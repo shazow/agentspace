@@ -20,10 +20,6 @@
             { type="bind";   src=''"$(pwd)"'';             target="/workspace";            opts="rw"; }
             { type="volume"; src="commandhistory";         target="/commandhistory";       opts=""; }
 
-            # Overlay the host's Nix Store (Read-Only Host + Ephemeral Write Container)
-            # This allows using the host cache without polluting it.
-            { type="podman-overlay"; src="/nix";           target="/nix";                  opts=""; }
-
             # Persist config between sessions (directories auto-created by homeMountCmds below)
             #{ type="volume"; src="claude-code-config";     target="${containerHome}/.claude";    opts=""; }
             #{ type="volume"; src="codex-config";           target="${containerHome}/.codex";     opts=""; }
@@ -75,8 +71,10 @@
             experimental-features = nix-command flakes
             sandbox = false
             filter-syscalls = false
-            trust-users = root ${containerUser}
+            trusted-users = root ${containerUser}
             use-sqlite-wal = false
+            build-users-group =
+            use-cgroups = false
           '';
 
           agentImage = pkgs.dockerTools.buildLayeredImage {
