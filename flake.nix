@@ -58,6 +58,8 @@
           mkdir -p $out/etc
           echo "${containerUser}:x:1000:1000::${containerHome}:/bin/bash" > $out/etc/passwd
           echo "${containerUser}:x:1000:" > $out/etc/group
+          mkdir -p $out/usr/bin
+          ln -s ${pkgs.coreutils}/bin/env $out/usr/bin/env
         '';
 
         agentImage = pkgs.dockerTools.buildLayeredImage {
@@ -65,31 +67,28 @@
           tag = "latest";
           
           contents = [ userInfo ] ++ (with pkgs; [
-            coreutils
             bashInteractive
+            coreutils
+            curl
+            dockerTools.caCertificates 
+            fd
+            fish 
+            gh
             git
             gnugrep
-            curl
-            which
-            gh
-            dockerTools.caCertificates 
-            fish 
+            jj
+            less
             nodejs_22
-            python3
-            uv
+            ripgrep
+            which
           ]);
 
           config = {
             User = containerUser;
             WorkingDir = "/workspace";
             Env = [
-              "NODE_OPTIONS=--max-old-space-size=4096"
-              # Enable global npm installs for the non-root user
               "NPM_CONFIG_PREFIX=${containerHome}/.npm-global"
               "PATH=${containerHome}/.npm-global/bin:/bin:/usr/bin:/usr/local/bin"
-              # Common config paths
-              "CLAUDE_CONFIG_DIR=${containerHome}/.claude"
-              "CODEX_HOME=${containerHome}/.codex"
             ];
             Cmd = [ "fish" ];
           };
@@ -107,7 +106,7 @@
 
         # --- 3. RUNNER SCRIPT ---
         runScript = pkgs.writeShellApplication {
-          name = "run-agent";
+          name = "run-container";
           runtimeInputs = [ pkgs.podman pkgs.slirp4netns ];
           
           text = ''
@@ -138,6 +137,8 @@
             # shellcheck disable=SC2086 
             # REMOVED 'exec' so the script stays alive to run the trap after podman exits
             podman run -it --rm \
+              --security-opt=no-new-privileges \
+              --cap-drop=all \
               --name agent-sandbox-instance \
               --runtime=${pkgs.gvisor}/bin/runsc \
               --runtime-flag=ignore-cgroups \
@@ -161,7 +162,7 @@
           packages = [ runScript ];
           shellHook = ''
             echo "Agent Sandbox Environment"
-            exec run-agent
+            exec run-container
           '';
         };
       }
