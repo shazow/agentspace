@@ -6,19 +6,48 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
     let
-      mkSandbox = { pkgs, additionalPkgs ? [], additionalMounts ? [] }:
+      mkSandbox =
+        {
+          pkgs,
+          additionalPkgs ? [ ],
+          additionalMounts ? [ ],
+        }:
         let
           USER = "agent";
           HOME = "/home/${USER}";
 
           mounts = [
-            { type="bind";   src=''"$(pwd)"'';             target="/workspace";            opts="rw"; }
-            { type="volume"; src="commandhistory";         target="/commandhistory";       opts=""; }
-          ] ++ additionalMounts;
+            {
+              type = "bind";
+              src = ''"$(pwd)"'';
+              target = "/workspace";
+              opts = "rw";
+            }
+            {
+              type = "volume";
+              src = "home";
+              target = HOME;
+              opts = "rw";
+            }
+            # Persist Nix store and database.
+            #{
+            #  type = "volume";
+            #  src = "${nixVolume}";
+            #  target = "/nix";
+            #  opts = "";
+            #}
+          ]
+          ++ additionalMounts;
 
-          mountFlags = pkgs.lib.concatMapStringsSep " " (m:
+          mountFlags = pkgs.lib.concatMapStringsSep " " (
+            m:
             if m.type == "podman-overlay" then
               "-v ${m.src}:${m.target}:O"
             else
@@ -26,19 +55,22 @@
               + (if m.opts != "" then ",${m.opts}" else "")
           ) mounts;
 
-          homeMountCmds = pkgs.lib.concatMapStringsSep "\n" (m:
-            if pkgs.lib.hasPrefix "${HOME}/" m.target then
-              "mkdir -p -m 700 .${m.target}"
-            else
-              ""
+          homeMountCmds = pkgs.lib.concatMapStringsSep "\n" (
+            m: if pkgs.lib.hasPrefix "${HOME}/" m.target then "mkdir -p -m 700 .${m.target}" else ""
           ) mounts;
 
-          policyConf = (pkgs.formats.json {}).generate "policy.json" {
+          policyConf = (pkgs.formats.json { }).generate "policy.json" {
             default = [ { type = "reject"; } ];
             transports = {
-              docker-archive = { "" = [ { type = "insecureAcceptAnything"; } ]; };
-              oci-archive = { "" = [ { type = "insecureAcceptAnything"; } ]; };
-              dir = { "" = [ { type = "insecureAcceptAnything"; } ]; };
+              docker-archive = {
+                "" = [ { type = "insecureAcceptAnything"; } ];
+              };
+              oci-archive = {
+                "" = [ { type = "insecureAcceptAnything"; } ];
+              };
+              dir = {
+                "" = [ { type = "insecureAcceptAnything"; } ];
+              };
             };
           };
 
@@ -51,8 +83,22 @@
             use-cgroups = false
           '';
 
-          # 1. Define contents list explicitly so we can use it for both the image and the DB generation
-          imageContents = [ nixConf ] ++ (with pkgs; [
+          # Generate a Nix Database (sqlite) containing the registration info for all image contents.
+          # We use the host's (build-time) Nix to generate the DB for the target paths.
+          nixDb = pkgs.runCommand "nix-db" {
+            buildInputs = [ pkgs.nix ];
+          } ''
+            mkdir -p $out/db
+            export NIX_STATE_DIR=$out
+            export NIX_STORE_DIR=${builtins.storeDir}
+            # Load the registration info (hashes/validity) for the image contents into a fresh DB
+            nix-store --load-db < ${pkgs.closureInfo { rootPaths = imageContents; }}/registration
+          '';
+
+          # Define contents list explicitly so we can use it for both the image and the DB generation
+          imageContents = [
+            nixConf
+          ] ++ (with pkgs; [
             bashInteractive
             coreutils
             curl
@@ -67,19 +113,8 @@
             nodejs_22
             ripgrep
             which
-          ]) ++ additionalPkgs;
-
-          # 2. Generate a Nix Database (sqlite) containing the registration info for all image contents.
-          # We use the host's (build-time) Nix to generate the DB for the target paths.
-          nixDb = pkgs.runCommand "nix-db" {
-            buildInputs = [ pkgs.nix ];
-          } ''
-            mkdir -p $out/db
-            export NIX_STATE_DIR=$out
-            export NIX_STORE_DIR=${builtins.storeDir}
-            # Load the registration info (hashes/validity) for the image contents into a fresh DB
-            nix-store --load-db < ${pkgs.closureInfo { rootPaths = imageContents; }}/registration
-          '';
+          ])
+          ++ additionalPkgs;
 
           agentImage = pkgs.dockerTools.buildLayeredImage {
             name = "agent-sandbox-image";
@@ -111,19 +146,15 @@
               echo "root:x:0:" > etc/group
               echo "${USER}:x:1000:" >> etc/group
 
-              # 3. Copy the pre-generated Nix DB into the image
+              # Create FHS compatibility symlinks (required for npm scripts using /usr/bin/env)
+              mkdir -p usr/bin bin
+              ln -s ${pkgs.coreutils}/bin/env usr/bin/env
+
+              # Nix state
               mkdir -p nix/var/nix
               cp -r ${nixDb}/db nix/var/nix/
-              
-              # FIX: Explicitly set permissions to 755 (rwxr-xr-x) for the DB directory and files.
-              # "u+w" might be insufficient if the base mode from the store is restricted.
               chmod -R 755 nix/var/nix
               chown -R 1000:1000 nix/var/nix
-
-              # 4. Standard permissions
-              # Note: chowning the store directory allows the user to ADD NEW files.
-              # Existing files (from contents) will remain root-owned in the lower layers,
-              # but because we populated the DB, Nix won't try to touch them.
               mkdir -p nix/store
               chown -R 1000:1000 nix
 
@@ -133,7 +164,10 @@
 
           runScript = pkgs.writeShellApplication {
             name = "run-container";
-            runtimeInputs = [ pkgs.podman pkgs.slirp4netns ];
+            runtimeInputs = [
+              pkgs.podman
+              pkgs.slirp4netns
+            ];
             text = ''
               IMAGE_ARCHIVE="${agentImage}"
 
@@ -171,15 +205,19 @@
                 fish
             '';
           };
-        in {
+        in
+        {
           inherit agentImage runScript;
         };
 
-    in flake-utils.lib.eachDefaultSystem (system:
+    in
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         sandbox = mkSandbox { inherit pkgs; };
-      in {
+      in
+      {
         packages.image = sandbox.agentImage;
         packages.default = sandbox.runScript;
 
@@ -191,7 +229,8 @@
           '';
         };
       }
-    ) // {
+    )
+    // {
       lib.mkSandbox = mkSandbox;
     };
 }
