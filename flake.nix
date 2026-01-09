@@ -18,6 +18,7 @@
           pkgs,
           additionalPkgs ? [ ],
           additionalMounts ? [ ],
+          withNix ? true,
         }:
         let
           USER = "agent";
@@ -74,47 +75,50 @@
             };
           };
 
-          nixConf = pkgs.writeTextDir "etc/nix/nix.conf" ''
-            experimental-features = nix-command flakes
-            sandbox = false
-            filter-syscalls = false
-            trusted-users = root ${USER}
-            build-users-group =
-            use-cgroups = false
-          '';
-
           # Generate a Nix Database (sqlite) containing the registration info for all image contents.
           # We use the host's (build-time) Nix to generate the DB for the target paths.
-          nixDb = pkgs.runCommand "nix-db" {
-            buildInputs = [ pkgs.nix ];
-          } ''
-            mkdir -p $out/db
-            export NIX_STATE_DIR=$out
-            export NIX_STORE_DIR=${builtins.storeDir}
-            # Load the registration info (hashes/validity) for the image contents into a fresh DB
-            nix-store --load-db < ${pkgs.closureInfo { rootPaths = imageContents; }}/registration
-          '';
+          nixDb =
+            pkgs.runCommand "nix-db"
+              {
+                buildInputs = [ pkgs.nix ];
+              }
+              ''
+                mkdir -p $out/db
+                export NIX_STATE_DIR=$out
+                export NIX_STORE_DIR=${builtins.storeDir}
+                # Load the registration info (hashes/validity) for the image contents into a fresh DB
+                nix-store --load-db < ${pkgs.closureInfo { rootPaths = imageContents; }}/registration
+              '';
 
           # Define contents list explicitly so we can use it for both the image and the DB generation
-          imageContents = [
-            nixConf
-          ] ++ (with pkgs; [
-            bashInteractive
-            coreutils
-            curl
-            fd
-            fish
-            gh
-            git
-            gnugrep
-            jj
-            less
-            nix
-            nodejs_22
-            ripgrep
-            which
-          ])
-          ++ additionalPkgs;
+          imageContents =
+            with pkgs;
+            [
+              bashInteractive
+              coreutils
+              curl
+              fd
+              gh
+              git
+              gnugrep
+              jj
+              less
+              nodejs_22
+              ripgrep
+              which
+            ]
+            ++ (pkgs.lib.optionals withNix [
+              (pkgs.writeTextDir "etc/nix/nix.conf" ''
+                experimental-features = nix-command flakes
+                sandbox = false
+                filter-syscalls = false
+                trusted-users = root ${USER}
+                build-users-group =
+                use-cgroups = false
+              '')
+              nix
+            ])
+            ++ additionalPkgs;
 
           agentImage = pkgs.dockerTools.buildLayeredImage {
             name = "agent-sandbox-image";
@@ -127,11 +131,13 @@
               WorkingDir = "/workspace";
               Env = [
                 "USER=${USER}"
-                "NIX_REMOTE=local"
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              ]
+              ++ (pkgs.lib.optionals withNix [
+                "NIX_REMOTE=local"
                 "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-              ];
-              Cmd = [ "fish" ];
+              ]);
+              Cmd = [ "bash" ];
             };
 
             fakeRootCommands = ''
@@ -150,7 +156,9 @@
               mkdir -p usr/bin bin
               ln -s ${pkgs.coreutils}/bin/env usr/bin/env
 
-              # Nix state
+            ''
+            ++ pkgs.lib.optionals withNix ''
+              # Setup state needed for nix
               mkdir -p nix/var/nix
               cp -r ${nixDb}/db nix/var/nix/
               chmod -R 755 nix/var/nix
@@ -158,8 +166,8 @@
               mkdir -p nix/store
               chown -R 1000:1000 nix
 
-              ${homeMountCmds}
-            '';
+            ''
+            ++ homeMountCmds;
           };
 
           runScript = pkgs.writeShellApplication {
@@ -202,7 +210,7 @@
                 $ENV_FLAGS \
                 ${mountFlags} \
                 agent-sandbox-image:latest \
-                fish
+                bash
             '';
           };
         in
