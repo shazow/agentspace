@@ -20,6 +20,7 @@
           additionalMounts ? [ ],
           withNix ? true,
           withNixVolume ? false,
+          withPrivileges ? false,
         }:
         let
           ICON = "🛡️";
@@ -60,6 +61,28 @@
               "--mount type=${m.type},source=${m.src},target=${m.target}"
               + (if m.opts != "" then ",${m.opts}" else "")
           ) mounts;
+
+          containerArgs = [
+            "-it"
+            "--rm"
+            "--name agent-sandbox-instance"
+            "--runtime=${pkgs.gvisor}/bin/runsc"
+            "--runtime-flag=ignore-cgroups"
+            "--cgroup-manager=cgroupfs"
+            "--events-backend=file"
+            "--network=slirp4netns"
+            "--userns=keep-id"
+            "--workdir /workspace"
+          ]
+          ++ (pkgs.lib.optionals (!withPrivileges) [
+            "--security-opt=no-new-privileges"
+            "--cap-drop=all"
+          ])
+          ++ (pkgs.lib.optionals withPrivileges [
+            "--device /dev/fuse"
+          ]);
+
+          containerArgsStr = pkgs.lib.concatStringsSep " " containerArgs;
 
           homeMountCmds = pkgs.lib.concatMapStringsSep "\n" (
             m: if pkgs.lib.hasPrefix "${HOME}/" m.target then "mkdir -p -m 700 .${m.target}" else ""
@@ -118,6 +141,9 @@
                 use-cgroups = false
               '')
               nix
+            ])
+            ++ (pkgs.lib.optionals withPrivileges [
+              podman
             ])
             ++ packages;
 
@@ -202,17 +228,7 @@
               podman load --quiet --signature-policy=${policyConf} --input "${agentImage}"
 
               echo "${ICON} Launching sandbox (runsc)"
-              podman run -it --rm \
-                --security-opt=no-new-privileges \
-                --cap-drop=all \
-                --name agent-sandbox-instance \
-                --runtime=${pkgs.gvisor}/bin/runsc \
-                --runtime-flag=ignore-cgroups \
-                --cgroup-manager=cgroupfs \
-                --events-backend=file \
-                --network=slirp4netns \
-                --userns=keep-id \
-                --workdir /workspace \
+              podman run ${containerArgsStr} \
                 ${mountFlags} \
                 agent-sandbox-image:latest \
                 bash
@@ -236,6 +252,7 @@
             nodejs_22
             ripgrep
           ];
+          # withPrivileges = true;
         };
       in
       {
