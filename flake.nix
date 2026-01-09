@@ -16,13 +16,16 @@
       mkSandbox =
         {
           pkgs,
-          additionalPkgs ? [ ],
+          packages ? [ ],
           additionalMounts ? [ ],
           withNix ? true,
+          withNixVolume ? false,
         }:
         let
+          ICON = "🛡️";
           USER = "agent";
           HOME = "/home/${USER}";
+          nixVolume = "nix-store-overlay-${builtins.substring 0 12 agentImage.imageDigest}";
 
           mounts = [
             {
@@ -37,14 +40,16 @@
               target = HOME;
               opts = "rw";
             }
-            # Persist Nix store and database.
-            #{
-            #  type = "volume";
-            #  src = "${nixVolume}";
-            #  target = "/nix";
-            #  opts = "";
-            #}
           ]
+          ++ (pkgs.lib.optionals withNixVolume [
+            # Persist Nix store and database.
+            {
+              type = "volume";
+              src = "${nixVolume}";
+              target = "/nix";
+              opts = "";
+            }
+          ])
           ++ additionalMounts;
 
           mountFlags = pkgs.lib.concatMapStringsSep " " (
@@ -98,13 +103,9 @@
               coreutils
               curl
               fd
-              gh
               git
               gnugrep
-              jj
               less
-              nodejs_22
-              ripgrep
               which
             ]
             ++ (pkgs.lib.optionals withNix [
@@ -118,7 +119,7 @@
               '')
               nix
             ])
-            ++ additionalPkgs;
+            ++ packages;
 
           agentImage = pkgs.dockerTools.buildLayeredImage {
             name = "agent-sandbox-image";
@@ -157,7 +158,7 @@
               ln -s ${pkgs.coreutils}/bin/env usr/bin/env
 
             ''
-            ++ pkgs.lib.optionals withNix ''
+            + (pkgs.lib.optionals withNix ''
               # Setup state needed for nix
               mkdir -p nix/var/nix
               cp -r ${nixDb}/db nix/var/nix/
@@ -166,8 +167,8 @@
               mkdir -p nix/store
               chown -R 1000:1000 nix
 
-            ''
-            ++ homeMountCmds;
+            '')
+            + homeMountCmds;
           };
 
           runScript = pkgs.writeShellApplication {
@@ -177,25 +178,30 @@
               pkgs.slirp4netns
             ];
             text = ''
-              IMAGE_ARCHIVE="${agentImage}"
-
+              echo "${ICON} Agent Sandbox"
+            ''
+            + pkgs.lib.optionalString withNixVolume ''
+              # Clean up any old nix-store overlays that don't match the current one
+              # This ensures we don't use stale Nix store states
+              echo "${ICON} Checking for outdated nix volume..."
+              for vol in $(podman volume ls --format "{{.Name}}" | grep "^nix-store-overlay-"); do
+                if [ "$vol" != "${nixVolume}" ]; then
+                  echo "Removing outdated volume: $vol"
+                  podman volume rm "$vol" >/dev/null 2>&1 || true
+                fi
+              done
+            ''
+            + ''
               cleanup() {
-                echo ""
-                echo "--- Cleaning up Image ---"
+                echo "${ICON} Cleaning up image"
                 podman image rm "agent-sandbox-image:latest" >/dev/null 2>&1 || true
               }
               trap cleanup EXIT INT TERM
 
-              echo "--- Loading Image from Nix Store ---"
-              podman load --quiet --signature-policy=${policyConf} --input "$IMAGE_ARCHIVE"
+              echo "${ICON} Loading image..." 
+              podman load --quiet --signature-policy=${policyConf} --input "${agentImage}"
 
-              echo "--- Launching Sandbox (runsc) ---"
-              ENV_FLAGS=""
-              [ -n "''${GEMINI_API_KEY:-}" ] && ENV_FLAGS="$ENV_FLAGS --env GEMINI_API_KEY"
-              [ -n "''${ANTHROPIC_API_KEY:-}" ] && ENV_FLAGS="$ENV_FLAGS --env ANTHROPIC_API_KEY"
-              [ -n "''${OPENAI_API_KEY:-}" ] && ENV_FLAGS="$ENV_FLAGS --env OPENAI_API_KEY"
-
-              # shellcheck disable=SC2086
+              echo "${ICON} Launching sandbox (runsc)"
               podman run -it --rm \
                 --security-opt=no-new-privileges \
                 --cap-drop=all \
@@ -207,7 +213,6 @@
                 --network=slirp4netns \
                 --userns=keep-id \
                 --workdir /workspace \
-                $ENV_FLAGS \
                 ${mountFlags} \
                 agent-sandbox-image:latest \
                 bash
@@ -223,7 +228,15 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        sandbox = mkSandbox { inherit pkgs; };
+        sandbox = mkSandbox {
+          inherit pkgs;
+          packages = with pkgs; [
+            gh
+            jj
+            nodejs_22
+            ripgrep
+          ];
+        };
       in
       {
         packages.image = sandbox.agentImage;
@@ -232,7 +245,6 @@
         devShells.default = pkgs.mkShell {
           packages = [ sandbox.runScript ];
           shellHook = ''
-            echo "Agent Sandbox Environment"
             exec run-container
           '';
         };
