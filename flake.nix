@@ -4,6 +4,11 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    # Added for VM generation
+    nixos-generators = {
+      url = "github:nix-community/nixos-generators";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -11,16 +16,18 @@
       self,
       nixpkgs,
       flake-utils,
+      nixos-generators,
     }:
     let
       mkSandbox =
         {
           pkgs,
+          system, # Added system argument for VM generation
           packages ? [ ],
           additionalMounts ? [ ],
-          withNix ? true,
-          withNixVolume ? false,
-          withPrivileges ? false,
+          withNix ? true, # Include nix in container
+          withNixVolume ? false, # Use a volume to persist /nix across container instances
+          withPrivileges ? false, # Reduce security to allow containers inside containers
         }:
         let
           ICON = "🛡️";
@@ -61,28 +68,6 @@
               "--mount type=${m.type},source=${m.src},target=${m.target}"
               + (if m.opts != "" then ",${m.opts}" else "")
           ) mounts;
-
-          containerArgs = [
-            "-it"
-            "--rm"
-            "--name agent-sandbox-instance"
-            "--runtime=${pkgs.gvisor}/bin/runsc"
-            "--runtime-flag=ignore-cgroups"
-            "--cgroup-manager=cgroupfs"
-            "--events-backend=file"
-            "--network=slirp4netns"
-            "--userns=keep-id"
-            "--workdir /workspace"
-          ]
-          ++ (pkgs.lib.optionals (!withPrivileges) [
-            "--security-opt=no-new-privileges"
-            "--cap-drop=all"
-          ])
-          ++ (pkgs.lib.optionals withPrivileges [
-            "--device /dev/fuse"
-          ]);
-
-          containerArgsStr = pkgs.lib.concatStringsSep " " containerArgs;
 
           homeMountCmds = pkgs.lib.concatMapStringsSep "\n" (
             m: if pkgs.lib.hasPrefix "${HOME}/" m.target then "mkdir -p -m 700 .${m.target}" else ""
@@ -197,7 +182,7 @@
             + homeMountCmds;
           };
 
-          runScript = pkgs.writeShellApplication {
+          runContainer = pkgs.writeShellApplication {
             name = "run-container";
             runtimeInputs = [
               pkgs.podman
@@ -227,16 +212,71 @@
               echo "${ICON} Loading image..." 
               podman load --quiet --signature-policy=${policyConf} --input "${agentImage}"
 
-              echo "${ICON} Launching sandbox (runsc)"
-              podman run ${containerArgsStr} \
+              # Check if we are already inside a container (Docker or Podman)
+              # If we are, avoid using gVisor (runsc) because nested virtualization often fails or performs poorly.
+              RUNTIME_FLAGS=("--runtime=${pkgs.gvisor}/bin/runsc" "--runtime-flag=ignore-cgroups")
+              if [ -f "/.dockerenv" ] || [ -f "/run/.containerenv" ]; then
+                echo "${ICON} Nested container detected. Using default runtime (runc)."
+                RUNTIME_FLAGS=()
+              fi
+
+              echo "${ICON} Launching sandbox"
+              podman run -it --rm \
+                "''${RUNTIME_FLAGS[@]}" \
+                --name agent-sandbox-instance \
+                --cgroup-manager=cgroupfs \
+                --events-backend=file \
+                --network=slirp4netns \
+                --userns=keep-id \
+                --workdir /workspace \
+            ''
+            + pkgs.lib.optionalString (!withPrivileges) ''
+                --security-opt=no-new-privileges \
+                --cap-drop=all \
+            ''
+            + pkgs.lib.optionalString withPrivileges ''
+                --device /dev/fuse \
+            ''
+            + ''
                 ${mountFlags} \
                 agent-sandbox-image:latest \
                 bash
             '';
           };
+
+          # VM Configuration (for Libvirt/QCOW2)
+          vmImage = nixos-generators.nixosGenerate {
+            inherit system;
+            format = "qcow2";
+            modules = [
+              ({ config, lib, ... }: {
+                 # Basic VM Settings
+                 networking.hostName = "agent-sandbox";
+                 networking.firewall.enable = false; # Allow traffic for dev
+                 
+                 # User Configuration
+                 users.users.${USER} = {
+                   isNormalUser = true;
+                   extraGroups = [ "wheel" ];
+                   initialPassword = "agent"; # Dev password
+                 };
+                 
+                 # SSH Access
+                 services.openssh.enable = true;
+                 services.openssh.settings.PasswordAuthentication = true;
+                 services.openssh.settings.PermitRootLogin = "yes";
+
+                 # System Packages (Syncs with container)
+                 environment.systemPackages = imageContents;
+                 
+                 # Optimization for QEMU
+                 services.qemuGuest.enable = true;
+              })
+            ];
+          };
         in
         {
-          inherit agentImage runScript;
+          inherit agentImage runScript vmImage;
         };
 
     in
@@ -245,7 +285,7 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         sandbox = mkSandbox {
-          inherit pkgs;
+          inherit pkgs system;
           packages = with pkgs; [
             gh
             jj
@@ -254,13 +294,57 @@
           ];
           # withPrivileges = true;
         };
+
+        devcontainerConfig = (pkgs.formats.json { }).generate "devcontainer.json" {
+          name = "Agent Sandbox";
+          image = "agent-sandbox-image:latest";
+          remoteUser = "agent";
+          workspaceMount = "source=\${localWorkspaceFolder},target=/workspace,type=bind";
+          workspaceFolder = "/workspace";
+          customizations = {
+            vscode = {
+              settings = { };
+              extensions = [ ];
+            };
+          };
+        };
+
+        # Helper script to export the image and configure VS Code Devcontainer
+        devcontainer = pkgs.writeShellScriptBin "make-devcontainer" ''
+          set -e
+          IMAGE_PATH="${sandbox.agentImage}"
+          
+          echo "🔍 Finding container engine..."
+          if command -v podman >/dev/null; then
+            CMD="podman"
+          elif command -v docker >/dev/null; then
+            CMD="docker"
+          else
+            echo "❌ Error: Neither podman nor docker found in PATH."
+            exit 1
+          fi
+
+          echo "📦 Loading image from $IMAGE_PATH..."
+          $CMD load < "$IMAGE_PATH"
+
+          echo "📝 Generating .devcontainer/devcontainer.json..."
+          mkdir -p .devcontainer
+          cp "${devcontainerConfig}" .devcontainer/devcontainer.json
+          chmod 644 .devcontainer/devcontainer.json
+          
+          echo "✅ Done! Open the command palette in VS Code and select 'Dev Containers: Reopen in Container'."
+        '';
+
       in
       {
         packages.image = sandbox.agentImage;
-        packages.default = sandbox.runScript;
+        packages.vm = sandbox.vmImage;
+        packages.devcontainer = devcontainer;
+        packages.container = sandbox.runContainer;
+        packages.default = sandbox.runContainer;
 
         devShells.default = pkgs.mkShell {
-          packages = [ sandbox.runScript ];
+          packages = [ sandbox.runContainer ];
           shellHook = ''
             exec run-container
           '';
