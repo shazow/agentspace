@@ -13,6 +13,10 @@
       flake-utils,
     }:
     let
+      ICON = "🛡️";
+      USER = "agent";
+      HOME = "/home/${USER}";
+
       mkSandbox =
         {
           pkgs,
@@ -23,9 +27,6 @@
           withPrivileges ? false,
         }:
         let
-          ICON = "🛡️";
-          USER = "agent";
-          HOME = "/home/${USER}";
           nixVolume = "nix-store-overlay-${builtins.substring 0 12 agentImage.imageDigest}";
 
           mounts = [
@@ -130,6 +131,11 @@
               gnugrep
               less
               which
+
+              # Required for inner containers
+              podman
+              slirp4netns
+              fuse-overlayfs
             ]
             ++ (pkgs.lib.optionals withNix [
               (pkgs.writeTextDir "etc/nix/nix.conf" ''
@@ -141,9 +147,6 @@
                 use-cgroups = false
               '')
               nix
-            ])
-            ++ (pkgs.lib.optionals withPrivileges [
-              podman
             ])
             ++ packages;
 
@@ -252,7 +255,7 @@
             nodejs_22
             ripgrep
           ];
-          # withPrivileges = true;
+          withPrivileges = true; # XXX
         };
       in
       {
@@ -260,9 +263,10 @@
         packages.default = sandbox.runScript;
 
         devShells.default = pkgs.mkShell {
-          packages = [ sandbox.runScript ];
+          packages = [ sandbox.runScript pkgs.podman ];
           shellHook = ''
-            exec run-container
+            export PS1="[${ICON}] $PS1"
+            echo "Loaded environment, available commands: run-container"
           '';
         };
       }
