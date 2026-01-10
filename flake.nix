@@ -124,11 +124,15 @@
                 trusted-users = root ${USER}
                 build-users-group =
                 use-cgroups = false
+                use-sqlite-wal = false
+                require-sigs = false
               '')
               nix
             ])
             ++ (pkgs.lib.optionals withPrivileges [
               podman
+              slirp4netns
+              fuse-overlayfs
             ])
             ++ packages;
 
@@ -236,6 +240,11 @@
             ''
             + pkgs.lib.optionalString withPrivileges ''
                 --device /dev/fuse \
+                --cap-add=CAP_SYS_ADMIN \
+                --cap-add=CAP_FOWNER \
+                --cap-add=CAP_CHOWN \
+                --cap-add=CAP_SETUID \
+                --cap-add=CAP_SETGID \
             ''
             + ''
                 ${mountFlags} \
@@ -292,7 +301,7 @@
             nodejs_22
             ripgrep
           ];
-          # withPrivileges = true;
+          withPrivileges = true;
         };
 
         devcontainerConfig = (pkgs.formats.json { }).generate "devcontainer.json" {
