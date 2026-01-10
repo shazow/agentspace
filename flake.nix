@@ -276,7 +276,7 @@
           };
         in
         {
-          inherit agentImage runScript vmImage;
+          inherit agentImage runContainer vmImage;
         };
 
     in
