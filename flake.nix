@@ -117,6 +117,9 @@
               which
             ]
             ++ (pkgs.lib.optionals withNix [
+              # NOTE: Removed `use-sqlite-wal = false` due to error:
+              # $ NIXPKGS_ALLOW_UNFREE=1 nix run --impure nixpkgs#amp-cli
+              # error: executing SQLite statement 'pragma synchronous = normal': unable to open database file, unable to open database file (in '/nix/var/nix/db/db.sqlite') 
               (pkgs.writeTextDir "etc/nix/nix.conf" ''
                 experimental-features = nix-command flakes
                 sandbox = false
@@ -124,7 +127,6 @@
                 trusted-users = root ${USER}
                 build-users-group =
                 use-cgroups = false
-                use-sqlite-wal = false
                 require-sigs = false
               '')
               nix
@@ -133,6 +135,18 @@
               podman
               slirp4netns
               fuse-overlayfs
+              # Podman configuration for rootless nested containers
+              (pkgs.writeTextDir "etc/containers/storage.conf" ''
+                [storage]
+                driver = "overlay"
+                [storage.options.overlay]
+                mount_program = "${pkgs.fuse-overlayfs}/bin/fuse-overlayfs"
+              '')
+              (pkgs.writeTextDir "etc/containers/containers.conf" ''
+                [engine]
+                cgroup_manager = "cgroupfs"
+                events_logger = "file"
+              '')
             ])
             ++ packages;
 
@@ -168,9 +182,17 @@
               echo "root:x:0:" > etc/group
               echo "${USER}:x:1000:" >> etc/group
 
+              # subuid/subgid for rootless podman (nested containers)
+              echo "${USER}:100000:65536" > etc/subuid
+              echo "${USER}:100000:65536" > etc/subgid
+
               # Create FHS compatibility symlinks (required for npm scripts using /usr/bin/env)
               mkdir -p usr/bin bin
               ln -s ${pkgs.coreutils}/bin/env usr/bin/env
+
+              # Marker file for nested container detection
+              mkdir -p -m 755 run
+              touch run/.containerenv
 
             ''
             + (pkgs.lib.optionals withNix ''
