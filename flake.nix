@@ -22,6 +22,16 @@
       # TODO: Factor these out into arguments passed into a mkSandbox helper
       homeImagePath = "./home.img";
       withWorkspace = true;
+
+      mkBundle = inputs: pkgs.linkFarm "agent-bundle" (
+        pkgs.lib.mapAttrsToList (name: path: { inherit name path; }) inputs
+      );
+
+      # Define the bundle: { "path/in/guest/home" = ./literal/path/on/host; }
+      bundle = mkBundle {
+        #".config/git/gitconfig" = /home/shazow/.config/git/gitconfig;
+        # "./scripts" = ./scripts; # -> ~/workspace/scripts
+      };
     in
     {
       packages.${system} =
@@ -39,15 +49,14 @@
             microvm.nixosModules.microvm
             {
               microvm = {
-                mem = 1024;
+                mem = 4 * 1024;
                 balloon = true; # Allocate memory on demand
                 shares = [
                   {
                     # use proto = "virtiofs" for MicroVMs that are started by systemd
                     proto = "9p";
                     tag = "ro-store";
-                    # a host's /nix/store will be picked up so that no
-                    # squashfs/erofs will be built for it.
+                    # a host's /nix/store will be picked up so that no squashfs/erofs will be built for it.
                     source = "/nix/store";
                     mountPoint = "/nix/.ro-store";
                   }
@@ -59,6 +68,13 @@
                     source = ".";
                     mountPoint = "/home/${USER}/workspace";
                     securityModel = "mapped";
+                  }
+                ] ++ pkgs.lib.optionals (bundle != {}) [
+                  {
+                    proto = "9p";
+                    tag = "bundle";
+                    source = "${bundle}";
+                    mountPoint = "/mnt/bundle";
                   }
                 ];
 
@@ -79,8 +95,7 @@
 
                 hypervisor = "qemu";
                 qemu.extraArgs = [
-                  "-cpu"
-                  "host" # Allow nested emulation
+                  "-cpu" "host" # Allow nested emulation
                 ];
                 interfaces = [
                   {
@@ -118,7 +133,26 @@
                 systemd.tmpfiles.rules = [
                   "d /home/${USER} 0700 ${USER} users -"
                   "d /home/${USER}/workspace 0755 ${USER} users -"
+                  "f /home/${USER}/.bash_logout 0600 ${USER} users - sudo poweroff"
                 ];
+
+                systemd.services.unpack-bundle = lib.mkIf (bundle != {}) {
+                  description = "Hydrate bundle files into home directory";
+                  after = [ "local-fs.target" ]; 
+                  before = [ "systemd-user-sessions.service" ];
+                  wantedBy = [ "multi-user.target" ];
+                  serviceConfig = {
+                    Type = "oneshot";
+                    User = USER;
+                    WorkingDirectory = "/home/${USER}";
+                  };
+                  script = ''
+                    if [ -d /mnt/bundle ]; then
+                      cp -Lr /mnt/bundle/. .
+                      chmod -R u+w .
+                    fi
+                  '';
+                };
 
                 fileSystems."/" = {
                   fsType = "tmpfs";
@@ -130,11 +164,6 @@
                   password = "";
                   isNormalUser = true;
                   extraGroups = [ "wheel" ]; # sudoer
-                  shell = pkgs.writeShellScript "agent-shell" ''
-                    cd /home/${USER}/workspace || true
-                    ${pkgs.bashInteractive}/bin/bash --login
-                    [[ "$SKIP_SHUTDOWN" ]] || sudo poweroff
-                  '';
                 };
 
                 security.sudo.wheelNeedsPassword = false;
