@@ -8,6 +8,8 @@
 
   outputs = { self, nixpkgs, microvm }: let
     system = "x86_64-linux";
+    USER = "agent";
+    HOSTNAME = "agent-sandbox";
   in {
     packages.${system} = {
       default = self.packages.${system}.vm;
@@ -33,7 +35,17 @@
                   source = "/nix/store";
                   mountPoint = "/nix/.ro-store";
                 }
+                {
+                  # Share for agent workspace
+                  proto = "9p";
+                  tag = "workspace";
+                  source = ".";
+                  mountPoint = "/home/${USER}/workspace";
+                }
               ];
+
+              # Keep the socket away from the CWD to avoid mounting
+              socket = "/tmp/vm-${HOSTNAME}.sock";
 
               writableStoreOverlay = "/nix/.rw-store";
 
@@ -58,7 +70,7 @@
           (
             # configuration.nix
             { pkgs, lib, ... }: {
-              networking.hostName = "agent-sandbox";
+              networking.hostName = HOSTNAME;
               boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1; # Nested namespaces
               system.stateVersion = lib.trivial.release;
               nixpkgs.config.allowUnfree = true;
@@ -75,14 +87,14 @@
               };
 
               # User
-              users.users.agent = {
+              users.users.${USER} = {
                 password = "";
                 isNormalUser = true;
                 extraGroups = [ "wheel" ]; # sudoer
               };
 
               security.sudo.wheelNeedsPassword = false;
-              services.getty.autologinUser = "agent";
+              services.getty.autologinUser = USER;
 
               # Packages
               environment.systemPackages = with pkgs; [
