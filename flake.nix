@@ -58,6 +58,7 @@
                     tag = "workspace";
                     source = ".";
                     mountPoint = "/home/${USER}/workspace";
+                    securityModel = "mapped";
                   }
                 ];
 
@@ -113,6 +114,12 @@
                 boot.consoleLogLevel = 0;
                 boot.initrd.verbose = false;
 
+                # Ensure the home directory and workspace are owned by the user
+                systemd.tmpfiles.rules = [
+                  "d /home/${USER} 0700 ${USER} users -"
+                  "d /home/${USER}/workspace 0755 ${USER} users -"
+                ];
+
                 fileSystems."/" = {
                   fsType = "tmpfs";
                   options = [ "mode=0755" ];
@@ -123,6 +130,11 @@
                   password = "";
                   isNormalUser = true;
                   extraGroups = [ "wheel" ]; # sudoer
+                  shell = pkgs.writeShellScript "agent-shell" ''
+                    cd /home/${USER}/workspace || true
+                    ${pkgs.bashInteractive}/bin/bash --login
+                    [[ "$SKIP_SHUTDOWN" ]] || sudo poweroff
+                  '';
                 };
 
                 security.sudo.wheelNeedsPassword = false;
