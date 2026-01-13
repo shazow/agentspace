@@ -6,112 +6,144 @@
     inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, microvm }: let
-    system = "x86_64-linux";
-    USER = "agent";
-    HOSTNAME = "agent-sandbox";
-  in {
-    packages.${system} = {
-      default = self.packages.${system}.vm;
-      vm = self.nixosConfigurations.vm.config.microvm.declaredRunner;
-    };
+  outputs =
+    {
+      self,
+      nixpkgs,
+      microvm,
+    }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
 
-    nixosConfigurations = {
-      vm = nixpkgs.lib.nixosSystem {
-        inherit system;
-        modules = [
-          microvm.nixosModules.microvm
-          {
-            microvm = {
-              mem = 1024;
-              balloon = true; # Allocate memory on demand
-              shares = [
-                {
-                  # use proto = "virtiofs" for MicroVMs that are started by systemd
-                  proto = "9p";
-                  tag = "ro-store";
-                  # a host's /nix/store will be picked up so that no
-                  # squashfs/erofs will be built for it.
-                  source = "/nix/store";
-                  mountPoint = "/nix/.ro-store";
-                }
-                {
-                  # Share for agent workspace
-                  proto = "9p";
-                  tag = "workspace";
-                  source = ".";
-                  mountPoint = "/home/${USER}/workspace";
-                }
-              ];
+      USER = "agent";
+      HOSTNAME = "agent-sandbox";
 
-              # Keep the socket away from the CWD to avoid mounting
-              socket = "/tmp/vm-${HOSTNAME}.sock";
+      # TODO: Factor these out into arguments passed into a mkSandbox helper
+      homeImagePath = "./home.img";
+      withWorkspace = true;
+    in
+    {
+      packages.${system} =
+        let
+          runner = self.nixosConfigurations.vm.config.microvm.declaredRunner;
+        in {
+          default = runner;
+          vm = runner;
+        };
 
-              writableStoreOverlay = "/nix/.rw-store";
+      nixosConfigurations = {
+        vm = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            microvm.nixosModules.microvm
+            {
+              microvm = {
+                mem = 1024;
+                balloon = true; # Allocate memory on demand
+                shares = [
+                  {
+                    # use proto = "virtiofs" for MicroVMs that are started by systemd
+                    proto = "9p";
+                    tag = "ro-store";
+                    # a host's /nix/store will be picked up so that no
+                    # squashfs/erofs will be built for it.
+                    source = "/nix/store";
+                    mountPoint = "/nix/.ro-store";
+                  }
+                ] ++ pkgs.lib.optionals withWorkspace [
+                  {
+                    # Share for agent workspace
+                    proto = "9p";
+                    tag = "workspace";
+                    source = ".";
+                    mountPoint = "/home/${USER}/workspace";
+                  }
+                ];
 
-              hypervisor = "qemu";
-              qemu.extraArgs = [
-                "-cpu" "host" # Allow nested emulation
-              ];
-              interfaces = [
-                {
-                  type = "user";
-                  id = "microvm1";
-                  mac = "02:02:00:00:00:01";
-                }
-              ];
-            };
+                volumes = pkgs.lib.optionals ( homeImagePath != "" ) [
+                  {
+                    image = homeImagePath;
+                    mountPoint = "/home/${USER}";
+                    fsType = "ext4";
+                    size = 1024; # MB
+                    autoCreate = true;
+                  }
+                ];
 
-            fileSystems."/nix/.rw-store" = { 
-              fsType = "tmpfs"; 
-              options = [ "mode=0755" ]; 
-            };
-          }
-          (
-            # configuration.nix
-            { pkgs, lib, ... }: {
-              networking.hostName = HOSTNAME;
-              boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1; # Nested namespaces
-              system.stateVersion = lib.trivial.release;
-              nixpkgs.config.allowUnfree = true;
-              nix.settings.experimental-features = [ "nix-command" "flakes" ];
+                # Keep the socket away from the CWD to avoid mounting
+                socket = "/tmp/vm-${HOSTNAME}.sock";
 
-              # Quiet boot
-              boot.kernelParams = [ "quiet" "udev.log_level=3" ];
-              boot.consoleLogLevel = 0;
-              boot.initrd.verbose = false;
+                writableStoreOverlay = "/nix/.rw-store";
 
-              fileSystems."/" = { 
-                fsType = "tmpfs"; 
-                options = [ "mode=0755" ]; 
+                hypervisor = "qemu";
+                qemu.extraArgs = [
+                  "-cpu"
+                  "host" # Allow nested emulation
+                ];
+                interfaces = [
+                  {
+                    type = "user";
+                    id = "microvm1";
+                    mac = "02:02:00:00:00:01";
+                  }
+                ];
               };
 
-              # User
-              users.users.${USER} = {
-                password = "";
-                isNormalUser = true;
-                extraGroups = [ "wheel" ]; # sudoer
+              fileSystems."/nix/.rw-store" = {
+                fsType = "tmpfs";
+                options = [ "mode=0755" ];
               };
-
-              security.sudo.wheelNeedsPassword = false;
-              services.getty.autologinUser = USER;
-
-              # Packages
-              environment.systemPackages = with pkgs; [
-                bashInteractive
-                coreutils
-                curl
-                fd
-                git
-                gnugrep
-                less
-                neovim
-                which
-              ];
             }
-          )
-        ];
+            (
+              # configuration.nix
+              { pkgs, lib, ... }:
+              {
+                networking.hostName = HOSTNAME;
+                system.stateVersion = lib.trivial.release;
+                nixpkgs.config.allowUnfree = true;
+                nix.settings.experimental-features = [
+                  "nix-command"
+                  "flakes"
+                ];
+
+                boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1; # Nested namespaces
+                # Quiet boot
+                boot.kernelParams = [ "quiet" "udev.log_level=3" ];
+                boot.consoleLogLevel = 0;
+                boot.initrd.verbose = false;
+
+                fileSystems."/" = {
+                  fsType = "tmpfs";
+                  options = [ "mode=0755" ];
+                };
+
+                # User
+                users.users.${USER} = {
+                  password = "";
+                  isNormalUser = true;
+                  extraGroups = [ "wheel" ]; # sudoer
+                };
+
+                security.sudo.wheelNeedsPassword = false;
+                services.getty.autologinUser = USER;
+
+                # Packages
+                environment.systemPackages = with pkgs; [
+                  bashInteractive
+                  coreutils
+                  curl
+                  fd
+                  git
+                  gnugrep
+                  less
+                  neovim
+                  which
+                ];
+              }
+            )
+          ];
+        };
       };
     };
-  };
 }
