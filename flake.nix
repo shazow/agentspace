@@ -15,6 +15,7 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
+      shareProto = "9p"; # "9p" runs in userland but is slower, "virtiofs" requires root but is fast
 
       USER = "agent";
       HOSTNAME = "agent-sandbox";
@@ -23,15 +24,11 @@
       homeImagePath = "./home.img";
       withWorkspace = true;
 
-      mkBundle = inputs: pkgs.linkFarm "agent-bundle" (
-        pkgs.lib.mapAttrsToList (name: path: { inherit name path; }) inputs
-      );
-
-      # Define the bundle: { "path/in/guest/home" = ./literal/path/on/host; }
-      bundle = mkBundle {
-        #".config/git/gitconfig" = /home/shazow/.config/git/gitconfig;
-        # "./scripts" = ./scripts; # -> ~/workspace/scripts
-      };
+      # TODO: Implement bundling and unbundling during runtime
+      bundle = [
+        # "~/.config/git/gitconfig"
+        # "~/.gemini/settings.json
+      ];
     in
     {
       packages.${system} =
@@ -54,31 +51,32 @@
                 shares = [
                   {
                     # use proto = "virtiofs" for MicroVMs that are started by systemd
-                    proto = "9p";
+                    proto = shareProto;
                     tag = "ro-store";
-                    # a host's /nix/store will be picked up so that no squashfs/erofs will be built for it.
                     source = "/nix/store";
                     mountPoint = "/nix/.ro-store";
                   }
                 ] ++ pkgs.lib.optionals withWorkspace [
                   {
                     # Share for agent workspace
-                    proto = "9p";
+                    proto = shareProto;
                     tag = "workspace";
                     source = ".";
                     mountPoint = "/home/${USER}/workspace";
                     securityModel = "mapped";
                   }
-                ] ++ pkgs.lib.optionals (bundle != {}) [
-                  {
-                    proto = "9p";
-                    tag = "bundle";
-                    source = "${bundle}";
-                    mountPoint = "/mnt/bundle";
-                  }
                 ];
 
-                volumes = pkgs.lib.optionals ( homeImagePath != "" ) [
+                writableStoreOverlay = "/nix/.rw-store";
+                volumes = [
+                  {
+                    # TODO: Delete image after shutdown, since the nix db is not retained yet
+                    # See https://microvm-nix.github.io/microvm.nix/shares.html#writable-nixstore-overlay
+                    image = "nix-store-overlay.img";
+                    mountPoint = "/nix/.rw-store";
+                    size = 2048;
+                  }
+                ] ++ pkgs.lib.optionals ( homeImagePath != "" ) [
                   {
                     image = homeImagePath;
                     mountPoint = "/home/${USER}";
@@ -90,9 +88,6 @@
 
                 # Keep the socket away from the CWD to avoid mounting
                 socket = "/tmp/vm-${HOSTNAME}.sock";
-
-                writableStoreOverlay = "/nix/.rw-store";
-
                 hypervisor = "qemu";
                 qemu.extraArgs = [
                   "-cpu" "host" # Allow nested emulation
@@ -105,11 +100,6 @@
                   }
                 ];
               };
-
-              fileSystems."/nix/.rw-store" = {
-                fsType = "tmpfs";
-                options = [ "mode=0755" ];
-              };
             }
             (
               # configuration.nix
@@ -118,10 +108,11 @@
                 networking.hostName = HOSTNAME;
                 system.stateVersion = lib.trivial.release;
                 nixpkgs.config.allowUnfree = true;
-                nix.settings.experimental-features = [
-                  "nix-command"
-                  "flakes"
-                ];
+
+                # Pin to host's nixpkgs
+                nix.registry.nixpkgs.flake = nixpkgs;
+                nix.nixPath = [ "nixpkgs=${nixpkgs}" ];
+                nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
                 boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1; # Nested namespaces
                 # Quiet boot
@@ -135,29 +126,6 @@
                   "d /home/${USER}/workspace 0755 ${USER} users -"
                   "f /home/${USER}/.bash_logout 0600 ${USER} users - sudo poweroff"
                 ];
-
-                systemd.services.unpack-bundle = lib.mkIf (bundle != {}) {
-                  description = "Hydrate bundle files into home directory";
-                  after = [ "local-fs.target" ]; 
-                  before = [ "systemd-user-sessions.service" ];
-                  wantedBy = [ "multi-user.target" ];
-                  serviceConfig = {
-                    Type = "oneshot";
-                    User = USER;
-                    WorkingDirectory = "/home/${USER}";
-                  };
-                  script = ''
-                    if [ -d /mnt/bundle ]; then
-                      cp -Lr /mnt/bundle/. .
-                      chmod -R u+w .
-                    fi
-                  '';
-                };
-
-                fileSystems."/" = {
-                  fsType = "tmpfs";
-                  options = [ "mode=0755" ];
-                };
 
                 # User
                 users.users.${USER} = {
