@@ -31,14 +31,6 @@
       ];
     in
     {
-      packages.${system} =
-        let
-          runner = self.nixosConfigurations.vm.config.microvm.declaredRunner;
-        in {
-          default = runner;
-          vm = runner;
-        };
-
       nixosConfigurations = {
         vm = nixpkgs.lib.nixosSystem {
           inherit system;
@@ -152,6 +144,63 @@
               }
             )
           ];
+        };
+      };
+
+      packages.${system} =
+        let
+          runner = self.nixosConfigurations.vm.config.microvm.declaredRunner;
+        in {
+          default = runner;
+          vm = runner;
+        };
+
+       # Wrapper script to launch the VM in an isolated git worktree
+      apps.${system} = {
+        default = self.apps.${system}.launch;
+        launch = {
+          type = "app";
+          program =
+            let
+              script = pkgs.writeShellScriptBin "launch-agent" ''
+                set -e
+
+                # 1. Setup ID and Directory
+                ID=$(${pkgs.openssl}/bin/openssl rand -hex 6)
+                WORKTREE_DIR=".worktrees/agent-$ID"
+
+                echo "🚀 Preparing Agent Environment: $ID"
+                echo "📂 Location: $WORKTREE_DIR"
+
+                # 2. Create Git Worktree
+                # Create a detached worktree of the current commit to ensure clean state
+                mkdir -p .worktrees
+                ${pkgs.git}/bin/git worktree add --detach "$WORKTREE_DIR" HEAD
+
+                # Cleanup instructions on exit
+                cleanup() {
+                  echo "🛑 Agent shutdown."
+                  echo "⚠️  Note: Worktree preserved at $WORKTREE_DIR for inspection."
+                  echo "   To delete: git worktree remove $WORKTREE_DIR"
+                  rm ./nix-store-overlay.img
+                }
+                trap cleanup EXIT
+
+                # 3. Enter the Worktree
+                cd "$WORKTREE_DIR"
+
+                # 4. Build the VM *inside* the worktree
+                # This ensures the 'result' symlink exists locally for the 'result-bin' share
+                echo "🔨 Building VM..."
+                readlink "${self.nixosConfigurations.vm.config.microvm.declaredRunner.outPath}/bin/microvm-run" >> runner
+                chmod u+x ./runner
+
+                # 5. Run the VM
+                echo "🖥️  Running Agent..."
+                ./runner
+              '';
+            in
+            "${script}/bin/launch-agent";
         };
       };
     };
