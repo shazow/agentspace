@@ -135,6 +135,7 @@
               podman
               slirp4netns
               fuse-overlayfs
+              shadow  # Provides newuidmap/newgidmap for rootless containers
               # Podman configuration for rootless nested containers
               (pkgs.writeTextDir "etc/containers/storage.conf" ''
                 [storage]
@@ -262,6 +263,7 @@
             ''
             + pkgs.lib.optionalString withPrivileges ''
                 --device /dev/fuse \
+                --user=root \
                 --cap-add=CAP_SYS_ADMIN \
                 --cap-add=CAP_FOWNER \
                 --cap-add=CAP_CHOWN \

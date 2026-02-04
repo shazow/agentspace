@@ -28,16 +28,25 @@ Test that recursive container nesting works. The configuration has been updated 
    cat /run/.containerenv  # Should exist
    ```
 
+## Recent Changes Made
+
+The following fixes were applied to enable recursive containers:
+
+1. **flake.nix line ~138**: Added `shadow` package for `newuidmap`/`newgidmap` (required for rootless podman)
+2. **flake.nix line ~265**: Added `--user=root` to podman run (enables capabilities to work with `--userns=keep-id`)
+3. **.devcontainer/devcontainer.json**: Added `runArgs` with capabilities (backup for VS Code devcontainer usage)
+
 ## If Tests Fail
 
-Check these recent changes in flake.nix:
-- **Lines ~139-150**: Podman storage.conf and containers.conf
-- **Lines ~185-187**: /etc/subuid and /etc/subgid setup
-- **Lines ~192-194**: /run/.containerenv marker
-- **Lines ~257-265**: Capability grants (CAP_SYS_ADMIN, CAP_FOWNER, etc.)
+Check these areas in flake.nix:
+- **Lines ~134-150**: Package includes (shadow, podman, fuse-overlayfs, storage/containers.conf)
+- **Lines ~186-188**: /etc/subuid and /etc/subgid setup
+- **Lines ~194-196**: /run/.containerenv marker
+- **Lines ~264-271**: Capability grants and --user=root flag
 
 ## Success Criteria
 
+- `CapEff` is non-zero when running `cat /proc/self/status | grep Cap`
 - `nix build .#container` completes without chmod errors
 - `nix develop` spawns a nested container
 - Nested container logs "Nested container detected"
