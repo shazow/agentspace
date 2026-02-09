@@ -72,6 +72,12 @@ in
         description = "Path to the ext4 disk image for home directory persistence. Set to null to disable.";
       };
 
+      homeSize = lib.mkOption {
+        type = lib.types.number;
+        default = 4096;
+        description = "Size of persistent home image in MB.";
+      };
+
       storeOverlay = lib.mkOption {
         type = lib.types.str;
         default = "nix-store-overlay.img";
@@ -180,7 +186,7 @@ in
         {
           image = cfg.persistence.storeOverlay;
           mountPoint = "/nix/.rw-store";
-          size = 2048;
+          size = 4096;
         }
       ]
       ++ lib.optionals (cfg.persistence.homeImage != null) [
@@ -188,7 +194,7 @@ in
           image = cfg.persistence.homeImage;
           mountPoint = "/home/${cfg.user}";
           fsType = "ext4";
-          size = 1024;
+          size = cfg.persistence.homeSize;
           autoCreate = true;
         }
       ];
