@@ -16,8 +16,8 @@ BUNDLE_PATH="${OUTBOX}/${BUNDLE_NAME}"
 
 mkdir -p "$OUTBOX"
 
-if ! git -C "$REPO" bundle create "$BUNDLE_PATH" --branches --not --remotes 2>/dev/null; then
-  if ! git -C "$REPO" bundle create "$BUNDLE_PATH" --branches; then
+if ! git -C "$REPO" bundle create "$BUNDLE_PATH" HEAD --branches --not --remotes 2>/dev/null; then
+  if ! git -C "$REPO" bundle create "$BUNDLE_PATH" HEAD --branches; then
     echo "Error: No commits to bundle" >&2
     exit 1
   fi
