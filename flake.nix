@@ -31,9 +31,7 @@
                 user = "agent";
                 hostName = "agent-sandbox";
                 protocol = "9p";
-                workspace.enable = true;
 
-                # Example of overriding defaults via the new options
                 persistence.homeImage = "./home.img";
                 bundle = [ ];
               };
@@ -72,31 +70,32 @@
               script = pkgs.writeShellScriptBin "launch-agent" ''
                 set -e
 
+                REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
                 ID=$(${pkgs.openssl}/bin/openssl rand -hex 6)
-                WORKTREE_DIR=".worktrees/agent-$ID"
+                AGENT_DIR=".agentspace/agent-$ID"
 
                 echo "🚀 Preparing Agent Environment: $ID"
-                echo "📂 Location: $WORKTREE_DIR"
+                echo "📂 Location: $AGENT_DIR"
 
-                # Worktree
-                mkdir -p .worktrees
-                ${pkgs.git}/bin/git worktree add --detach "$WORKTREE_DIR" HEAD
+                mkdir -p "$AGENT_DIR/inbox" "$AGENT_DIR/outbox"
+                ln -sfn "$REPO_DIR" "$AGENT_DIR/inbox/repo"
 
-                # Cleanup instructions on exit
                 cleanup() {
                   echo "🛑 Agent shutdown."
-                  echo "⚠️  Note: Worktree preserved at $WORKTREE_DIR for inspection."
-                  echo "   To delete: git worktree remove $WORKTREE_DIR"
-                  rm -f ./nix-store-overlay.img
+                  rm -f "$REPO_DIR/$AGENT_DIR/inbox/repo"
+                  rmdir "$REPO_DIR/$AGENT_DIR/inbox" 2>/dev/null || true
+                  if [ -z "$(ls -A "$REPO_DIR/$AGENT_DIR/outbox" 2>/dev/null)" ]; then
+                    echo "📭 Outbox empty, cleaning up $AGENT_DIR"
+                    rm -rf "$REPO_DIR/$AGENT_DIR"
+                  else
+                    echo "📬 Outbox has contents, preserving $AGENT_DIR"
+                  fi
                 }
                 trap cleanup EXIT
 
-                cd "$WORKTREE_DIR"
-                echo "🔨 Building VM..."
+                cd "$AGENT_DIR"
 
-                # Add runner script for recursive VMs (a+rx)
                 install -m 555 <(readlink -f "${runnerPath}/bin/microvm-run") ./runner
-
                 echo "🖥️  Running Agent..."
                 ./runner
               '';
