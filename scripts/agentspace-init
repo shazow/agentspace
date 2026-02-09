@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -eq 0 ]; then
+  echo "Usage: agentbox-init <inbox-path>..." >&2
+  echo "Example: agentbox-init ~/mnt/inbox/*" >&2
+  exit 1
+fi
+
+for item in "$@"; do
+  item=$(realpath "$item" 2>/dev/null || echo "$item")
+
+  if [ ! -d "$item" ]; then
+    echo "Skipping $item (not a directory)"
+    continue
+  fi
+
+  if ! git -C "$item" rev-parse --git-dir >/dev/null 2>&1; then
+    git config --global --add safe.directory "$item"
+    if ! git -C "$item" rev-parse --git-dir >/dev/null 2>&1; then
+      echo "Skipping $item (not a git repository)"
+      continue
+    fi
+  fi
+
+  git config --global --add safe.directory "$item"
+
+  remote=$(git -C "$item" remote get-url origin 2>/dev/null || echo "")
+  name=$(basename "$item")
+
+  if [ -z "$remote" ]; then
+    echo "Skipping $item (no origin remote, not a GitHub clone)"
+    continue
+  fi
+
+  case "$remote" in
+    *github.com*) ;;
+    *)
+      echo "Skipping $item (origin is not GitHub: $remote)"
+      continue
+      ;;
+  esac
+
+  dest="./$name"
+  if [ -d "$dest" ]; then
+    echo "Skipping $name (already exists in cwd)"
+    continue
+  fi
+
+  echo "Cloning $name (ref: $item, origin: $remote)"
+  git clone --reference "$item" "$remote" "$dest"
+  echo ""
+done

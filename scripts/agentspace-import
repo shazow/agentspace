@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: agentspace-import <bundle-path>" >&2
+  exit 1
+}
+
+BUNDLE="${1:-}"
+if [ -z "$BUNDLE" ]; then
+  usage
+fi
+
+if [ ! -f "$BUNDLE" ]; then
+  echo "Error: Bundle not found: $BUNDLE" >&2
+  exit 1
+fi
+
+# Must be run from inside a git repo
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  echo "Error: Not inside a git repository" >&2
+  exit 1
+fi
+
+echo "=== Verifying bundle ==="
+if ! git bundle verify "$BUNDLE"; then
+  echo "Error: Bundle verification failed" >&2
+  exit 1
+fi
+echo ""
+
+echo "=== Bundle refs ==="
+git bundle list-heads "$BUNDLE"
+echo ""
+
+echo "=== Fetching from bundle ==="
+git fetch "$BUNDLE"
+echo ""
+
+echo "=== Changes overview ==="
+# For each ref in the bundle, show what's new
+git bundle list-heads "$BUNDLE" | while read -r sha ref; do
+  # Get the short ref name (strip refs/heads/)
+  branch="${ref#refs/heads/}"
+  if [ "$branch" = "$ref" ]; then
+    # Not a branch ref (could be a tag, etc.), show as-is
+    branch="$ref"
+  fi
+
+  echo "--- $branch ($sha) ---"
+
+  # Find merge base with current HEAD to show only new commits
+  merge_base=$(git merge-base HEAD "$sha" 2>/dev/null || echo "")
+  if [ -n "$merge_base" ]; then
+    git log --oneline "$merge_base..$sha"
+    echo ""
+    git diff --stat "$merge_base..$sha"
+  else
+    echo "  (no common ancestor with HEAD, showing recent commits)"
+    git log --oneline -20 "$sha"
+  fi
+  echo ""
+done
+
+echo "=== Next steps ==="
+echo "To merge a branch:"
+echo "  git merge FETCH_HEAD"
+echo ""
+echo "To cherry-pick specific commits:"
+echo "  git cherry-pick <commit-sha>"
