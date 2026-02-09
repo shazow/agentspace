@@ -33,17 +33,35 @@ in
       description = "File share protocol. '9p' runs in userland (slow), 'virtiofs' requires root (fast).";
     };
 
-    workspace = {
-      enable = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
-        description = "Whether to mount the host current directory into the VM.";
-      };
+    inbox = lib.mkOption {
+      type = lib.types.listOf (
+        lib.types.submodule {
+          options = {
+            source = lib.mkOption {
+              type = lib.types.str;
+              description = "Host-side path (relative to agent dir at runtime).";
+            };
+            mountPoint = lib.mkOption {
+              type = lib.types.str;
+              description = "Where to mount the share inside the VM.";
+            };
+          };
+        }
+      );
+      default = [
+        {
+          source = "inbox/repo";
+          mountPoint = "/home/${cfg.user}/mnt/inbox/repo";
+        }
+      ];
+      description = "Read-only shares mounted into the VM.";
+    };
 
+    outbox = {
       mountPoint = lib.mkOption {
         type = lib.types.str;
-        default = "/home/${cfg.user}/workspace";
-        description = "Where to mount the workspace inside the VM.";
+        default = "/home/${cfg.user}/mnt/outbox";
+        description = "Where to mount the writable outbox inside the VM.";
       };
     };
 
@@ -96,9 +114,6 @@ in
     systemd.tmpfiles.rules = [
       "d /home/${cfg.user} 0700 ${cfg.user} users -"
       "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - sudo poweroff"
-    ]
-    ++ lib.optionals cfg.workspace.enable [
-      "d ${cfg.workspace.mountPoint} 0755 ${cfg.user} users -"
     ];
 
     # Basic Package Set
@@ -142,12 +157,19 @@ in
           mountPoint = "/nix/.ro-store";
         }
       ]
-      ++ lib.optionals cfg.workspace.enable [
+      ++ lib.imap0 (i: inbox: {
+        proto = cfg.protocol;
+        tag = "inbox-${toString i}";
+        source = inbox.source;
+        mountPoint = inbox.mountPoint;
+        readOnly = true;
+      }) cfg.inbox
+      ++ [
         {
           proto = cfg.protocol;
-          tag = "workspace";
-          source = ".";
-          mountPoint = cfg.workspace.mountPoint;
+          tag = "outbox";
+          source = "outbox";
+          mountPoint = cfg.outbox.mountPoint;
           securityModel = "mapped";
         }
       ];
