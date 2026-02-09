@@ -72,14 +72,13 @@
               script = pkgs.writeShellScriptBin "launch-agent" ''
                 set -e
 
-                # 1. Setup ID and Directory
                 ID=$(${pkgs.openssl}/bin/openssl rand -hex 6)
                 WORKTREE_DIR=".worktrees/agent-$ID"
 
                 echo "🚀 Preparing Agent Environment: $ID"
                 echo "📂 Location: $WORKTREE_DIR"
 
-                # 2. Create Git Worktree
+                # Worktree
                 mkdir -p .worktrees
                 ${pkgs.git}/bin/git worktree add --detach "$WORKTREE_DIR" HEAD
 
@@ -92,15 +91,12 @@
                 }
                 trap cleanup EXIT
 
-                # 3. Enter the Worktree
                 cd "$WORKTREE_DIR"
-
-                # 4. Build the VM *inside* the worktree
                 echo "🔨 Building VM..."
-                # Link the runner dynamically
-                ln -sf "${runnerPath}/bin/microvm-run" ./runner
 
-                # 5. Run the VM
+                # Add runner script for recursive VMs (a+rx)
+                install -m 555 <(readlink -f "${runnerPath}/bin/microvm-run") ./runner
+
                 echo "🖥️  Running Agent..."
                 ./runner
               '';
