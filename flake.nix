@@ -71,10 +71,10 @@
                 set -e
 
                 REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
-                ID=$(${pkgs.openssl}/bin/openssl rand -hex 6)
-                AGENT_DIR=".agentspace/agent-$ID"
+                AGENT_ID=''${AGENT_ID:-$(${pkgs.openssl}/bin/openssl rand -hex 3)}
+                AGENT_DIR=".agentspace/agent-$AGENT_ID"
 
-                echo "🚀 Preparing Agent Environment: $ID"
+                echo "🚀 Preparing Agent Environment: $AGENT_ID"
                 echo "📂 Location: $AGENT_DIR"
 
                 mkdir -p "$AGENT_DIR/inbox" "$AGENT_DIR/outbox"
@@ -95,9 +95,9 @@
 
                 cd "$AGENT_DIR"
 
-                install -m 555 <(readlink -f "${runnerPath}/bin/microvm-run") ./runner
+                install -m 555 <(readlink -f "${runnerPath}/bin/microvm-run") ./inbox/runner
                 echo "🖥️  Running Agent..."
-                ./runner
+                ./inbox/runner
               '';
             in
             "${script}/bin/launch-agent";
