@@ -22,7 +22,7 @@
           inherit system;
           modules = [
             microvm.nixosModules.microvm
-            ./sandbox.nix
+            ./sandbox-qemu.nix
 
             # Module Configuration
             {
