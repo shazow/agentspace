@@ -1,3 +1,6 @@
+run:
+	nix run
+
 clean: clean-podman-volumes
 
 clean-podman-volumes:
