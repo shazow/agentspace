@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="${1:-$HOME/mnt/inbox/repo}"
+OUTBOX="$HOME/mnt/outbox"
+
+if [ ! -d "$REPO/.git" ] && ! git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+  echo "Error: $REPO is not a git repository" >&2
+  exit 1
+fi
+
+REPO_NAME=$(git -C "$REPO" remote get-url origin 2>/dev/null | sed 's|.*/||;s|\.git$||' || basename "$REPO")
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+BUNDLE_NAME="${REPO_NAME}-${TIMESTAMP}.bundle"
+BUNDLE_PATH="${OUTBOX}/${BUNDLE_NAME}"
+
+mkdir -p "$OUTBOX"
+
+if ! git -C "$REPO" bundle create "$BUNDLE_PATH" --branches --not --remotes 2>/dev/null; then
+  if ! git -C "$REPO" bundle create "$BUNDLE_PATH" --branches; then
+    echo "Error: No commits to bundle" >&2
+    exit 1
+  fi
+fi
+
+echo "Bundle created: $BUNDLE_PATH"
+echo ""
+echo "Bundled refs:"
+git bundle list-heads "$BUNDLE_PATH"
+echo ""
+SIZE=$(du -h "$BUNDLE_PATH" | cut -f1)
+echo "Size: $SIZE"

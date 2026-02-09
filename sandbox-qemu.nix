@@ -92,7 +92,10 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf cfg.enable (let
+    agentspace-bundle = pkgs.writeShellScriptBin "agentspace-bundle" (builtins.readFile ./scripts/agentspace-bundle);
+    agentspace-init = pkgs.writeShellScriptBin "agentspace-init" (builtins.readFile ./scripts/agentspace-init);
+  in {
     networking.hostName = cfg.hostName;
     system.stateVersion = lib.trivial.release;
     nixpkgs.config.allowUnfree = true;
@@ -123,7 +126,10 @@ in
     ];
 
     # Basic Package Set
-    environment.systemPackages = with pkgs; [
+    environment.systemPackages = [
+      agentspace-init
+      agentspace-bundle
+    ] ++ (with pkgs; [
       bashInteractive
       coreutils
       curl
@@ -133,7 +139,7 @@ in
       less
       neovim
       which
-    ];
+    ]);
 
     # MicroVM Configuration
     microvm = {
@@ -199,5 +205,5 @@ in
         }
       ];
     };
-  };
+  });
 }
