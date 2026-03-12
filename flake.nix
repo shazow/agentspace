@@ -32,7 +32,7 @@
                 user = "agent";
                 hostName = "agent-sandbox";
                 protocol = "9p";
-                airlock.enable = false;
+                # airlock.enable = true;
 
                 persistence.homeImage = "./home.img";
                 bundle = [ ];
@@ -73,7 +73,8 @@
                 set -e
 
                 REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
-${vmConfig.agentspace.sandbox.airlock.launchAgentSetup}
+
+${vmConfig.agentspace.sandbox.initExtra}
 
                 echo "🖥️  Running Agent..."
                 exec "${runnerPath}/bin/microvm-run"
