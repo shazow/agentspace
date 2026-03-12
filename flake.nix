@@ -23,6 +23,7 @@
           modules = [
             microvm.nixosModules.microvm
             ./sandbox-qemu.nix
+            ./airlock.nix
 
             # Module Configuration
             {
@@ -31,6 +32,7 @@
                 user = "agent";
                 hostName = "agent-sandbox";
                 protocol = "9p";
+                # airlock.enable = true;
 
                 persistence.homeImage = "./home.img";
                 bundle = [ ];
@@ -57,6 +59,15 @@
           vm = runner;
         };
 
+      checks.${system} = import ./checks.nix {
+        inherit
+          microvm
+          nixpkgs
+          pkgs
+          system
+          ;
+      };
+
       apps.${system} = {
         default = self.apps.${system}.launch;
         launch = {
@@ -68,36 +79,14 @@
               runnerPath = vmConfig.microvm.declaredRunner.outPath;
 
               script = pkgs.writeShellScriptBin "launch-agent" ''
-                set -e
+                                set -e
 
-                REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
-                AGENT_ID=''${AGENT_ID:-$(${pkgs.openssl}/bin/openssl rand -hex 3)}
-                AGENT_DIR=".agentspace/agent-$AGENT_ID"
+                                REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
 
-                echo "🚀 Preparing Agent Environment: $AGENT_ID"
-                echo "📂 Location: $AGENT_DIR"
+                ${vmConfig.agentspace.sandbox.initExtra}
 
-                mkdir -p "$AGENT_DIR/inbox" "$AGENT_DIR/outbox"
-                ln -sfn "$REPO_DIR" "$AGENT_DIR/inbox/repo"
-
-                cleanup() {
-                  echo "🛑 Agent shutdown."
-                  rm -f "$REPO_DIR/$AGENT_DIR/inbox/repo"
-                  rmdir "$REPO_DIR/$AGENT_DIR/inbox" 2>/dev/null || true
-                  if [ -z "$(ls -A "$REPO_DIR/$AGENT_DIR/outbox" 2>/dev/null)" ]; then
-                    echo "📭 Outbox empty, cleaning up $AGENT_DIR"
-                    rm -rf "$REPO_DIR/$AGENT_DIR"
-                  else
-                    echo "📬 Outbox has contents, preserving $AGENT_DIR"
-                  fi
-                }
-                trap cleanup EXIT
-
-                cd "$AGENT_DIR"
-
-                install -m 555 <(readlink -f "${runnerPath}/bin/microvm-run") ./inbox/runner
-                echo "🖥️  Running Agent..."
-                ./inbox/runner
+                                echo "🖥️  Running Agent..."
+                                exec "${runnerPath}/bin/microvm-run"
               '';
             in
             "${script}/bin/launch-agent";

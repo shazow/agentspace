@@ -33,38 +33,6 @@ in
       description = "File share protocol. '9p' runs in userland (slow), 'virtiofs' requires root (fast).";
     };
 
-    inbox = lib.mkOption {
-      type = lib.types.listOf (
-        lib.types.submodule {
-          options = {
-            source = lib.mkOption {
-              type = lib.types.str;
-              description = "Host-side path (relative to agent dir at runtime).";
-            };
-            mountPoint = lib.mkOption {
-              type = lib.types.str;
-              description = "Where to mount the share inside the VM.";
-            };
-          };
-        }
-      );
-      default = [
-        {
-          source = "inbox/repo";
-          mountPoint = "/home/${cfg.user}/mnt/inbox/repo";
-        }
-      ];
-      description = "Read-only shares mounted into the VM.";
-    };
-
-    outbox = {
-      mountPoint = lib.mkOption {
-        type = lib.types.str;
-        default = "/home/${cfg.user}/mnt/outbox";
-        description = "Where to mount the writable outbox inside the VM.";
-      };
-    };
-
     persistence = {
       homeImage = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
@@ -90,120 +58,146 @@ in
       default = [ ];
       description = "List of file paths to bundle into the VM runtime";
     };
+
+    mountWorkspace = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Mount the current working directory into the VM as the workspace share.";
+    };
+
+    workspaceMountPoint = lib.mkOption {
+      type = lib.types.str;
+      default = "/home/${cfg.user}/workspace";
+      description = "Where to mount the current working directory inside the VM.";
+    };
+
+    initExtra = lib.mkOption {
+      type = lib.types.separatedString "\n";
+      description = "Extra shell snippet appended to the launch-agent script.";
+    };
   };
 
-  config = lib.mkIf cfg.enable (let
-    agentspace-bundle = pkgs.writeShellScriptBin "agentspace-bundle" (builtins.readFile ./scripts/agentspace-bundle);
-    agentspace-init = pkgs.writeShellScriptBin "agentspace-init" (builtins.readFile ./scripts/agentspace-init);
-  in {
-    networking.hostName = cfg.hostName;
-    system.stateVersion = lib.trivial.release;
-    nixpkgs.config.allowUnfree = true;
+  config = lib.mkIf cfg.enable (
+    let
+      agentspace-bundle = pkgs.writeShellScriptBin "agentspace-bundle" (
+        builtins.readFile ./scripts/agentspace-bundle
+      );
+      agentspace-init = pkgs.writeShellScriptBin "agentspace-init" (
+        builtins.readFile ./scripts/agentspace-init
+      );
+    in
+    {
+      networking.hostName = cfg.hostName;
+      system.stateVersion = lib.trivial.release;
+      nixpkgs.config.allowUnfree = true;
 
-    # Boot & Kernel
-    boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
-    boot.kernelParams = [
-      "quiet"
-      "udev.log_level=3"
-    ];
-    boot.consoleLogLevel = 0;
-    boot.initrd.verbose = false;
+      agentspace.sandbox.initExtra = lib.mkDefault ''
+        echo "🚀 Preparing Agent Environment"
+        if [ "${if cfg.mountWorkspace then "1" else "0"}" = "1" ]; then
+          echo "📂 Mounting current directory at ~/workspace"
+          cd "$REPO_DIR"
+        fi
+      '';
 
-    # User Configuration
-    users.users.${cfg.user} = {
-      password = "";
-      isNormalUser = true;
-      extraGroups = [ "wheel" ];
-    };
+      # Boot & Kernel
+      boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
+      boot.kernelParams = [
+        "quiet"
+        "udev.log_level=3"
+      ];
+      boot.consoleLogLevel = 0;
+      boot.initrd.verbose = false;
 
-    security.sudo.wheelNeedsPassword = false;
-    services.getty.autologinUser = cfg.user;
+      # User Configuration
+      users.users.${cfg.user} = {
+        password = "";
+        isNormalUser = true;
+        extraGroups = [ "wheel" ];
+      };
 
-    # Directory permissions
-    systemd.tmpfiles.rules = [
-      "d /home/${cfg.user} 0700 ${cfg.user} users -"
-      "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - sudo poweroff"
-    ];
+      security.sudo.wheelNeedsPassword = false;
+      services.getty.autologinUser = cfg.user;
 
-    # Basic Package Set
-    environment.systemPackages = [
-      agentspace-init
-      agentspace-bundle
-    ] ++ (with pkgs; [
-      bashInteractive
-      coreutils
-      curl
-      fd
-      git
-      gnugrep
-      less
-      neovim
-      which
-    ]);
-
-    # MicroVM Configuration
-    microvm = {
-      mem = 4 * 1024;
-      balloon = true;
-      socket = "/tmp/vm-${cfg.hostName}.sock";
-      hypervisor = "qemu";
-
-      qemu.extraArgs = [
-        "-cpu"
-        "host"
+      # Directory permissions
+      systemd.tmpfiles.rules = [
+        "d /home/${cfg.user} 0700 ${cfg.user} users -"
+        "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - sudo poweroff"
       ];
 
-      interfaces = [
-        {
-          type = "user";
-          id = "microvm1";
-          mac = "02:02:00:00:00:01";
-        }
-      ];
-
-      shares = [
-        {
-          proto = cfg.protocol;
-          tag = "ro-store";
-          source = "/nix/store";
-          mountPoint = "/nix/.ro-store";
-        }
+      # Basic Package Set
+      environment.systemPackages = [
+        agentspace-init
+        agentspace-bundle
       ]
-      ++ lib.imap0 (i: inbox: {
-        proto = cfg.protocol;
-        tag = "inbox-${toString i}";
-        source = inbox.source;
-        mountPoint = inbox.mountPoint;
-        readOnly = true;
-      }) cfg.inbox
-      ++ [
-        {
-          proto = cfg.protocol;
-          tag = "outbox";
-          source = "outbox";
-          mountPoint = cfg.outbox.mountPoint;
-          securityModel = "mapped";
-        }
-      ];
+      ++ (with pkgs; [
+        bashInteractive
+        coreutils
+        curl
+        fd
+        git
+        gnugrep
+        less
+        neovim
+        which
+      ]);
 
-      writableStoreOverlay = "/nix/.rw-store";
+      # MicroVM Configuration
+      microvm = {
+        mem = 4 * 1024;
+        balloon = true;
+        socket = "/tmp/vm-${cfg.hostName}.sock";
+        hypervisor = "qemu";
 
-      volumes = [
-        {
-          image = cfg.persistence.storeOverlay;
-          mountPoint = "/nix/.rw-store";
-          size = 4096;
-        }
-      ]
-      ++ lib.optionals (cfg.persistence.homeImage != null) [
-        {
-          image = cfg.persistence.homeImage;
-          mountPoint = "/home/${cfg.user}";
-          fsType = "ext4";
-          size = cfg.persistence.homeSize;
-          autoCreate = true;
-        }
-      ];
-    };
-  });
+        qemu.extraArgs = [
+          "-cpu"
+          "host"
+        ];
+
+        interfaces = [
+          {
+            type = "user";
+            id = "microvm1";
+            mac = "02:02:00:00:00:01";
+          }
+        ];
+
+        shares = [
+          {
+            proto = cfg.protocol;
+            tag = "ro-store";
+            source = "/nix/store";
+            mountPoint = "/nix/.ro-store";
+          }
+        ]
+        ++ lib.optionals cfg.mountWorkspace [
+          {
+            proto = cfg.protocol;
+            tag = "workspace";
+            source = ".";
+            mountPoint = cfg.workspaceMountPoint;
+            securityModel = "mapped";
+          }
+        ];
+
+        writableStoreOverlay = "/nix/.rw-store";
+
+        volumes = [
+          {
+            image = cfg.persistence.storeOverlay;
+            mountPoint = "/nix/.rw-store";
+            size = 4096;
+          }
+        ]
+        ++ lib.optionals (cfg.persistence.homeImage != null) [
+          {
+            image = cfg.persistence.homeImage;
+            mountPoint = "/home/${cfg.user}";
+            fsType = "ext4";
+            size = cfg.persistence.homeSize;
+            autoCreate = true;
+          }
+        ];
+      };
+    }
+  );
 }
