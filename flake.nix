@@ -32,7 +32,7 @@
                 user = "agent";
                 hostName = "agent-sandbox";
                 protocol = "9p";
-                airlock.enable = false;
+                # airlock.enable = true;
 
                 persistence.homeImage = "./home.img";
                 bundle = [ ];
@@ -59,6 +59,15 @@
           vm = runner;
         };
 
+      checks.${system} = import ./checks.nix {
+        inherit
+          microvm
+          nixpkgs
+          pkgs
+          system
+          ;
+      };
+
       apps.${system} = {
         default = self.apps.${system}.launch;
         launch = {
@@ -70,13 +79,14 @@
               runnerPath = vmConfig.microvm.declaredRunner.outPath;
 
               script = pkgs.writeShellScriptBin "launch-agent" ''
-                set -e
+                                set -e
 
-                REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
-${vmConfig.agentspace.sandbox.airlock.launchAgentSetup}
+                                REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
 
-                echo "🖥️  Running Agent..."
-                exec "${runnerPath}/bin/microvm-run"
+                ${vmConfig.agentspace.sandbox.initExtra}
+
+                                echo "🖥️  Running Agent..."
+                                exec "${runnerPath}/bin/microvm-run"
               '';
             in
             "${script}/bin/launch-agent";
