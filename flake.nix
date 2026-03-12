@@ -15,36 +15,44 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
+
+      mkSandbox = { extraModules ? [] }: nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          microvm.nixosModules.microvm
+          ./sandbox-qemu.nix
+
+          # Module Configuration
+          {
+            agentspace.sandbox = {
+              enable = true;
+              user = "agent";
+              hostName = "agent-sandbox";
+              protocol = "9p";
+
+              persistence.homeImage = "./home.img";
+              bundle = [ ];
+            };
+
+            # System-specific overrides can still go here
+            nix.registry.nixpkgs.flake = nixpkgs;
+            nix.nixPath = [ "nixpkgs=${nixpkgs}" ];
+            nix.settings.experimental-features = [
+              "nix-command"
+              "flakes"
+            ];
+          }
+        ] ++ extraModules;
+      };
     in
     {
       nixosConfigurations = {
-        vm = nixpkgs.lib.nixosSystem {
-          inherit system;
-          modules = [
-            microvm.nixosModules.microvm
-            ./sandbox-qemu.nix
+        vm = mkSandbox {};
+        vmWithAirlock = mkSandbox {
+          extraModules = [
             ./airlock.nix
-
-            # Module Configuration
             {
-              agentspace.sandbox = {
-                enable = true;
-                user = "agent";
-                hostName = "agent-sandbox";
-                protocol = "9p";
-                # airlock.enable = true;
-
-                persistence.homeImage = "./home.img";
-                bundle = [ ];
-              };
-
-              # System-specific overrides can still go here
-              nix.registry.nixpkgs.flake = nixpkgs;
-              nix.nixPath = [ "nixpkgs=${nixpkgs}" ];
-              nix.settings.experimental-features = [
-                "nix-command"
-                "flakes"
-              ];
+              agentspace.sandbox.airlock.enable = true;
             }
           ];
         };
@@ -52,11 +60,12 @@
 
       packages.${system} =
         let
-          runner = self.nixosConfigurations.vm.config.microvm.declaredRunner;
+          mkRunner = name: self.nixosConfigurations.${name}.config.microvm.declaredRunner;
         in
         {
-          default = runner;
-          vm = runner;
+          default = mkRunner "vm";
+          vm = mkRunner "vm";
+          vmWithAirlock = mkRunner "vmWithAirlock";
         };
 
       checks.${system} = import ./checks.nix {
@@ -79,14 +88,12 @@
               runnerPath = vmConfig.microvm.declaredRunner.outPath;
 
               script = pkgs.writeShellScriptBin "launch-agent" ''
-                                set -e
-
-                                REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
+                set -e
 
                 ${vmConfig.agentspace.sandbox.initExtra}
 
-                                echo "🖥️  Running Agent..."
-                                exec "${runnerPath}/bin/microvm-run"
+                echo "🖥️  Running Agent..."
+                exec "${runnerPath}/bin/microvm-run"
               '';
             in
             "${script}/bin/launch-agent";

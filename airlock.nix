@@ -77,6 +77,7 @@ in
       lib.mkAfter ''
         AGENT_ID=''${AGENT_ID:-$(${pkgs.openssl}/bin/openssl rand -hex 3)}
         AGENT_DIR=".agentspace/agent-$AGENT_ID"
+        REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
 
         echo "🚀 Preparing Agent Environment: $AGENT_ID"
         echo "📂 Location: $AGENT_DIR"
