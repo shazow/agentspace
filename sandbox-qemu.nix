@@ -77,118 +77,127 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable (let
-    agentspace-bundle = pkgs.writeShellScriptBin "agentspace-bundle" (builtins.readFile ./scripts/agentspace-bundle);
-    agentspace-init = pkgs.writeShellScriptBin "agentspace-init" (builtins.readFile ./scripts/agentspace-init);
-  in {
-    networking.hostName = cfg.hostName;
-    system.stateVersion = lib.trivial.release;
-    nixpkgs.config.allowUnfree = true;
+  config = lib.mkIf cfg.enable (
+    let
+      agentspace-bundle = pkgs.writeShellScriptBin "agentspace-bundle" (
+        builtins.readFile ./scripts/agentspace-bundle
+      );
+      agentspace-init = pkgs.writeShellScriptBin "agentspace-init" (
+        builtins.readFile ./scripts/agentspace-init
+      );
+    in
+    {
+      networking.hostName = cfg.hostName;
+      system.stateVersion = lib.trivial.release;
+      nixpkgs.config.allowUnfree = true;
 
-    agentspace.sandbox.initExtra = lib.mkDefault ''
-      echo "🚀 Preparing Agent Environment"
-      if [ "${if cfg.mountWorkspace then "1" else "0"}" = "1" ]; then
-        echo "📂 Mounting current directory at ~/workspace"
-        cd "$REPO_DIR"
-      fi
-    '';
+      agentspace.sandbox.initExtra = lib.mkDefault ''
+        echo "🚀 Preparing Agent Environment"
+        if [ "${if cfg.mountWorkspace then "1" else "0"}" = "1" ]; then
+          echo "📂 Mounting current directory at ~/workspace"
+          cd "$REPO_DIR"
+        fi
+      '';
 
-    # Boot & Kernel
-    boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
-    boot.kernelParams = [
-      "quiet"
-      "udev.log_level=3"
-    ];
-    boot.consoleLogLevel = 0;
-    boot.initrd.verbose = false;
+      # Boot & Kernel
+      boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
+      boot.kernelParams = [
+        "quiet"
+        "udev.log_level=3"
+      ];
+      boot.consoleLogLevel = 0;
+      boot.initrd.verbose = false;
 
-    # User Configuration
-    users.users.${cfg.user} = {
-      password = "";
-      isNormalUser = true;
-      extraGroups = [ "wheel" ];
-    };
+      # User Configuration
+      users.users.${cfg.user} = {
+        password = "";
+        isNormalUser = true;
+        extraGroups = [ "wheel" ];
+      };
 
-    security.sudo.wheelNeedsPassword = false;
-    services.getty.autologinUser = cfg.user;
+      security.sudo.wheelNeedsPassword = false;
+      services.getty.autologinUser = cfg.user;
 
-    # Directory permissions
-    systemd.tmpfiles.rules = [
-      "d /home/${cfg.user} 0700 ${cfg.user} users -"
-      "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - sudo poweroff"
-    ];
-
-    # Basic Package Set
-    environment.systemPackages = [
-      agentspace-init
-      agentspace-bundle
-    ] ++ (with pkgs; [
-      bashInteractive
-      coreutils
-      curl
-      fd
-      git
-      gnugrep
-      less
-      neovim
-      which
-    ]);
-
-    # MicroVM Configuration
-    microvm = {
-      mem = 4 * 1024;
-      balloon = true;
-      socket = "/tmp/vm-${cfg.hostName}.sock";
-      hypervisor = "qemu";
-
-      qemu.extraArgs = [
-        "-cpu"
-        "host"
+      # Directory permissions
+      systemd.tmpfiles.rules = [
+        "d /home/${cfg.user} 0700 ${cfg.user} users -"
+        "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - sudo poweroff"
       ];
 
-      interfaces = [
-        {
-          type = "user";
-          id = "microvm1";
-          mac = "02:02:00:00:00:01";
-        }
-      ];
-
-      shares = [
-        {
-          proto = cfg.protocol;
-          tag = "ro-store";
-          source = "/nix/store";
-          mountPoint = "/nix/.ro-store";
-        }
-      ] ++ lib.optionals cfg.mountWorkspace [
-        {
-          proto = cfg.protocol;
-          tag = "workspace";
-          source = ".";
-          mountPoint = cfg.workspaceMountPoint;
-          securityModel = "mapped";
-        }
-      ];
-
-      writableStoreOverlay = "/nix/.rw-store";
-
-      volumes = [
-        {
-          image = cfg.persistence.storeOverlay;
-          mountPoint = "/nix/.rw-store";
-          size = 4096;
-        }
+      # Basic Package Set
+      environment.systemPackages = [
+        agentspace-init
+        agentspace-bundle
       ]
-      ++ lib.optionals (cfg.persistence.homeImage != null) [
-        {
-          image = cfg.persistence.homeImage;
-          mountPoint = "/home/${cfg.user}";
-          fsType = "ext4";
-          size = cfg.persistence.homeSize;
-          autoCreate = true;
-        }
-      ];
-    };
-  });
+      ++ (with pkgs; [
+        bashInteractive
+        coreutils
+        curl
+        fd
+        git
+        gnugrep
+        less
+        neovim
+        which
+      ]);
+
+      # MicroVM Configuration
+      microvm = {
+        mem = 4 * 1024;
+        balloon = true;
+        socket = "/tmp/vm-${cfg.hostName}.sock";
+        hypervisor = "qemu";
+
+        qemu.extraArgs = [
+          "-cpu"
+          "host"
+        ];
+
+        interfaces = [
+          {
+            type = "user";
+            id = "microvm1";
+            mac = "02:02:00:00:00:01";
+          }
+        ];
+
+        shares = [
+          {
+            proto = cfg.protocol;
+            tag = "ro-store";
+            source = "/nix/store";
+            mountPoint = "/nix/.ro-store";
+          }
+        ]
+        ++ lib.optionals cfg.mountWorkspace [
+          {
+            proto = cfg.protocol;
+            tag = "workspace";
+            source = ".";
+            mountPoint = cfg.workspaceMountPoint;
+            securityModel = "mapped";
+          }
+        ];
+
+        writableStoreOverlay = "/nix/.rw-store";
+
+        volumes = [
+          {
+            image = cfg.persistence.storeOverlay;
+            mountPoint = "/nix/.rw-store";
+            size = 4096;
+          }
+        ]
+        ++ lib.optionals (cfg.persistence.homeImage != null) [
+          {
+            image = cfg.persistence.homeImage;
+            mountPoint = "/home/${cfg.user}";
+            fsType = "ext4";
+            size = cfg.persistence.homeSize;
+            autoCreate = true;
+          }
+        ];
+      };
+    }
+  );
 }

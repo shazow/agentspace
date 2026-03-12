@@ -59,7 +59,6 @@
           vm = runner;
         };
 
-
       checks.${system} = import ./checks.nix {
         inherit
           microvm
@@ -80,14 +79,14 @@
               runnerPath = vmConfig.microvm.declaredRunner.outPath;
 
               script = pkgs.writeShellScriptBin "launch-agent" ''
-                set -e
+                                set -e
 
-                REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
+                                REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
 
-${vmConfig.agentspace.sandbox.initExtra}
+                ${vmConfig.agentspace.sandbox.initExtra}
 
-                echo "🖥️  Running Agent..."
-                exec "${runnerPath}/bin/microvm-run"
+                                echo "🖥️  Running Agent..."
+                                exec "${runnerPath}/bin/microvm-run"
               '';
             in
             "${script}/bin/launch-agent";
