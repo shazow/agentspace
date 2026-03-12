@@ -72,14 +72,7 @@ in
     };
 
     initExtra = lib.mkOption {
-      type = lib.types.lines;
-      default = ''
-        echo "🚀 Preparing Agent Environment"
-        if [ "${if cfg.mountWorkspace then "1" else "0"}" = "1" ]; then
-          echo "📂 Mounting current directory at ~/workspace"
-          cd "$REPO_DIR"
-        fi
-      '';
+      type = lib.types.separatedString "\n";
       description = "Extra shell snippet appended to the launch-agent script.";
     };
   };
@@ -91,6 +84,14 @@ in
     networking.hostName = cfg.hostName;
     system.stateVersion = lib.trivial.release;
     nixpkgs.config.allowUnfree = true;
+
+    agentspace.sandbox.initExtra = lib.mkDefault ''
+      echo "🚀 Preparing Agent Environment"
+      if [ "${if cfg.mountWorkspace then "1" else "0"}" = "1" ]; then
+        echo "📂 Mounting current directory at ~/workspace"
+        cd "$REPO_DIR"
+      fi
+    '';
 
     # Boot & Kernel
     boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
