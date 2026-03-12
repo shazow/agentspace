@@ -33,38 +33,6 @@ in
       description = "File share protocol. '9p' runs in userland (slow), 'virtiofs' requires root (fast).";
     };
 
-    inbox = lib.mkOption {
-      type = lib.types.listOf (
-        lib.types.submodule {
-          options = {
-            source = lib.mkOption {
-              type = lib.types.str;
-              description = "Host-side path (relative to agent dir at runtime).";
-            };
-            mountPoint = lib.mkOption {
-              type = lib.types.str;
-              description = "Where to mount the share inside the VM.";
-            };
-          };
-        }
-      );
-      default = [
-        {
-          source = "inbox/repo";
-          mountPoint = "/home/${cfg.user}/mnt/inbox/repo";
-        }
-      ];
-      description = "Read-only shares mounted into the VM.";
-    };
-
-    outbox = {
-      mountPoint = lib.mkOption {
-        type = lib.types.str;
-        default = "/home/${cfg.user}/mnt/outbox";
-        description = "Where to mount the writable outbox inside the VM.";
-      };
-    };
-
     persistence = {
       homeImage = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
@@ -167,22 +135,6 @@ in
           tag = "ro-store";
           source = "/nix/store";
           mountPoint = "/nix/.ro-store";
-        }
-      ]
-      ++ lib.imap0 (i: inbox: {
-        proto = cfg.protocol;
-        tag = "inbox-${toString i}";
-        source = inbox.source;
-        mountPoint = inbox.mountPoint;
-        readOnly = true;
-      }) cfg.inbox
-      ++ [
-        {
-          proto = cfg.protocol;
-          tag = "outbox";
-          source = "outbox";
-          mountPoint = cfg.outbox.mountPoint;
-          securityModel = "mapped";
         }
       ];
 
