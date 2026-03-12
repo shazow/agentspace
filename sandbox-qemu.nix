@@ -58,6 +58,23 @@ in
       default = [ ];
       description = "List of file paths to bundle into the VM runtime";
     };
+
+    mountWorkspace = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Mount the current working directory into the VM as the workspace share.";
+    };
+
+    workspaceMountPoint = lib.mkOption {
+      type = lib.types.str;
+      default = "/home/${cfg.user}/workspace";
+      description = "Where to mount the current working directory inside the VM.";
+    };
+
+    initExtra = lib.mkOption {
+      type = lib.types.separatedString "\n";
+      description = "Extra shell snippet appended to the launch-agent script.";
+    };
   };
 
   config = lib.mkIf cfg.enable (let
@@ -67,6 +84,14 @@ in
     networking.hostName = cfg.hostName;
     system.stateVersion = lib.trivial.release;
     nixpkgs.config.allowUnfree = true;
+
+    agentspace.sandbox.initExtra = lib.mkDefault ''
+      echo "🚀 Preparing Agent Environment"
+      if [ "${if cfg.mountWorkspace then "1" else "0"}" = "1" ]; then
+        echo "📂 Mounting current directory at ~/workspace"
+        cd "$REPO_DIR"
+      fi
+    '';
 
     # Boot & Kernel
     boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
@@ -135,6 +160,14 @@ in
           tag = "ro-store";
           source = "/nix/store";
           mountPoint = "/nix/.ro-store";
+        }
+      ] ++ lib.optionals cfg.mountWorkspace [
+        {
+          proto = cfg.protocol;
+          tag = "workspace";
+          source = ".";
+          mountPoint = cfg.workspaceMountPoint;
+          securityModel = "mapped";
         }
       ];
 
