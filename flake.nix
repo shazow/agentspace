@@ -63,7 +63,7 @@
             ${vmConfig.agentspace.sandbox.initExtra}
 
             echo "🖥️  Running Agent..."
-            exec "${runnerPath}/bin/microvm-run"
+            "${runnerPath}/bin/microvm-run"
           '';
         in
         script;
