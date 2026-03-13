@@ -15,15 +15,16 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
-    in
-    {
-      nixosConfigurations = {
-        vm = nixpkgs.lib.nixosSystem {
+
+      mkSandbox =
+        {
+          extraModules ? [ ],
+        }:
+        nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [
             microvm.nixosModules.microvm
             ./sandbox-qemu.nix
-            ./airlock.nix
 
             # Module Configuration
             {
@@ -32,7 +33,6 @@
                 user = "agent";
                 hostName = "agent-sandbox";
                 protocol = "9p";
-                # airlock.enable = true;
 
                 persistence.homeImage = "./home.img";
                 bundle = [ ];
@@ -46,18 +46,46 @@
                 "flakes"
               ];
             }
+          ]
+          ++ extraModules;
+        };
+
+      mkLaunchScript =
+        name:
+        let
+          vmConfig = self.nixosConfigurations.${name}.config;
+          runnerPath = vmConfig.microvm.declaredRunner.outPath;
+          script = pkgs.writeShellScriptBin "launch-agent-${name}" ''
+            set -e
+
+            REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
+
+            ${vmConfig.agentspace.sandbox.initExtra}
+
+            echo "🖥️  Running Agent..."
+            "${runnerPath}/bin/microvm-run"
+          '';
+        in
+        script;
+    in
+    {
+      nixosConfigurations = {
+        vm = mkSandbox { };
+        vmWithAirlock = mkSandbox {
+          extraModules = [
+            ./airlock.nix
+            {
+              agentspace.sandbox.airlock.enable = true;
+            }
           ];
         };
       };
 
-      packages.${system} =
-        let
-          runner = self.nixosConfigurations.vm.config.microvm.declaredRunner;
-        in
-        {
-          default = runner;
-          vm = runner;
-        };
+      packages.${system} = {
+        default = mkLaunchScript "vm";
+        vm = mkLaunchScript "vm";
+        vmWithAirlock = mkLaunchScript "vmWithAirlock";
+      };
 
       checks.${system} = import ./checks.nix {
         inherit
@@ -72,24 +100,7 @@
         default = self.apps.${system}.launch;
         launch = {
           type = "app";
-          program =
-            let
-              # Access config to make script dynamic based on module settings
-              vmConfig = self.nixosConfigurations.vm.config;
-              runnerPath = vmConfig.microvm.declaredRunner.outPath;
-
-              script = pkgs.writeShellScriptBin "launch-agent" ''
-                                set -e
-
-                                REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
-
-                ${vmConfig.agentspace.sandbox.initExtra}
-
-                                echo "🖥️  Running Agent..."
-                                exec "${runnerPath}/bin/microvm-run"
-              '';
-            in
-            "${script}/bin/launch-agent";
+          program = "${mkLaunchScript "vm"}/bin/launch-agent-vm";
         };
       };
     };
