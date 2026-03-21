@@ -30,7 +30,7 @@ in
         "virtiofs"
       ];
       default = "9p";
-      description = "File share protocol. '9p' runs in userland (slow), 'virtiofs' requires root (fast).";
+      description = "File share protocol. '9p' runs in userland (slow), 'virtiofs' requires a daemon (fast).";
     };
 
     persistence = {
@@ -170,6 +170,11 @@ in
           "-cpu"
           "host"
         ];
+        vsock = {
+          cid = 10;
+          ssh.enable = true;
+        };
+
 
         interfaces = [
           {
