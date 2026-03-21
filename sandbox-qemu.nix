@@ -88,18 +88,16 @@ in
       agentspace-logout = pkgs.writeShellScriptBin "agentspace-logout" ''
         set -eu
 
-        if [ "${if cfg.airlock.enable then "1" else "0"}" = "1" ]; then
-          uptime_seconds="$(cut -d. -f1 /proc/uptime)"
-          if [ "$uptime_seconds" -gt 0 ] && fd --type f --hidden --follow --changed-within "''${uptime_seconds}s" . "$HOME" | {
-            read -r _
-          }; then
-            printf '%s' "Found files in \$HOME modified since boot. Power off anyway? [N/y] "
-            read -r confirm
-            case "$confirm" in
-              y|Y) ;;
-              *) exit 0 ;;
-            esac
-          fi
+        uptime_seconds="$(cut -d. -f1 /proc/uptime)"
+        if [ "$uptime_seconds" -gt 0 ] && fd --type f --hidden --follow --changed-within "''${uptime_seconds}s" . "$HOME" | {
+          read -r _
+        }; then
+          printf '%s' "Found files in \$HOME modified since boot. Power off anyway? [N/y] "
+          read -r confirm
+          case "$confirm" in
+            y|Y) ;;
+            *) exit 0 ;;
+          esac
         fi
 
         exec sudo poweroff
