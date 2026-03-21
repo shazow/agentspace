@@ -85,6 +85,23 @@ in
       agentspace-init = pkgs.writeShellScriptBin "agentspace-init" (
         builtins.readFile ./scripts/agentspace-init
       );
+      agentspace-logout = pkgs.writeShellScriptBin "agentspace-logout" ''
+        set -eu
+
+        uptime_seconds="$(cut -d. -f1 /proc/uptime)"
+        if [ "$uptime_seconds" -gt 0 ] && fd --type f --hidden --follow --changed-within "''${uptime_seconds}s" . "$HOME" | {
+          read -r _
+        }; then
+          printf '%s' "Found files in \$HOME modified since boot. Power off anyway? [N/y] "
+          read -r confirm
+          case "$confirm" in
+            y|Y) ;;
+            *) exit 0 ;;
+          esac
+        fi
+
+        exec sudo poweroff
+      '';
     in
     {
       networking.hostName = cfg.hostName;
@@ -121,12 +138,13 @@ in
       # Directory permissions
       systemd.tmpfiles.rules = [
         "d /home/${cfg.user} 0700 ${cfg.user} users -"
-        "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - sudo poweroff"
+        "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - agentspace-logout"
       ];
 
       # Basic Package Set
       environment.systemPackages = [
         agentspace-init
+        agentspace-logout
         agentspace-bundle
       ]
       ++ (with pkgs; [
