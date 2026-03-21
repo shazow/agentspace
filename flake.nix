@@ -67,6 +67,17 @@
           '';
         in
         script;
+
+      mkSshScript =
+        name:
+        let
+          microvmCommand = "${microvm.packages.${system}.microvm}/bin/microvm";
+          script = pkgs.writeShellScriptBin "ssh-agent-${name}" ''
+            set -e
+            exec "${microvmCommand}" -s ${name} "$@"
+          '';
+        in
+        script;
     in
     {
       nixosConfigurations = {
@@ -85,6 +96,7 @@
         default = mkLaunchScript "vm";
         vm = mkLaunchScript "vm";
         vmWithAirlock = mkLaunchScript "vmWithAirlock";
+        ssh = mkSshScript "vm";
       };
 
       checks.${system} = import ./checks.nix {
@@ -101,6 +113,10 @@
         launch = {
           type = "app";
           program = "${mkLaunchScript "vm"}/bin/launch-agent-vm";
+        };
+        ssh = {
+          type = "app";
+          program = "${mkSshScript "vm"}/bin/ssh-agent-vm";
         };
       };
     };

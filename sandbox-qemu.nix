@@ -175,7 +175,6 @@ in
           ssh.enable = true;
         };
 
-
         interfaces = [
           {
             type = "user";
