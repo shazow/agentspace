@@ -33,6 +33,7 @@
                 user = "agent";
                 hostName = "agent-sandbox";
                 protocol = "9p";
+                consoleLogin.enable = true;
 
                 persistence.homeImage = "./home.img";
                 bundle = [ ];
