@@ -65,6 +65,12 @@ in
       description = "Mount the current working directory into the VM as the workspace share.";
     };
 
+    consoleLogin.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Enable auto-connecting to console via serial tty.";
+    };
+
     workspaceMountPoint = lib.mkOption {
       type = lib.types.str;
       default = "/home/${cfg.user}/workspace";
@@ -133,12 +139,10 @@ in
       };
 
       security.sudo.wheelNeedsPassword = false;
-      services.getty.autologinUser = cfg.user;
 
       # Directory permissions
       systemd.tmpfiles.rules = [
         "d /home/${cfg.user} 0700 ${cfg.user} users -"
-        "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - agentspace-logout"
       ];
 
       # Basic Package Set
@@ -174,7 +178,6 @@ in
           cid = 10;
           ssh.enable = true;
         };
-
 
         interfaces = [
           {
@@ -221,6 +224,12 @@ in
           }
         ];
       };
+    }
+    // lib.mkIf cfg.consoleLogin.enable {
+      services.getty.autologinUser = cfg.user;
+      systemd.tmpfiles.rules = [
+        "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - agentspace-logout"
+      ];
     }
   );
 }
