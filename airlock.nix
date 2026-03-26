@@ -51,55 +51,58 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    agentspace.sandbox.mountWorkspace = lib.mkIf cfg.airlock.enable (lib.mkForce false);
+  config = lib.mkIf cfg.airlock.enable {
+    agentspace.sandbox.mountWorkspace = lib.mkForce false;
 
-    microvm.shares = lib.optionals cfg.airlock.enable (
-      (lib.imap0 (i: inbox: {
+    # Inbox-mounted directories are owned by root, but readable which we'll be
+    # using to clone as local user.
+    environment.etc."gitconfig".text = ''
+      [safe]
+        directory = /home/${cfg.user}/mnt/inbox/*
+    '';
+
+    microvm.shares = (lib.imap0 (i: inbox: {
+      proto = cfg.protocol;
+      tag = "inbox-${toString i}";
+      source = inbox.source;
+      mountPoint = inbox.mountPoint;
+      readOnly = true;
+    }) cfg.inbox)
+    ++ [
+      {
         proto = cfg.protocol;
-        tag = "inbox-${toString i}";
-        source = inbox.source;
-        mountPoint = inbox.mountPoint;
-        readOnly = true;
-      }) cfg.inbox)
-      ++ [
-        {
-          proto = cfg.protocol;
-          tag = "outbox";
-          source = "outbox";
-          mountPoint = cfg.outbox.mountPoint;
-          securityModel = "mapped";
-        }
-      ]
-    );
+        tag = "outbox";
+        source = "outbox";
+        mountPoint = cfg.outbox.mountPoint;
+        securityModel = "mapped";
+      }
+    ];
 
-    agentspace.sandbox.initExtra = lib.mkIf cfg.airlock.enable (
-      lib.mkAfter ''
-        AGENT_ID=''${AGENT_ID:-$(${pkgs.openssl}/bin/openssl rand -hex 3)}
-        AGENT_DIR=".agentspace/agent-$AGENT_ID"
-        REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
+    agentspace.sandbox.initExtra = lib.mkAfter ''
+      AGENT_ID=''${AGENT_ID:-$(${pkgs.openssl}/bin/openssl rand -hex 3)}
+      AGENT_DIR=".agentspace/agent-$AGENT_ID"
+      REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
 
-        echo "🚀 Preparing Agent Environment: $AGENT_ID"
-        echo "📂 Location: $AGENT_DIR"
+      echo "🚀 Preparing Agent Environment: $AGENT_ID"
+      echo "📂 Location: $AGENT_DIR"
 
-        mkdir -p "$AGENT_DIR/inbox" "$AGENT_DIR/outbox"
-        ln -sfn "$REPO_DIR" "$AGENT_DIR/inbox/repo"
+      mkdir -p "$AGENT_DIR/inbox" "$AGENT_DIR/outbox"
+      ln -sfn "$REPO_DIR" "$AGENT_DIR/inbox/repo"
 
-        cleanup() {
-          echo "🛑 Agent shutdown."
-          rm -f "$REPO_DIR/$AGENT_DIR/inbox/repo"
-          rmdir "$REPO_DIR/$AGENT_DIR/inbox" 2>/dev/null || true
-          if [ -z "$(ls -A "$REPO_DIR/$AGENT_DIR/outbox" 2>/dev/null)" ]; then
-            echo "📭 Outbox empty, cleaning up $AGENT_DIR"
-            rm -rf "$REPO_DIR/$AGENT_DIR"
-          else
-            echo "📬 Outbox has contents, preserving $AGENT_DIR"
-          fi
-        }
-        trap cleanup EXIT
+      cleanup() {
+        echo "🛑 Agent shutdown."
+        rm -f "$REPO_DIR/$AGENT_DIR/inbox/repo"
+        rmdir "$REPO_DIR/$AGENT_DIR/inbox" 2>/dev/null || true
+        if [ -z "$(ls -A "$REPO_DIR/$AGENT_DIR/outbox" 2>/dev/null)" ]; then
+          echo "📭 Outbox empty, cleaning up $AGENT_DIR"
+          rm -rf "$REPO_DIR/$AGENT_DIR"
+        else
+          echo "📬 Outbox has contents, preserving $AGENT_DIR"
+        fi
+      }
+      trap cleanup EXIT
 
-        cd "$AGENT_DIR"
-      ''
-    );
+      cd "$AGENT_DIR"
+    '';
   };
 }
