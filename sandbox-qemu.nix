@@ -82,7 +82,8 @@ in
       description = "Extra shell snippet appended to the launch-agent script.";
       default = ''
         echo "🚀 Preparing Agent QEMU Sandbox..."
-      '' + lib.optionalString cfg.mountWorkspace ''
+      ''
+      + lib.optionalString cfg.mountWorkspace ''
         echo "📂 Mounting current directory at ~/workspace"
         cd "$REPO_DIR"
       '';
@@ -115,126 +116,128 @@ in
         exec sudo poweroff
       '';
     in
-    {
-      networking.hostName = cfg.hostName;
-      nixpkgs.config.allowUnfree = true;
+    lib.mkMerge [
+      {
+        networking.hostName = cfg.hostName;
+        nixpkgs.config.allowUnfree = true;
 
-      # Boot & Kernel
-      boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
-      boot.kernelParams = [
-        "quiet"
-        "udev.log_level=3"
-      ];
-      boot.consoleLogLevel = 0;
-      boot.initrd.verbose = false;
-
-      # User Configuration
-      users.users.${cfg.user} = {
-        password = "";
-        isNormalUser = true;
-        extraGroups = [ "wheel" ];
-      };
-
-      security.sudo.wheelNeedsPassword = false;
-
-      # Directory permissions
-      systemd.tmpfiles.rules = [
-        "d /home/${cfg.user} 0700 ${cfg.user} users -"
-      ];
-
-      # Inbox-mounted directories are owned by root, but readable which we'll be
-      # using to clone as local user.
-      # TODO: mkOptional if we're using inboxes
-      environment.etc."gitconfig".text = ''
-        [safe]
-          directory = /home/${cfg.user}/mnt/inbox/*
-      '';
-
-      # Basic Package Set
-      environment.systemPackages = [
-        agentspace-init
-        agentspace-logout
-        agentspace-bundle
-      ]
-      ++ (with pkgs; [
-        bashInteractive
-        coreutils
-        curl
-        fd
-        git
-        gnugrep
-        less
-        neovim
-        which
-      ]);
-
-      # MicroVM Configuration
-      microvm = {
-        mem = 4 * 1024;
-        balloon = true;
-        socket = "/tmp/vm-${cfg.hostName}.sock";
-        hypervisor = "qemu";
-
-        qemu.extraArgs = [
-          "-cpu"
-          "host"
+        # Boot & Kernel
+        boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
+        boot.kernelParams = [
+          "quiet"
+          "udev.log_level=3"
         ];
-        vsock = {
-          cid = 10;
-          ssh.enable = true;
+        boot.consoleLogLevel = 0;
+        boot.initrd.verbose = false;
+
+        # User Configuration
+        users.users.${cfg.user} = {
+          password = "";
+          isNormalUser = true;
+          extraGroups = [ "wheel" ];
         };
 
-        interfaces = [
-          {
-            type = "user";
-            id = "microvm1";
-            mac = "02:02:00:00:00:01";
-          }
+        security.sudo.wheelNeedsPassword = false;
+
+        # Directory permissions
+        systemd.tmpfiles.rules = [
+          "d /home/${cfg.user} 0700 ${cfg.user} users -"
         ];
 
-        shares = [
-          {
-            proto = cfg.protocol;
-            tag = "ro-store";
-            source = "/nix/store";
-            mountPoint = "/nix/.ro-store";
-          }
+        # Inbox-mounted directories are owned by root, but readable which we'll be
+        # using to clone as local user.
+        # TODO: mkOptional if we're using inboxes
+        environment.etc."gitconfig".text = ''
+          [safe]
+            directory = /home/${cfg.user}/mnt/inbox/*
+        '';
+
+        # Basic Package Set
+        environment.systemPackages = [
+          agentspace-init
+          agentspace-logout
+          agentspace-bundle
         ]
-        ++ lib.optionals cfg.mountWorkspace [
-          {
-            proto = cfg.protocol;
-            tag = "workspace";
-            source = ".";
-            mountPoint = cfg.workspaceMountPoint;
-            securityModel = "mapped";
-          }
-        ];
+        ++ (with pkgs; [
+          bashInteractive
+          coreutils
+          curl
+          fd
+          git
+          gnugrep
+          less
+          neovim
+          which
+        ]);
 
-        writableStoreOverlay = "/nix/.rw-store";
+        # MicroVM Configuration
+        microvm = {
+          mem = 4 * 1024;
+          balloon = true;
+          socket = "/tmp/vm-${cfg.hostName}.sock";
+          hypervisor = "qemu";
 
-        volumes = [
-          {
-            image = cfg.persistence.storeOverlay;
-            mountPoint = "/nix/.rw-store";
-            size = 4096;
-          }
-        ]
-        ++ lib.optionals (cfg.persistence.homeImage != null) [
-          {
-            image = cfg.persistence.homeImage;
-            mountPoint = "/home/${cfg.user}";
-            fsType = "ext4";
-            size = cfg.persistence.homeSize;
-            autoCreate = true;
-          }
+          qemu.extraArgs = [
+            "-cpu"
+            "host"
+          ];
+          vsock = {
+            cid = 10;
+            ssh.enable = true;
+          };
+
+          interfaces = [
+            {
+              type = "user";
+              id = "microvm1";
+              mac = "02:02:00:00:00:01";
+            }
+          ];
+
+          shares = [
+            {
+              proto = cfg.protocol;
+              tag = "ro-store";
+              source = "/nix/store";
+              mountPoint = "/nix/.ro-store";
+            }
+          ]
+          ++ lib.optionals cfg.mountWorkspace [
+            {
+              proto = cfg.protocol;
+              tag = "workspace";
+              source = ".";
+              mountPoint = cfg.workspaceMountPoint;
+              securityModel = "mapped";
+            }
+          ];
+
+          writableStoreOverlay = "/nix/.rw-store";
+
+          volumes = [
+            {
+              image = cfg.persistence.storeOverlay;
+              mountPoint = "/nix/.rw-store";
+              size = 4096;
+            }
+          ]
+          ++ lib.optionals (cfg.persistence.homeImage != null) [
+            {
+              image = cfg.persistence.homeImage;
+              mountPoint = "/home/${cfg.user}";
+              fsType = "ext4";
+              size = cfg.persistence.homeSize;
+              autoCreate = true;
+            }
+          ];
+        };
+      }
+      (lib.mkIf cfg.consoleLogin.enable {
+        services.getty.autologinUser = cfg.user;
+        systemd.tmpfiles.rules = lib.mkAfter [
+          "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - agentspace-logout"
         ];
-      };
-    }
-    // lib.mkIf cfg.consoleLogin.enable {
-      services.getty.autologinUser = cfg.user;
-      systemd.tmpfiles.rules = [
-        "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - agentspace-logout"
-      ];
-    }
+      })
+    ]
   );
 }
