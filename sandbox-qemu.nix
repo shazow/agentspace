@@ -80,6 +80,12 @@ in
     initExtra = lib.mkOption {
       type = lib.types.separatedString "\n";
       description = "Extra shell snippet appended to the launch-agent script.";
+      default = ''
+        echo "🚀 Preparing Agent QEMU Sandbox..."
+      '' + lib.optionalString cfg.mountWorkspace ''
+        echo "📂 Mounting current directory at ~/workspace"
+        cd "$REPO_DIR"
+      '';
     };
   };
 
@@ -111,16 +117,8 @@ in
     in
     {
       networking.hostName = cfg.hostName;
-      system.stateVersion = lib.trivial.release;
+      system.stateVersion = "25.11";
       nixpkgs.config.allowUnfree = true;
-
-      agentspace.sandbox.initExtra = lib.mkDefault ''
-        echo "🚀 Preparing Agent Environment"
-        if [ "${if cfg.mountWorkspace then "1" else "0"}" = "1" ]; then
-          echo "📂 Mounting current directory at ~/workspace"
-          cd "$REPO_DIR"
-        fi
-      '';
 
       # Boot & Kernel
       boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
