@@ -40,6 +40,7 @@
               };
 
               # System-specific overrides can still go here
+              system.stateVersion = "25.11";
               nix.registry.nixpkgs.flake = nixpkgs;
               nix.nixPath = [ "nixpkgs=${nixpkgs}" ];
               nix.settings.experimental-features = [

@@ -117,7 +117,6 @@ in
     in
     {
       networking.hostName = cfg.hostName;
-      system.stateVersion = "25.11";
       nixpkgs.config.allowUnfree = true;
 
       # Boot & Kernel
@@ -142,6 +141,14 @@ in
       systemd.tmpfiles.rules = [
         "d /home/${cfg.user} 0700 ${cfg.user} users -"
       ];
+
+      # Inbox-mounted directories are owned by root, but readable which we'll be
+      # using to clone as local user.
+      # TODO: mkOptional if we're using inboxes
+      environment.etc."gitconfig".text = ''
+        [safe]
+          directory = /home/${cfg.user}/mnt/inbox/*
+      '';
 
       # Basic Package Set
       environment.systemPackages = [
