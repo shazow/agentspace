@@ -113,6 +113,11 @@ in
         VIRTIOFS_SOCKETS="${
           lib.concatMapStringsSep " " ({ socket, ... }: lib.escapeShellArg socket) virtiofsShares
         }"
+        VIRTIOFS_SOCKET_DIRS="${
+          lib.concatMapStringsSep " " (dir: lib.escapeShellArg dir) (
+            lib.unique (map ({ socket, ... }: builtins.dirOf socket) virtiofsShares)
+          )
+        }"
 
         all_virtiofs_sockets_ready() {
           for socket_path in $VIRTIOFS_SOCKETS; do
@@ -125,7 +130,7 @@ in
 
         wait_for_virtiofs_sockets() {
           attempt=0
-          while [ "$attempt" -lt 200 ]; do
+          while [ "$attempt" -lt 20 ]; do
             if all_virtiofs_sockets_ready; then
               return 0
             fi
@@ -133,7 +138,15 @@ in
               echo "❌ virtiofsd-run exited before creating all virtiofs sockets" >&2
               exit 1
             fi
-            sleep 0.05
+
+            ${pkgs.inotify-tools}/bin/inotifywait \
+              --quiet \
+              --timeout 1 \
+              --event create \
+              --event moved_to \
+              --event attrib \
+              $VIRTIOFS_SOCKET_DIRS >/dev/null 2>&1 || true
+
             attempt=$((attempt + 1))
           done
 
