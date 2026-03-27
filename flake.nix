@@ -33,13 +33,14 @@
                 enable = true;
                 user = "agent";
                 hostName = "agent-sandbox";
-                protocol = "9p";
-                consoleLogin.enable = false;
-                sshLogin.enable = true;
-                # Example: explicitly wire a host public key into the guest image.
-                # sshLogin.authorizedKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... you@example";
-                # Example (pure, tracked file): sshLogin.authorizedKey = builtins.readFile ./keys/agent.pub;
-                # Example (impure): sshLogin.authorizedKey = builtins.readFile ~/.ssh/id_ed25519.pub;
+                protocol = "9p"; # 9p | virtiofs
+                connectWith = "console"; # console | ssh
+
+                sshAuthorizedKeys = [
+                  # Put your ~/.ssh/id_*.pub here to start an ssh server you can connect to.
+                  # Example:
+                  # "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPWrZA5SvCSRmewCRj8nKvcZVZz7+Gy7LWV30oZ/MUwr"
+                ];
 
                 persistence.homeImage = "./home.img";
                 bundle = [ ];
@@ -68,13 +69,13 @@
         pkgs.writeShellScriptBin "connect-agent-${name}" ''
           set -euo pipefail
 
+          # Assumes systemd-ssh-proxy support is available via ssh_config.
+          # Fallback (if unavailable):
+          # -o ProxyCommand='socat STDIO VSOCK-CONNECT:10:22'
           exec ${pkgs.openssh}/bin/ssh \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o GlobalKnownHostsFile=/dev/null \
-            # Assumes systemd-ssh-proxy support is available via ssh_config.
-            # Fallback (if unavailable):
-            # -o ProxyCommand='${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:${toString cid}:22'
             "${sandboxCfg.user}@vsock/${toString cid}" \
             "$@"
         '';
@@ -93,25 +94,20 @@
 
             ${vmConfig.agentspace.sandbox.initExtra}
 
-            echo "🖥️  Running Agent..."
-            if [ "${toString vmConfig.agentspace.sandbox.sshLogin.enable}" = "true" ]; then
-              "$RUNNER_PATH/bin/microvm-run" &
-              VM_PID=$!
-              trap 'kill "$VM_PID" 2>/dev/null || true; wait "$VM_PID" 2>/dev/null || true' EXIT INT TERM
+            echo "🖥️  Running Agentspace..."
+            "$RUNNER_PATH/bin/microvm-run"
 
-              echo "🔐 Waiting for SSH over vsock..."
-              for _ in $(seq 1 60); do
-                if "${connectScript}/bin/connect-agent-${name}" true >/dev/null 2>&1; then
-                  exec "${connectScript}/bin/connect-agent-${name}"
-                fi
-                sleep 0.5
-              done
+          ''
+          # FIXME: This is a WIP feature which doesn't work unless we use qemu --daemonize, which we can't do because microvm.nix uses `-chardev stdio`
+          + pkgs.lib.optionalString (false) ''
+            VM_PID=$!
+            trap 'kill "$VM_PID" 2>/dev/null || true; wait "$VM_PID" 2>/dev/null || true' EXIT INT TERM
 
-              echo "Timed out waiting for SSH to become ready." >&2
-              exit 1
-            else
-              "$RUNNER_PATH/bin/microvm-run"
-            fi
+            echo "🔐 Waiting for SSH over vsock..."
+            for _ in $(seq 1 60); do
+              exec "${connectScript}/bin/connect-agent-${name}"
+              sleep 0.5
+            done
           '';
         in
         script;
