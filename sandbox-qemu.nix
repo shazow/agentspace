@@ -220,6 +220,7 @@ in
               tag = "ro-store";
               source = "/nix/store";
               mountPoint = "/nix/.ro-store";
+              readOnly = true;
             }
           ]
           ++ lib.optionals cfg.mountWorkspace [
