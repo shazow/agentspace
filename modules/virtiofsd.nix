@@ -55,6 +55,14 @@ let
     }@share:
     ''
       socket=${lib.escapeShellArg socket}
+      case "$socket" in
+        /*) ;;
+        *)
+          # systemd-socket-activate expects an absolute unix socket path.
+          # microvm socket defaults are often relative to the launch directory.
+          socket="$PWD/$socket"
+          ;;
+      esac
       rm -f "$socket"
       ${systemdSocketActivate} \
         --listen="$socket" \
