@@ -129,26 +129,31 @@ in
         }
 
         wait_for_virtiofs_sockets() {
-          attempt=0
-          while [ "$attempt" -lt 20 ]; do
-            if all_virtiofs_sockets_ready; then
-              return 0
-            fi
-            if ! kill -0 "$VIRTIOFSD_PID" 2>/dev/null; then
-              echo "❌ virtiofsd-run exited before creating all virtiofs sockets" >&2
-              exit 1
-            fi
+          if all_virtiofs_sockets_ready; then
+            return 0
+          fi
+          if ! kill -0 "$VIRTIOFSD_PID" 2>/dev/null; then
+            echo "❌ virtiofsd-run exited before creating all virtiofs sockets" >&2
+            exit 1
+          fi
 
-            ${pkgs.inotify-tools}/bin/inotifywait \
-              --quiet \
-              --timeout 1 \
-              --event create \
-              --event moved_to \
-              --event attrib \
-              $VIRTIOFS_SOCKET_DIRS >/dev/null 2>&1 || true
+          # Assumption: once virtiofsd-run is started, all sockets are created
+          # promptly in a single startup phase.
+          ${pkgs.inotify-tools}/bin/inotifywait \
+            --quiet \
+            --timeout 10 \
+            --event create \
+            --event moved_to \
+            --event attrib \
+            $VIRTIOFS_SOCKET_DIRS >/dev/null 2>&1 || true
 
-            attempt=$((attempt + 1))
-          done
+          if all_virtiofs_sockets_ready; then
+            return 0
+          fi
+          if ! kill -0 "$VIRTIOFSD_PID" 2>/dev/null; then
+            echo "❌ virtiofsd-run exited before creating all virtiofs sockets" >&2
+            exit 1
+          fi
 
           echo "❌ Timed out waiting for virtiofs sockets: $VIRTIOFS_SOCKETS" >&2
           exit 1
