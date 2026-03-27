@@ -104,6 +104,10 @@ in
 
           trap 'cleanup_virtiofsd' EXIT INT TERM
 
+          # microvm's virtiofsd-run uses supervisord + systemd-notify for
+          # readiness in the managed service flow. During imperative nix run
+          # there is no systemd unit dependency ordering, so we still gate QEMU
+          # startup on the socket files appearing.
           "${config.microvm.declaredRunner.outPath}/bin/virtiofsd-run" &
           VIRTIOFSD_PID=$!
 
