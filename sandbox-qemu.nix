@@ -7,6 +7,19 @@
 
 let
   cfg = config.agentspace.sandbox;
+
+  virtiofsShares = [
+    {
+      tag = "ro-store";
+      source = "/nix/store";
+    }
+  ]
+  ++ lib.optionals cfg.mountWorkspace [
+    {
+      tag = "workspace";
+      source = ".";
+    }
+  ];
 in
 {
   options.agentspace.sandbox = {
@@ -86,7 +99,60 @@ in
       + lib.optionalString cfg.mountWorkspace ''
         echo "📂 Mounting current directory at ~/workspace"
         cd "$REPO_DIR"
-      '';
+      ''
+      + lib.optionalString (cfg.protocol == "virtiofs") (
+        ''
+          echo "🧰 Starting virtiofs daemons..."
+
+          VIRTIOFSD_PIDS=""
+
+          cleanup_virtiofsd() {
+            if [ -n "$VIRTIOFSD_PIDS" ]; then
+              for pid in $VIRTIOFSD_PIDS; do
+                kill "$pid" 2>/dev/null || true
+              done
+              wait $VIRTIOFSD_PIDS 2>/dev/null || true
+            fi
+          }
+
+          trap 'cleanup_virtiofsd' EXIT INT TERM
+
+          start_virtiofs_share() {
+            socket_path="$1"
+            shared_dir="$2"
+
+            rm -f "$socket_path"
+
+            ${pkgs.virtiofsd}/bin/virtiofsd \
+              --socket-path "$socket_path" \
+              --shared-dir "$shared_dir" \
+              --sandbox none \
+              --seccomp none &
+
+            daemon_pid=$!
+            VIRTIOFSD_PIDS="$VIRTIOFSD_PIDS $daemon_pid"
+
+            attempt=0
+            while [ "$attempt" -lt 200 ]; do
+              if [ -S "$socket_path" ]; then
+                return 0
+              fi
+              if ! kill -0 "$daemon_pid" 2>/dev/null; then
+                echo "❌ virtiofsd exited before creating $socket_path" >&2
+                exit 1
+              fi
+              sleep 0.05
+              attempt=$((attempt + 1))
+            done
+
+            echo "❌ Timed out waiting for $socket_path" >&2
+            exit 1
+          }
+        ''
+        + lib.concatMapStringsSep "\n" (share: ''
+          start_virtiofs_share "${cfg.hostName}-virtiofs-${share.tag}.sock" "${share.source}"
+        '') virtiofsShares
+      );
     };
   };
 
