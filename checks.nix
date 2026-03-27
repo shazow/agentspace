@@ -9,7 +9,7 @@ let
     inherit system;
     modules = [
       microvm.nixosModules.microvm
-      ./nixos-modules/microvm/virtiofsd/default.nix
+      ./modules/virtiofsd.nix
       ./sandbox-qemu.nix
       ./airlock.nix
       {
