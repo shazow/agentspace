@@ -139,13 +139,20 @@ in
 
           # Assumption: once virtiofsd-run is started, all sockets are created
           # promptly in a single startup phase.
-          ${pkgs.inotify-tools}/bin/inotifywait \
+          if ! ${pkgs.inotify-tools}/bin/inotifywait \
             --quiet \
             --timeout 10 \
             --event create \
             --event moved_to \
             --event attrib \
-            $VIRTIOFS_SOCKET_DIRS >/dev/null 2>&1 || true
+            $VIRTIOFS_SOCKET_DIRS >/dev/null 2>&1; then
+            if ! kill -0 "$VIRTIOFSD_PID" 2>/dev/null; then
+              echo "❌ virtiofsd-run exited before creating all virtiofs sockets" >&2
+              exit 1
+            fi
+            echo "❌ Timed out waiting for virtiofs sockets: $VIRTIOFS_SOCKETS" >&2
+            exit 1
+          fi
 
           if all_virtiofs_sockets_ready; then
             return 0
