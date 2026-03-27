@@ -139,6 +139,7 @@ in
 
         networking.hostName = cfg.hostName;
         nixpkgs.config.allowUnfree = true;
+        services.logrotate.enable = false;
 
         # Boot & Kernel
         boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
