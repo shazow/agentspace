@@ -69,6 +69,7 @@ let
         --fdname=${lib.escapeShellArg "virtiofsd-${tag}"} \
         ${mkVirtiofsdCommand share} &
       pids+=("$!")
+      sockets+=("$socket")
     '';
 
 in
@@ -78,11 +79,15 @@ in
       set -euo pipefail
 
       pids=()
+      sockets=()
       cleanup() {
         for pid in "''${pids[@]}"; do
           if kill -0 "$pid" 2>/dev/null; then
             kill "$pid" 2>/dev/null || true
           fi
+        done
+        for socket in "''${sockets[@]}"; do
+          rm -f "$socket"
         done
       }
 
