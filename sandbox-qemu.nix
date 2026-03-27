@@ -89,54 +89,60 @@ in
         echo "📂 Mounting current directory at ~/workspace"
         cd "$REPO_DIR"
       ''
-      + lib.optionalString (cfg.protocol == "virtiofs") (
-        ''
-          echo "🧰 Starting virtiofsd supervisor..."
+      + lib.optionalString (cfg.protocol == "virtiofs") (''
+        echo "🧰 Starting virtiofsd supervisor..."
 
-          VIRTIOFSD_PID=""
+        VIRTIOFSD_PID=""
 
-          cleanup_virtiofsd() {
-            if [ -n "$VIRTIOFSD_PID" ]; then
-              kill "$VIRTIOFSD_PID" 2>/dev/null || true
-              wait "$VIRTIOFSD_PID" 2>/dev/null || true
+        cleanup_virtiofsd() {
+          if [ -n "$VIRTIOFSD_PID" ]; then
+            kill "$VIRTIOFSD_PID" 2>/dev/null || true
+            wait "$VIRTIOFSD_PID" 2>/dev/null || true
+          fi
+        }
+
+        trap 'cleanup_virtiofsd' EXIT INT TERM
+
+        # microvm's virtiofsd-run uses supervisord + systemd-notify for
+        # readiness in the managed service flow. During imperative nix run
+        # there is no systemd unit dependency ordering, so we still gate QEMU
+        # startup on the socket files appearing.
+        "${config.microvm.declaredRunner.outPath}/bin/virtiofsd-run" &
+        VIRTIOFSD_PID=$!
+
+        VIRTIOFS_SOCKETS="${
+          lib.concatMapStringsSep " " ({ socket, ... }: lib.escapeShellArg socket) virtiofsShares
+        }"
+
+        all_virtiofs_sockets_ready() {
+          for socket_path in $VIRTIOFS_SOCKETS; do
+            if [ ! -S "$socket_path" ]; then
+              return 1
             fi
-          }
+          done
+          return 0
+        }
 
-          trap 'cleanup_virtiofsd' EXIT INT TERM
+        wait_for_virtiofs_sockets() {
+          attempt=0
+          while [ "$attempt" -lt 200 ]; do
+            if all_virtiofs_sockets_ready; then
+              return 0
+            fi
+            if ! kill -0 "$VIRTIOFSD_PID" 2>/dev/null; then
+              echo "❌ virtiofsd-run exited before creating all virtiofs sockets" >&2
+              exit 1
+            fi
+            sleep 0.05
+            attempt=$((attempt + 1))
+          done
 
-          # microvm's virtiofsd-run uses supervisord + systemd-notify for
-          # readiness in the managed service flow. During imperative nix run
-          # there is no systemd unit dependency ordering, so we still gate QEMU
-          # startup on the socket files appearing.
-          "${config.microvm.declaredRunner.outPath}/bin/virtiofsd-run" &
-          VIRTIOFSD_PID=$!
+          echo "❌ Timed out waiting for virtiofs sockets: $VIRTIOFS_SOCKETS" >&2
+          exit 1
+        }
 
-          wait_for_socket() {
-            socket_path="$1"
-            attempt=0
-            while [ "$attempt" -lt 200 ]; do
-              if [ -S "$socket_path" ]; then
-                return 0
-              fi
-              if ! kill -0 "$VIRTIOFSD_PID" 2>/dev/null; then
-                echo "❌ virtiofsd-run exited before creating $socket_path" >&2
-                exit 1
-              fi
-              sleep 0.05
-              attempt=$((attempt + 1))
-            done
-
-            echo "❌ Timed out waiting for $socket_path" >&2
-            exit 1
-          }
-        ''
-        + lib.concatMapStringsSep "\n" (
-          { socket, ... }:
-          ''
-            wait_for_socket "${socket}"
-          ''
-        ) virtiofsShares
-      );
+        wait_for_virtiofs_sockets
+      '');
     };
   };
 
