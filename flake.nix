@@ -73,10 +73,10 @@
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o GlobalKnownHostsFile=/dev/null \
-            # OpenSSH cannot dial AF_VSOCK directly; ProxyCommand bridges stdin/stdout
-            # to the guest CID:port over vsock using socat.
-            -o ProxyCommand='${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:${toString cid}:22' \
-            "${sandboxCfg.user}@agentspace-vsock" \
+            # Assumes systemd-ssh-proxy support is available via ssh_config.
+            # Fallback (if unavailable):
+            # -o ProxyCommand='${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:${toString cid}:22'
+            "${sandboxCfg.user}@vsock/${toString cid}" \
             "$@"
         '';
 
