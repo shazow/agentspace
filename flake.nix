@@ -24,6 +24,7 @@
           inherit system;
           modules = [
             microvm.nixosModules.microvm
+            ./modules/virtiofsd.nix
             ./sandbox-qemu.nix
 
             # Module Configuration
@@ -58,14 +59,15 @@
           vmConfig = self.nixosConfigurations.${name}.config;
           runnerPath = vmConfig.microvm.declaredRunner.outPath;
           script = pkgs.writeShellScriptBin "launch-agent-${name}" ''
-            set -e
+            set -euo pipefail
 
             REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
+            RUNNER_PATH=${runnerPath}
 
             ${vmConfig.agentspace.sandbox.initExtra}
 
             echo "🖥️  Running Agent..."
-            "${runnerPath}/bin/microvm-run"
+            "$RUNNER_PATH/bin/microvm-run"
           '';
         in
         script;
