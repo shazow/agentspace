@@ -71,6 +71,20 @@ in
       description = "Enable auto-connecting to console via serial tty.";
     };
 
+    sshLogin = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Enable auto-connecting to the guest over SSH via vsock.";
+      };
+
+      authorizedKey = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "SSH public key authorized for the guest user. Must be set explicitly for sshLogin.";
+      };
+    };
+
     workspaceMountPoint = lib.mkOption {
       type = lib.types.str;
       default = "/home/${cfg.user}/workspace";
@@ -155,6 +169,19 @@ in
           password = "";
           isNormalUser = true;
           extraGroups = [ "wheel" ];
+          openssh.authorizedKeys.keys = lib.optionals (
+            cfg.sshLogin.enable && cfg.sshLogin.authorizedKey != null
+          ) [ cfg.sshLogin.authorizedKey ];
+        };
+
+        services.openssh = lib.mkIf cfg.sshLogin.enable {
+          enable = true;
+          openFirewall = false;
+          settings = {
+            PasswordAuthentication = false;
+            KbdInteractiveAuthentication = false;
+            PermitRootLogin = "no";
+          };
         };
 
         security.sudo.wheelNeedsPassword = false;
@@ -206,13 +233,16 @@ in
             ssh.enable = true;
           };
 
-          interfaces = [
-            {
-              type = "user";
-              id = "microvm1";
-              mac = "02:02:00:00:00:01";
-            }
-          ];
+          interfaces =
+            # FIXME: Assumes disabling the emulated NIC is acceptable whenever
+            # sshLogin is enabled. Add a dedicated network toggle if both are needed.
+            lib.optionals (!cfg.sshLogin.enable) [
+              {
+                type = "user";
+                id = "microvm1";
+                mac = "02:02:00:00:00:01";
+              }
+            ];
 
           shares = [
             {
