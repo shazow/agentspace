@@ -227,7 +227,8 @@ in
           qemu.extraArgs = [
             "-cpu"
             "host"
-          ];
+          ]
+          ++ lib.optionals cfg.sshLogin.enable [ "-daemonize" ];
           vsock = {
             cid = 10;
             ssh.enable = true;
