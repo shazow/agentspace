@@ -24,7 +24,7 @@
           inherit system;
           modules = [
             microvm.nixosModules.microvm
-            ./nixos-modules/microvm/virtiofsd/default.nix
+            ./modules/virtiofsd.nix
             ./sandbox-qemu.nix
 
             # Module Configuration
@@ -59,11 +59,26 @@
           vmConfig = self.nixosConfigurations.${name}.config;
           runnerPath = vmConfig.microvm.declaredRunner.outPath;
           script = pkgs.writeShellScriptBin "launch-agent-${name}" ''
-            set -e
+            set -euo pipefail
 
             REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
 
             ${vmConfig.agentspace.sandbox.initExtra}
+
+            virtiofsd_runner="${runnerPath}/bin/virtiofsd-run"
+            cleanup() {
+              if [ -n "''${VIRTIOFSD_PID:-}" ] && kill -0 "$VIRTIOFSD_PID" 2>/dev/null; then
+                kill "$VIRTIOFSD_PID" 2>/dev/null || true
+                wait "$VIRTIOFSD_PID" 2>/dev/null || true
+              fi
+            }
+            trap cleanup EXIT INT TERM
+
+            if [ -x "$virtiofsd_runner" ]; then
+              echo "📦 Starting virtiofsd..."
+              "$virtiofsd_runner" &
+              VIRTIOFSD_PID=$!
+            fi
 
             echo "🖥️  Running Agent..."
             "${runnerPath}/bin/microvm-run"

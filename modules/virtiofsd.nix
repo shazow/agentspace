@@ -1,4 +1,9 @@
 {
+  # Drop-in replacement for:
+  # https://github.com/microvm-nix/microvm.nix/blob/main/nixos-modules/microvm/virtiofsd/default.nix
+  #
+  # We keep behavior intentionally equivalent where practical, while swapping
+  # the supervisord-based launcher for systemd-socket-activate.
   config,
   lib,
   pkgs,
