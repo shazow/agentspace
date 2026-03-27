@@ -65,24 +65,19 @@ in
       description = "Mount the current working directory into the VM as the workspace share.";
     };
 
-    consoleLogin.enable = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Enable auto-connecting to console via serial tty.";
+    connectWith = lib.mkOption {
+      type = lib.types.enum [
+        "console"
+        "ssh"
+      ];
+      default = "console";
+      description = "Auto-connect via serial console or ssh. When using ssh, make sure to set sshAuthorizedKeys.";
     };
 
-    sshLogin = {
-      enable = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "Enable auto-connecting to the guest over SSH via vsock.";
-      };
-
-      authorizedKey = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "SSH public key authorized for the guest user. Must be set explicitly for sshLogin.";
-      };
+    sshAuthorizedKeys = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Setup ssh access with these authorized keys.";
     };
 
     workspaceMountPoint = lib.mkOption {
@@ -169,12 +164,10 @@ in
           password = "";
           isNormalUser = true;
           extraGroups = [ "wheel" ];
-          openssh.authorizedKeys.keys = lib.optionals (
-            cfg.sshLogin.enable && cfg.sshLogin.authorizedKey != null
-          ) [ cfg.sshLogin.authorizedKey ];
+          openssh.authorizedKeys.keys = cfg.sshAuthorizedKeys;
         };
 
-        services.openssh = lib.mkIf cfg.sshLogin.enable {
+        services.openssh = lib.mkIf (cfg.sshAuthorizedKeys != []) {
           enable = true;
           openFirewall = false;
           settings = {
@@ -224,10 +217,12 @@ in
           socket = "/tmp/vm-${cfg.hostName}.sock";
           hypervisor = "qemu";
 
+          qemu.serialConsole = cfg.connectWith == "console";
           qemu.extraArgs = [
             "-cpu"
             "host"
           ];
+
           vsock = {
             cid = 10;
             ssh.enable = true;
@@ -280,7 +275,8 @@ in
           ];
         };
       }
-      (lib.mkIf cfg.consoleLogin.enable {
+
+      (lib.mkIf (cfg.connectWith == "console") {
         services.getty.autologinUser = cfg.user;
         systemd.tmpfiles.rules = lib.mkAfter [
           "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - agentspace-logout"
