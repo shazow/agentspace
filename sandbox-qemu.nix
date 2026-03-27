@@ -118,6 +118,25 @@ in
     in
     lib.mkMerge [
       {
+        agentspace.sandbox.initExtra = lib.mkAfter (
+          lib.optionalString (cfg.protocol == "virtiofs") ''
+            virtiofsd_runner="$RUNNER_PATH/bin/virtiofsd-run"
+            cleanup_virtiofsd() {
+              if [ -n "''${VIRTIOFSD_PID:-}" ] && kill -0 "$VIRTIOFSD_PID" 2>/dev/null; then
+                kill "$VIRTIOFSD_PID" 2>/dev/null || true
+                wait "$VIRTIOFSD_PID" 2>/dev/null || true
+              fi
+            }
+            trap cleanup_virtiofsd EXIT INT TERM
+
+            if [ -x "$virtiofsd_runner" ]; then
+              echo "📦 Starting virtiofsd..."
+              "$virtiofsd_runner" &
+              VIRTIOFSD_PID=$!
+            fi
+          ''
+        );
+
         networking.hostName = cfg.hostName;
         nixpkgs.config.allowUnfree = true;
 
