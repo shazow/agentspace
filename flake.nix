@@ -84,7 +84,6 @@
         name:
         let
           vmConfig = self.nixosConfigurations.${name}.config;
-          connectScript = mkConnectScript name;
           runnerPath = vmConfig.microvm.declaredRunner.outPath;
           script = pkgs.writeShellScriptBin "launch-agent-${name}" ''
             set -euo pipefail
@@ -95,19 +94,7 @@
             ${vmConfig.agentspace.sandbox.initExtra}
 
             echo "🖥️  Running Agentspace..."
-            "$RUNNER_PATH/bin/microvm-run"
-
-          ''
-          # FIXME: This is a WIP feature which doesn't work unless we use qemu --daemonize, which we can't do because microvm.nix uses `-chardev stdio`
-          + pkgs.lib.optionalString (false) ''
-            VM_PID=$!
-            trap 'kill "$VM_PID" 2>/dev/null || true; wait "$VM_PID" 2>/dev/null || true' EXIT INT TERM
-
-            echo "🔐 Waiting for SSH over vsock..."
-            for _ in $(seq 1 60); do
-              exec "${connectScript}/bin/connect-agent-${name}"
-              sleep 0.5
-            done
+            exec "$RUNNER_PATH/bin/microvm-run"
           '';
         in
         script;

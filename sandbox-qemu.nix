@@ -76,7 +76,7 @@ in
 
     sshAuthorizedKeys = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [];
+      default = [ ];
       description = "Setup ssh access with these authorized keys.";
     };
 
@@ -128,21 +128,92 @@ in
     lib.mkMerge [
       {
         agentspace.sandbox.initExtra = lib.mkAfter (
-          lib.optionalString (cfg.protocol == "virtiofs") ''
-            virtiofsd_runner="$RUNNER_PATH/bin/virtiofsd-run"
-            cleanup_virtiofsd() {
-              if [ -n "''${VIRTIOFSD_PID:-}" ] && kill -0 "$VIRTIOFSD_PID" 2>/dev/null; then
-                kill "$VIRTIOFSD_PID" 2>/dev/null || true
-                wait "$VIRTIOFSD_PID" 2>/dev/null || true
-              fi
-            }
-            trap cleanup_virtiofsd EXIT INT TERM
+          ''
+            vfs_unit="agentspace-${cfg.hostName}-virtiofsd"
+            vm_unit="agentspace-${cfg.hostName}-vm"
+            connect_unit="agentspace-${cfg.hostName}-connect"
+            tracked_units=()
 
-            if [ -x "$virtiofsd_runner" ]; then
-              echo "📦 Starting virtiofsd..."
-              "$virtiofsd_runner" &
-              VIRTIOFSD_PID=$!
+            if [ "${cfg.protocol}" = "virtiofs" ]; then
+              tracked_units+=("$vfs_unit.service")
             fi
+          ''
+          + lib.optionalString (cfg.connectWith != "ssh" && cfg.protocol == "virtiofs") ''
+            echo "📦 Starting virtiofsd unit..."
+            systemd-run --user \
+              --unit="$vfs_unit" \
+              --collect \
+              --service-type=exec \
+              -p KillMode=control-group \
+              -p Restart=on-failure \
+              -p RestartSec=500ms \
+              -p TimeoutStopSec=15s \
+              -p WorkingDirectory="$REPO_DIR" \
+              "$RUNNER_PATH/bin/virtiofsd-run"
+            trap 'systemctl --user stop "$vfs_unit.service" >/dev/null 2>&1 || true' EXIT INT TERM
+          ''
+          + lib.optionalString (cfg.connectWith == "ssh") ''
+            tracked_units+=("$connect_unit.service" "$vm_unit.service")
+
+            if systemctl --user --quiet is-active "''${tracked_units[@]}"; then
+              echo "launch-agent: refusing to start because an agentspace unit is already active" >&2
+              exit 1
+            fi
+
+            systemctl --user reset-failed "''${tracked_units[@]}" >/dev/null 2>&1 || true
+
+            echo "🖥️  Starting Agentspace VM unit..."
+            ${lib.optionalString (cfg.protocol == "virtiofs") ''
+              echo "📦 Starting virtiofsd unit..."
+              systemd-run --user \
+                --unit="$vfs_unit" \
+                --collect \
+                --service-type=exec \
+                -p PartOf="$vm_unit.service" \
+                -p KillMode=control-group \
+                -p Restart=on-failure \
+                -p RestartSec=500ms \
+                -p TimeoutStopSec=15s \
+                -p WorkingDirectory="$REPO_DIR" \
+                "$RUNNER_PATH/bin/virtiofsd-run"
+            ''}
+
+            systemd-run --user \
+              --unit="$vm_unit" \
+              --collect \
+              --service-type=exec \
+              ${lib.optionalString (cfg.protocol == "virtiofs") "-p BindsTo=\"$vfs_unit.service\""} \
+              ${lib.optionalString (cfg.protocol == "virtiofs") "-p After=\"$vfs_unit.service\""} \
+              -p KillMode=control-group \
+              -p TimeoutStopSec=15s \
+              -p WorkingDirectory="$REPO_DIR" \
+              "$RUNNER_PATH/bin/microvm-run"
+
+            echo "🔐 Starting SSH connect unit..."
+            set +e
+            systemd-run --user \
+              --unit="$connect_unit" \
+              --collect \
+              --wait \
+              --service-type=exec \
+              -p BindsTo="$vm_unit.service" \
+              -p After="$vm_unit.service" \
+              -p Restart=on-failure \
+              -p RestartSec=500ms \
+              -p StartLimitIntervalSec=0 \
+              -p KillMode=control-group \
+              -p TimeoutStopSec=15s \
+              ${pkgs.openssh}/bin/ssh \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o GlobalKnownHostsFile=/dev/null \
+              "${cfg.user}@vsock/${toString config.microvm.vsock.cid}" \
+              "$@"
+            ssh_status=$?
+            set -e
+
+            systemctl --user stop "$connect_unit.service" "$vm_unit.service" >/dev/null 2>&1 || true
+            exit "$ssh_status"
           ''
         );
 
@@ -167,7 +238,7 @@ in
           openssh.authorizedKeys.keys = cfg.sshAuthorizedKeys;
         };
 
-        services.openssh = lib.mkIf (cfg.sshAuthorizedKeys != []) {
+        services.openssh = lib.mkIf (cfg.sshAuthorizedKeys != [ ]) {
           enable = true;
           openFirewall = false;
           settings = {
