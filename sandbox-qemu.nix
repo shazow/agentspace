@@ -195,7 +195,7 @@ in
               --unit="$connect_unit" \
               --collect \
               --wait \
-              --pty \
+              --pipe \
               --service-type=exec \
               -p BindsTo="$vm_unit.service" \
               -p After="$vm_unit.service" \
@@ -205,6 +205,7 @@ in
               -p KillMode=control-group \
               -p TimeoutStopSec=15s \
               ${pkgs.openssh}/bin/ssh \
+              -tt \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o GlobalKnownHostsFile=/dev/null \
