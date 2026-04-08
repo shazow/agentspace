@@ -152,12 +152,13 @@ in
           + lib.optionalString (cfg.connectWith == "ssh") ''
             tracked_units+=("$connect_unit.service" "$vm_unit.service")
 
-            if systemctl --user --quiet is-active "''${tracked_units[@]}"; then
+            if systemctl --user --quiet is-active "$vm_unit.service" "$connect_unit.service" "$vfs_unit.service"; then
               echo "launch-agent: refusing to start because an agentspace unit is already active" >&2
               exit 1
             fi
 
-            systemctl --user reset-failed "''${tracked_units[@]}" >/dev/null 2>&1 || true
+            # FIXME: Do we need this?
+            #systemctl --user reset-failed "''${tracked_units[@]}"
 
             echo "🖥️  Starting microvm..."
             systemd-run --user \
@@ -171,8 +172,7 @@ in
               -p WorkingDirectory="$REPO_DIR" \
               "$RUNNER_PATH/bin/microvm-run"
 
-            echo "🔐 Starting SSH connect unit..."
-            set +e
+            echo "🔐 Starting SSH..."
             systemd-run --user \
               --unit="$connect_unit" \
               --collect \
@@ -193,11 +193,9 @@ in
               -o GlobalKnownHostsFile=/dev/null \
               "${cfg.user}@vsock/${toString config.microvm.vsock.cid}" \
               "$@"
-            ssh_status=$?
-            set -e
 
-            systemctl --user stop "$connect_unit.service" "$vm_unit.service" >/dev/null 2>&1 || true
-            exit "$ssh_status"
+            systemctl --user stop "''${tracked_units[@]}"
+            exit
           ''
         );
 
