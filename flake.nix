@@ -30,7 +30,9 @@
 
             # Module Configuration
             {
-              agentspace.sandbox = cfg;
+              agentspace.sandbox = {
+                enable = true;
+              } // cfg;
 
               # System-specific overrides can still go here
               system.stateVersion = "25.11";
