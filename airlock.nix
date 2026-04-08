@@ -61,22 +61,23 @@ in
         directory = /home/${cfg.user}/mnt/inbox/*
     '';
 
-    microvm.shares = (lib.imap0 (i: inbox: {
-      proto = cfg.protocol;
-      tag = "inbox-${toString i}";
-      source = inbox.source;
-      mountPoint = inbox.mountPoint;
-      readOnly = true;
-    }) cfg.inbox)
-    ++ [
-      {
+    microvm.shares =
+      (lib.imap0 (i: inbox: {
         proto = cfg.protocol;
-        tag = "outbox";
-        source = "outbox";
-        mountPoint = cfg.outbox.mountPoint;
-        securityModel = "mapped";
-      }
-    ];
+        tag = "inbox-${toString i}";
+        source = inbox.source;
+        mountPoint = inbox.mountPoint;
+        readOnly = true;
+      }) cfg.inbox)
+      ++ [
+        {
+          proto = cfg.protocol;
+          tag = "outbox";
+          source = "outbox";
+          mountPoint = cfg.outbox.mountPoint;
+          securityModel = "mapped";
+        }
+      ];
 
     agentspace.sandbox.initExtra = lib.mkAfter ''
       AGENT_ID=''${AGENT_ID:-$(${pkgs.openssl}/bin/openssl rand -hex 3)}
