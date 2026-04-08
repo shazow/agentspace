@@ -17,7 +17,10 @@
       pkgs = nixpkgs.legacyPackages.${system};
 
       mkSandbox =
-        cfg @ { extraModules ? [ ], ... }:
+        cfg@{
+          extraModules ? [ ],
+          ...
+        }:
         nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [
