@@ -133,13 +133,10 @@ in
             vm_unit="agentspace-${cfg.hostName}-vm"
             connect_unit="agentspace-${cfg.hostName}-connect"
             tracked_units=()
-
-            if [ "${cfg.protocol}" = "virtiofs" ]; then
-              tracked_units+=("$vfs_unit.service")
-            fi
           ''
-          + lib.optionalString (cfg.connectWith != "ssh" && cfg.protocol == "virtiofs") ''
-            echo "📦 Starting virtiofsd unit..."
+          + lib.optionalString (cfg.protocol == "virtiofs") ''
+            echo "📦 Starting virtiofsd..."
+            tracked_units+=("$vfs_unit.service")
             systemd-run --user \
               --unit="$vfs_unit" \
               --collect \
@@ -162,22 +159,7 @@ in
 
             systemctl --user reset-failed "''${tracked_units[@]}" >/dev/null 2>&1 || true
 
-            echo "🖥️  Starting Agentspace VM unit..."
-            ${lib.optionalString (cfg.protocol == "virtiofs") ''
-              echo "📦 Starting virtiofsd unit..."
-              systemd-run --user \
-                --unit="$vfs_unit" \
-                --collect \
-                --service-type=exec \
-                -p PartOf="$vm_unit.service" \
-                -p KillMode=control-group \
-                -p Restart=on-failure \
-                -p RestartSec=500ms \
-                -p TimeoutStopSec=15s \
-                -p WorkingDirectory="$REPO_DIR" \
-                "$RUNNER_PATH/bin/virtiofsd-run"
-            ''}
-
+            echo "🖥️  Starting microvm..."
             systemd-run --user \
               --unit="$vm_unit" \
               --collect \
@@ -285,19 +267,16 @@ in
 
         # MicroVM Configuration
         microvm = {
-          mem = 4 * 1024;
+          vcpu = lib.mkDefault 8;
+          mem = lib.mkDefault 4 * 1024;
           balloon = true;
           socket = "/tmp/vm-${cfg.hostName}.sock";
           hypervisor = "qemu";
 
           qemu.serialConsole = cfg.connectWith == "console";
-          qemu.extraArgs = [
-            "-cpu"
-            "host"
-          ];
 
           vsock = {
-            cid = 10;
+            cid = lib.mkDefault 10;
             ssh.enable = true;
           };
 
