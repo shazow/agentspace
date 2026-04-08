@@ -119,6 +119,10 @@
         connect = mkConnectScript "vm";
       };
 
+      lib = {
+        inherit mkSandbox;
+      };
+
       checks.${system} = import ./checks.nix {
         inherit
           microvm
