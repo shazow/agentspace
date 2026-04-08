@@ -34,6 +34,6 @@
         ];
       };
 
-      packages.${system}.default = self.nixosConfigurations.demo.config.microvm.declaredRunner;
+      packages.${system}.default = mkLaunch self.nixosConfigurations.demo;
     };
 }

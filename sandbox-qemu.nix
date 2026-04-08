@@ -268,7 +268,7 @@ in
         # MicroVM Configuration
         microvm = {
           vcpu = lib.mkDefault 8;
-          mem = lib.mkDefault 4 * 1024;
+          mem = lib.mkDefault (4 * 1024);
           balloon = true;
           socket = "/tmp/vm-${cfg.hostName}.sock";
           hypervisor = "qemu";
