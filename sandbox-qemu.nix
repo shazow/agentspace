@@ -129,10 +129,16 @@ in
       {
         agentspace.sandbox.initExtra = lib.mkAfter (
           ''
-            vfs_unit="agentspace-${cfg.hostName}-virtiofsd"
-            vm_unit="agentspace-${cfg.hostName}-vm"
-            connect_unit="agentspace-${cfg.hostName}-connect"
+            name_prefix="agentspace-${cfg.hostName}";
+            vfs_unit="$name_prefix-virtiofsd"
+            vm_unit="$name_prefix-vm"
+            connect_unit="$name_prefix-connect"
             tracked_units=()
+
+            if systemctl --user --quiet is-active "$name_prefix-*.service"; then
+              echo "launch-agent: refusing to start because an agentspace unit is already active" >&2
+              exit 1
+            fi
           ''
           + lib.optionalString (cfg.protocol == "virtiofs") ''
             echo "📦 Starting virtiofsd..."
@@ -151,11 +157,6 @@ in
           ''
           + lib.optionalString (cfg.connectWith == "ssh") ''
             tracked_units+=("$connect_unit.service" "$vm_unit.service")
-
-            if systemctl --user --quiet is-active "$vm_unit.service" "$connect_unit.service" "$vfs_unit.service"; then
-              echo "launch-agent: refusing to start because an agentspace unit is already active" >&2
-              exit 1
-            fi
 
             # FIXME: Do we need this?
             #systemctl --user reset-failed "''${tracked_units[@]}"
@@ -182,7 +183,7 @@ in
               -p BindsTo="$vm_unit.service" \
               -p After="$vm_unit.service" \
               -p Restart=on-failure \
-              -p RestartSec=500ms \
+              -p RestartSec=1000ms \
               -p StartLimitIntervalSec=0 \
               -p KillMode=control-group \
               -p TimeoutStopSec=15s \
