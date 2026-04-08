@@ -17,9 +17,7 @@
       pkgs = nixpkgs.legacyPackages.${system};
 
       mkSandbox =
-        {
-          extraModules ? [ ],
-        }:
+        cfg @ { extraModules ? [ ], ... }:
         nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [
@@ -29,22 +27,7 @@
 
             # Module Configuration
             {
-              agentspace.sandbox = {
-                enable = true;
-                user = "agent";
-                hostName = "agent-sandbox";
-                protocol = "9p"; # 9p | virtiofs
-                connectWith = "console"; # console | ssh
-
-                sshAuthorizedKeys = [
-                  # Put your ~/.ssh/id_*.pub here to start an ssh server you can connect to.
-                  # Example:
-                  # "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPWrZA5SvCSRmewCRj8nKvcZVZz7+Gy7LWV30oZ/MUwr"
-                ];
-
-                persistence.homeImage = "./home.img";
-                bundle = [ ];
-              };
+              agentspace.sandbox = cfg;
 
               # System-specific overrides can still go here
               system.stateVersion = "25.11";
