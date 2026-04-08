@@ -15,25 +15,20 @@
     }:
     let
       system = "x86_64-linux";
-      mkSandbox = agentspace.lib.mkSandbox;
-    in
+    in rec
     {
-      nixosConfigurations.demo = mkSandbox {
-        extraModules = [
-          {
-            agentspace.sandbox = {
-              hostName = "agent-demo";
-              connectWith = "ssh";
-              protocol = "virtiofs";
-              sshAuthorizedKeys = [
-                # Replace with your own key.
-                "ssh-ed25519 AAAA... user@example"
-              ];
-            };
-          }
+      nixosConfigurations.agentspace = agentspace.lib.mkSandbox {
+        connectWith = "ssh";
+        protocol = "virtiofs";
+        sshAuthorizedKeys = [
+          # Replace with your own key.
+          "ssh-ed25519 AAAA... user@example"
         ];
       };
 
-      packages.${system}.default = mkLaunch self.nixosConfigurations.demo;
+      apps.${system}.default = {
+        type = "app";
+        program = agentspace.lib.mkLaunch nixosConfigurations.agentspace;
+      };
     };
 }
