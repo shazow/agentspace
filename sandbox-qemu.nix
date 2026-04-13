@@ -189,7 +189,7 @@ in
               --unit="$connect_unit" \
               --collect \
               --wait \
-              --pipe \
+              --pty \
               --service-type=exec \
               -p BindsTo="$vm_unit.service" \
               -p After="$vm_unit.service" \
