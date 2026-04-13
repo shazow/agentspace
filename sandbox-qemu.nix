@@ -7,6 +7,9 @@
 
 let
   cfg = config.agentspace.sandbox;
+  readinessEnabled = cfg.connectWith == "ssh";
+  readinessPort = 17999;
+  readinessTarget = "agentspace-ssh-ready.target";
 in
 {
   options.agentspace.sandbox = {
@@ -157,9 +160,25 @@ in
           ''
           + lib.optionalString (cfg.connectWith == "ssh") ''
             tracked_units+=("$connect_unit.service" "$vm_unit.service")
+            ready_pid=""
+
+            cleanup() {
+              if [ -n "$ready_pid" ] && kill -0 "$ready_pid" >/dev/null 2>&1; then
+                kill "$ready_pid" >/dev/null 2>&1 || true
+              fi
+              if [ "''${#tracked_units[@]}" -gt 0 ]; then
+                systemctl --user stop "''${tracked_units[@]}" >/dev/null 2>&1 || true
+              fi
+            }
+            trap cleanup EXIT INT TERM
 
             # FIXME: Do we need this?
             #systemctl --user reset-failed "''${tracked_units[@]}"
+
+            echo "⏳ Waiting for guest SSH readiness..."
+            ${pkgs.nmap}/bin/ncat -l --vsock --udp "${toString readinessPort}" \
+              | ${pkgs.gnugrep}/bin/grep -m1 -Fx "X_SYSTEMD_UNIT_ACTIVE=${readinessTarget}" >/dev/null &
+            ready_pid=$!
 
             echo "🖥️  Starting microvm..."
             systemd-run --user \
@@ -173,6 +192,13 @@ in
               -p WorkingDirectory="$REPO_DIR" \
               "$RUNNER_PATH/bin/microvm-run"
 
+            if ! wait "$ready_pid"; then
+              echo "launch-agent: guest SSH readiness wait failed" >&2
+              exit 1
+            fi
+            ready_pid=""
+            echo "✅ Guest SSH readiness received."
+
             echo "🔐 Starting SSH..."
             systemd-run --user \
               --unit="$connect_unit" \
@@ -182,9 +208,6 @@ in
               --service-type=exec \
               -p BindsTo="$vm_unit.service" \
               -p After="$vm_unit.service" \
-              -p Restart=on-failure \
-              -p RestartSec=1000ms \
-              -p StartLimitIntervalSec=0 \
               -p KillMode=control-group \
               -p TimeoutStopSec=15s \
               ${pkgs.openssh}/bin/ssh \
@@ -194,9 +217,6 @@ in
               -o GlobalKnownHostsFile=/dev/null \
               "${cfg.user}@vsock/${toString config.microvm.vsock.cid}" \
               "$@"
-
-            systemctl --user stop "''${tracked_units[@]}"
-            exit
           ''
         );
 
@@ -238,6 +258,15 @@ in
           "d /home/${cfg.user} 0700 ${cfg.user} users -"
         ];
 
+        systemd.targets = lib.mkIf readinessEnabled {
+          ${readinessTarget} = {
+            description = "Agentspace SSH readiness target";
+            requires = [ "sshd.service" ];
+            after = [ "sshd.service" ];
+            wantedBy = [ "multi-user.target" ];
+          };
+        };
+
         # Inbox-mounted directories are owned by root, but readable which we'll be
         # using to clone as local user.
         # TODO: mkOptional if we're using inboxes
@@ -273,6 +302,10 @@ in
           hypervisor = "qemu";
 
           qemu.serialConsole = cfg.connectWith == "console";
+          qemu.extraArgs = lib.optionals readinessEnabled [
+            "-smbios"
+            "type=11,value=io.systemd.credential:vmm.notify_socket=vsock-dgram:2:${toString readinessPort}"
+          ];
 
           vsock = {
             cid = lib.mkDefault 10;
