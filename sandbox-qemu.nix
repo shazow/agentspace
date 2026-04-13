@@ -124,11 +124,23 @@ in
 
         exec sudo poweroff
       '';
+
+      initDirs =
+        lib.pipe
+          [ cfg.persistence.homeImage cfg.persistence.storeOverlay ]
+          [
+            (builtins.filter (x: x != null))
+            (builtins.map builtins.dirOf)
+            lib.escapeShellArgs
+          ];
     in
     lib.mkMerge [
       {
         agentspace.sandbox.initExtra = lib.mkAfter (
+          lib.optionalString (initDirs != "") ''
+            mkdir -vp ${initDirs}
           ''
+          + ''
             name_prefix="agentspace-${cfg.hostName}";
             vfs_unit="$name_prefix-virtiofsd"
             vm_unit="$name_prefix-vm"
@@ -139,6 +151,7 @@ in
               echo "launch-agent: refusing to start because an agentspace unit is already active" >&2
               exit 1
             fi
+            systemctl --user reset-failed "$name_prefix-*.service"
           ''
           + lib.optionalString (cfg.protocol == "virtiofs") ''
             echo "📦 Starting virtiofsd..."
@@ -158,9 +171,6 @@ in
           + lib.optionalString (cfg.connectWith == "ssh") ''
             tracked_units+=("$connect_unit.service" "$vm_unit.service")
 
-            # FIXME: Do we need this?
-            #systemctl --user reset-failed "''${tracked_units[@]}"
-
             echo "🖥️  Starting microvm..."
             systemd-run --user \
               --unit="$vm_unit" \
@@ -172,6 +182,7 @@ in
               -p TimeoutStopSec=15s \
               -p WorkingDirectory="$REPO_DIR" \
               "$RUNNER_PATH/bin/microvm-run"
+            journalctl --user --no-pager -u "$vm_unit.service" --invocation=0
 
             echo "🔐 Starting SSH..."
             systemd-run --user \
@@ -195,7 +206,7 @@ in
               "${cfg.user}@vsock/${toString config.microvm.vsock.cid}" \
               "$@"
 
-            systemctl --user stop "''${tracked_units[@]}"
+            systemctl --user stop "''${tracked_units[@]}" >/dev/null 2>&1 || true
             exit
           ''
         );
