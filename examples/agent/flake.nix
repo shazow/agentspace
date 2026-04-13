@@ -15,8 +15,8 @@
     }:
     let
       system = "x86_64-linux";
-    in rec
-    {
+    in
+    rec {
       nixosConfigurations.agentspace = agentspace.lib.mkSandbox {
         connectWith = "ssh";
         protocol = "virtiofs";

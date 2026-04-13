@@ -32,7 +32,8 @@
             {
               agentspace.sandbox = {
                 enable = true;
-              } // cfg;
+              }
+              // cfg;
 
               # System-specific overrides can still go here
               system.stateVersion = "25.11";

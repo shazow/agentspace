@@ -107,6 +107,50 @@ in
       agentspace-init = pkgs.writeShellScriptBin "agentspace-init" (
         builtins.readFile ./scripts/agentspace-init
       );
+      processComposeYAML = lib.generators.toYAML { };
+      processComposeVirtiofsdProcess = {
+        command = "$RUNNER_PATH/bin/virtiofsd-run";
+        working_dir = "$REPO_DIR";
+        availability = {
+          restart = "on_failure";
+        };
+      };
+      processComposeMicrovmProcess = {
+        command = "$RUNNER_PATH/bin/microvm-run";
+        working_dir = "$REPO_DIR";
+      }
+      // lib.optionalAttrs (cfg.protocol == "virtiofs") {
+        depends_on.virtiofsd.condition = "process_started";
+      };
+      processComposeSshConfig = pkgs.writeText "agentspace-process-compose-ssh.yaml" (processComposeYAML {
+        version = "0.5";
+        is_strict = true;
+        processes =
+          (lib.optionalAttrs (cfg.protocol == "virtiofs") {
+            virtiofsd = processComposeVirtiofsdProcess;
+          })
+          // {
+            microvm = processComposeMicrovmProcess;
+            ssh = {
+              command = "${pkgs.openssh}/bin/ssh -tt -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null ${cfg.user}@vsock/${toString config.microvm.vsock.cid}$SSH_ARGS";
+              is_interactive = true;
+              availability = {
+                restart = "on_failure";
+              };
+              depends_on.microvm.condition = "process_started";
+            };
+          };
+      });
+      processComposeVirtiofsConsoleConfig =
+        pkgs.writeText "agentspace-process-compose-virtiofs-console.yaml"
+          (processComposeYAML {
+            version = "0.5";
+            is_strict = true;
+            processes = {
+              virtiofsd = processComposeVirtiofsdProcess;
+              microvm = processComposeMicrovmProcess;
+            };
+          });
       agentspace-logout = pkgs.writeShellScriptBin "agentspace-logout" ''
         set -eu
 
@@ -128,75 +172,19 @@ in
     lib.mkMerge [
       {
         agentspace.sandbox.initExtra = lib.mkAfter (
+          lib.optionalString (cfg.connectWith == "ssh") ''
+            SSH_ARGS=""
+            for arg in "$@"; do
+              SSH_ARGS+=" ''${arg@Q}"
+            done
+            export SSH_ARGS
+
+            echo "🧭 Starting process-compose dashboard..."
+            exec ${pkgs.process-compose}/bin/process-compose -f ${processComposeSshConfig} up
           ''
-            name_prefix="agentspace-${cfg.hostName}";
-            vfs_unit="$name_prefix-virtiofsd"
-            vm_unit="$name_prefix-vm"
-            connect_unit="$name_prefix-connect"
-            tracked_units=()
-
-            if systemctl --user --quiet is-active "$name_prefix-*.service"; then
-              echo "launch-agent: refusing to start because an agentspace unit is already active" >&2
-              exit 1
-            fi
-          ''
-          + lib.optionalString (cfg.protocol == "virtiofs") ''
-            echo "📦 Starting virtiofsd..."
-            tracked_units+=("$vfs_unit.service")
-            systemd-run --user \
-              --unit="$vfs_unit" \
-              --collect \
-              --service-type=exec \
-              -p KillMode=control-group \
-              -p Restart=on-failure \
-              -p RestartSec=500ms \
-              -p TimeoutStopSec=15s \
-              -p WorkingDirectory="$REPO_DIR" \
-              "$RUNNER_PATH/bin/virtiofsd-run"
-            trap 'systemctl --user stop "$vfs_unit.service" >/dev/null 2>&1 || true' EXIT INT TERM
-          ''
-          + lib.optionalString (cfg.connectWith == "ssh") ''
-            tracked_units+=("$connect_unit.service" "$vm_unit.service")
-
-            # FIXME: Do we need this?
-            #systemctl --user reset-failed "''${tracked_units[@]}"
-
-            echo "🖥️  Starting microvm..."
-            systemd-run --user \
-              --unit="$vm_unit" \
-              --collect \
-              --service-type=exec \
-              ${lib.optionalString (cfg.protocol == "virtiofs") "-p BindsTo=\"$vfs_unit.service\""} \
-              ${lib.optionalString (cfg.protocol == "virtiofs") "-p After=\"$vfs_unit.service\""} \
-              -p KillMode=control-group \
-              -p TimeoutStopSec=15s \
-              -p WorkingDirectory="$REPO_DIR" \
-              "$RUNNER_PATH/bin/microvm-run"
-
-            echo "🔐 Starting SSH..."
-            systemd-run --user \
-              --unit="$connect_unit" \
-              --collect \
-              --wait \
-              --pipe \
-              --service-type=exec \
-              -p BindsTo="$vm_unit.service" \
-              -p After="$vm_unit.service" \
-              -p Restart=on-failure \
-              -p RestartSec=1000ms \
-              -p StartLimitIntervalSec=0 \
-              -p KillMode=control-group \
-              -p TimeoutStopSec=15s \
-              ${pkgs.openssh}/bin/ssh \
-              -tt \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o GlobalKnownHostsFile=/dev/null \
-              "${cfg.user}@vsock/${toString config.microvm.vsock.cid}" \
-              "$@"
-
-            systemctl --user stop "''${tracked_units[@]}"
-            exit
+          + lib.optionalString ((cfg.connectWith != "ssh") && (cfg.protocol == "virtiofs")) ''
+            echo "🧭 Starting process-compose dashboard..."
+            exec ${pkgs.process-compose}/bin/process-compose -f ${processComposeVirtiofsConsoleConfig} up
           ''
         );
 
