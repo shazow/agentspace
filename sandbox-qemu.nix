@@ -65,18 +65,10 @@ in
       description = "Mount the current working directory into the VM as the workspace share.";
     };
 
-    swap = {
-      enable = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
-        description = "Enable a sparse swapfile inside the guest VM.";
-      };
-
-      sizeMB = lib.mkOption {
-        type = lib.types.int;
-        default = 4096;
-        description = "Size of the guest swapfile in MiB.";
-      };
+    swapSize = lib.mkOption {
+      type = lib.types.int;
+      default = 0;
+      description = "Size of the guest sparse swapfile in MiB. Set to 0 to disable (e.g. 4096).";
     };
 
     connectWith = lib.mkOption {
@@ -257,10 +249,10 @@ in
         };
 
         security.sudo.wheelNeedsPassword = false;
-        swapDevices = lib.optionals cfg.swap.enable [
+        swapDevices = lib.optionals (cfg.swapSize > 0) [
           {
             device = "/swapfile";
-            size = cfg.swap.sizeMB;
+            size = cfg.swapSize;
           }
         ];
 
