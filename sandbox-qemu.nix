@@ -65,6 +65,12 @@ in
       description = "Mount the current working directory into the VM as the workspace share.";
     };
 
+    swapSize = lib.mkOption {
+      type = lib.types.int;
+      default = 0;
+      description = "Size of the guest sparse swapfile in MiB. Set to 0 to disable (e.g. 4096).";
+    };
+
     connectWith = lib.mkOption {
       type = lib.types.enum [
         "console"
@@ -243,6 +249,12 @@ in
         };
 
         security.sudo.wheelNeedsPassword = false;
+        swapDevices = lib.optionals (cfg.swapSize > 0) [
+          {
+            device = "/swapfile";
+            size = cfg.swapSize;
+          }
+        ];
 
         # Directory permissions
         systemd.tmpfiles.rules = [
