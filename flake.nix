@@ -121,7 +121,7 @@
         inherit mkSandbox mkLaunch mkConnect;
       };
 
-      checks.${system} = import ./checks.nix {
+      checks.${system} = import ./checks {
         inherit mkSandbox pkgs;
       };
 
