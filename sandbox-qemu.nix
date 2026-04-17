@@ -307,6 +307,7 @@ in
         ];
         boot.consoleLogLevel = 0;
         boot.initrd.verbose = false;
+        boot.tmp.useTmpfs = false;
 
         # User Configuration
         users.users.${cfg.user} = {
@@ -442,7 +443,7 @@ in
             {
               image = cfg.persistence.storeOverlay;
               mountPoint = "/nix/.rw-store";
-              size = 4096;
+              size = 2 * 4096;
             }
           ]
           ++ lib.optionals (cfg.persistence.homeImage != null) [
