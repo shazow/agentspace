@@ -257,20 +257,12 @@ in
             fi
 
             echo "🔐 Starting SSH..."
-            ssh_tty_args=()
-            if [ "$#" -eq 0 ]; then
-              ssh_tty_args=(-tt)
-            fi
             ssh_deadline=$((SECONDS + 60))
             while true; do
               set +e
               ${pkgs.openssh}/bin/ssh \
                 -F /dev/null \
-                "''${ssh_tty_args[@]}" \
-                ${lib.optionalString (
-                  cfg.sshIdentityFile != null
-                ) "-i ${lib.escapeShellArg cfg.sshIdentityFile} \\"}
-                ${lib.optionalString (cfg.sshIdentityFile != null) "-o IdentitiesOnly=yes \\"}
+                -tt \
                 -o ProxyCommand="$ssh_proxy" \
                 -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null \

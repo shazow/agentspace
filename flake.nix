@@ -25,13 +25,11 @@
       mkSandbox =
         {
           extraModules ? [ ],
-          homeModules ? [ ],
           ...
         }@cfg:
         let
           sandboxCfg = builtins.removeAttrs cfg [
             "extraModules"
-            "homeModules"
           ];
         in
         nixpkgs.lib.nixosSystem {
@@ -46,7 +44,6 @@
             {
               agentspace.sandbox = {
                 enable = true;
-                inherit homeModules;
               }
               // sandboxCfg;
 
@@ -74,10 +71,6 @@
 
             exec ${pkgs.openssh}/bin/ssh \
               -F /dev/null \
-              ${nixpkgs.lib.optionalString (
-                sandboxCfg.sshIdentityFile != null
-              ) "-i ${nixpkgs.lib.escapeShellArg sandboxCfg.sshIdentityFile} \\"}
-              ${nixpkgs.lib.optionalString (sandboxCfg.sshIdentityFile != null) "-o IdentitiesOnly=yes \\"}
               -o ProxyCommand="${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:${toString cid}:22" \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
