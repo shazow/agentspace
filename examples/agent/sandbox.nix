@@ -9,13 +9,17 @@
   vsockCid ? 11010,
   memoryMiB ? 1024,
   extraModules ? [ ],
+  homeModules ? [ ],
 }:
 mkSandbox {
   connectWith = "ssh";
   hostName = hostName;
   protocol = protocol;
   sshAuthorizedKeys = [ publicKey ];
-  inherit sshIdentityFile;
+  inherit
+    homeModules
+    sshIdentityFile
+    ;
   persistence = {
     homeImage = homeImagePath;
     storeOverlay = storeOverlayPath;

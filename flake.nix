@@ -1,6 +1,11 @@
 {
   description = "Agent Sandbox";
 
+  inputs.home-manager = {
+    url = "github:nix-community/home-manager";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+
   inputs.microvm = {
     url = "github:astro/microvm.nix";
     inputs.nixpkgs.follows = "nixpkgs";
@@ -9,6 +14,7 @@
   outputs =
     {
       self,
+      home-manager,
       nixpkgs,
       microvm,
     }:
@@ -19,15 +25,20 @@
       mkSandbox =
         {
           extraModules ? [ ],
+          homeModules ? [ ],
           ...
         }@cfg:
         let
-          sandboxCfg = builtins.removeAttrs cfg [ "extraModules" ];
+          sandboxCfg = builtins.removeAttrs cfg [
+            "extraModules"
+            "homeModules"
+          ];
         in
         nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [
             microvm.nixosModules.microvm
+            home-manager.nixosModules.home-manager
             ./modules/virtiofsd.nix
             ./sandbox-qemu.nix
 
@@ -35,6 +46,7 @@
             {
               agentspace.sandbox = {
                 enable = true;
+                inherit homeModules;
               }
               // sandboxCfg;
 

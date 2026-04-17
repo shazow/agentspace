@@ -101,6 +101,12 @@ in
       description = "Where to mount the current working directory inside the VM.";
     };
 
+    homeModules = lib.mkOption {
+      type = lib.types.listOf lib.types.raw;
+      default = [ ];
+      description = "Extra Home Manager modules imported for the sandbox user.";
+    };
+
     initExtra = lib.mkOption {
       type = lib.types.separatedString "\n";
       description = "Extra shell snippet appended to the launch-agent script.";
@@ -306,8 +312,24 @@ in
         users.users.${cfg.user} = {
           password = "";
           isNormalUser = true;
+          createHome = true;
+          home = "/home/${cfg.user}";
           extraGroups = [ "wheel" ];
           openssh.authorizedKeys.keys = cfg.sshAuthorizedKeys;
+        };
+
+        home-manager = {
+          useGlobalPkgs = true;
+          useUserPackages = true;
+          users.${cfg.user} = {
+            imports = cfg.homeModules;
+
+            home.username = lib.mkDefault cfg.user;
+            home.homeDirectory = lib.mkDefault "/home/${cfg.user}";
+            home.stateVersion = lib.mkDefault config.system.stateVersion;
+
+            programs.home-manager.enable = lib.mkDefault true;
+          };
         };
 
         services.openssh = lib.mkIf (cfg.sshAuthorizedKeys != [ ]) {
