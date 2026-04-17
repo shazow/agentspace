@@ -17,10 +17,13 @@
       pkgs = nixpkgs.legacyPackages.${system};
 
       mkSandbox =
-        cfg@{
+        {
           extraModules ? [ ],
           ...
-        }:
+        }@cfg:
+        let
+          sandboxCfg = builtins.removeAttrs cfg [ "extraModules" ];
+        in
         nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [
@@ -32,7 +35,8 @@
             {
               agentspace.sandbox = {
                 enable = true;
-              } // cfg;
+              }
+              // sandboxCfg;
 
               # System-specific overrides can still go here
               system.stateVersion = "25.11";
@@ -56,14 +60,17 @@
           script = pkgs.writeShellScriptBin "connect-agent" ''
             set -euo pipefail
 
-            # Assumes systemd-ssh-proxy support is available via ssh_config.
-            # Fallback (if unavailable):
-            # -o ProxyCommand='socat STDIO VSOCK-CONNECT:10:22'
             exec ${pkgs.openssh}/bin/ssh \
+              -F /dev/null \
+              ${nixpkgs.lib.optionalString (
+                sandboxCfg.sshIdentityFile != null
+              ) "-i ${nixpkgs.lib.escapeShellArg sandboxCfg.sshIdentityFile} \\"}
+              ${nixpkgs.lib.optionalString (sandboxCfg.sshIdentityFile != null) "-o IdentitiesOnly=yes \\"}
+              -o ProxyCommand="${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:${toString cid}:22" \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o GlobalKnownHostsFile=/dev/null \
-              "${sandboxCfg.user}@vsock/${toString cid}" \
+              "${sandboxCfg.user}@agentspace" \
               "$@"
           '';
         in
@@ -115,12 +122,7 @@
       };
 
       checks.${system} = import ./checks.nix {
-        inherit
-          microvm
-          nixpkgs
-          pkgs
-          system
-          ;
+        inherit mkSandbox pkgs;
       };
 
       apps.${system} = {

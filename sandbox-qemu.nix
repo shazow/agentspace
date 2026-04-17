@@ -7,6 +7,9 @@
 
 let
   cfg = config.agentspace.sandbox;
+  readinessEnabled = cfg.connectWith == "ssh";
+  readinessPort = 17999;
+  readinessTarget = "agentspace-ssh-ready.target";
 in
 {
   options.agentspace.sandbox = {
@@ -84,6 +87,12 @@ in
       type = lib.types.listOf lib.types.str;
       default = [ ];
       description = "Setup ssh access with these authorized keys.";
+    };
+
+    sshIdentityFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Host-side private key path used by SSH-based launch and connect commands.";
     };
 
     workspaceMountPoint = lib.mkOption {
@@ -175,7 +184,21 @@ in
             trap 'systemctl --user stop "$vfs_unit.service" >/dev/null 2>&1 || true' EXIT INT TERM
           ''
           + lib.optionalString (cfg.connectWith == "ssh") ''
-            tracked_units+=("$connect_unit.service" "$vm_unit.service")
+            tracked_units+=("$vm_unit.service")
+            ready_pid=""
+            readiness_fallback=0
+            readiness_attempts=0
+            ssh_proxy="${pkgs.socat}/bin/socat STDIO VSOCK-CONNECT:${toString config.microvm.vsock.cid}:22"
+
+            cleanup() {
+              if [ -n "$ready_pid" ] && kill -0 "$ready_pid" >/dev/null 2>&1; then
+                kill "$ready_pid" >/dev/null 2>&1 || true
+              fi
+              if [ "''${#tracked_units[@]}" -gt 0 ]; then
+                systemctl --user stop "''${tracked_units[@]}" >/dev/null 2>&1 || true
+              fi
+            }
+            trap cleanup EXIT INT TERM
 
             echo "🖥️  Starting microvm..."
             systemd-run --user \
@@ -188,31 +211,80 @@ in
               -p TimeoutStopSec=15s \
               -p WorkingDirectory="$REPO_DIR" \
               "$RUNNER_PATH/bin/microvm-run"
-            journalctl --user --no-pager -u "$vm_unit.service" --invocation=0
+
+            echo "⏳ Waiting for guest SSH readiness..."
+            while true; do
+              ${pkgs.nmap}/bin/ncat -l --vsock --udp 2 "${toString readinessPort}" \
+                | ${pkgs.gnugrep}/bin/grep -m1 -Fx "X_SYSTEMD_UNIT_ACTIVE=${readinessTarget}" >/dev/null &
+              ready_pid=$!
+
+              sleep 0.1
+              if kill -0 "$ready_pid" >/dev/null 2>&1; then
+                break
+              fi
+
+              if wait "$ready_pid"; then
+                ready_pid=""
+                break
+              fi
+
+              if ! systemctl --user --quiet is-active "$vm_unit.service"; then
+                echo "launch-agent: microvm terminated before SSH readiness listener could start" >&2
+                exit 1
+              fi
+
+              readiness_attempts=$((readiness_attempts + 1))
+              if [ "$readiness_attempts" -ge 50 ]; then
+                readiness_fallback=1
+                echo "launch-agent: host vsock listener unavailable, falling back to SSH retries" >&2
+                break
+              fi
+            done
+
+            if [ "$readiness_fallback" = 0 ] && [ -n "$ready_pid" ]; then
+              if ! wait "$ready_pid"; then
+                echo "launch-agent: guest SSH readiness wait failed" >&2
+                exit 1
+              fi
+              ready_pid=""
+              echo "✅ Guest SSH readiness received."
+            fi
 
             echo "🔐 Starting SSH..."
-            systemd-run --user \
-              --unit="$connect_unit" \
-              --collect \
-              --wait \
-              --pty \
-              --service-type=exec \
-              -p BindsTo="$vm_unit.service" \
-              -p After="$vm_unit.service" \
-              -p Restart=on-failure \
-              -p RestartSec=1000ms \
-              -p StartLimitIntervalSec=0 \
-              -p KillMode=control-group \
-              -p TimeoutStopSec=15s \
+            ssh_tty_args=()
+            if [ "$#" -eq 0 ]; then
+              ssh_tty_args=(-tt)
+            fi
+            ssh_deadline=$((SECONDS + 60))
+            while true; do
+              set +e
               ${pkgs.openssh}/bin/ssh \
-              -tt \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o GlobalKnownHostsFile=/dev/null \
-              "${cfg.user}@vsock/${toString config.microvm.vsock.cid}" \
-              "$@"
+                -F /dev/null \
+                "''${ssh_tty_args[@]}" \
+                ${lib.optionalString (
+                  cfg.sshIdentityFile != null
+                ) "-i ${lib.escapeShellArg cfg.sshIdentityFile} \\"}
+                ${lib.optionalString (cfg.sshIdentityFile != null) "-o IdentitiesOnly=yes \\"}
+                -o ProxyCommand="$ssh_proxy" \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o GlobalKnownHostsFile=/dev/null \
+                "${cfg.user}@agentspace" \
+                "$@"
+              ssh_status=$?
+              set -e
 
-            systemctl --user stop "''${tracked_units[@]}" >/dev/null 2>&1 || true
+              if [ "$ssh_status" -ne 255 ] || [ "$readiness_fallback" = 0 ]; then
+                exit "$ssh_status"
+              fi
+              if [ "$SECONDS" -ge "$ssh_deadline" ]; then
+                echo "launch-agent: SSH fallback retries timed out" >&2
+                exit "$ssh_status"
+              fi
+
+              sleep 1
+            done
+
             exit
           ''
         );
@@ -261,6 +333,15 @@ in
           "d /home/${cfg.user} 0700 ${cfg.user} users -"
         ];
 
+        systemd.targets = lib.mkIf readinessEnabled {
+          ${readinessTarget} = {
+            description = "Agentspace SSH readiness target";
+            requires = [ "sshd.service" ];
+            after = [ "sshd.service" ];
+            wantedBy = [ "multi-user.target" ];
+          };
+        };
+
         # Inbox-mounted directories are owned by root, but readable which we'll be
         # using to clone as local user.
         # TODO: mkOptional if we're using inboxes
@@ -296,6 +377,10 @@ in
           hypervisor = "qemu";
 
           qemu.serialConsole = cfg.connectWith == "console";
+          qemu.extraArgs = lib.optionals readinessEnabled [
+            "-smbios"
+            "type=11,value=io.systemd.credential:vmm.notify_socket=vsock-dgram:2:${toString readinessPort}"
+          ];
 
           vsock = {
             cid = lib.mkDefault 10;
