@@ -98,6 +98,12 @@ in
       description = "Extra Home Manager modules imported for the sandbox user.";
     };
 
+    extraModules = lib.mkOption {
+      type = lib.types.listOf lib.types.raw;
+      default = [ ];
+      description = "Extra modules imported for NixOS.";
+    };
+
     initExtra = lib.mkOption {
       type = lib.types.separatedString "\n";
       description = "Extra shell snippet appended to the launch-agent script.";
@@ -146,6 +152,9 @@ in
             lib.escapeShellArgs
           ];
     in
+    {
+      imports = cfg.extraModules;
+    } //
     lib.mkMerge [
       {
         agentspace.sandbox.initExtra = lib.mkAfter (
@@ -237,6 +246,18 @@ in
         boot.initrd.verbose = false;
         boot.tmp.useTmpfs = false;
 
+        # Need this to fix running out of fd's, but requires root (or CAP_DAC_READ_SEARCH)
+        #   microvm.virtiofsd.inodeFileHandles = "mandatory";
+        # Workaround during runtime:
+        # $ sync && echo 3 > /proc/sys/vm/drop_caches
+        # Also:
+        boot.kernel.sysctl = {
+          # Increase likelihood guest will release inodes, but contingent on memory pressure
+          # so unlikely to work in all scenarios.
+          "vm.vfs_cache_pressure" = 1000; # Default: 100
+        };
+
+
         # User Configuration
         users.users.${cfg.user} = {
           password = "";
@@ -317,8 +338,6 @@ in
           balloon = true;
           socket = "/tmp/vm-${cfg.hostName}.sock";
           hypervisor = "qemu";
-
-          virtiofsd.inodeFileHandles = "mandatory";
 
           qemu.serialConsole = cfg.connectWith == "console";
 

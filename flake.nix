@@ -23,10 +23,7 @@
       pkgs = nixpkgs.legacyPackages.${system};
 
       mkSandbox =
-        cfg@{
-          extraModules ? [ ],
-          ...
-        }:
+        cfg:
         nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [
@@ -50,8 +47,7 @@
                 "flakes"
               ];
             }
-          ]
-          ++ extraModules;
+          ];
         };
 
       mkConnect =
