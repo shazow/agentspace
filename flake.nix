@@ -1,6 +1,11 @@
 {
   description = "Agent Sandbox";
 
+  inputs.home-manager = {
+    url = "github:nix-community/home-manager";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+
   inputs.microvm = {
     url = "github:astro/microvm.nix";
     inputs.nixpkgs.follows = "nixpkgs";
@@ -9,6 +14,7 @@
   outputs =
     {
       self,
+      home-manager,
       nixpkgs,
       microvm,
     }:
@@ -17,14 +23,12 @@
       pkgs = nixpkgs.legacyPackages.${system};
 
       mkSandbox =
-        cfg@{
-          extraModules ? [ ],
-          ...
-        }:
+        cfg:
         nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [
             microvm.nixosModules.microvm
+            home-manager.nixosModules.home-manager
             ./modules/virtiofsd.nix
             ./sandbox-qemu.nix
 
@@ -43,8 +47,7 @@
                 "flakes"
               ];
             }
-          ]
-          ++ extraModules;
+          ];
         };
 
       mkConnect =

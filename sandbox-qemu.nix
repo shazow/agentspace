@@ -92,6 +92,18 @@ in
       description = "Where to mount the current working directory inside the VM.";
     };
 
+    homeModules = lib.mkOption {
+      type = lib.types.listOf lib.types.raw;
+      default = [ ];
+      description = "Extra Home Manager modules imported for the sandbox user.";
+    };
+
+    extraModules = lib.mkOption {
+      type = lib.types.listOf lib.types.raw;
+      default = [ ];
+      description = "Extra modules imported for NixOS.";
+    };
+
     initExtra = lib.mkOption {
       type = lib.types.separatedString "\n";
       description = "Extra shell snippet appended to the launch-agent script.";
@@ -140,6 +152,9 @@ in
             lib.escapeShellArgs
           ];
     in
+    {
+      imports = cfg.extraModules;
+    } //
     lib.mkMerge [
       {
         agentspace.sandbox.initExtra = lib.mkAfter (
@@ -229,13 +244,42 @@ in
         ];
         boot.consoleLogLevel = 0;
         boot.initrd.verbose = false;
+        boot.tmp.useTmpfs = false;
+
+        # Need this to fix running out of fd's, but requires root (or CAP_DAC_READ_SEARCH)
+        #   microvm.virtiofsd.inodeFileHandles = "mandatory";
+        # Workaround during runtime:
+        # $ sync && echo 3 > /proc/sys/vm/drop_caches
+        # Also:
+        boot.kernel.sysctl = {
+          # Increase likelihood guest will release inodes, but contingent on memory pressure
+          # so unlikely to work in all scenarios.
+          "vm.vfs_cache_pressure" = 1000; # Default: 100
+        };
+
 
         # User Configuration
         users.users.${cfg.user} = {
           password = "";
           isNormalUser = true;
+          createHome = true;
+          home = "/home/${cfg.user}";
           extraGroups = [ "wheel" ];
           openssh.authorizedKeys.keys = cfg.sshAuthorizedKeys;
+        };
+
+        home-manager = {
+          useGlobalPkgs = true;
+          useUserPackages = true;
+          users.${cfg.user} = {
+            imports = cfg.homeModules;
+
+            home.username = lib.mkDefault cfg.user;
+            home.homeDirectory = lib.mkDefault "/home/${cfg.user}";
+            home.stateVersion = lib.mkDefault config.system.stateVersion;
+
+            programs.home-manager.enable = lib.mkDefault true;
+          };
         };
 
         services.openssh = lib.mkIf (cfg.sshAuthorizedKeys != [ ]) {
@@ -335,7 +379,7 @@ in
             {
               image = cfg.persistence.storeOverlay;
               mountPoint = "/nix/.rw-store";
-              size = 4096;
+              size = 2 * 4096;
             }
           ]
           ++ lib.optionals (cfg.persistence.homeImage != null) [
