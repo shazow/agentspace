@@ -391,6 +391,8 @@ in
           socket = "/tmp/vm-${cfg.hostName}.sock";
           hypervisor = "qemu";
 
+          virtiofsd.inodeFileHandles = "mandatory";
+
           qemu.serialConsole = cfg.connectWith == "console";
           qemu.extraArgs = lib.optionals readinessEnabled [
             "-smbios"
