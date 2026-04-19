@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,13 +23,20 @@ func TestManifestValidate(t *testing.T) {
 	valid := &Manifest{
 		Identity: ManifestIdentity{HostName: "agent-sandbox"},
 		Paths: ManifestPaths{
-			WorkingDir:   "/tmp/work",
-			MicroVMRun:   "/tmp/microvm-run",
-			VirtioFSDRun: "/tmp/virtiofsd-run",
-			LockPath:     "/tmp/virtie.lock",
+			WorkingDir: "/tmp/work",
+			MicroVMRun: "/tmp/microvm-run",
+			LockPath:   "/tmp/virtie.lock",
 		},
-		SSH:      ManifestSSH{Argv: []string{"/bin/ssh", "agent@vsock/10"}},
-		VirtioFS: ManifestVirtioFS{SocketPaths: []string{"sock-a"}},
+		SSH: ManifestSSH{Argv: []string{"/bin/ssh", "agent@vsock/10"}},
+		VirtioFS: ManifestVirtioFS{Daemons: []ManifestVirtioFSDaemon{
+			{
+				Tag:        "workspace",
+				SocketPath: "sock-a",
+				Command: ManifestCommand{
+					Path: "/tmp/virtiofsd-workspace",
+				},
+			},
+		}},
 	}
 
 	if err := valid.Validate(); err != nil {
@@ -123,10 +131,9 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	manifest := &Manifest{
 		Identity: ManifestIdentity{HostName: "agent-sandbox"},
 		Paths: ManifestPaths{
-			WorkingDir:   tmpDir,
-			MicroVMRun:   "/bin/microvm-run",
-			VirtioFSDRun: "/bin/virtiofsd-run",
-			LockPath:     lockPath,
+			WorkingDir: tmpDir,
+			MicroVMRun: "/bin/microvm-run",
+			LockPath:   lockPath,
 		},
 		Persistence: ManifestPersistence{
 			Directories: []string{"persist"},
@@ -135,7 +142,22 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 			Argv: []string{"/bin/ssh", "-tt", "agent@vsock/10"},
 		},
 		VirtioFS: ManifestVirtioFS{
-			SocketPaths: []string{socketA, socketB},
+			Daemons: []ManifestVirtioFSDaemon{
+				{
+					Tag:        "ro-store",
+					SocketPath: socketA,
+					Command: ManifestCommand{
+						Path: "/bin/virtiofsd-ro-store",
+					},
+				},
+				{
+					Tag:        "workspace",
+					SocketPath: socketB,
+					Command: ManifestCommand{
+						Path: "/bin/virtiofsd-workspace",
+					},
+				},
+			},
 		},
 	}
 
@@ -144,12 +166,12 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	wantStarts := []string{"virtiofsd", "microvm", "ssh", "ssh", "ssh", "ssh"}
+	wantStarts := []string{"virtiofsd[ro-store]", "virtiofsd[workspace]", "microvm", "ssh", "ssh", "ssh", "ssh"}
 	if !reflect.DeepEqual(runner.starts, wantStarts) {
 		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
 	}
 
-	wantSignals := []string{"ssh", "microvm", "virtiofsd"}
+	wantSignals := []string{"ssh", "microvm", "virtiofsd[workspace]", "virtiofsd[ro-store]"}
 	if !reflect.DeepEqual(runner.signals, wantSignals) {
 		t.Fatalf("unexpected stop order: got %v want %v", runner.signals, wantSignals)
 	}
@@ -220,7 +242,7 @@ func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
 	r.starts = append(r.starts, spec.Name)
 
 	switch spec.Name {
-	case "virtiofsd", "microvm":
+	case "microvm":
 		return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
 	case "ssh":
 		r.probes++
@@ -243,6 +265,9 @@ func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
 		go r.cancel()
 		return process, nil
 	default:
+		if strings.HasPrefix(spec.Name, "virtiofsd[") {
+			return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
+		}
 		return nil, errors.New("unexpected process")
 	}
 }

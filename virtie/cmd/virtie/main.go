@@ -41,7 +41,7 @@ func main() {
 	if _, err := parser.AddCommand(
 		"launch",
 		"Launch a virtiofs + ssh sandbox session",
-		"Start virtiofsd-run, microvm-run, then attach over ssh.",
+		"Start the configured virtiofsd daemons, microvm-run, then attach over ssh.",
 		&launchCommand{},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -20,10 +20,9 @@ type ManifestIdentity struct {
 }
 
 type ManifestPaths struct {
-	WorkingDir   string `json:"workingDir"`
-	MicroVMRun   string `json:"microvmRun"`
-	VirtioFSDRun string `json:"virtiofsdRun"`
-	LockPath     string `json:"lockPath"`
+	WorkingDir string `json:"workingDir"`
+	MicroVMRun string `json:"microvmRun"`
+	LockPath   string `json:"lockPath"`
 }
 
 type ManifestPersistence struct {
@@ -34,8 +33,19 @@ type ManifestSSH struct {
 	Argv []string `json:"argv"`
 }
 
+type ManifestCommand struct {
+	Path string   `json:"path"`
+	Args []string `json:"args,omitempty"`
+}
+
+type ManifestVirtioFSDaemon struct {
+	Tag        string          `json:"tag"`
+	SocketPath string          `json:"socketPath"`
+	Command    ManifestCommand `json:"command"`
+}
+
 type ManifestVirtioFS struct {
-	SocketPaths []string `json:"socketPaths"`
+	Daemons []ManifestVirtioFSDaemon `json:"daemons"`
 }
 
 func LoadManifest(path string) (*Manifest, error) {
@@ -66,17 +76,24 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.paths.workingDir is required")
 	case m.Paths.MicroVMRun == "":
 		return fmt.Errorf("manifest.paths.microvmRun is required")
-	case m.Paths.VirtioFSDRun == "":
-		return fmt.Errorf("manifest.paths.virtiofsdRun is required")
 	case m.Paths.LockPath == "":
 		return fmt.Errorf("manifest.paths.lockPath is required")
 	case len(m.SSH.Argv) == 0:
 		return fmt.Errorf("manifest.ssh.argv must contain at least the ssh executable")
-	case len(m.VirtioFS.SocketPaths) == 0:
-		return fmt.Errorf("manifest.virtiofs.socketPaths must contain at least one socket path")
-	default:
-		return nil
+	case len(m.VirtioFS.Daemons) == 0:
+		return fmt.Errorf("manifest.virtiofs.daemons must contain at least one daemon")
 	}
+
+	for i, daemon := range m.VirtioFS.Daemons {
+		if daemon.SocketPath == "" {
+			return fmt.Errorf("manifest.virtiofs.daemons[%d].socketPath is required", i)
+		}
+		if daemon.Command.Path == "" {
+			return fmt.Errorf("manifest.virtiofs.daemons[%d].command.path is required", i)
+		}
+	}
+
+	return nil
 }
 
 func (m *Manifest) ResolvePath(path string) string {
@@ -96,9 +113,9 @@ func (m *Manifest) ResolvedPersistenceDirectories() []string {
 }
 
 func (m *Manifest) ResolvedSocketPaths() []string {
-	paths := make([]string, 0, len(m.VirtioFS.SocketPaths))
-	for _, path := range m.VirtioFS.SocketPaths {
-		paths = append(paths, m.ResolvePath(path))
+	paths := make([]string, 0, len(m.VirtioFS.Daemons))
+	for _, daemon := range m.VirtioFS.Daemons {
+		paths = append(paths, m.ResolvePath(daemon.SocketPath))
 	}
 	return paths
 }
@@ -111,6 +128,14 @@ func (m *Manifest) ResolvedMicroVMRun() string {
 	return m.ResolvePath(m.Paths.MicroVMRun)
 }
 
-func (m *Manifest) ResolvedVirtioFSDRun() string {
-	return m.ResolvePath(m.Paths.VirtioFSDRun)
+func (m *Manifest) ResolvedVirtioFSDaemons() []ManifestVirtioFSDaemon {
+	daemons := make([]ManifestVirtioFSDaemon, 0, len(m.VirtioFS.Daemons))
+	for _, daemon := range m.VirtioFS.Daemons {
+		resolved := daemon
+		resolved.SocketPath = m.ResolvePath(daemon.SocketPath)
+		resolved.Command.Path = m.ResolvePath(daemon.Command.Path)
+		resolved.Command.Args = append([]string(nil), daemon.Command.Args...)
+		daemons = append(daemons, resolved)
+	}
+	return daemons
 }

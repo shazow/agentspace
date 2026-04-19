@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -44,6 +45,8 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 		return err
 	}
 
+	socketPaths := manifest.ResolvedSocketPaths()
+
 	lock, err := m.Locker.Acquire(manifest.ResolvedLockPath())
 	if err != nil {
 		return &StageError{Stage: "preflight", Err: err}
@@ -60,32 +63,32 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 	if err := ensureDirectories(manifest.ResolvedPersistenceDirectories()); err != nil {
 		return &StageError{Stage: "preflight", Err: err}
 	}
+	if err := ensureParentDirectories(socketPaths); err != nil {
+		return &StageError{Stage: "preflight", Err: err}
+	}
+	if err := removeSocketPaths(socketPaths); err != nil {
+		return &StageError{Stage: "preflight", Err: err}
+	}
 
 	var started []*managedProcess
 	defer func() {
 		stopErr := m.stopAll(started)
+		cleanupErr := removeSocketPaths(socketPaths)
 		if err == nil {
-			err = stopErr
-		} else if stopErr != nil {
-			err = errors.Join(err, stopErr)
+			err = errors.Join(stopErr, cleanupErr)
+		} else if stopErr != nil || cleanupErr != nil {
+			err = errors.Join(err, stopErr, cleanupErr)
 		}
 	}()
 
-	m.Logger.Printf("starting virtiofsd-run")
-	virtiofsd, err := m.startManagedProcess(ProcessSpec{
-		Name:   "virtiofsd",
-		Path:   manifest.ResolvedVirtioFSDRun(),
-		Dir:    manifest.Paths.WorkingDir,
-		Stdout: os.Stderr,
-		Stderr: os.Stderr,
-	})
+	virtiofsd, err := m.startVirtioFSDaemons(manifest)
 	if err != nil {
 		return &StageError{Stage: "virtiofs startup", Err: err}
 	}
-	started = append(started, virtiofsd)
+	started = append(started, virtiofsd...)
 
 	m.Logger.Printf("waiting for virtiofs sockets")
-	if err := m.waitForSockets(ctx, manifest.ResolvedSocketPaths(), started...); err != nil {
+	if err := m.waitForSockets(ctx, socketPaths, started...); err != nil {
 		return err
 	}
 
@@ -141,6 +144,38 @@ func (m *Manager) startManagedProcess(spec ProcessSpec) (*managedProcess, error)
 	}()
 
 	return mp, nil
+}
+
+func (m *Manager) startVirtioFSDaemons(manifest *Manifest) ([]*managedProcess, error) {
+	daemons := manifest.ResolvedVirtioFSDaemons()
+	started := make([]*managedProcess, 0, len(daemons))
+
+	for _, daemon := range daemons {
+		name := "virtiofsd"
+		if daemon.Tag != "" {
+			name = fmt.Sprintf("virtiofsd[%s]", daemon.Tag)
+			m.Logger.Printf("starting virtiofsd [%s]", daemon.Tag)
+		} else {
+			m.Logger.Printf("starting virtiofsd")
+		}
+
+		process, err := m.startManagedProcess(ProcessSpec{
+			Name:   name,
+			Path:   daemon.Command.Path,
+			Args:   daemon.Command.Args,
+			Dir:    manifest.Paths.WorkingDir,
+			Stdout: os.Stderr,
+			Stderr: os.Stderr,
+		})
+		if err != nil {
+			_ = m.stopAll(started)
+			return nil, err
+		}
+
+		started = append(started, process)
+	}
+
+	return started, nil
 }
 
 func (m *Manager) waitForSockets(ctx context.Context, socketPaths []string, watchers ...*managedProcess) error {
@@ -381,6 +416,25 @@ func ensureDirectories(directories []string) error {
 	for _, dir := range directories {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create directory %q: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+func ensureParentDirectories(paths []string) error {
+	for _, path := range paths {
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create directory %q: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+func removeSocketPaths(paths []string) error {
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove socket %q: %w", path, err)
 		}
 	}
 	return nil
