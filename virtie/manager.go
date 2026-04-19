@@ -345,17 +345,25 @@ func buildSSHSpec(manifest *Manifest, remoteCommand []string, interactive bool) 
 	argv := append([]string(nil), manifest.SSH.Argv...)
 	path := argv[0]
 	args := append([]string(nil), argv[1:]...)
+	sshModeArgs := []string{}
 	stdin := io.Reader(nil)
 	stdout := io.Writer(io.Discard)
 	stderr := io.Writer(io.Discard)
 
 	if !interactive {
-		args = append(args, "-o", "BatchMode=yes")
+		sshModeArgs = append(
+			sshModeArgs,
+			"-o", "BatchMode=yes",
+			"-o", "ConnectTimeout=1",
+		)
 	} else {
+		sshModeArgs = append(sshModeArgs, "-tt")
 		stdin = os.Stdin
 		stdout = os.Stdout
 		stderr = os.Stderr
 	}
+
+	args = append(sshModeArgs, args...)
 	args = append(args, remoteCommand...)
 
 	return ProcessSpec{

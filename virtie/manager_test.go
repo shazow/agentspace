@@ -36,6 +36,58 @@ func TestManifestValidate(t *testing.T) {
 	}
 }
 
+func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
+	manifest := &Manifest{
+		Paths: ManifestPaths{
+			WorkingDir: "/tmp/work",
+		},
+		SSH: ManifestSSH{
+			Argv: []string{
+				"/bin/ssh",
+				"-q",
+				"-o",
+				"StrictHostKeyChecking=no",
+				"agent@vsock/10",
+			},
+		},
+	}
+
+	probe := buildSSHSpec(manifest, []string{"true"}, false)
+	wantProbeArgs := []string{
+		"-o",
+		"BatchMode=yes",
+		"-o",
+		"ConnectTimeout=1",
+		"-q",
+		"-o",
+		"StrictHostKeyChecking=no",
+		"agent@vsock/10",
+		"true",
+	}
+	if !reflect.DeepEqual(probe.Args, wantProbeArgs) {
+		t.Fatalf("unexpected ssh probe args: got %v want %v", probe.Args, wantProbeArgs)
+	}
+
+	session := buildSSHSpec(manifest, []string{"bash", "-lc", "echo hi"}, true)
+	wantSessionArgs := []string{
+		"-tt",
+		"-q",
+		"-o",
+		"StrictHostKeyChecking=no",
+		"agent@vsock/10",
+		"bash",
+		"-lc",
+		"echo hi",
+	}
+	if !reflect.DeepEqual(session.Args, wantSessionArgs) {
+		t.Fatalf("unexpected ssh session args: got %v want %v", session.Args, wantSessionArgs)
+	}
+
+	if session.Stdin != os.Stdin || session.Stdout != os.Stdout || session.Stderr != os.Stderr {
+		t.Fatalf("expected interactive ssh session to inherit stdio")
+	}
+}
+
 func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	lockPath := filepath.Join(tmpDir, "virtie.lock")
