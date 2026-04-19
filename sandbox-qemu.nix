@@ -205,12 +205,13 @@ in
               "$RUNNER_PATH/bin/microvm-run"
             journalctl --user --no-pager -u "$vm_unit.service" --invocation=0
 
-            echo "🔐 Starting SSH..."
+            echo "🔐 Starting SSH... (Retrying until host is ready)"
             systemd-run --user \
               --unit="$connect_unit" \
               --collect \
               --wait \
               --pty \
+              --quiet \
               --service-type=exec \
               -p BindsTo="$vm_unit.service" \
               -p After="$vm_unit.service" \
@@ -220,7 +221,7 @@ in
               -p KillMode=control-group \
               -p TimeoutStopSec=15s \
               ${pkgs.openssh}/bin/ssh \
-              -tt \
+              -tt -q \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o GlobalKnownHostsFile=/dev/null \
