@@ -1,4 +1,1 @@
-- This is a nix flake project, assume that `nix` command exists.
-- When a tool is not available, try running it with `nix run`. For example: `nix run nixpkgs#nixfmt-tree`
-- Make sure the code is well-formatted, use `nixfmt-tree` as a formatter.
-- Keep the main entry-point flake.nix reasonably simple. Move isolated functionality into separate *.nix files.
+
