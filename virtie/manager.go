@@ -192,15 +192,40 @@ func (m *Manager) waitForSSH(ctx context.Context, manifest *Manifest, remoteComm
 			return &StageError{Stage: "ssh readiness", Err: err}
 		}
 
-		if err := <-probe.done; err == nil {
+		ready, err := m.waitForSSHProbe(ctx, probe, watchers...)
+		if err != nil {
+			return err
+		}
+		if ready {
 			return nil
 		}
 
-		if err := firstUnexpectedExit("ssh readiness", watchers...); err != nil {
-			return err
-		}
-
 		timer.Reset(m.SSHRetryDelay)
+	}
+}
+
+func (m *Manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, watchers ...*managedProcess) (bool, error) {
+	ticker := time.NewTicker(DefaultSocketPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case err := <-probe.done:
+			return err == nil, nil
+		case <-ticker.C:
+			if err := firstUnexpectedExit("ssh readiness", watchers...); err != nil {
+				if abortErr := m.killProcess(probe); abortErr != nil {
+					return false, errors.Join(err, abortErr)
+				}
+				return false, err
+			}
+		case <-ctx.Done():
+			stageErr := &StageError{Stage: "ssh readiness", Err: ctx.Err()}
+			if abortErr := m.killProcess(probe); abortErr != nil {
+				return false, errors.Join(stageErr, abortErr)
+			}
+			return false, stageErr
+		}
 	}
 }
 
@@ -233,6 +258,23 @@ func (m *Manager) stopAll(processes []*managedProcess) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (m *Manager) killProcess(process *managedProcess) error {
+	if process == nil {
+		return nil
+	}
+
+	if exited, _ := process.pollExit(); exited {
+		return nil
+	}
+
+	if err := process.proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return fmt.Errorf("kill %s: %w", process.name, err)
+	}
+
+	<-process.done
+	return nil
 }
 
 func (m *Manager) stopProcess(process *managedProcess) error {

@@ -1,10 +1,12 @@
 package virtie
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 )
 
 type FileLocker struct{}
@@ -14,14 +16,28 @@ func (l *FileLocker) Acquire(path string) (Lock, error) {
 		return nil, fmt.Errorf("create lock directory for %q: %w", path, err)
 	}
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("acquire lock %q: %w", path, err)
 	}
 
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("acquire lock %q: %w", path, err)
+	}
+
+	if err := file.Truncate(0); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("reset lock %q: %w", path, err)
+	}
+
+	if _, err := file.Seek(0, 0); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("seek lock %q: %w", path, err)
+	}
+
 	if _, err := file.WriteString(strconv.Itoa(os.Getpid()) + "\n"); err != nil {
 		file.Close()
-		_ = os.Remove(path)
 		return nil, fmt.Errorf("write lock %q: %w", path, err)
 	}
 
@@ -34,16 +50,14 @@ type fileLock struct {
 }
 
 func (l *fileLock) Release() error {
-	if l.file != nil {
-		if err := l.file.Close(); err != nil {
-			return fmt.Errorf("close lock %q: %w", l.path, err)
-		}
-		l.file = nil
+	if l.file == nil {
+		return nil
 	}
 
-	if err := os.Remove(l.path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove lock %q: %w", l.path, err)
+	if err := l.file.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		return fmt.Errorf("close lock %q: %w", l.path, err)
 	}
+	l.file = nil
 
 	return nil
 }
