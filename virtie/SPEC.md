@@ -4,7 +4,7 @@
 
 `virtie` is the host-side process manager for one interactive sandbox workflow:
 
-- start `virtiofsd-run`
+- start one `virtiofsd` process per configured share
 - start `microvm-run`
 - connect to the guest over SSH as part of launch
 - tear everything down cleanly on exit
@@ -14,7 +14,8 @@ V1 is intentionally narrow. It replaces the current shell-plus-`systemd-run` orc
 Nix remains the source of truth for:
 
 - guest configuration
-- generated helper binaries such as `microvm-run` and `virtiofsd-run`
+- generated helper binaries such as `microvm-run`
+- generated `virtiofsd` command lines for each share
 - launch metadata passed to `virtie`
 
 `virtie` does not construct QEMU or `virtiofsd` argv in v1.
@@ -40,7 +41,6 @@ Anything outside this path is deferred until later.
 - reconnect support
 - replacing `mkSandbox` as the public Nix API
 - rewriting `microvm-run`
-- rewriting `virtiofsd-run`
 - running as a background daemon
 
 ## User-Facing Command
@@ -54,12 +54,12 @@ Behavior:
 1. load and validate the manifest
 2. acquire a per-sandbox lock
 3. create required host directories
-4. start `virtiofsd-run`
+4. start the configured `virtiofsd` daemons
 5. wait for the expected virtiofs socket paths to exist
 6. start `microvm-run`
 7. retry SSH until the guest is ready
 8. attach the SSH session to the current terminal
-9. on exit or signal, stop SSH first, then the VM, then `virtiofsd-run`
+9. on exit or signal, stop SSH first, then the VM, then the `virtiofsd` daemons
 
 ## Manifest Contract
 
@@ -72,20 +72,19 @@ V1 only needs fields for the single supported workflow:
 - paths:
   - `workingDir`
   - `microvmRun`
-  - `virtiofsdRun`
   - `lockPath`
 - persistence:
   - host directories that must exist before launch
 - ssh:
   - full SSH argv template, including the vsock target and host key bypass flags
 - virtiofs:
-  - expected socket paths that must exist before starting the VM
+  - per-share daemon commands and expected socket paths that must exist before starting the VM
 
 The manifest does not need console, `9p`, or airlock fields in v1.
 
 ## Command Inventory
 
-This inventory reflects the specific workflow visible in `systemctl-agentspace.out`, `flake.nix`, `sandbox-qemu.nix`, and `modules/virtiofsd.nix`.
+This inventory reflects the specific workflow visible in `flake.nix`, `sandbox-qemu.nix`, and the generated launch manifest.
 
 ### Commands `virtie` must replace directly
 
@@ -93,7 +92,7 @@ This inventory reflects the specific workflow visible in `systemctl-agentspace.o
 | --- | --- | --- |
 | `systemctl --user is-active "$name_prefix-*.service"` | reject duplicate active launches | replace with an explicit lock check |
 | `systemctl --user reset-failed "$name_prefix-*.service"` | clear transient unit failure state | no direct equivalent |
-| `systemd-run --user ... "$RUNNER_PATH/bin/virtiofsd-run"` | supervise the virtiofs helper | spawn child directly |
+| `systemd-run --user ... "$RUNNER_PATH/bin/virtiofsd-run"` | supervise the old virtiofs helper | removed; spawn `virtiofsd` children directly |
 | `systemd-run --user ... "$RUNNER_PATH/bin/microvm-run"` | supervise the VM process | spawn child directly |
 | `journalctl --user --no-pager -u "$vm_unit.service" --invocation=0` | inspect VM logs | replace with direct child stdout/stderr streaming |
 | `systemd-run --user --wait --pty ... ssh ... "$@"` | retry until SSH is ready, then attach | run SSH with retry/backoff in Go |
@@ -103,7 +102,7 @@ This inventory reflects the specific workflow visible in `systemctl-agentspace.o
 
 | Command | Why it still exists in v1 |
 | --- | --- |
-| `virtiofsd-run` | Nix-generated helper remains the source of truth |
+| `virtiofsd` | launched from Nix-generated per-share commands |
 | `microvm-run` | Nix-generated VM launcher remains the source of truth |
 | `ssh` | SSH is the only supported connection mechanism |
 
@@ -112,8 +111,7 @@ This inventory reflects the specific workflow visible in `systemctl-agentspace.o
 | Command | Current source | Why it matters |
 | --- | --- | --- |
 | `qemu-system-*` | spawned by `microvm-run` | main VM workload managed indirectly through `microvm-run` |
-| `systemd-socket-activate` | spawned by `virtiofsd-run` | owns the virtiofs sockets and hands accepted FDs to `virtiofsd` |
-| `virtiofsd --fd=3 ...` | spawned by `virtiofsd-run` activators | serves the `ro-store` and `workspace` shares |
+| `virtiofsd --socket-path=...` | spawned directly by `virtie` from manifest commands | serves the `ro-store` and `workspace` shares |
 
 ### Structured host operations
 
@@ -131,8 +129,6 @@ These should be normal Go operations, not shell:
 | --- | --- |
 | `openssh` client | guest connection over SSH |
 | `microvm-run` binary | VM startup |
-| `virtiofsd-run` binary | virtiofs helper startup |
-| `systemd-socket-activate` | per-share socket activation inside `virtiofsd-run` |
 | `virtiofsd` | serving `virtiofs` shares |
 | QEMU / microvm runtime | actual guest execution |
 | vsock support | SSH-over-vsock transport |
@@ -158,12 +154,12 @@ These should be normal Go operations, not shell:
 The only supported v1 process flow is:
 
 1. preflight and lock acquisition
-2. start `virtiofsd-run`
+2. start the configured `virtiofsd` daemons
 3. wait for the expected virtiofs sockets
 4. start `microvm-run`
 5. retry SSH until the guest is ready
 6. attach the SSH session
-7. on exit, stop SSH, then VM, then `virtiofsd-run`
+7. on exit, stop SSH, then VM, then the `virtiofsd` daemons
 
 ### Control Flow Diagram
 
@@ -172,7 +168,7 @@ flowchart TD
     A[virtie launch] --> B[Load and validate manifest]
     B --> C[Acquire lock]
     C --> D[Create required host directories]
-    D --> E[Start virtiofsd-run]
+    D --> E[Start virtiofsd daemons]
     E --> F[Wait for expected virtiofs sockets]
     F --> G[Start microvm-run]
     G --> H{SSH ready?}
@@ -182,7 +178,7 @@ flowchart TD
     J --> K[Teardown]
     K --> L[Stop SSH if running]
     L --> M[Stop microvm-run if running]
-    M --> N[Stop virtiofsd-run if running]
+    M --> N[Stop virtiofsd daemons if running]
     N --> O[Release lock and exit]
 
     E -. failure .-> K
