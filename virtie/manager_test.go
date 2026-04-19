@@ -111,6 +111,48 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 }
 
+func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
+	runner := &blockingSSHRunner{started: make(chan *blockingSSHProcess, 1)}
+	manager := &Manager{
+		Runner:        runner,
+		Logger:        log.New(io.Discard, "", 0),
+		SSHRetryDelay: time.Second,
+	}
+
+	manifest := &Manifest{
+		Paths: ManifestPaths{
+			WorkingDir: t.TempDir(),
+		},
+		SSH: ManifestSSH{
+			Argv: []string{"/bin/ssh", "agent@vsock/10"},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- manager.waitForSSH(ctx, manifest, nil)
+	}()
+
+	probe := <-runner.started
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context cancellation, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waitForSSH did not return after cancellation")
+	}
+
+	if got, want := probe.killCalls(), 1; got != want {
+		t.Fatalf("unexpected probe kills: got %d want %d", got, want)
+	}
+}
+
 type fakeRunner struct {
 	mu      sync.Mutex
 	starts  []string
@@ -203,4 +245,59 @@ func closedErrorChannel(err error) chan error {
 	ch <- err
 	close(ch)
 	return ch
+}
+
+type blockingSSHRunner struct {
+	started chan *blockingSSHProcess
+}
+
+func (r *blockingSSHRunner) Start(spec ProcessSpec) (Process, error) {
+	if spec.Name != "ssh" {
+		return nil, errors.New("unexpected process")
+	}
+
+	process := &blockingSSHProcess{done: make(chan error, 1)}
+	r.started <- process
+	return process, nil
+}
+
+type blockingSSHProcess struct {
+	mu        sync.Mutex
+	done      chan error
+	killCount int
+}
+
+func (p *blockingSSHProcess) Wait() error {
+	err, ok := <-p.done
+	if !ok {
+		return nil
+	}
+	return err
+}
+
+func (p *blockingSSHProcess) Signal(sig os.Signal) error {
+	return p.Kill()
+}
+
+func (p *blockingSSHProcess) Kill() error {
+	p.mu.Lock()
+	p.killCount++
+	p.mu.Unlock()
+
+	select {
+	case p.done <- nil:
+	default:
+	}
+	close(p.done)
+	return nil
+}
+
+func (p *blockingSSHProcess) PID() int {
+	return 1
+}
+
+func (p *blockingSSHProcess) killCalls() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.killCount
 }
