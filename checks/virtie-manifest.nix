@@ -19,15 +19,8 @@ let
     balloon = false;
   };
 
-  manifest = builtins.fromJSON (
-    builtins.unsafeDiscardStringContext (builtins.toJSON vmVirtie.config.agentspace.sandbox.launch.virtieManifestData)
-  );
-  disabledBalloonManifest =
-    builtins.fromJSON (
-      builtins.unsafeDiscardStringContext (
-        builtins.toJSON vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData
-      )
-    );
+  manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
+  disabledBalloonManifest = vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
 
   _ =
     assert manifest.qemu.binaryPath != "";
