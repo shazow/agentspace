@@ -24,12 +24,18 @@ func TestManifestValidate(t *testing.T) {
 		Identity: ManifestIdentity{HostName: "agent-sandbox"},
 		Paths: ManifestPaths{
 			WorkingDir: "/tmp/work",
-			MicroVMRun: "/tmp/microvm-run",
 			LockPath:   "/tmp/virtie.lock",
 		},
 		SSH: ManifestSSH{
 			Argv: []string{"/bin/ssh"},
 			User: "agent",
+		},
+		QEMU: ManifestQEMU{
+			ArgvTemplate: []string{
+				"/tmp/qemu-system-x86_64",
+				"-device",
+				"vhost-vsock-pci,guest-cid={{VSOCK_CID}}",
+			},
 		},
 		VirtioFS: ManifestVirtioFS{Daemons: []ManifestVirtioFSDaemon{
 			{
@@ -62,6 +68,12 @@ func TestManifestValidate(t *testing.T) {
 	invalidRange.VSock.CIDRange.Start = 2
 	if err := invalidRange.Validate(); err == nil {
 		t.Fatalf("expected validation error for invalid cid range")
+	}
+
+	invalidQEMU := *valid
+	invalidQEMU.QEMU.ArgvTemplate = []string{"/tmp/qemu-system-x86_64"}
+	if err := invalidQEMU.Validate(); err == nil {
+		t.Fatalf("expected validation error for missing qemu vsock placeholder")
 	}
 }
 
@@ -122,6 +134,18 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	lockPath := filepath.Join(tmpDir, "virtie.lock")
 	socketA := filepath.Join(tmpDir, "sock-a")
 	socketB := filepath.Join(tmpDir, "sock-b")
+	volumeImage := filepath.Join(tmpDir, "overlay.img")
+	mkfsLog := filepath.Join(tmpDir, "mkfs.log")
+
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	mkfsPath := filepath.Join(binDir, "mkfs.ext4")
+	if err := os.WriteFile(mkfsPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+mkfsLog+"\n"), 0o755); err != nil {
+		t.Fatalf("write fake mkfs tool: %v", err)
+	}
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -153,7 +177,6 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		Identity: ManifestIdentity{HostName: "agent-sandbox"},
 		Paths: ManifestPaths{
 			WorkingDir: tmpDir,
-			MicroVMRun: "/bin/microvm-run",
 			LockPath:   lockPath,
 		},
 		Persistence: ManifestPersistence{
@@ -162,6 +185,21 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		SSH: ManifestSSH{
 			Argv: []string{"/bin/ssh", "-q"},
 			User: "agent",
+		},
+		QEMU: ManifestQEMU{
+			ArgvTemplate: []string{
+				"/bin/qemu-system-x86_64",
+				"-device",
+				"vhost-vsock-pci,guest-cid={{VSOCK_CID}}",
+			},
+		},
+		Volumes: []ManifestVolume{
+			{
+				ImagePath:  "overlay.img",
+				SizeMiB:    64,
+				FSType:     "ext4",
+				AutoCreate: true,
+			},
 		},
 		VirtioFS: ManifestVirtioFS{
 			Daemons: []ManifestVirtioFSDaemon{
@@ -188,13 +226,18 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	wantStarts := []string{"virtiofsd[ro-store]", "virtiofsd[workspace]", "microvm", "ssh", "ssh", "ssh", "ssh"}
+	wantStarts := []string{"virtiofsd[ro-store]", "virtiofsd[workspace]", "qemu", "ssh", "ssh", "ssh", "ssh"}
 	if !reflect.DeepEqual(runner.starts, wantStarts) {
 		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
 	}
 
-	if got, want := runner.microvmEnv, []string{"AGENTSPACE_VSOCK_CID=3"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected microvm env: got %v want %v", got, want)
+	wantQEMUArgs := []string{"-device", "vhost-vsock-pci,guest-cid=3"}
+	if got := runner.qemuArgs; !reflect.DeepEqual(got, wantQEMUArgs) {
+		t.Fatalf("unexpected qemu args: got %v want %v", got, wantQEMUArgs)
+	}
+
+	if got := runner.qemuEnv; len(got) != 0 {
+		t.Fatalf("unexpected qemu env: got %v want no extra env", got)
 	}
 
 	if got := len(runner.sshArgs); got != 4 {
@@ -206,7 +249,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		}
 	}
 
-	wantSignals := []string{"ssh", "microvm", "virtiofsd[workspace]", "virtiofsd[ro-store]"}
+	wantSignals := []string{"ssh", "qemu", "virtiofsd[workspace]", "virtiofsd[ro-store]"}
 	if !reflect.DeepEqual(runner.signals, wantSignals) {
 		t.Fatalf("unexpected stop order: got %v want %v", runner.signals, wantSignals)
 	}
@@ -217,6 +260,16 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(tmpDir, "persist")); err != nil {
 		t.Fatalf("expected persistence directory to exist: %v", err)
+	}
+	if info, err := os.Stat(volumeImage); err != nil {
+		t.Fatalf("expected volume image to exist: %v", err)
+	} else if got, want := info.Size(), int64(64*1024*1024); got != want {
+		t.Fatalf("unexpected volume size: got %d want %d", got, want)
+	}
+	if data, err := os.ReadFile(mkfsLog); err != nil {
+		t.Fatalf("expected mkfs log: %v", err)
+	} else if got, want := strings.TrimSpace(string(data)), volumeImage; got != want {
+		t.Fatalf("unexpected mkfs args: got %q want %q", got, want)
 	}
 }
 
@@ -297,14 +350,47 @@ func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
 	}
 }
 
+func TestBuildQEMUSpecSubstitutesRuntimeCID(t *testing.T) {
+	manifest := &Manifest{
+		Paths: ManifestPaths{
+			WorkingDir: "/tmp/work",
+		},
+		QEMU: ManifestQEMU{
+			ArgvTemplate: []string{
+				"/bin/qemu-system-x86_64",
+				"-device",
+				"vhost-vsock-pci,guest-cid={{VSOCK_CID}}",
+				"-name",
+				"agent-sandbox",
+			},
+		},
+	}
+
+	spec := buildQEMUSpec(manifest, 42)
+	wantArgs := []string{
+		"-device",
+		"vhost-vsock-pci,guest-cid=42",
+		"-name",
+		"agent-sandbox",
+	}
+
+	if spec.Path != "/bin/qemu-system-x86_64" {
+		t.Fatalf("unexpected qemu path: got %q", spec.Path)
+	}
+	if !reflect.DeepEqual(spec.Args, wantArgs) {
+		t.Fatalf("unexpected qemu args: got %v want %v", spec.Args, wantArgs)
+	}
+}
+
 type fakeRunner struct {
-	mu         sync.Mutex
-	starts     []string
-	signals    []string
-	sshArgs    [][]string
-	microvmEnv []string
-	probes     int
-	cancel     context.CancelFunc
+	mu       sync.Mutex
+	starts   []string
+	signals  []string
+	sshArgs  [][]string
+	qemuArgs []string
+	qemuEnv  []string
+	probes   int
+	cancel   context.CancelFunc
 }
 
 func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
@@ -314,8 +400,9 @@ func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
 	r.starts = append(r.starts, spec.Name)
 
 	switch spec.Name {
-	case "microvm":
-		r.microvmEnv = append([]string(nil), spec.Env...)
+	case "qemu":
+		r.qemuArgs = append([]string(nil), spec.Args...)
+		r.qemuEnv = append([]string(nil), spec.Env...)
 		return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
 	case "ssh":
 		r.sshArgs = append(r.sshArgs, append([]string(nil), spec.Args...))

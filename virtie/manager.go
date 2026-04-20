@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -46,6 +47,7 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 	}
 
 	socketPaths := manifest.ResolvedSocketPaths()
+	volumes := manifest.ResolvedVolumes()
 
 	lock, err := m.Locker.Acquire(manifest.ResolvedLockPath())
 	if err != nil {
@@ -66,7 +68,13 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 	if err := ensureParentDirectories(socketPaths); err != nil {
 		return &StageError{Stage: "preflight", Err: err}
 	}
+	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
+		return &StageError{Stage: "preflight", Err: err}
+	}
 	if err := removeSocketPaths(socketPaths); err != nil {
+		return &StageError{Stage: "preflight", Err: err}
+	}
+	if err := ensureVolumeImages(volumes); err != nil {
 		return &StageError{Stage: "preflight", Err: err}
 	}
 
@@ -92,19 +100,12 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 		return err
 	}
 
-	m.Logger.Printf("starting microvm-run")
-	microvm, err := m.startManagedProcess(ProcessSpec{
-		Name:   "microvm",
-		Path:   manifest.ResolvedMicroVMRun(),
-		Dir:    manifest.Paths.WorkingDir,
-		Env:    []string{fmt.Sprintf("AGENTSPACE_VSOCK_CID=%d", cid)},
-		Stdout: os.Stderr,
-		Stderr: os.Stderr,
-	})
+	m.Logger.Printf("starting qemu")
+	qemu, err := m.startManagedProcess(buildQEMUSpec(manifest, cid))
 	if err != nil {
 		return &StageError{Stage: "vm startup", Err: err}
 	}
-	started = append(started, microvm)
+	started = append(started, qemu)
 
 	m.Logger.Printf("waiting for ssh readiness")
 	if err := m.waitForSSH(ctx, manifest, cid, started...); err != nil {
@@ -396,6 +397,23 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 	return nil
 }
 
+func buildQEMUSpec(manifest *Manifest, cid int) ProcessSpec {
+	argv := manifest.ResolvedQEMUArgvTemplate()
+	cidValue := fmt.Sprintf("%d", cid)
+	for i, arg := range argv {
+		argv[i] = strings.ReplaceAll(arg, VSockCIDPlaceholder, cidValue)
+	}
+
+	return ProcessSpec{
+		Name:   "qemu",
+		Path:   argv[0],
+		Args:   argv[1:],
+		Dir:    manifest.Paths.WorkingDir,
+		Stdout: os.Stderr,
+		Stderr: os.Stderr,
+	}
+}
+
 func buildSSHSpec(manifest *Manifest, cid int, remoteCommand []string, interactive bool) ProcessSpec {
 	argv := append([]string(nil), manifest.SSH.Argv...)
 	path := argv[0]
@@ -452,6 +470,93 @@ func ensureDirectories(directories []string) error {
 		}
 	}
 	return nil
+}
+
+func volumeImagePaths(volumes []ManifestVolume) []string {
+	paths := make([]string, 0, len(volumes))
+	for _, volume := range volumes {
+		paths = append(paths, volume.ImagePath)
+	}
+	return paths
+}
+
+func ensureVolumeImages(volumes []ManifestVolume) error {
+	for _, volume := range volumes {
+		if !volume.AutoCreate {
+			continue
+		}
+
+		info, err := os.Stat(volume.ImagePath)
+		if err == nil {
+			if info.IsDir() {
+				return fmt.Errorf("volume image %q is a directory", volume.ImagePath)
+			}
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("stat volume image %q: %w", volume.ImagePath, err)
+		}
+
+		if err := createVolumeImage(volume); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func createVolumeImage(volume ManifestVolume) error {
+	file, err := os.OpenFile(volume.ImagePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("create volume image %q: %w", volume.ImagePath, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close volume image %q: %w", volume.ImagePath, err)
+	}
+
+	if chattrPath, lookErr := exec.LookPath("chattr"); lookErr == nil {
+		cmd := exec.Command(chattrPath, "+C", volume.ImagePath)
+		_ = cmd.Run()
+	}
+
+	sizeBytes := int64(volume.SizeMiB) * 1024 * 1024
+	if err := os.Truncate(volume.ImagePath, sizeBytes); err != nil {
+		return fmt.Errorf("truncate volume image %q: %w", volume.ImagePath, err)
+	}
+
+	mkfsArgs := []string{}
+	if volume.Label != nil {
+		if labelOption := mkfsLabelOption(volume.FSType); labelOption != "" {
+			mkfsArgs = append(mkfsArgs, labelOption, *volume.Label)
+		}
+	}
+	mkfsArgs = append(mkfsArgs, volume.MkfsExtraArgs...)
+	mkfsArgs = append(mkfsArgs, volume.ImagePath)
+
+	mkfsPath, err := exec.LookPath(fmt.Sprintf("mkfs.%s", volume.FSType))
+	if err != nil {
+		return fmt.Errorf("find mkfs tool for %q: %w", volume.FSType, err)
+	}
+
+	cmd := exec.Command(mkfsPath, mkfsArgs...)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("format volume image %q with %s: %w", volume.ImagePath, filepath.Base(mkfsPath), err)
+	}
+
+	return nil
+}
+
+func mkfsLabelOption(fsType string) string {
+	switch fsType {
+	case "ext2", "ext3", "ext4", "xfs", "btrfs":
+		return "-L"
+	case "vfat":
+		return "-n"
+	default:
+		return ""
+	}
 }
 
 func ensureParentDirectories(paths []string) error {
