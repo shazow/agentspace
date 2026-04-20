@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/adrg/xdg"
 )
 
 const (
@@ -29,8 +31,9 @@ type ManifestIdentity struct {
 }
 
 type ManifestPaths struct {
-	WorkingDir string `json:"workingDir"`
-	LockPath   string `json:"lockPath"`
+	WorkingDir string  `json:"workingDir"`
+	LockPath   string  `json:"lockPath"`
+	RuntimeDir *string `json:"runtimeDir,omitempty"`
 }
 
 type ManifestPersistence struct {
@@ -373,12 +376,36 @@ func (m *Manifest) ResolvedPersistenceDirectories() []string {
 	return dirs
 }
 
-func (m *Manifest) ResolvedSocketPaths() []string {
+func (m *Manifest) resolveSocketPath(path string) (string, error) {
+	if path == "" || filepath.IsAbs(path) {
+		return path, nil
+	}
+
+	if m.Paths.RuntimeDir == nil {
+		return m.ResolvePath(path), nil
+	}
+
+	if *m.Paths.RuntimeDir == "" {
+		resolved, err := xdg.RuntimeFile(filepath.Join("agentspace", m.Identity.HostName, path))
+		if err != nil {
+			return "", fmt.Errorf("resolve runtime socket %q: %w", path, err)
+		}
+		return resolved, nil
+	}
+
+	return filepath.Join(m.ResolvePath(*m.Paths.RuntimeDir), path), nil
+}
+
+func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
 	paths := make([]string, 0, len(m.VirtioFS.Daemons))
 	for _, daemon := range m.VirtioFS.Daemons {
-		paths = append(paths, m.ResolvePath(daemon.SocketPath))
+		resolved, err := m.resolveSocketPath(daemon.SocketPath)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, resolved)
 	}
-	return paths
+	return paths, nil
 }
 
 func (m *Manifest) ResolvedLockPath() string {
@@ -393,17 +420,22 @@ func (m *Manifest) ResolvedVSockLockPath(cid int) string {
 	return filepath.Join(m.ResolvedVSockLockDir(), fmt.Sprintf("%d.lock", cid))
 }
 
-func (m *Manifest) ResolvedQMPSocketPath() string {
-	return m.ResolvePath(m.QEMU.QMP.SocketPath)
+func (m *Manifest) ResolvedQMPSocketPath() (string, error) {
+	return m.resolveSocketPath(m.QEMU.QMP.SocketPath)
 }
 
-func (m *Manifest) ResolvedQEMU() ManifestQEMU {
+func (m *Manifest) ResolvedQEMU() (ManifestQEMU, error) {
 	resolved := m.QEMU
 	resolved.BinaryPath = m.ResolvePath(resolved.BinaryPath)
 	resolved.Kernel.Path = m.ResolvePath(resolved.Kernel.Path)
 	resolved.Kernel.InitrdPath = m.ResolvePath(resolved.Kernel.InitrdPath)
-	resolved.QMP.SocketPath = m.ResolvePath(resolved.QMP.SocketPath)
 	resolved.PassthroughArgs = append([]string(nil), resolved.PassthroughArgs...)
+
+	qmpSocketPath, err := m.resolveSocketPath(resolved.QMP.SocketPath)
+	if err != nil {
+		return ManifestQEMU{}, err
+	}
+	resolved.QMP.SocketPath = qmpSocketPath
 
 	if resolved.MachineID != nil {
 		value := *resolved.MachineID
@@ -414,7 +446,11 @@ func (m *Manifest) ResolvedQEMU() ManifestQEMU {
 
 	resolved.Devices.VirtioFS = append([]ManifestQEMUVirtioFSShare(nil), resolved.Devices.VirtioFS...)
 	for i := range resolved.Devices.VirtioFS {
-		resolved.Devices.VirtioFS[i].SocketPath = m.ResolvePath(resolved.Devices.VirtioFS[i].SocketPath)
+		socketPath, err := m.resolveSocketPath(resolved.Devices.VirtioFS[i].SocketPath)
+		if err != nil {
+			return ManifestQEMU{}, err
+		}
+		resolved.Devices.VirtioFS[i].SocketPath = socketPath
 	}
 
 	resolved.Devices.Block = append([]ManifestQEMUBlockDevice(nil), resolved.Devices.Block...)
@@ -444,19 +480,23 @@ func (m *Manifest) ResolvedQEMU() ManifestQEMU {
 		resolved.Devices.Balloon = &balloon
 	}
 
-	return resolved
+	return resolved, nil
 }
 
-func (m *Manifest) ResolvedVirtioFSDaemons() []ManifestVirtioFSDaemon {
+func (m *Manifest) ResolvedVirtioFSDaemons() ([]ManifestVirtioFSDaemon, error) {
 	daemons := make([]ManifestVirtioFSDaemon, 0, len(m.VirtioFS.Daemons))
 	for _, daemon := range m.VirtioFS.Daemons {
 		resolved := daemon
-		resolved.SocketPath = m.ResolvePath(daemon.SocketPath)
+		socketPath, err := m.resolveSocketPath(daemon.SocketPath)
+		if err != nil {
+			return nil, err
+		}
+		resolved.SocketPath = socketPath
 		resolved.Command.Path = m.ResolvePath(daemon.Command.Path)
 		resolved.Command.Args = append([]string(nil), daemon.Command.Args...)
 		daemons = append(daemons, resolved)
 	}
-	return daemons
+	return daemons, nil
 }
 
 func (m *Manifest) ResolvedVolumes() []ManifestVolume {

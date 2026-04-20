@@ -135,12 +135,16 @@ PY
         set -euo pipefail
 
         mkdir -p "$PWD/state"
+        socket_path="''${VIRTIE_SOCKET_PATH:-$PWD/virtiofs.sock}"
+        pid_path="$socket_path.pid"
+        mkdir -p "$(dirname "$socket_path")"
         touch "$PWD/state/virtiofsd-started"
-        : > "$PWD/virtiofs.sock"
+        : > "$socket_path"
+        printf '%s\n' "$$" > "$pid_path"
 
         cleanup() {
           trap - EXIT INT TERM
-          rm -f "$PWD/virtiofs.sock"
+          rm -f "$socket_path" "$pid_path"
           touch "$PWD/state/virtiofsd-stopped"
           exit 0
         }
@@ -220,6 +224,7 @@ PY
       paths = {
         workingDir = ".";
         lockPath = "virtie.lock";
+        runtimeDir = "";
       };
       persistence.directories = [ "state" ];
       ssh = {
@@ -346,8 +351,10 @@ in
     cd "$workspace_dir"
 
     export PATH=${fakeTools}/bin:$PATH
+    export XDG_RUNTIME_DIR="$tmpdir/run"
+    mkdir -p "$XDG_RUNTIME_DIR"
 
-    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f virtiofs.sock; test -f overlay.img; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
+    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
       echo "virtie-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1

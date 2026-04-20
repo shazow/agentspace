@@ -163,7 +163,7 @@ in
   machineId = microvm.machineId;
 
   qmp = {
-    socketPath = if microvm.socket != null then microvm.socket else "/tmp/vm-${config.networking.hostName}.sock";
+    socketPath = if microvm.socket != null then microvm.socket else "qmp.sock";
   };
 
   devices = {

@@ -37,6 +37,7 @@ Acceptance criteria:
 - [x] Move final QEMU argv construction out of Nix and into `virtie`, leaving Nix responsible for guest evaluation plus the resolved typed QEMU launch config.
 - [x] Emit the typed QEMU manifest from `sandbox-qemu.nix` through `agentspace-qemu-config.nix`.
 - [x] Generate per-share `virtiofsd` commands and socket paths in the manifest instead of relying on a `virtiofsd-run` helper.
+- [x] Opt the generated manifest into XDG runtime socket placement so default `virtiofs` and QMP sockets no longer spill into the launch working directory.
 - [x] Remove `mkConnect`, `connect-agent`, and `apps.connect` so the repo exposes only the supported launch entrypoint.
 - [x] Remove the dead airlock and bundle/import workflow files so the repo matches the supported launch surface.
 - [x] Restore `agentspace.sandbox.extraModules` support via the `mkSandbox` extension pass.
@@ -52,6 +53,7 @@ Acceptance criteria:
 - Current Nix-to-virtie contract:
   - Nix still owns guest evaluation and image production through `microvm.nix`.
   - Nix resolves machine, CPU, memory, kernel, block, network, `virtiofs`, and QMP settings into the manifest.
+  - The generated manifest sets `paths.runtimeDir = ""`, so relative socket paths resolve under the per-user XDG runtime directory by default.
   - `virtie` owns final argv compilation, QMP lifecycle, process launch, and teardown ordering.
 - Current retained public hooks:
   - `extraModules`

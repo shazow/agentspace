@@ -41,6 +41,7 @@ Acceptance criteria:
 - [x] Implement launch sequencing for preflight, `virtiofs` socket wait, QMP readiness, QEMU start, SSH readiness probing, session attach, and ordered shutdown.
 - [x] Implement volume auto-create handling, including filesystem defaults and `mkfs.<fsType>` execution.
 - [x] Implement per-sandbox and per-CID lock files for concurrent session safety.
+- [x] Add runtime-dir-based socket resolution for relative QMP and `virtiofs` sockets, using XDG defaults when requested by the manifest.
 - [x] Implement stage-aware errors and foreground SSH exit-code propagation.
 - [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH retry behavior, and launch/teardown ordering with Go tests.
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
@@ -52,6 +53,7 @@ Acceptance criteria:
   - `identity.hostName`
   - `paths.workingDir`
   - `paths.lockPath`
+  - optional `paths.runtimeDir`
   - `persistence.directories`
   - `ssh.argv`
   - `ssh.user`
@@ -81,6 +83,10 @@ Acceptance criteria:
   - Nix has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
   - `ssh` and the required `mkfs.<fsType>` tools are available on the host.
   - The guest SSH service is reachable over the runtime-selected vsock CID.
+- Runtime socket policy:
+  - If `paths.runtimeDir` is omitted, relative socket paths still resolve from `paths.workingDir`.
+  - If `paths.runtimeDir` is the empty string, `virtie` resolves relative socket paths under the per-user XDG runtime location at `agentspace/<hostName>/...`.
+  - `virtie` injects `VIRTIE_SOCKET_PATH` for each `virtiofsd` daemon process so launch scripts can consume the resolved socket path.
 - Implementation notes:
   - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.
   - QMP is used for monitor readiness and graceful shutdown, not for guest readiness.

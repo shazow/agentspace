@@ -169,8 +169,13 @@ in
             opt_rlimit=()
           fi
 
+          socket_path=${lib.escapeShellArg socket}
+          if [ -n "''${VIRTIE_SOCKET_PATH-}" ]; then
+            socket_path="$VIRTIE_SOCKET_PATH"
+          fi
+
           exec ${lib.getExe config.microvm.virtiofsd.package} \
-            --socket-path=${lib.escapeShellArg socket} \
+            --socket-path="$socket_path" \
             ${lib.optionalString (config.microvm.virtiofsd.group != null)
               "--socket-group=${config.microvm.virtiofsd.group}"
             } \
@@ -213,6 +218,7 @@ in
           paths = {
             workingDir = ".";
             lockPath = "/tmp/agentspace-${cfg.hostName}.lock";
+            runtimeDir = "";
           };
           persistence.directories = initDirs;
           ssh = {
@@ -378,7 +384,7 @@ in
           vcpu = lib.mkDefault 8;
           mem = lib.mkDefault (4 * 1024);
           balloon = true;
-          socket = "/tmp/vm-${cfg.hostName}.sock";
+          socket = "qmp.sock";
           hypervisor = "qemu";
 
           qemu.serialConsole = false;

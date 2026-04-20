@@ -53,8 +53,14 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 		return err
 	}
 
-	socketPaths := manifest.ResolvedSocketPaths()
-	qmpSocketPath := manifest.ResolvedQMPSocketPath()
+	socketPaths, err := manifest.ResolvedSocketPaths()
+	if err != nil {
+		return &StageError{Stage: "preflight", Err: err}
+	}
+	qmpSocketPath, err := manifest.ResolvedQMPSocketPath()
+	if err != nil {
+		return &StageError{Stage: "preflight", Err: err}
+	}
 	volumes := manifest.ResolvedVolumes()
 
 	lock, err := m.Locker.Acquire(manifest.ResolvedLockPath())
@@ -182,7 +188,10 @@ func (m *Manager) startManagedProcess(spec ProcessSpec) (*managedProcess, error)
 }
 
 func (m *Manager) startVirtioFSDaemons(manifest *Manifest) ([]*managedProcess, error) {
-	daemons := manifest.ResolvedVirtioFSDaemons()
+	daemons, err := manifest.ResolvedVirtioFSDaemons()
+	if err != nil {
+		return nil, err
+	}
 	started := make([]*managedProcess, 0, len(daemons))
 
 	for _, daemon := range daemons {
@@ -199,6 +208,7 @@ func (m *Manager) startVirtioFSDaemons(manifest *Manifest) ([]*managedProcess, e
 			Path:   daemon.Command.Path,
 			Args:   daemon.Command.Args,
 			Dir:    manifest.Paths.WorkingDir,
+			Env:    []string{fmt.Sprintf("VIRTIE_SOCKET_PATH=%s", daemon.SocketPath)},
 			Stdout: os.Stderr,
 			Stderr: os.Stderr,
 		})
