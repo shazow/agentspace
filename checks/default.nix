@@ -8,6 +8,8 @@ let
     inherit mkLaunch mkSandbox pkgs;
   };
 in
+import ./virtie-manifest.nix args
+//
 import ./virtie-launch.nix args
 // import ./virtie-e2e.nix args
 // import ./extra-modules.nix args

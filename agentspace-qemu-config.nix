@@ -167,64 +167,62 @@ in
     socketPath = if microvm.socket != null then microvm.socket else "qmp.sock";
   };
 
-  devices = {
-    rng = {
-      id = "rng0";
-      inherit transport;
-    };
+  devices =
+    {
+      rng = {
+        id = "rng0";
+        inherit transport;
+      };
 
-    i8042 = system == "x86_64-linux";
+      i8042 = system == "x86_64-linux";
 
-    balloon =
-      if microvm.balloon then
-        {
-          id = "balloon0";
+      virtiofs = lib.imap0 (
+        index: share: {
+          id = "fs${toString index}";
+          socketPath = share.socket;
+          tag = share.tag;
           inherit transport;
-          deflateOnOOM = microvm.deflateOnOOM;
-          freePageReporting = true;
         }
-      else
-        null;
+      ) microvm.shares;
 
-    virtiofs = lib.imap0 (
-      index: share: {
-        id = "fs${toString index}";
-        socketPath = share.socket;
-        tag = share.tag;
+      block = builtins.map (
+        volume: {
+          id = "vd${volume.letter}";
+          imagePath = volume.image;
+          aio = aioEngine;
+          cache = if volume.direct != null then "none" else null;
+          readOnly = volume.readOnly;
+          serial = volume.serial;
+          inherit transport;
+        }
+      ) volumes;
+
+      network = builtins.map (
+        interface: {
+          id = interface.id;
+          backend = interface.type;
+          macAddress = interface.mac;
+          romFile =
+            if requirePci || (microvm.cpu == null && system != "x86_64-linux") then "" else null;
+          netdevOptions = netdevOptions;
+          mqVectors = if microvm.vcpu > 1 && requirePci then 2 * microvm.vcpu + 2 else 0;
+          inherit transport;
+        }
+      ) microvm.interfaces;
+
+      vsock = {
+        id = "vsock0";
         inherit transport;
-      }
-    ) microvm.shares;
-
-    block = builtins.map (
-      volume: {
-        id = "vd${volume.letter}";
-        imagePath = volume.image;
-        aio = aioEngine;
-        cache = if volume.direct != null then "none" else null;
-        readOnly = volume.readOnly;
-        serial = volume.serial;
+      };
+    }
+    // lib.optionalAttrs microvm.balloon {
+      balloon = {
+        id = "balloon0";
         inherit transport;
-      }
-    ) volumes;
-
-    network = builtins.map (
-      interface: {
-        id = interface.id;
-        backend = interface.type;
-        macAddress = interface.mac;
-        romFile =
-          if requirePci || (microvm.cpu == null && system != "x86_64-linux") then "" else null;
-        netdevOptions = netdevOptions;
-        mqVectors = if microvm.vcpu > 1 && requirePci then 2 * microvm.vcpu + 2 else 0;
-        inherit transport;
-      }
-    ) microvm.interfaces;
-
-    vsock = {
-      id = "vsock0";
-      inherit transport;
+        deflateOnOOM = microvm.deflateOnOOM;
+        freePageReporting = true;
+      };
     };
-  };
 
   passthroughArgs =
     lib.optionals (microvm.user != null) [
