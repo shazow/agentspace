@@ -29,7 +29,16 @@ in
       exit 1
     fi
 
-    grep -F '"qemu":{"argvTemplate":[' ${manifest}
+    grep -F '"qemu":{"binaryPath":"' ${manifest}
+    grep -F '"name":"agent-sandbox"' ${manifest}
+    grep -F '"machine":{"options":[' ${manifest}
+    grep -F '"type":"microvm"' ${manifest}
+    grep -F '"qmp":{"socketPath":"' ${manifest}
+    grep -F '"rng":{"id":"rng0"' ${manifest}
+    grep -F '"virtiofs":[{' ${manifest}
+    grep -F '"block":[{' ${manifest}
+    grep -F '"network":[{' ${manifest}
+    grep -F '"vsock":{"id":"vsock0"' ${manifest}
     grep -F '"argv":["${pkgs.openssh}/bin/ssh"' ${manifest}
     grep -F '"user":"agent"' ${manifest}
     grep -F '".agentspace-test/id_ed25519"' ${manifest}
@@ -39,12 +48,16 @@ in
     grep -F '"socketPath":"' ${manifest}
     grep -F '"command":{' ${manifest}
     grep -F 'workspace' ${manifest}
-    if grep -F '"vsock":' ${manifest} >/dev/null; then
-      echo "launch-agent-virtie-contract: manifest must not explicitly supply a vsock range" >&2
+    if grep -F '"cidRange"' ${manifest} >/dev/null; then
+      echo "launch-agent-virtie-contract: manifest must not explicitly supply a vsock cid range" >&2
       exit 1
     fi
     if grep -F '@vsock/' ${manifest} >/dev/null; then
       echo "launch-agent-virtie-contract: manifest must not embed the vsock destination" >&2
+      exit 1
+    fi
+    if grep -F '"argvTemplate"' ${manifest} >/dev/null; then
+      echo "launch-agent-virtie-contract: manifest must not include a legacy qemu argv template" >&2
       exit 1
     fi
     if grep -F '"microvmRun":"' ${manifest} >/dev/null; then

@@ -20,33 +20,7 @@ func TestManifestValidate(t *testing.T) {
 		t.Fatalf("expected validation error for empty manifest")
 	}
 
-	valid := &Manifest{
-		Identity: ManifestIdentity{HostName: "agent-sandbox"},
-		Paths: ManifestPaths{
-			WorkingDir: "/tmp/work",
-			LockPath:   "/tmp/virtie.lock",
-		},
-		SSH: ManifestSSH{
-			Argv: []string{"/bin/ssh"},
-			User: "agent",
-		},
-		QEMU: ManifestQEMU{
-			ArgvTemplate: []string{
-				"/tmp/qemu-system-x86_64",
-				"-device",
-				"vhost-vsock-pci,guest-cid={{VSOCK_CID}}",
-			},
-		},
-		VirtioFS: ManifestVirtioFS{Daemons: []ManifestVirtioFSDaemon{
-			{
-				Tag:        "workspace",
-				SocketPath: "sock-a",
-				Command: ManifestCommand{
-					Path: "/tmp/virtiofsd-workspace",
-				},
-			},
-		}},
-	}
+	valid := validManifest("/tmp/work")
 
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
@@ -70,10 +44,10 @@ func TestManifestValidate(t *testing.T) {
 		t.Fatalf("expected validation error for invalid cid range")
 	}
 
-	invalidQEMU := *valid
-	invalidQEMU.QEMU.ArgvTemplate = []string{"/tmp/qemu-system-x86_64"}
-	if err := invalidQEMU.Validate(); err == nil {
-		t.Fatalf("expected validation error for missing qemu vsock placeholder")
+	invalidQMP := *valid
+	invalidQMP.QEMU.QMP.SocketPath = ""
+	if err := invalidQMP.Validate(); err == nil {
+		t.Fatalf("expected validation error for missing qmp socket path")
 	}
 }
 
@@ -131,9 +105,40 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 
 func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	tmpDir := t.TempDir()
-	lockPath := filepath.Join(tmpDir, "virtie.lock")
-	socketA := filepath.Join(tmpDir, "sock-a")
-	socketB := filepath.Join(tmpDir, "sock-b")
+	manifest := validManifest(tmpDir)
+	manifest.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	manifest.Persistence.Directories = []string{"persist"}
+	manifest.QEMU.QMP.SocketPath = "qmp.sock"
+	manifest.QEMU.Devices.Block[0].ImagePath = "overlay.img"
+	manifest.Volumes = []ManifestVolume{
+		{
+			ImagePath:  "overlay.img",
+			SizeMiB:    64,
+			FSType:     "ext4",
+			AutoCreate: true,
+		},
+	}
+	manifest.VirtioFS.Daemons = []ManifestVirtioFSDaemon{
+		{
+			Tag:        "ro-store",
+			SocketPath: "sock-a",
+			Command: ManifestCommand{
+				Path: "/bin/virtiofsd-ro-store",
+			},
+		},
+		{
+			Tag:        "workspace",
+			SocketPath: "sock-b",
+			Command: ManifestCommand{
+				Path: "/bin/virtiofsd-workspace",
+			},
+		},
+	}
+	manifest.QEMU.Devices.VirtioFS = []ManifestQEMUVirtioFSShare{
+		{ID: "fs0", SocketPath: "sock-a", Tag: "ro-store", Transport: "pci"},
+		{ID: "fs1", SocketPath: "sock-b", Tag: "workspace", Transport: "pci"},
+	}
+
 	volumeImage := filepath.Join(tmpDir, "overlay.img")
 	mkfsLog := filepath.Join(tmpDir, "mkfs.log")
 
@@ -151,6 +156,11 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	defer cancel()
 
 	runner := &fakeRunner{cancel: cancel}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
 	waiter := &fakeSocketWaiter{
 		callback: func(paths []string) error {
 			for _, path := range paths {
@@ -165,60 +175,16 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 
 	manager := &Manager{
-		Locker:        &FileLocker{},
-		Runner:        runner,
-		SocketWaiter:  waiter,
-		Logger:        log.New(io.Discard, "", 0),
-		SSHRetryDelay: 0,
-		ShutdownDelay: 10 * time.Millisecond,
-	}
-
-	manifest := &Manifest{
-		Identity: ManifestIdentity{HostName: "agent-sandbox"},
-		Paths: ManifestPaths{
-			WorkingDir: tmpDir,
-			LockPath:   lockPath,
-		},
-		Persistence: ManifestPersistence{
-			Directories: []string{"persist"},
-		},
-		SSH: ManifestSSH{
-			Argv: []string{"/bin/ssh", "-q"},
-			User: "agent",
-		},
-		QEMU: ManifestQEMU{
-			ArgvTemplate: []string{
-				"/bin/qemu-system-x86_64",
-				"-device",
-				"vhost-vsock-pci,guest-cid={{VSOCK_CID}}",
-			},
-		},
-		Volumes: []ManifestVolume{
-			{
-				ImagePath:  "overlay.img",
-				SizeMiB:    64,
-				FSType:     "ext4",
-				AutoCreate: true,
-			},
-		},
-		VirtioFS: ManifestVirtioFS{
-			Daemons: []ManifestVirtioFSDaemon{
-				{
-					Tag:        "ro-store",
-					SocketPath: socketA,
-					Command: ManifestCommand{
-						Path: "/bin/virtiofsd-ro-store",
-					},
-				},
-				{
-					Tag:        "workspace",
-					SocketPath: socketB,
-					Command: ManifestCommand{
-						Path: "/bin/virtiofsd-workspace",
-					},
-				},
-			},
-		},
+		Locker:            &FileLocker{},
+		Runner:            runner,
+		SocketWaiter:      waiter,
+		QMPDialer:         &fakeQMPDialer{client: qmpClient},
+		Logger:            log.New(io.Discard, "", 0),
+		SSHRetryDelay:     0,
+		ShutdownDelay:     10 * time.Millisecond,
+		QMPRetryDelay:     0,
+		QMPConnectTimeout: time.Millisecond,
+		QMPQuitTimeout:    time.Millisecond,
 	}
 
 	err := manager.Launch(cancelCtx, manifest, nil)
@@ -231,9 +197,20 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
 	}
 
-	wantQEMUArgs := []string{"-device", "vhost-vsock-pci,guest-cid=3"}
-	if got := runner.qemuArgs; !reflect.DeepEqual(got, wantQEMUArgs) {
-		t.Fatalf("unexpected qemu args: got %v want %v", got, wantQEMUArgs)
+	if !containsString(runner.qemuArgs, "-qmp") {
+		t.Fatalf("expected qemu args to contain qmp socket: %v", runner.qemuArgs)
+	}
+	if !containsString(runner.qemuArgs, "unix:"+filepath.Join(tmpDir, "qmp.sock")+",server,nowait") {
+		t.Fatalf("expected qemu args to contain resolved qmp socket path: %v", runner.qemuArgs)
+	}
+	if !containsString(runner.qemuArgs, "guest-cid=3") {
+		t.Fatalf("expected qemu args to contain runtime vsock cid: %v", runner.qemuArgs)
+	}
+	if !containsString(runner.qemuArgs, "virtio-blk-pci,drive=vda") {
+		t.Fatalf("expected qemu args to contain virtio block device: %v", runner.qemuArgs)
+	}
+	if !containsString(runner.qemuArgs, "vhost-user-fs-pci,chardev=char-fs1,tag=workspace") {
+		t.Fatalf("expected qemu args to contain virtiofs share: %v", runner.qemuArgs)
 	}
 
 	if got := runner.qemuEnv; len(got) != 0 {
@@ -249,12 +226,15 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		}
 	}
 
-	wantSignals := []string{"ssh", "qemu", "virtiofsd[workspace]", "virtiofsd[ro-store]"}
+	wantSignals := []string{"ssh", "virtiofsd[workspace]", "virtiofsd[ro-store]"}
 	if !reflect.DeepEqual(runner.signals, wantSignals) {
 		t.Fatalf("unexpected stop order: got %v want %v", runner.signals, wantSignals)
 	}
+	if qmpClient.quitCalls != 1 {
+		t.Fatalf("expected qmp quit to be used for qemu shutdown, got %d calls", qmpClient.quitCalls)
+	}
 
-	if got, want := waiter.calls, 1; got != want {
+	if got, want := waiter.calls, 2; got != want {
 		t.Fatalf("unexpected waiter calls: got %d want %d", got, want)
 	}
 
@@ -350,35 +330,130 @@ func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecSubstitutesRuntimeCID(t *testing.T) {
-	manifest := &Manifest{
-		Paths: ManifestPaths{
-			WorkingDir: "/tmp/work",
-		},
-		QEMU: ManifestQEMU{
-			ArgvTemplate: []string{
-				"/bin/qemu-system-x86_64",
-				"-device",
-				"vhost-vsock-pci,guest-cid={{VSOCK_CID}}",
-				"-name",
-				"agent-sandbox",
-			},
-		},
-	}
+func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
+	manifest := validManifest("/tmp/work")
 
-	spec := buildQEMUSpec(manifest, 42)
-	wantArgs := []string{
-		"-device",
-		"vhost-vsock-pci,guest-cid=42",
-		"-name",
-		"agent-sandbox",
+	spec, err := buildQEMUSpec(manifest, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
 	}
 
 	if spec.Path != "/bin/qemu-system-x86_64" {
-		t.Fatalf("unexpected qemu path: got %q", spec.Path)
+		t.Fatalf("unexpected qemu path: got %q want %q", spec.Path, "/bin/qemu-system-x86_64")
 	}
-	if !reflect.DeepEqual(spec.Args, wantArgs) {
-		t.Fatalf("unexpected qemu args: got %v want %v", spec.Args, wantArgs)
+	if !containsString(spec.Args, "-name") || !containsString(spec.Args, "agent-sandbox") {
+		t.Fatalf("expected qemu args to include the guest name: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "guest-cid=42") {
+		t.Fatalf("expected qemu args to include the runtime cid: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "unix:/tmp/work/qmp.sock,server,nowait") {
+		t.Fatalf("expected qemu args to include the qmp socket: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "memory-backend-memfd,id=mem,size=1024M,share=on") {
+		t.Fatalf("expected qemu args to include the shared memory backend: %v", spec.Args)
+	}
+}
+
+func validManifest(workingDir string) *Manifest {
+	return &Manifest{
+		Identity: ManifestIdentity{HostName: "agent-sandbox"},
+		Paths: ManifestPaths{
+			WorkingDir: workingDir,
+			LockPath:   "/tmp/virtie.lock",
+		},
+		SSH: ManifestSSH{
+			Argv: []string{"/bin/ssh"},
+			User: "agent",
+		},
+		QEMU: ManifestQEMU{
+			BinaryPath: "/bin/qemu-system-x86_64",
+			Name:       "agent-sandbox",
+			Machine: ManifestQEMUMachine{
+				Type:    "microvm",
+				Options: []string{"accel=kvm:tcg"},
+			},
+			CPU: ManifestQEMUCPU{
+				Model:     "host",
+				EnableKVM: true,
+			},
+			Memory: ManifestQEMUMemory{
+				SizeMiB: 1024,
+				Backend: "memfd",
+				Shared:  true,
+			},
+			Kernel: ManifestQEMUKernel{
+				Path:       "/tmp/vmlinuz",
+				InitrdPath: "/tmp/initrd",
+				Params:     "panic=-1",
+			},
+			SMP: ManifestQEMUSMP{
+				CPUs: 2,
+			},
+			Console: ManifestQEMUConsole{
+				StdioChardev: true,
+			},
+			Knobs: ManifestQEMUKnobs{
+				NoDefaults:   true,
+				NoUserConfig: true,
+				NoReboot:     true,
+				NoGraphic:    true,
+			},
+			QMP: ManifestQEMUQMP{
+				SocketPath: "qmp.sock",
+			},
+			Devices: ManifestQEMUDevices{
+				RNG: ManifestQEMURNGDevice{
+					ID:        "rng0",
+					Transport: "pci",
+				},
+				VirtioFS: []ManifestQEMUVirtioFSShare{
+					{
+						ID:         "fs0",
+						SocketPath: "fs.sock",
+						Tag:        "workspace",
+						Transport:  "pci",
+					},
+				},
+				Block: []ManifestQEMUBlockDevice{
+					{
+						ID:        "vda",
+						ImagePath: "root.img",
+						AIO:       "threads",
+						Transport: "pci",
+					},
+				},
+				Network: []ManifestQEMUNetDevice{
+					{
+						ID:         "net0",
+						Backend:    "user",
+						MacAddress: "02:02:00:00:00:01",
+						Transport:  "pci",
+					},
+				},
+				VSOCK: ManifestQEMUVSOCKDevice{
+					ID:        "vsock0",
+					Transport: "pci",
+				},
+			},
+		},
+		Volumes: []ManifestVolume{
+			{
+				ImagePath:  "root.img",
+				SizeMiB:    64,
+				FSType:     "ext4",
+				AutoCreate: true,
+			},
+		},
+		VirtioFS: ManifestVirtioFS{Daemons: []ManifestVirtioFSDaemon{
+			{
+				Tag:        "workspace",
+				SocketPath: "fs.sock",
+				Command: ManifestCommand{
+					Path: "/tmp/virtiofsd-workspace",
+				},
+			},
+		}},
 	}
 }
 
@@ -391,6 +466,7 @@ type fakeRunner struct {
 	qemuEnv  []string
 	probes   int
 	cancel   context.CancelFunc
+	qemu     *fakeProcess
 }
 
 func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
@@ -403,7 +479,9 @@ func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
 	case "qemu":
 		r.qemuArgs = append([]string(nil), spec.Args...)
 		r.qemuEnv = append([]string(nil), spec.Env...)
-		return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
+		process := &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}
+		r.qemu = process
+		return process, nil
 	case "ssh":
 		r.sshArgs = append(r.sshArgs, append([]string(nil), spec.Args...))
 		r.probes++
@@ -433,10 +511,21 @@ func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
 	}
 }
 
+func (r *fakeRunner) exitQEMU(err error) {
+	r.mu.Lock()
+	process := r.qemu
+	r.mu.Unlock()
+	if process == nil {
+		return
+	}
+	process.complete(err)
+}
+
 type fakeProcess struct {
 	name   string
 	runner *fakeRunner
 	done   chan error
+	once   sync.Once
 }
 
 func (p *fakeProcess) Wait() error {
@@ -451,12 +540,7 @@ func (p *fakeProcess) Signal(sig os.Signal) error {
 	p.runner.mu.Lock()
 	p.runner.signals = append(p.runner.signals, p.name)
 	p.runner.mu.Unlock()
-
-	select {
-	case p.done <- nil:
-	default:
-	}
-	close(p.done)
+	p.complete(nil)
 	return nil
 }
 
@@ -468,6 +552,16 @@ func (p *fakeProcess) PID() int {
 	return 1
 }
 
+func (p *fakeProcess) complete(err error) {
+	p.once.Do(func() {
+		select {
+		case p.done <- err:
+		default:
+		}
+		close(p.done)
+	})
+}
+
 type fakeSocketWaiter struct {
 	calls    int
 	callback func(paths []string) error
@@ -476,6 +570,33 @@ type fakeSocketWaiter struct {
 func (w *fakeSocketWaiter) Wait(ctx context.Context, socketPaths []string) error {
 	w.calls++
 	return w.callback(socketPaths)
+}
+
+type fakeQMPDialer struct {
+	client   QMPClient
+	attempts int
+}
+
+func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (QMPClient, error) {
+	d.attempts++
+	return d.client, nil
+}
+
+type fakeQMPClient struct {
+	quitCalls int
+	onQuit    func()
+}
+
+func (c *fakeQMPClient) Quit(timeout time.Duration) error {
+	c.quitCalls++
+	if c.onQuit != nil {
+		c.onQuit()
+	}
+	return nil
+}
+
+func (c *fakeQMPClient) Disconnect() error {
+	return nil
 }
 
 func closedErrorChannel(err error) chan error {
@@ -542,7 +663,7 @@ func (p *blockingSSHProcess) killCalls() int {
 
 func containsString(values []string, needle string) bool {
 	for _, value := range values {
-		if value == needle {
+		if strings.Contains(value, needle) {
 			return true
 		}
 	}

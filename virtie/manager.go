@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -22,22 +21,30 @@ const (
 var SSHProbeCommand = []string{"true"}
 
 type Manager struct {
-	Locker        Locker
-	Runner        Runner
-	SocketWaiter  SocketWaiter
-	Logger        *log.Logger
-	SSHRetryDelay time.Duration
-	ShutdownDelay time.Duration
+	Locker            Locker
+	Runner            Runner
+	SocketWaiter      SocketWaiter
+	QMPDialer         QMPDialer
+	Logger            *log.Logger
+	SSHRetryDelay     time.Duration
+	ShutdownDelay     time.Duration
+	QMPRetryDelay     time.Duration
+	QMPConnectTimeout time.Duration
+	QMPQuitTimeout    time.Duration
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		Locker:        &FileLocker{},
-		Runner:        &ExecRunner{},
-		SocketWaiter:  &PollingSocketWaiter{},
-		Logger:        log.New(os.Stderr, "virtie: ", 0),
-		SSHRetryDelay: DefaultSSHRetryDelay,
-		ShutdownDelay: DefaultShutdownDelay,
+		Locker:            &FileLocker{},
+		Runner:            &ExecRunner{},
+		SocketWaiter:      &PollingSocketWaiter{},
+		QMPDialer:         &socketMonitorDialer{},
+		Logger:            log.New(os.Stderr, "virtie: ", 0),
+		SSHRetryDelay:     DefaultSSHRetryDelay,
+		ShutdownDelay:     DefaultShutdownDelay,
+		QMPRetryDelay:     DefaultQMPRetryDelay,
+		QMPConnectTimeout: DefaultQMPConnectTimeout,
+		QMPQuitTimeout:    DefaultQMPQuitTimeout,
 	}
 }
 
@@ -47,6 +54,7 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 	}
 
 	socketPaths := manifest.ResolvedSocketPaths()
+	qmpSocketPath := manifest.ResolvedQMPSocketPath()
 	volumes := manifest.ResolvedVolumes()
 
 	lock, err := m.Locker.Acquire(manifest.ResolvedLockPath())
@@ -68,10 +76,16 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 	if err := ensureParentDirectories(socketPaths); err != nil {
 		return &StageError{Stage: "preflight", Err: err}
 	}
+	if err := ensureParentDirectories([]string{qmpSocketPath}); err != nil {
+		return &StageError{Stage: "preflight", Err: err}
+	}
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
 		return &StageError{Stage: "preflight", Err: err}
 	}
 	if err := removeSocketPaths(socketPaths); err != nil {
+		return &StageError{Stage: "preflight", Err: err}
+	}
+	if err := removeSocketPaths([]string{qmpSocketPath}); err != nil {
 		return &StageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureVolumeImages(volumes); err != nil {
@@ -79,13 +93,18 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 	}
 
 	var started []*managedProcess
+	var qmpClient QMPClient
 	defer func() {
 		stopErr := m.stopAll(started)
-		cleanupErr := removeSocketPaths(socketPaths)
+		var disconnectErr error
+		if qmpClient != nil {
+			disconnectErr = qmpClient.Disconnect()
+		}
+		cleanupErr := removeSocketPaths(append([]string{qmpSocketPath}, socketPaths...))
 		if err == nil {
-			err = errors.Join(stopErr, cleanupErr)
-		} else if stopErr != nil || cleanupErr != nil {
-			err = errors.Join(err, stopErr, cleanupErr)
+			err = errors.Join(stopErr, disconnectErr, cleanupErr)
+		} else if stopErr != nil || disconnectErr != nil || cleanupErr != nil {
+			err = errors.Join(err, stopErr, disconnectErr, cleanupErr)
 		}
 	}()
 
@@ -101,11 +120,24 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 	}
 
 	m.Logger.Printf("starting qemu")
-	qemu, err := m.startManagedProcess(buildQEMUSpec(manifest, cid))
+	qemuSpec, err := buildQEMUSpec(manifest, cid)
+	if err != nil {
+		return &StageError{Stage: "preflight", Err: err}
+	}
+	qemu, err := m.startManagedProcess(qemuSpec)
 	if err != nil {
 		return &StageError{Stage: "vm startup", Err: err}
 	}
 	started = append(started, qemu)
+
+	m.Logger.Printf("waiting for qmp readiness")
+	qmpClient, err = m.waitForQMP(ctx, qmpSocketPath, qemu)
+	if err != nil {
+		return err
+	}
+	qemu.shutdown = func() error {
+		return qmpClient.Quit(m.effectiveQMPQuitTimeout())
+	}
 
 	m.Logger.Printf("waiting for ssh readiness")
 	if err := m.waitForSSH(ctx, manifest, cid, started...); err != nil {
@@ -123,9 +155,10 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 }
 
 type managedProcess struct {
-	name string
-	proc Process
-	done chan error
+	name     string
+	proc     Process
+	done     chan error
+	shutdown func() error
 }
 
 func (m *Manager) startManagedProcess(spec ProcessSpec) (*managedProcess, error) {
@@ -226,6 +259,86 @@ func (m *Manager) waitForSockets(ctx context.Context, socketPaths []string, watc
 			return &StageError{Stage: "virtiofs startup", Err: ctx.Err()}
 		}
 	}
+}
+
+func (m *Manager) waitForQMP(ctx context.Context, socketPath string, watchers ...*managedProcess) (QMPClient, error) {
+	waitCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- m.SocketWaiter.Wait(waitCtx, []string{socketPath})
+	}()
+
+	ticker := time.NewTicker(DefaultSocketPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				return nil, &StageError{Stage: "vm startup", Err: err}
+			}
+			return m.connectQMP(ctx, socketPath, watchers...)
+		case <-ticker.C:
+			if err := firstUnexpectedExit("vm startup", watchers...); err != nil {
+				return nil, err
+			}
+		case <-ctx.Done():
+			return nil, &StageError{Stage: "vm startup", Err: ctx.Err()}
+		}
+	}
+}
+
+func (m *Manager) connectQMP(ctx context.Context, socketPath string, watchers ...*managedProcess) (QMPClient, error) {
+	dialer := m.QMPDialer
+	if dialer == nil {
+		dialer = &socketMonitorDialer{}
+	}
+	connectTimeout := m.effectiveQMPConnectTimeout()
+	retryDelay := m.QMPRetryDelay
+	if retryDelay <= 0 {
+		retryDelay = DefaultQMPRetryDelay
+	}
+
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, &StageError{Stage: "vm startup", Err: ctx.Err()}
+		case <-timer.C:
+		}
+
+		if err := firstUnexpectedExit("vm startup", watchers...); err != nil {
+			return nil, err
+		}
+
+		client, err := dialer.Dial(ctx, socketPath, connectTimeout)
+		if err == nil {
+			return client, nil
+		}
+		if ctx.Err() != nil {
+			return nil, &StageError{Stage: "vm startup", Err: ctx.Err()}
+		}
+
+		timer.Reset(retryDelay)
+	}
+}
+
+func (m *Manager) effectiveQMPConnectTimeout() time.Duration {
+	if m.QMPConnectTimeout > 0 {
+		return m.QMPConnectTimeout
+	}
+	return DefaultQMPConnectTimeout
+}
+
+func (m *Manager) effectiveQMPQuitTimeout() time.Duration {
+	if m.QMPQuitTimeout > 0 {
+		return m.QMPQuitTimeout
+	}
+	return DefaultQMPQuitTimeout
 }
 
 func (m *Manager) waitForSSH(ctx context.Context, manifest *Manifest, cid int, watchers ...*managedProcess) error {
@@ -342,7 +455,26 @@ func (m *Manager) stopProcess(process *managedProcess) error {
 		return nil
 	}
 
+	var shutdownErr error
+	if process.shutdown != nil {
+		if err := process.shutdown(); err != nil {
+			shutdownErr = fmt.Errorf("shutdown %s: %w", process.name, err)
+		} else {
+			timer := time.NewTimer(m.ShutdownDelay)
+			defer timer.Stop()
+
+			select {
+			case <-process.done:
+				return shutdownErr
+			case <-timer.C:
+			}
+		}
+	}
+
 	if err := process.proc.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if shutdownErr != nil {
+			return errors.Join(shutdownErr, fmt.Errorf("stop %s: %w", process.name, err))
+		}
 		return fmt.Errorf("stop %s: %w", process.name, err)
 	}
 
@@ -351,13 +483,16 @@ func (m *Manager) stopProcess(process *managedProcess) error {
 
 	select {
 	case <-process.done:
-		return nil
+		return shutdownErr
 	case <-timer.C:
 		if err := process.proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			if shutdownErr != nil {
+				return errors.Join(shutdownErr, fmt.Errorf("kill %s: %w", process.name, err))
+			}
 			return fmt.Errorf("kill %s: %w", process.name, err)
 		}
 		<-process.done
-		return nil
+		return shutdownErr
 	}
 }
 
@@ -395,23 +530,6 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 	}
 
 	return nil
-}
-
-func buildQEMUSpec(manifest *Manifest, cid int) ProcessSpec {
-	argv := manifest.ResolvedQEMUArgvTemplate()
-	cidValue := fmt.Sprintf("%d", cid)
-	for i, arg := range argv {
-		argv[i] = strings.ReplaceAll(arg, VSockCIDPlaceholder, cidValue)
-	}
-
-	return ProcessSpec{
-		Name:   "qemu",
-		Path:   argv[0],
-		Args:   argv[1:],
-		Dir:    manifest.Paths.WorkingDir,
-		Stdout: os.Stderr,
-		Stderr: os.Stderr,
-	}
 }
 
 func buildSSHSpec(manifest *Manifest, cid int, remoteCommand []string, interactive bool) ProcessSpec {
