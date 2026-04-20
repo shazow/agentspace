@@ -11,28 +11,125 @@ let
         set -euo pipefail
 
         mkdir -p "$PWD/state"
+        qmp_socket=""
 
-        for arg in "$@"; do
-          case "$arg" in
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            -qmp)
+              shift
+              qmp_socket="$1"
+              ;;
             *guest-cid=*)
-              cid="''${arg##*guest-cid=}"
+              cid="''${1##*guest-cid=}"
               printf '%s\n' "$cid" > "$PWD/state/qemu-vsock-cid"
               ;;
           esac
+          shift || true
         done
+
+        case "$qmp_socket" in
+          unix:*,server,nowait)
+            qmp_socket="''${qmp_socket#unix:}"
+            qmp_socket="''${qmp_socket%,server,nowait}"
+            ;;
+          "")
+            echo "fake qemu: missing -qmp unix socket" >&2
+            exit 1
+            ;;
+          *)
+            echo "fake qemu: unsupported qmp socket spec: $qmp_socket" >&2
+            exit 1
+            ;;
+        esac
 
         touch "$PWD/state/qemu-started"
 
+        export QMP_SOCKET="$qmp_socket"
+        export QEMU_PARENT_PID="$$"
+        ${pkgs.python3}/bin/python - <<'PY' &
+import json
+import os
+import signal
+import socket
+
+socket_path = os.environ["QMP_SOCKET"]
+parent_pid = int(os.environ["QEMU_PARENT_PID"])
+
+os.makedirs(os.path.dirname(socket_path) or ".", exist_ok=True)
+try:
+    os.unlink(socket_path)
+except FileNotFoundError:
+    pass
+
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(socket_path)
+server.listen(1)
+conn, _ = server.accept()
+
+def send(message):
+    conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
+
+send(
+    {
+        "QMP": {
+            "version": {
+                "qemu": {"major": 8, "minor": 2, "micro": 0},
+                "package": "",
+            },
+            "capabilities": [],
+        }
+    }
+)
+
+decoder = json.JSONDecoder()
+buffer = ""
+quit_requested = False
+while True:
+    chunk = conn.recv(4096)
+    if not chunk:
+        break
+    buffer += chunk.decode("utf-8")
+    while True:
+        stripped = buffer.lstrip()
+        if not stripped:
+            buffer = ""
+            break
+        try:
+            message, consumed = decoder.raw_decode(stripped)
+        except json.JSONDecodeError:
+            break
+        buffer = stripped[consumed:]
+        command = message.get("execute")
+        send({"return": {}})
+        if command == "quit":
+            os.kill(parent_pid, signal.SIGTERM)
+            buffer = ""
+            quit_requested = True
+            break
+    if quit_requested:
+        break
+
+conn.close()
+server.close()
+try:
+    os.unlink(socket_path)
+except FileNotFoundError:
+    pass
+PY
+        qmp_pid=$!
+
         cleanup() {
           trap - EXIT INT TERM
+          kill "$qmp_pid" 2>/dev/null || true
+          wait "$qmp_pid" 2>/dev/null || true
+          rm -f "$qmp_socket"
           touch "$PWD/state/qemu-stopped"
           exit 0
         }
         trap cleanup EXIT INT TERM
 
-        while true; do
-          sleep 1
-        done
+        wait "$qmp_pid" || true
+        cleanup
       '')
       (pkgs.writeShellScriptBin "virtiofsd-workspace" ''
         set -euo pipefail
@@ -129,11 +226,75 @@ let
         argv = [ fakeSSH ];
         user = "agent";
       };
-      qemu.argvTemplate = [
-        "${fakeTools}/bin/qemu-system-x86_64"
-        "-device"
-        "vhost-vsock-pci,guest-cid={{VSOCK_CID}}"
-      ];
+      qemu = {
+        binaryPath = "${fakeTools}/bin/qemu-system-x86_64";
+        name = "virtie-fake";
+        machine = {
+          type = "microvm";
+          options = [ "accel=tcg" ];
+        };
+        cpu = {
+          model = "host";
+        };
+        memory = {
+          sizeMiB = 256;
+          backend = "default";
+        };
+        kernel = {
+          path = "/tmp/vmlinuz";
+          initrdPath = "/tmp/initrd";
+          params = "panic=-1";
+        };
+        smp = {
+          cpus = 2;
+        };
+        console = {
+          stdioChardev = true;
+        };
+        knobs = {
+          noDefaults = true;
+          noUserConfig = true;
+          noReboot = true;
+          noGraphic = true;
+        };
+        qmp = {
+          socketPath = "qmp.sock";
+        };
+        devices = {
+          rng = {
+            id = "rng0";
+            transport = "pci";
+          };
+          virtiofs = [
+            {
+              id = "fs0";
+              socketPath = "virtiofs.sock";
+              tag = "workspace";
+              transport = "pci";
+            }
+          ];
+          block = [
+            {
+              id = "vda";
+              imagePath = "overlay.img";
+              aio = "threads";
+              transport = "pci";
+            }
+          ];
+          network = [
+            {
+              id = "net0";
+              backend = "user";
+              macAddress = "02:02:00:00:00:01";
+              transport = "pci";
+            }
+          ];
+          vsock = {
+            id = "vsock0";
+            transport = "pci";
+          };
+        };
+      };
       volumes = [
         {
           imagePath = "overlay.img";

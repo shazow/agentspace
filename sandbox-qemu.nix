@@ -192,7 +192,7 @@ in
           cfg.sshIdentityFile
         ];
       virtiofsShares = builtins.filter (share: share.proto == "virtiofs") config.microvm.shares;
-      qemuArgvTemplate = import ./agentspace-qemu-argv.nix {
+      qemuConfig = import ./agentspace-qemu-config.nix {
         inherit config lib pkgs;
       };
 
@@ -262,7 +262,7 @@ in
             argv = sshBaseArgv;
             user = cfg.user;
           };
-          qemu.argvTemplate = qemuArgvTemplate;
+          qemu = qemuConfig;
           volumes = manifestVolumes;
           virtiofs.daemons = virtiofsDaemons;
         }

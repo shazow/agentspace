@@ -25,7 +25,7 @@ Out of scope:
 Acceptance criteria:
 
 - [x] `mkLaunch` execs `virtie launch <manifest> -- "$@"` for the supported path.
-- [x] The manifest emitted from `sandbox-qemu.nix` carries the current `virtie` inputs: working dir, lock path, ssh argv/user, QEMU argv template, volumes, and `virtiofs` daemon commands.
+- [x] The manifest emitted from `sandbox-qemu.nix` carries the current `virtie` inputs: working dir, lock path, ssh argv/user, typed QEMU settings, volumes, and `virtiofs` daemon commands.
 - [x] Unsupported launch configurations fail through explicit assertions rather than hidden fallback behavior.
 - [x] `agentspace.sandbox.extraModules` remains usable through the follow-up evaluation pass in `mkSandbox`.
 - [ ] The default `mkSandbox {}` launch experience provisions a usable out-of-the-box SSH credential story.
@@ -35,10 +35,14 @@ Acceptance criteria:
 
 - [x] Package `virtie` in the flake and use it from generated launch wrappers.
 - [x] Replace the active launch path with `virtie launch` instead of legacy host orchestration.
+- [x] Move final QEMU argv construction out of Nix and into `virtie`, leaving Nix responsible for guest evaluation plus the resolved typed QEMU launch config.
+- [x] Emit the typed QEMU manifest from `sandbox-qemu.nix` through `agentspace-qemu-config.nix`.
 - [x] Generate per-share `virtiofsd` commands and socket paths in the manifest instead of relying on a `virtiofsd-run` helper.
 - [x] Stub `connect-agent` with an explicit unsupported message while launch-time CID allocation remains dynamic.
 - [x] Restore `agentspace.sandbox.extraModules` support via the `mkSandbox` extension pass.
 - [x] Keep unsupported modes explicit in `sandbox-qemu.nix`, including `9p`, console attach, airlock, fixed vsock CID, and other unsupported direct-QEMU features.
+- [x] Remove the legacy Nix argv-template builder so the repo does not imply that final QEMU argv is still Nix-owned.
+- [x] Re-enable the `virtie` fake-tools E2E check in `checks/default.nix` alongside the manifest contract check.
 - [ ] Fix `nix flake check`, which currently stops at `packages.x86_64-linux.default` because it is a string path rather than a derivation.
 - [ ] Re-enable the additional repo checks that exist in `checks/` but are currently commented out in `checks/default.nix`.
 - [ ] Decide whether `connect-agent` should remain unsupported or be replaced by a future `virtie` reconnect/connect command.
@@ -47,10 +51,13 @@ Acceptance criteria:
 
 - Current supported selection rule: `agentspace.sandbox.connectWith == "ssh"`, `agentspace.sandbox.protocol == "virtiofs"`, airlock disabled, default `initExtra`, QEMU hypervisor, user-mode networking.
 - Current launcher shape: set `REPO_DIR`, run the default prelaunch shell, then exec `virtie launch`.
+- Current Nix-to-virtie contract:
+  - Nix still owns guest evaluation and image production through `microvm.nix`.
+  - Nix resolves machine, CPU, memory, kernel, block, network, `virtiofs`, and QMP settings into the manifest.
+  - `virtie` owns final argv compilation, QMP lifecycle, process launch, and teardown ordering.
 - Current repo drift to keep visible in planning:
-  - `PLAN.md` previously described `microvm-run` fields and behavior that are no longer part of the active path.
   - `mkConnect` is no longer a direct SSH wrapper; it now exits unsupported.
-  - Only `checks/virtie-launch.nix` is enabled in `checks/default.nix`, even though additional checks exist for E2E, unsupported paths, home-manager, extra modules, and connect behavior.
+  - `checks/default.nix` now enables the `virtie` contract and fake-tools E2E checks, but unsupported-path, home-manager, extra-modules, and connect checks are still commented out.
 
 ```mermaid
 flowchart TD
@@ -61,5 +68,6 @@ flowchart TD
   D --> F[launch-agent sets REPO_DIR]
   F --> G[Run default initExtra prelaunch shell]
   G --> H[Exec virtie launch manifest]
-  H --> I[virtie manages virtiofs, QEMU, and SSH session]
+  H --> I[virtie compiles final QEMU argv]
+  I --> J[virtie manages virtiofs, QMP, QEMU, and SSH session]
 ```

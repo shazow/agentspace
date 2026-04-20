@@ -27,23 +27,26 @@ Out of scope:
 Acceptance criteria:
 
 - [x] `virtie launch <manifest> [-- <remote-cmd...>]` is the supported user-facing command.
-- [x] Manifest validation enforces the implemented contract for host name, working dir, lock path, ssh argv/user, QEMU argv template, `virtiofs` daemons, and auto-created volumes.
-- [x] QEMU launch substitutes the runtime CID into the literal `{{VSOCK_CID}}` placeholder.
+- [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, QEMU devices, `virtiofs` daemons, and auto-created volumes.
+- [x] QEMU launch is compiled from the typed manifest plus the runtime-selected CID rather than string-substituting a Nix-generated argv template.
 - [x] Launch acquires per-sandbox and per-CID locks before starting guest processes.
-- [x] Launch waits for `virtiofs` socket readiness and retries SSH probes before starting the interactive session.
-- [x] Teardown stops the foreground SSH session first, then QEMU, then `virtiofsd`.
-- [ ] Repo-level Nix checks exercise the generated wrapper and E2E launch path by default.
+- [x] Launch waits for `virtiofs` socket readiness, then QMP readiness, then retries SSH probes before starting the interactive session.
+- [x] Teardown stops the foreground SSH session first, then requests QMP `quit`, then falls back to signal-based QEMU shutdown, then stops `virtiofsd`.
+- [x] Repo-level Nix checks exercise the generated wrapper and E2E launch path by default.
 
 ## Progress
 
 - [x] Implement manifest loading, validation, defaulting, and path resolution.
-- [x] Implement launch sequencing for preflight, socket wait, QEMU start, SSH readiness probing, session attach, and ordered shutdown.
+- [x] Replace `qemu.argvTemplate` with a typed `qemu` manifest contract that captures the resolved host-side launch inputs.
+- [x] Implement QEMU argv compilation inside `virtie`, using `govmm/qemu` for typed device emission where it fits and local raw-arg assembly for user networking, memfd memory, balloon flags, and block-device details that are not modeled cleanly.
+- [x] Implement QMP connection management with `go-qemu/qmp` for monitor readiness and graceful `quit` during teardown.
+- [x] Implement launch sequencing for preflight, `virtiofs` socket wait, QMP readiness, QEMU start, SSH readiness probing, session attach, and ordered shutdown.
 - [x] Implement volume auto-create handling, including filesystem defaults and `mkfs.<fsType>` execution.
 - [x] Implement per-sandbox and per-CID lock files for concurrent session safety.
 - [x] Implement stage-aware errors and foreground SSH exit-code propagation.
-- [x] Cover manifest validation, CID substitution, CID locking, SSH retry behavior, and launch/teardown ordering with Go tests.
-- [x] Confirm `go test ./...` passes in `virtie`.
-- [ ] Keep the Nix-layer integration checks enabled and green as part of the default repo check surface.
+- [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH retry behavior, and launch/teardown ordering with Go tests.
+- [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
+- [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface.
 
 ## Appendix
 
@@ -54,16 +57,37 @@ Acceptance criteria:
   - `persistence.directories`
   - `ssh.argv`
   - `ssh.user`
-  - `qemu.argvTemplate`
+  - `qemu.binaryPath`
+  - `qemu.name`
+  - `qemu.machine`
+  - `qemu.cpu`
+  - `qemu.memory`
+  - `qemu.kernel`
+  - `qemu.smp`
+  - `qemu.console`
+  - `qemu.knobs`
+  - `qemu.qmp.socketPath`
+  - `qemu.devices.rng`
+  - `qemu.devices.balloon`
+  - `qemu.devices.virtiofs[]`
+  - `qemu.devices.block[]`
+  - `qemu.devices.network[]`
+  - `qemu.devices.vsock`
+  - `qemu.machineId`
+  - `qemu.passthroughArgs`
   - `volumes[].imagePath`, `sizeMiB`, `fsType`, `autoCreate`, optional `label`, `mkfsExtraArgs`
   - `virtiofs.daemons[].socketPath`
   - `virtiofs.daemons[].command`
   - optional `vsock.cidRange`, defaulting to `3..65535`
 - Runtime assumptions:
-  - Nix has already produced the guest image inputs and manifest.
+  - Nix has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
   - `ssh` and the required `mkfs.<fsType>` tools are available on the host.
   - The guest SSH service is reachable over the runtime-selected vsock CID.
-- Current verification note: the Go package tests pass, but the repo does not currently enable all Nix checks that were intended to cover the launch wrapper and fake-tools E2E path.
+- Implementation notes:
+  - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.
+  - QMP is used for monitor readiness and graceful shutdown, not for guest readiness.
+  - The old Nix-owned argv-template path has been removed from the active contract.
+- Current verification note: the Go package tests pass, and the Nix contract and fake-tools E2E checks now cover the typed manifest by default, but other unrelated checks in `checks/default.nix` remain disabled.
 
 ```mermaid
 flowchart TD
@@ -73,10 +97,13 @@ flowchart TD
   D --> E[Create required directories and auto-created volumes]
   E --> F[Start virtiofsd daemons]
   F --> G[Wait for virtiofs sockets]
-  G --> H[Substitute CID into QEMU argv template]
+  G --> H[Compile QEMU argv from typed manifest plus runtime CID]
   H --> I[Start QEMU]
-  I --> J[Probe SSH until guest is ready]
-  J --> K[Attach interactive SSH session]
-  K --> L[Session exits or signal received]
-  L --> M[Stop SSH then QEMU then virtiofsd]
+  I --> J[Wait for QMP socket and connect monitor]
+  J --> K[Probe SSH until guest is ready]
+  K --> L[Attach interactive SSH session]
+  L --> M[Session exits or signal received]
+  M --> N[Stop SSH then request QMP quit]
+  N --> O[Fallback to TERM or kill if needed]
+  O --> P[Stop virtiofsd and clean sockets]
 ```
