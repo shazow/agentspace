@@ -31,7 +31,8 @@ in
     grep -F '"name":"agent-sandbox"' ${manifest}
     grep -F '"machine":{"options":[' ${manifest}
     grep -F '"type":"microvm"' ${manifest}
-    grep -F '"qmp":{"socketPath":"' ${manifest}
+    grep -F '"runtimeDir":""' ${manifest}
+    grep -F '"qmp":{"socketPath":"qmp.sock"}' ${manifest}
     grep -F '"rng":{"id":"rng0"' ${manifest}
     grep -F '"virtiofs":[{' ${manifest}
     grep -F '"block":[{' ${manifest}

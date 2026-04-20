@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/adrg/xdg"
 )
 
 func TestManifestValidate(t *testing.T) {
@@ -355,6 +357,143 @@ func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	}
 }
 
+func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
+	runtimeDir := t.TempDir()
+	setXDGTestRuntimeDir(t, runtimeDir)
+
+	manifest := validManifest("/tmp/work")
+	manifest.Paths.RuntimeDir = stringPtr("")
+
+	spec, err := buildQEMUSpec(manifest, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	wantQMP := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "qmp.sock")
+	if !containsString(spec.Args, "unix:"+wantQMP+",server,nowait") {
+		t.Fatalf("expected qemu args to include runtime qmp socket %q: %v", wantQMP, spec.Args)
+	}
+}
+
+func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
+	runtimeDir := t.TempDir()
+	setXDGTestRuntimeDir(t, runtimeDir)
+
+	tests := []struct {
+		name       string
+		runtimeDir *string
+		socketPath string
+		wantSocket string
+		wantQMP    string
+	}{
+		{
+			name:       "legacy working dir",
+			runtimeDir: nil,
+			socketPath: "fs.sock",
+			wantSocket: "/tmp/work/fs.sock",
+			wantQMP:    "/tmp/work/qmp.sock",
+		},
+		{
+			name:       "default runtime dir",
+			runtimeDir: stringPtr(""),
+			socketPath: "fs.sock",
+			wantSocket: filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "fs.sock"),
+			wantQMP:    filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qmp.sock"),
+		},
+		{
+			name:       "relative runtime dir",
+			runtimeDir: stringPtr("runtime"),
+			socketPath: "fs.sock",
+			wantSocket: "/tmp/work/runtime/fs.sock",
+			wantQMP:    "/tmp/work/runtime/qmp.sock",
+		},
+		{
+			name:       "absolute runtime dir",
+			runtimeDir: stringPtr("/tmp/runtime"),
+			socketPath: "fs.sock",
+			wantSocket: "/tmp/runtime/fs.sock",
+			wantQMP:    "/tmp/runtime/qmp.sock",
+		},
+		{
+			name:       "absolute socket path bypasses runtime dir",
+			runtimeDir: stringPtr(""),
+			socketPath: "/tmp/explicit-fs.sock",
+			wantSocket: "/tmp/explicit-fs.sock",
+			wantQMP:    "/tmp/explicit-qmp.sock",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := validManifest("/tmp/work")
+			manifest.Paths.RuntimeDir = tt.runtimeDir
+			manifest.VirtioFS.Daemons[0].SocketPath = tt.socketPath
+			manifest.QEMU.Devices.VirtioFS[0].SocketPath = tt.socketPath
+			if tt.name == "absolute socket path bypasses runtime dir" {
+				manifest.QEMU.QMP.SocketPath = "/tmp/explicit-qmp.sock"
+			}
+
+			socketPaths, err := manifest.ResolvedSocketPaths()
+			if err != nil {
+				t.Fatalf("resolve socket paths: %v", err)
+			}
+			if got, want := socketPaths, []string{tt.wantSocket}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("unexpected socket paths: got %v want %v", got, want)
+			}
+
+			qmpSocketPath, err := manifest.ResolvedQMPSocketPath()
+			if err != nil {
+				t.Fatalf("resolve qmp socket path: %v", err)
+			}
+			if qmpSocketPath != tt.wantQMP {
+				t.Fatalf("unexpected qmp socket path: got %q want %q", qmpSocketPath, tt.wantQMP)
+			}
+
+			qemu, err := manifest.ResolvedQEMU()
+			if err != nil {
+				t.Fatalf("resolve qemu config: %v", err)
+			}
+			if got, want := qemu.Devices.VirtioFS[0].SocketPath, tt.wantSocket; got != want {
+				t.Fatalf("unexpected qemu virtiofs socket path: got %q want %q", got, want)
+			}
+			if got, want := qemu.QMP.SocketPath, tt.wantQMP; got != want {
+				t.Fatalf("unexpected qemu qmp socket path: got %q want %q", got, want)
+			}
+
+			daemons, err := manifest.ResolvedVirtioFSDaemons()
+			if err != nil {
+				t.Fatalf("resolve virtiofs daemons: %v", err)
+			}
+			if got, want := daemons[0].SocketPath, tt.wantSocket; got != want {
+				t.Fatalf("unexpected daemon socket path: got %q want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
+	runtimeDir := t.TempDir()
+	setXDGTestRuntimeDir(t, runtimeDir)
+
+	manifest := validManifest(t.TempDir())
+	manifest.Paths.RuntimeDir = stringPtr("")
+
+	runner := &fakeRunner{}
+	manager := &Manager{
+		Runner: runner,
+		Logger: log.New(io.Discard, "", 0),
+	}
+
+	if _, err := manager.startVirtioFSDaemons(manifest); err != nil {
+		t.Fatalf("start virtiofs daemons: %v", err)
+	}
+
+	wantSocket := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "fs.sock")
+	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIE_SOCKET_PATH="+wantSocket) {
+		t.Fatalf("expected virtiofs daemon env to contain resolved socket path %q: %v", wantSocket, got)
+	}
+}
+
 func validManifest(workingDir string) *Manifest {
 	return &Manifest{
 		Identity: ManifestIdentity{HostName: "agent-sandbox"},
@@ -458,15 +597,16 @@ func validManifest(workingDir string) *Manifest {
 }
 
 type fakeRunner struct {
-	mu       sync.Mutex
-	starts   []string
-	signals  []string
-	sshArgs  [][]string
-	qemuArgs []string
-	qemuEnv  []string
-	probes   int
-	cancel   context.CancelFunc
-	qemu     *fakeProcess
+	mu          sync.Mutex
+	starts      []string
+	signals     []string
+	sshArgs     [][]string
+	qemuArgs    []string
+	qemuEnv     []string
+	virtiofsEnv map[string][]string
+	probes      int
+	cancel      context.CancelFunc
+	qemu        *fakeProcess
 }
 
 func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
@@ -505,6 +645,10 @@ func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
 		return process, nil
 	default:
 		if strings.HasPrefix(spec.Name, "virtiofsd[") {
+			if r.virtiofsEnv == nil {
+				r.virtiofsEnv = make(map[string][]string)
+			}
+			r.virtiofsEnv[spec.Name] = append([]string(nil), spec.Env...)
 			return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
 		}
 		return nil, errors.New("unexpected process")
@@ -668,4 +812,31 @@ func containsString(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func setXDGTestRuntimeDir(t *testing.T, runtimeDir string) {
+	t.Helper()
+
+	original, hadOriginal := os.LookupEnv("XDG_RUNTIME_DIR")
+	if err := os.Setenv("XDG_RUNTIME_DIR", runtimeDir); err != nil {
+		t.Fatalf("set XDG_RUNTIME_DIR: %v", err)
+	}
+	xdg.Reload()
+
+	t.Cleanup(func() {
+		var err error
+		if hadOriginal {
+			err = os.Setenv("XDG_RUNTIME_DIR", original)
+		} else {
+			err = os.Unsetenv("XDG_RUNTIME_DIR")
+		}
+		if err != nil {
+			t.Fatalf("restore XDG_RUNTIME_DIR: %v", err)
+		}
+		xdg.Reload()
+	})
 }

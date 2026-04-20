@@ -107,7 +107,11 @@ func runQMPMonitorOp(ctx context.Context, timeout time.Duration, abort func() er
 }
 
 func buildQEMUSpec(manifest *Manifest, cid int) (ProcessSpec, error) {
-	qemu := manifest.ResolvedQEMU()
+	qemu, err := manifest.ResolvedQEMU()
+	if err != nil {
+		return ProcessSpec{}, err
+	}
+
 	args, err := buildQEMUArgs(qemu, cid)
 	if err != nil {
 		return ProcessSpec{}, err
