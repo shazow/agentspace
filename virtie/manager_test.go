@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
+	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
+	balloonpkg "github.com/shazow/agentspace/virtie/balloon"
 )
 
 func TestManifestValidate(t *testing.T) {
@@ -50,6 +52,52 @@ func TestManifestValidate(t *testing.T) {
 	invalidQMP.QEMU.QMP.SocketPath = ""
 	if err := invalidQMP.Validate(); err == nil {
 		t.Fatalf("expected validation error for missing qmp socket path")
+	}
+
+	balloon := validManifestWithBalloon("/tmp/work")
+	if err := balloon.Validate(); err != nil {
+		t.Fatalf("unexpected balloon controller validation error: %v", err)
+	}
+	if balloon.QEMU.Devices.Balloon.Controller == nil {
+		t.Fatal("expected balloon controller defaults to be synthesized")
+	}
+	if got, want := balloon.QEMU.Devices.Balloon.Controller.MinActualMiB, 512; got != want {
+		t.Fatalf("unexpected balloon controller minActualMiB default: got %d want %d", got, want)
+	}
+	if got, want := balloon.QEMU.Devices.Balloon.Controller.MaxActualMiB, balloon.QEMU.Memory.SizeMiB; got != want {
+		t.Fatalf("unexpected balloon controller maxActualMiB default: got %d want %d", got, want)
+	}
+	if got, want := balloon.QEMU.Devices.Balloon.Controller.GrowBelowAvailableMiB, 256; got != want {
+		t.Fatalf("unexpected balloon controller grow threshold default: got %d want %d", got, want)
+	}
+	if got, want := balloon.QEMU.Devices.Balloon.Controller.ReclaimAboveAvailableMiB, 512; got != want {
+		t.Fatalf("unexpected balloon controller reclaim threshold default: got %d want %d", got, want)
+	}
+	if got, want := balloon.QEMU.Devices.Balloon.Controller.StepMiB, balloonpkg.DefaultControllerStepMiB; got != want {
+		t.Fatalf("unexpected balloon controller step default: got %d want %d", got, want)
+	}
+	if got, want := balloon.QEMU.Devices.Balloon.Controller.PollIntervalSeconds, balloonpkg.DefaultControllerPollIntervalSecs; got != want {
+		t.Fatalf("unexpected balloon controller poll interval default: got %d want %d", got, want)
+	}
+	if got, want := balloon.QEMU.Devices.Balloon.Controller.ReclaimHoldoffSeconds, balloonpkg.DefaultControllerReclaimHoldoff; got != want {
+		t.Fatalf("unexpected balloon controller reclaim holdoff default: got %d want %d", got, want)
+	}
+
+	invalidBalloon := validManifestWithBalloon("/tmp/work")
+	invalidBalloon.QEMU.Devices.Balloon.Controller = &balloonpkg.ControllerConfig{
+		MinActualMiB: invalidBalloon.QEMU.Memory.SizeMiB + 1,
+	}
+	if err := invalidBalloon.Validate(); err == nil {
+		t.Fatalf("expected validation error for invalid balloon controller bounds")
+	}
+
+	invalidThresholds := validManifestWithBalloon("/tmp/work")
+	invalidThresholds.QEMU.Devices.Balloon.Controller = &balloonpkg.ControllerConfig{
+		GrowBelowAvailableMiB:    512,
+		ReclaimAboveAvailableMiB: 512,
+	}
+	if err := invalidThresholds.Validate(); err == nil {
+		t.Fatalf("expected validation error for invalid balloon controller thresholds")
 	}
 }
 
@@ -252,6 +300,147 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("expected mkfs log: %v", err)
 	} else if got, want := strings.TrimSpace(string(data)), volumeImage; got != want {
 		t.Fatalf("unexpected mkfs args: got %q want %q", got, want)
+	}
+}
+
+func TestManagerLaunchStartsBalloonControllerAfterSSHReadinessAndStopsItBeforeQuit(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifest := validManifestWithBalloon(tmpDir)
+	manifest.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	manifest.QEMU.Devices.Balloon.Controller = &balloonpkg.ControllerConfig{
+		PollIntervalSeconds:   1,
+		ReclaimHoldoffSeconds: 1,
+	}
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &fakeRunner{
+		cancel:      cancel,
+		cancelDelay: 2 * time.Second,
+	}
+
+	var enableProbes int
+	var quitAt time.Time
+	qmpClient := (&fakeQMPClient{
+		onQuit: func() {
+			quitAt = time.Now()
+			runner.exitQEMU(nil)
+		},
+		onEnableBalloonStats: func() {
+			runner.mu.Lock()
+			enableProbes = runner.probes
+			runner.mu.Unlock()
+		},
+		readBalloonStats: balloonpkg.Stats{
+			Stats: map[string]int64{
+				"stat-available-memory": int64(900) * balloonpkg.BytesPerMiB,
+			},
+			LastUpdate: time.Now(),
+		},
+		readBalloonStatsDelay: 400 * time.Millisecond,
+		queryBalloonInfo:      balloonpkg.Info{ActualBytes: int64(512) * balloonpkg.BytesPerMiB},
+	}).withDefaultBalloonPath("/machine/peripheral/balloon0")
+
+	waiter := &fakeSocketWaiter{
+		callback: func(paths []string) error {
+			for _, path := range paths {
+				file, err := os.Create(path)
+				if err != nil {
+					return err
+				}
+				file.Close()
+			}
+			return nil
+		},
+	}
+
+	manager := &Manager{
+		Locker:            &FileLocker{},
+		Runner:            runner,
+		SocketWaiter:      waiter,
+		QMPDialer:         &fakeQMPDialer{client: qmpClient},
+		Logger:            log.New(io.Discard, "", 0),
+		SSHRetryDelay:     0,
+		ShutdownDelay:     10 * time.Millisecond,
+		QMPRetryDelay:     0,
+		QMPConnectTimeout: time.Second,
+		QMPQuitTimeout:    time.Second,
+	}
+
+	err := manager.Launch(cancelCtx, manifest, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+
+	if enableProbes < 3 {
+		t.Fatalf("expected balloon controller to start only after ssh readiness succeeded, got probe count %d", enableProbes)
+	}
+	if got, want := qmpClient.quitCount(), 1; got != want {
+		t.Fatalf("expected qmp quit to be called once, got %d", got)
+	}
+
+	readCompleted := qmpClient.readCompletionTime()
+	if readCompleted.IsZero() {
+		t.Fatal("expected balloon controller poll to run before shutdown")
+	}
+	if quitAt.Before(readCompleted) {
+		t.Fatalf("expected qmp quit after balloon controller stopped: quit=%s read-complete=%s", quitAt, readCompleted)
+	}
+}
+
+func TestManagerLaunchDoesNotAbortOnBalloonControllerFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifest := validManifestWithBalloon(tmpDir)
+	manifest.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &fakeRunner{cancel: cancel}
+	qmpClient := (&fakeQMPClient{
+		enableBalloonStatsErr: errors.New("guest stats unavailable"),
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}).withDefaultBalloonPath("/machine/peripheral/balloon0")
+
+	waiter := &fakeSocketWaiter{
+		callback: func(paths []string) error {
+			for _, path := range paths {
+				file, err := os.Create(path)
+				if err != nil {
+					return err
+				}
+				file.Close()
+			}
+			return nil
+		},
+	}
+
+	manager := &Manager{
+		Locker:            &FileLocker{},
+		Runner:            runner,
+		SocketWaiter:      waiter,
+		QMPDialer:         &fakeQMPDialer{client: qmpClient},
+		Logger:            log.New(io.Discard, "", 0),
+		SSHRetryDelay:     0,
+		ShutdownDelay:     10 * time.Millisecond,
+		QMPRetryDelay:     0,
+		QMPConnectTimeout: time.Second,
+		QMPQuitTimeout:    time.Second,
+	}
+
+	err := manager.Launch(cancelCtx, manifest, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+
+	if got, want := len(runner.sshArgs), 4; got != want {
+		t.Fatalf("expected ssh session to start despite balloon controller failure, got %d ssh starts", got)
+	}
+	if got, want := qmpClient.quitCount(), 1; got != want {
+		t.Fatalf("expected qmp quit to still be used on teardown, got %d", got)
 	}
 }
 
@@ -596,6 +785,15 @@ func validManifest(workingDir string) *Manifest {
 	}
 }
 
+func validManifestWithBalloon(workingDir string) *Manifest {
+	manifest := validManifest(workingDir)
+	manifest.QEMU.Devices.Balloon = &balloonpkg.Device{
+		ID:        "balloon0",
+		Transport: "pci",
+	}
+	return manifest
+}
+
 type fakeRunner struct {
 	mu          sync.Mutex
 	starts      []string
@@ -606,6 +804,7 @@ type fakeRunner struct {
 	virtiofsEnv map[string][]string
 	probes      int
 	cancel      context.CancelFunc
+	cancelDelay time.Duration
 	qemu        *fakeProcess
 }
 
@@ -641,7 +840,12 @@ func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
 		}
 
 		process := &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}
-		go r.cancel()
+		go func() {
+			if r.cancelDelay > 0 {
+				time.Sleep(r.cancelDelay)
+			}
+			r.cancel()
+		}()
 		return process, nil
 	default:
 		if strings.HasPrefix(spec.Name, "virtiofsd[") {
@@ -727,20 +931,135 @@ func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout tim
 }
 
 type fakeQMPClient struct {
-	quitCalls int
-	onQuit    func()
+	mu                       sync.Mutex
+	quitCalls                int
+	onQuit                   func()
+	onEnableBalloonStats     func()
+	listQOMProperties        map[string][]balloonpkg.ObjectPropertyInfo
+	listQOMPropertiesErr     map[string]error
+	enableBalloonStatsErr    error
+	queryBalloonInfo         balloonpkg.Info
+	queryBalloonErr          error
+	readBalloonStats         balloonpkg.Stats
+	readBalloonStatsErr      error
+	readBalloonStatsDelay    time.Duration
+	readBalloonStatsComplete time.Time
+	setBalloonLogicalSizes   []int64
+	setBalloonErr            error
 }
 
 func (c *fakeQMPClient) Quit(timeout time.Duration) error {
+	c.mu.Lock()
 	c.quitCalls++
-	if c.onQuit != nil {
-		c.onQuit()
+	onQuit := c.onQuit
+	c.mu.Unlock()
+
+	if onQuit != nil {
+		onQuit()
 	}
 	return nil
 }
 
+func (c *fakeQMPClient) QueryBalloon(timeout time.Duration) (balloonpkg.Info, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.queryBalloonErr != nil {
+		return balloonpkg.Info{}, c.queryBalloonErr
+	}
+	if c.queryBalloonInfo.ActualBytes == 0 {
+		return balloonpkg.Info{ActualBytes: int64(512) * balloonpkg.BytesPerMiB}, nil
+	}
+	return c.queryBalloonInfo, nil
+}
+
+func (c *fakeQMPClient) SetBalloonLogicalSize(timeout time.Duration, logicalSizeBytes int64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.setBalloonLogicalSizes = append(c.setBalloonLogicalSizes, logicalSizeBytes)
+	return c.setBalloonErr
+}
+
+func (c *fakeQMPClient) EnableBalloonStatsPolling(timeout time.Duration, qomPath string, pollIntervalSeconds int) error {
+	c.mu.Lock()
+	onEnable := c.onEnableBalloonStats
+	err := c.enableBalloonStatsErr
+	c.mu.Unlock()
+
+	if onEnable != nil {
+		onEnable()
+	}
+	return err
+}
+
+func (c *fakeQMPClient) ReadBalloonStats(timeout time.Duration, qomPath string) (balloonpkg.Stats, error) {
+	c.mu.Lock()
+	delay := c.readBalloonStatsDelay
+	stats := c.readBalloonStats
+	err := c.readBalloonStatsErr
+	c.mu.Unlock()
+
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+
+	c.mu.Lock()
+	c.readBalloonStatsComplete = time.Now()
+	c.mu.Unlock()
+
+	if err != nil {
+		return balloonpkg.Stats{}, err
+	}
+	if stats.Stats == nil {
+		stats.Stats = map[string]int64{
+			"stat-available-memory": int64(768) * balloonpkg.BytesPerMiB,
+		}
+	}
+	if stats.LastUpdate.IsZero() {
+		stats.LastUpdate = time.Now()
+	}
+	return stats, nil
+}
+
+func (c *fakeQMPClient) ListQOMProperties(timeout time.Duration, path string) ([]balloonpkg.ObjectPropertyInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err, ok := c.listQOMPropertiesErr[path]; ok {
+		return nil, err
+	}
+	if props, ok := c.listQOMProperties[path]; ok {
+		return append([]balloonpkg.ObjectPropertyInfo(nil), props...), nil
+	}
+	return nil, errors.New("unexpected qom-list path")
+}
+
+func (c *fakeQMPClient) readCompletionTime() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.readBalloonStatsComplete
+}
+
+func (c *fakeQMPClient) quitCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.quitCalls
+}
+
 func (c *fakeQMPClient) Disconnect() error {
 	return nil
+}
+
+func (c *fakeQMPClient) withDefaultBalloonPath(path string) *fakeQMPClient {
+	c.listQOMProperties = map[string][]balloonpkg.ObjectPropertyInfo{
+		path: {
+			{Name: "guest-stats", Type: "dict"},
+			{Name: "guest-stats-polling-interval", Type: "int"},
+		},
+	}
+	return c
+}
+
+func (c *fakeQMPClient) WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error {
+	return errors.New("unexpected raw qmp use in fakeQMPClient")
 }
 
 func closedErrorChannel(err error) chan error {

@@ -11,6 +11,7 @@ Provide the foreground launch runtime for the supported sandbox session created 
 - Load and validate a Nix-generated manifest for the supported sandbox workflow.
 - Allocate and lock a runtime vsock CID for each session.
 - Create missing auto-created volume images, start `virtiofsd`, launch QEMU directly, wait for SSH readiness, and attach the active SSH session.
+- Keep a long-lived QMP session open after boot for graceful shutdown and optional runtime balloon control.
 - Tear down SSH, QEMU, and `virtiofsd` in the correct order on exit or signal.
 - Surface stage-specific failures clearly enough to debug preflight, startup, readiness, session, and teardown problems.
 
@@ -38,7 +39,9 @@ Acceptance criteria:
 - [x] Replace `qemu.argvTemplate` with a typed `qemu` manifest contract that captures the resolved host-side launch inputs.
 - [x] Implement QEMU argv compilation inside `virtie`, using `govmm/qemu` for typed device emission where it fits and local raw-arg assembly for user networking, memfd memory, balloon flags, and block-device details that are not modeled cleanly.
 - [x] Implement QMP connection management with `go-qemu/qmp` for monitor readiness and graceful `quit` during teardown.
+- [x] Extend the QMP session to use `go-qemu/qmp/raw` for `query-balloon`, `balloon`, `qom-set`, `qom-get`, and `qom-list` so runtime balloon control can share the same monitor connection as shutdown.
 - [x] Implement launch sequencing for preflight, `virtiofs` socket wait, QMP readiness, QEMU start, SSH readiness probing, session attach, and ordered shutdown.
+- [x] Start an optional guest-pressure balloon controller only after SSH readiness succeeds, and stop it before sending the final QMP `quit`.
 - [x] Implement volume auto-create handling, including filesystem defaults and `mkfs.<fsType>` execution.
 - [x] Implement per-sandbox and per-CID lock files for concurrent session safety.
 - [x] Add runtime-dir-based socket resolution for relative QMP and `virtiofs` sockets, using XDG defaults when requested by the manifest.
@@ -69,6 +72,7 @@ Acceptance criteria:
   - `qemu.qmp.socketPath`
   - `qemu.devices.rng`
   - `qemu.devices.balloon`
+  - optional `qemu.devices.balloon.controller`
   - `qemu.devices.virtiofs[]`
   - `qemu.devices.block[]`
   - `qemu.devices.network[]`
@@ -89,7 +93,9 @@ Acceptance criteria:
   - `virtie` injects `VIRTIE_SOCKET_PATH` for each `virtiofsd` daemon process so launch scripts can consume the resolved socket path.
 - Implementation notes:
   - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.
-  - QMP is used for monitor readiness and graceful shutdown, not for guest readiness.
+  - QMP is used for monitor readiness, graceful shutdown, and optional runtime balloon control, not for guest readiness.
+  - When `qemu.devices.balloon` is present, `virtie` resolves the balloon QOM path, enables `guest-stats-polling-interval`, reads `guest-stats` plus `query-balloon`, and adjusts the logical guest memory size within configured or synthesized bounds.
+  - If the manifest omits `qemu.devices.balloon.controller`, `virtie` defaults to `maxActualMiB = qemu.memory.sizeMiB`, an idle reclaim target of 50% of that max, a grow threshold at 25% available memory, and the existing step, poll, and reclaim-holdoff defaults.
   - The old Nix-owned argv-template path has been removed from the active contract.
 - Current verification note: the Go package tests pass, and `checks/default.nix` keeps the launch-contract and fake-tools E2E coverage enabled alongside repo-level hook-compatibility checks.
 

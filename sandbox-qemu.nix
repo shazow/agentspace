@@ -56,6 +56,12 @@ in
       description = "Size of the guest sparse swapfile in MiB. Set to 0 to disable (e.g. 4096).";
     };
 
+    balloon = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Enable the virtio-balloon device and virtie's default runtime balloon controller.";
+    };
+
     sshAuthorizedKeys = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -383,7 +389,7 @@ in
         microvm = {
           vcpu = lib.mkDefault 8;
           mem = lib.mkDefault (4 * 1024);
-          balloon = true;
+          balloon = lib.mkDefault cfg.balloon;
           socket = "qmp.sock";
           hypervisor = "qemu";
 

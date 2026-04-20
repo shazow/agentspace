@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	manifestpkg "github.com/shazow/agentspace/virtie/manifest"
 )
 
 const (
@@ -48,7 +50,7 @@ func NewManager() *Manager {
 	}
 }
 
-func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand []string) (err error) {
+func (m *Manager) Launch(ctx context.Context, manifest *manifestpkg.Manifest, remoteCommand []string) (err error) {
 	if err := manifest.Validate(); err != nil {
 		return err
 	}
@@ -100,7 +102,9 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 
 	var started []*managedProcess
 	var qmpClient QMPClient
+	var featureTask *managedTask
 	defer func() {
+		featureErr := featureTask.Stop()
 		stopErr := m.stopAll(started)
 		var disconnectErr error
 		if qmpClient != nil {
@@ -108,9 +112,9 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 		}
 		cleanupErr := removeSocketPaths(append([]string{qmpSocketPath}, socketPaths...))
 		if err == nil {
-			err = errors.Join(stopErr, disconnectErr, cleanupErr)
-		} else if stopErr != nil || disconnectErr != nil || cleanupErr != nil {
-			err = errors.Join(err, stopErr, disconnectErr, cleanupErr)
+			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
+		} else if featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {
+			err = errors.Join(err, featureErr, stopErr, disconnectErr, cleanupErr)
 		}
 	}()
 
@@ -150,6 +154,8 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 		return err
 	}
 
+	featureTask = m.startBalloonController(ctx, manifest, qmpClient)
+
 	m.Logger.Printf("starting ssh session")
 	session, err := m.startManagedProcess(buildSSHSpec(manifest, cid, remoteCommand, true))
 	if err != nil {
@@ -187,7 +193,7 @@ func (m *Manager) startManagedProcess(spec ProcessSpec) (*managedProcess, error)
 	return mp, nil
 }
 
-func (m *Manager) startVirtioFSDaemons(manifest *Manifest) ([]*managedProcess, error) {
+func (m *Manager) startVirtioFSDaemons(manifest *manifestpkg.Manifest) ([]*managedProcess, error) {
 	daemons, err := manifest.ResolvedVirtioFSDaemons()
 	if err != nil {
 		return nil, err
@@ -223,7 +229,7 @@ func (m *Manager) startVirtioFSDaemons(manifest *Manifest) ([]*managedProcess, e
 	return started, nil
 }
 
-func (m *Manager) allocateCID(manifest *Manifest) (int, Lock, error) {
+func (m *Manager) allocateCID(manifest *manifestpkg.Manifest) (int, Lock, error) {
 	for cid := manifest.VSock.CIDRange.Start; cid <= manifest.VSock.CIDRange.End; cid++ {
 		lock, err := m.Locker.Acquire(manifest.ResolvedVSockLockPath(cid))
 		if err == nil {
@@ -351,7 +357,11 @@ func (m *Manager) effectiveQMPQuitTimeout() time.Duration {
 	return DefaultQMPQuitTimeout
 }
 
-func (m *Manager) waitForSSH(ctx context.Context, manifest *Manifest, cid int, watchers ...*managedProcess) error {
+func (m *Manager) effectiveQMPCommandTimeout() time.Duration {
+	return m.effectiveQMPConnectTimeout()
+}
+
+func (m *Manager) waitForSSH(ctx context.Context, manifest *manifestpkg.Manifest, cid int, watchers ...*managedProcess) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 
@@ -542,7 +552,7 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 	return nil
 }
 
-func buildSSHSpec(manifest *Manifest, cid int, remoteCommand []string, interactive bool) ProcessSpec {
+func buildSSHSpec(manifest *manifestpkg.Manifest, cid int, remoteCommand []string, interactive bool) ProcessSpec {
 	argv := append([]string(nil), manifest.SSH.Argv...)
 	path := argv[0]
 	args := append([]string(nil), argv[1:]...)
@@ -600,7 +610,7 @@ func ensureDirectories(directories []string) error {
 	return nil
 }
 
-func volumeImagePaths(volumes []ManifestVolume) []string {
+func volumeImagePaths(volumes []manifestpkg.ManifestVolume) []string {
 	paths := make([]string, 0, len(volumes))
 	for _, volume := range volumes {
 		paths = append(paths, volume.ImagePath)
@@ -608,7 +618,7 @@ func volumeImagePaths(volumes []ManifestVolume) []string {
 	return paths
 }
 
-func ensureVolumeImages(volumes []ManifestVolume) error {
+func ensureVolumeImages(volumes []manifestpkg.ManifestVolume) error {
 	for _, volume := range volumes {
 		if !volume.AutoCreate {
 			continue
@@ -633,7 +643,7 @@ func ensureVolumeImages(volumes []ManifestVolume) error {
 	return nil
 }
 
-func createVolumeImage(volume ManifestVolume) error {
+func createVolumeImage(volume manifestpkg.ManifestVolume) error {
 	file, err := os.OpenFile(volume.ImagePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return fmt.Errorf("create volume image %q: %w", volume.ImagePath, err)

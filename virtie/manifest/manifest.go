@@ -1,4 +1,4 @@
-package virtie
+package manifest
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/adrg/xdg"
+	"github.com/shazow/agentspace/virtie/balloon"
 )
 
 const (
@@ -116,7 +117,7 @@ type ManifestQEMUQMP struct {
 type ManifestQEMUDevices struct {
 	RNG      ManifestQEMURNGDevice       `json:"rng"`
 	I8042    bool                        `json:"i8042,omitempty"`
-	Balloon  *ManifestQEMUBalloonDevice  `json:"balloon,omitempty"`
+	Balloon  *balloon.Device             `json:"balloon,omitempty"`
 	VirtioFS []ManifestQEMUVirtioFSShare `json:"virtiofs,omitempty"`
 	Block    []ManifestQEMUBlockDevice   `json:"block,omitempty"`
 	Network  []ManifestQEMUNetDevice     `json:"network,omitempty"`
@@ -126,13 +127,6 @@ type ManifestQEMUDevices struct {
 type ManifestQEMURNGDevice struct {
 	ID        string `json:"id"`
 	Transport string `json:"transport"`
-}
-
-type ManifestQEMUBalloonDevice struct {
-	ID                string `json:"id"`
-	Transport         string `json:"transport"`
-	DeflateOnOOM      bool   `json:"deflateOnOOM,omitempty"`
-	FreePageReporting bool   `json:"freePageReporting,omitempty"`
 }
 
 type ManifestQEMUVirtioFSShare struct {
@@ -226,6 +220,8 @@ func (m *Manifest) ApplyDefaults() {
 			m.Volumes[i].FSType = DefaultVolumeFSType
 		}
 	}
+
+	applyBalloonDefaults(m.QEMU.Memory.SizeMiB, m.QEMU.Devices.Balloon)
 }
 
 func (m *Manifest) Validate() error {
@@ -330,13 +326,8 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
-	if m.QEMU.Devices.Balloon != nil {
-		switch {
-		case m.QEMU.Devices.Balloon.ID == "":
-			return fmt.Errorf("manifest.qemu.devices.balloon.id is required")
-		case !validQEMUTransport(m.QEMU.Devices.Balloon.Transport):
-			return fmt.Errorf("manifest.qemu.devices.balloon.transport must be one of pci, mmio, or ccw")
-		}
+	if err := validateBalloonDevice(m.QEMU.Memory.SizeMiB, m.QEMU.Devices.Balloon); err != nil {
+		return err
 	}
 
 	for i, volume := range m.Volumes {
@@ -475,10 +466,7 @@ func (m *Manifest) ResolvedQEMU() (ManifestQEMU, error) {
 		}
 	}
 
-	if resolved.Devices.Balloon != nil {
-		balloon := *resolved.Devices.Balloon
-		resolved.Devices.Balloon = &balloon
-	}
+	resolved.Devices.Balloon = cloneBalloonDevice(resolved.Devices.Balloon)
 
 	return resolved, nil
 }
