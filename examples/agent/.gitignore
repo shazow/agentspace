@@ -1,0 +1,5 @@
+id_ed25519
+id_ed25519.pub
+nix-store-overlay.img
+*.sock
+*.sock.pid

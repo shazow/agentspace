@@ -75,14 +75,12 @@
         nixosConfig:
         let
           vmConfig = nixosConfig.config;
-          sandboxCfg = vmConfig.agentspace.sandbox;
           script = pkgs.writeShellScriptBin "connect-agent" ''
             set -euo pipefail
 
-            # Assumes systemd-ssh-proxy support is available via ssh_config.
-            # Fallback (if unavailable):
-            # -o ProxyCommand='socat STDIO VSOCK-CONNECT:10:22'
-            exec ${lib.escapeShellArgs sandboxCfg.launch.sshArgv} "$@"
+            echo "connect-agent is unsupported when virtie allocates vsock CIDs at launch time." >&2
+            echo "Start a fresh session with launch-agent instead." >&2
+            exit 1
           '';
         in
         "${script}/bin/connect-agent";
@@ -123,7 +121,7 @@
       };
 
       checks.${system} = import ./checks {
-        inherit mkLaunch mkSandbox pkgs;
+        inherit mkConnect mkLaunch mkSandbox pkgs;
       };
 
       apps.${system} = {
