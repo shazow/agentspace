@@ -30,6 +30,24 @@ Out of scope for this phase:
 - migrating `mkConnect`
 - generic `initExtra` compatibility
 
+## Status
+
+Implemented so far:
+
+- `mkLaunch` now always execs `virtie launch <manifest>`
+- the manifest now carries per-share `virtiofsd` commands and socket paths
+- `virtie` now starts `virtiofsd` directly instead of launching a `virtiofsd-run` helper
+- `modules/virtiofsd.nix` has been removed from the flake module list
+- unsupported launch paths now fail with explicit assertions instead of falling back
+- the public `agentspace.sandbox.extraModules` hook has been restored via a follow-up module-extension pass in `mkSandbox`
+- checks now cover the launch wrapper contract, sandbox-safe `virtie` e2e, unsupported-path rejection, home-manager, and `extraModules`
+
+Still open:
+
+- the default `mkSandbox {}` path currently defaults to `connectWith = "ssh"` without provisioning credentials, so the out-of-the-box default launcher remains broken until that is fixed
+- `mkConnect` is still a direct SSH wrapper rather than a `virtie` subcommand
+- console, `9p`, airlock, and general `initExtra` support are still intentionally removed and would need to be reintroduced on top of the current `virtie` base
+
 ## Unsupported Paths
 
 The following launch configurations are intentionally unsupported for now and should fail clearly rather than falling back to legacy host orchestration:
@@ -41,25 +59,15 @@ The following launch configurations are intentionally unsupported for now and sh
 
 These can be added back later, but only after they are redefined in terms of the `virtie`-based launcher.
 
-## Current Nix Behavior To Change
+## Current State
 
 Today, `mkLaunch` is a generated shell wrapper that:
 
-- sets `REPO_DIR` and `RUNNER_PATH`
-- inlines `agentspace.sandbox.initExtra`
-- starts `virtiofsd`, `microvm-run`, and the SSH session through `virtie`
+- sets `REPO_DIR`
+- inlines the supported `agentspace.sandbox.initExtra` prelude
+- execs `virtie launch <manifest>`
 
-That behavior currently lives mostly in `sandbox-qemu.nix`, with additional launch-time shell coming from modules such as `airlock.nix`.
-
-For this phase, only the built-in `virtiofs + ssh` path remains available.
-
-## Planned Nix Changes
-
-### 1. Add a manifest generator for the supported path
-
-Add a Nix-side function that writes a JSON manifest for the `virtiofs + ssh` launch path.
-
-The manifest should include only the fields `virtie` needs in v1:
+For the supported path, the manifest generated from `sandbox-qemu.nix` now includes:
 
 - `hostName`
 - `workingDir`
@@ -69,53 +77,73 @@ The manifest should include only the fields `virtie` needs in v1:
 - full SSH argv, including the vsock target and host key bypass flags
 - per-share virtiofs daemon commands and expected socket paths
 
-Do not add console, `9p`, airlock, or reconnect fields in this phase.
+`virtie` consumes that manifest, starts the configured `virtiofsd` daemons directly, waits for sockets, starts `microvm-run`, retries SSH readiness, and then attaches the interactive SSH session.
 
-### 2. Package `virtie`
+`mkConnect` remains a direct SSH wrapper, and unsupported launch modes are rejected by assertions in `sandbox-qemu.nix`.
 
-Add a Nix package for the Go binary and make it available to generated launch wrappers.
+## Implemented Changes
 
-The wrapper contract should not depend on a developer-local Go toolchain.
+### 1. Manifest generator for the supported path
 
-### 3. Change `mkLaunch` to always use `virtie`
+Nix now writes a JSON manifest for the supported `virtiofs + ssh` launch path.
 
-Update `mkLaunch` so that the generated wrapper:
+The manifest intentionally includes only the fields `virtie` needs in v1:
 
-- resolves the manifest path
+- `hostName`
+- `workingDir`
+- `microvmRun`
+- `lockPath`
+- required host directories
+- SSH argv
+- per-share virtiofs daemon commands and socket paths
+
+### 2. `virtie` packaged in Nix
+
+The Go binary is now packaged in the flake and used by generated launch wrappers.
+
+The wrapper contract does not depend on a developer-local Go toolchain.
+
+### 3. `mkLaunch` now always uses `virtie`
+
+The generated launcher now:
+
+- resolves the manifest path through the generated config
 - sets the working directory as today
 - execs `virtie launch <manifest> [-- "$@"]`
 
-Unsupported configurations must not keep the existing `systemd-run` launcher behavior. They should fail explicitly until equivalent `virtie` support exists.
+Unsupported configurations no longer keep the legacy `systemd-run` launcher behavior.
 
-### 4. Leave `mkConnect` unchanged
+### 4. `mkConnect` still unchanged
 
-Do not migrate `mkConnect` in this phase.
+`virtie` still has no reconnect command in v1, so the current direct SSH wrapper remains in place.
 
-`virtie` has no separate reconnect command in v1, so the current direct SSH wrapper can remain as-is or be treated as legacy behavior outside the new launch flow.
+### 5. Unsupported launch logic removed from the active path
 
-### 5. Remove unsupported launch logic from the active path
+`sandbox-qemu.nix` is now centered on the `virtie` workflow instead of carrying a live legacy branch.
 
-Restructure `sandbox-qemu.nix` around the `virtie` workflow instead of keeping a legacy branch alive.
-
-Specifically, do not try to solve these in this phase:
+These are currently rejected explicitly:
 
 - generic `initExtra` translation
-- airlock setup/cleanup
+- airlock setup and cleanup
 - console attach
 - `9p`
 
-Instead, reject them explicitly and keep the main launcher code focused on the supported `virtie` flow.
+### 6. Helper generation preserved in Nix
 
-### 6. Preserve helper generation in Nix
-
-Keep ownership of these pieces in Nix:
+Nix still owns:
 
 - `microvm.declaredRunner`
 - `microvm-run`
 - `virtiofsd` command generation
 - guest-side NixOS configuration
 
-This phase is about lifecycle/orchestration only, not VM command assembly.
+Lifecycle orchestration moved to `virtie`, but VM command assembly did not.
+
+### 7. `agentspace.sandbox.extraModules` restored
+
+`mkSandbox` now does an initial evaluation pass, reads `config.agentspace.sandbox.extraModules`, and extends the system with those modules.
+
+That restores the public option for downstream modules that set `agentspace.sandbox.extraModules` instead of only passing `extraModules` as a top-level `mkSandbox` argument.
 
 ## Selection Rule
 
@@ -132,17 +160,18 @@ Configurations outside that set should fail instead of falling back.
 
 ### Launch wrapper checks
 
-Add or update checks so the launcher asserts:
+Checks now assert:
 
 - the generated wrapper calls `virtie launch`
 - the wrapper passes the manifest path
 - `systemd-run` is not present in that wrapper
+- the runner's `virtiofsd-run` filename is only a stub and does not pull in `supervisord`
 
 ### Manifest checks
 
-Add a non-E2E check that validates manifest generation for the supported `virtiofs + ssh` path.
+There is now a non-E2E check that validates manifest generation for the supported `virtiofs + ssh` path.
 
-It should assert at least:
+It asserts at least:
 
 - helper binary paths are present
 - SSH argv is populated
@@ -151,9 +180,9 @@ It should assert at least:
 
 ### Integration coverage
 
-Add one integration path that exercises the generated `virtie`-backed launch wrapper for `virtiofs + ssh`.
+There is now one integration path that exercises the generated `virtie`-backed launch wrapper for `virtiofs + ssh`.
 
-Add a check that unsupported launch modes fail explicitly.
+There are also checks for unsupported launch modes and for `agentspace.sandbox.extraModules`.
 
 ## Migration Notes
 
@@ -163,8 +192,9 @@ Add a check that unsupported launch modes fail explicitly.
 
 ## Acceptance Criteria
 
-- the supported `virtiofs + ssh` path launches through `virtie launch`
-- that path no longer depends on `systemd --user`, `supervisord`, or the `modules/virtiofsd.nix` override for lifecycle orchestration
-- unsupported paths fail clearly instead of using the old launcher
-- Nix generates the manifest fields required by `virtie` v1
-- repo checks validate the new wrapper/manifest contract for the supported path
+- done: the supported `virtiofs + ssh` path launches through `virtie launch`
+- done: that path no longer depends on `systemd --user`, `supervisord`, or the `modules/virtiofsd.nix` override for lifecycle orchestration
+- done: unsupported paths fail clearly instead of using the old launcher
+- done: Nix generates the manifest fields required by `virtie` v1
+- done: repo checks validate the new wrapper/manifest contract for the supported path
+- open: the default `mkSandbox {}` launch path still needs a usable out-of-the-box SSH login story
