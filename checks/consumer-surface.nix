@@ -38,7 +38,10 @@ let
   sandboxCfg = vmConsumer.config.agentspace.sandbox;
   userCfg = vmConsumer.config.users.users.${sandboxCfg.user};
   homeCfg = vmConsumer.config.home-manager.users.${sandboxCfg.user};
-  manifest = sandboxCfg.launch.virtieManifest;
+  manifestPath = sandboxCfg.launch.virtieManifest;
+  manifest = builtins.fromJSON (
+    builtins.unsafeDiscardStringContext (builtins.toJSON sandboxCfg.launch.virtieManifestData)
+  );
   launchScript = mkLaunch vmConsumer;
 
   _ =
@@ -49,15 +52,20 @@ let
     assert vmConsumer.config.microvm.mem == 8 * 1024;
     assert userCfg.openssh.authorizedKeys.keys == [ consumerPublicKey ];
     assert homeCfg.programs.git.enable;
-    assert builtins.length homeCfg.home.packages == 3;
+    assert builtins.elem pkgs.go homeCfg.home.packages;
+    assert builtins.elem pkgs.just homeCfg.home.packages;
+    assert builtins.elem pkgs.nodejs homeCfg.home.packages;
+    assert builtins.elem "./id_ed25519" manifest.ssh.argv;
+    assert builtins.any (volume: volume.imagePath == "/var/lib/agentspace/home.img") manifest.volumes;
+    assert builtins.any (
+      volume: volume.imagePath == "/var/lib/agentspace/nix-store-overlay.img"
+    ) manifest.volumes;
     true;
 in
 {
-  sandbox-consumer-surface = pkgs.runCommand "sandbox-consumer-surface" { } ''
+  sandbox-consumer-surface = assert _; pkgs.runCommand "sandbox-consumer-surface" { } ''
     grep -F 'virtie launch' ${launchScript}
-    grep -F '"./id_ed25519"' ${manifest}
-    grep -F '"/var/lib/agentspace/home.img"' ${manifest}
-    grep -F '"/var/lib/agentspace/nix-store-overlay.img"' ${manifest}
+    grep -F ${pkgs.lib.escapeShellArg manifestPath} ${launchScript}
 
     touch $out
   '';
