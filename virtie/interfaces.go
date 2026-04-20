@@ -34,6 +34,7 @@ type ProcessSpec struct {
 	Path   string
 	Args   []string
 	Dir    string
+	Env    []string
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer

@@ -51,14 +51,14 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 	if err != nil {
 		return &StageError{Stage: "preflight", Err: err}
 	}
-	defer func() {
-		releaseErr := lock.Release()
-		if err == nil {
-			err = releaseErr
-		} else if releaseErr != nil {
-			err = errors.Join(err, releaseErr)
-		}
-	}()
+	defer joinDeferredError(&err, lock.Release)
+
+	cid, cidLock, err := m.allocateCID(manifest)
+	if err != nil {
+		return &StageError{Stage: "preflight", Err: err}
+	}
+	defer joinDeferredError(&err, cidLock.Release)
+	m.Logger.Printf("allocated vsock cid %d", cid)
 
 	if err := ensureDirectories(manifest.ResolvedPersistenceDirectories()); err != nil {
 		return &StageError{Stage: "preflight", Err: err}
@@ -97,6 +97,7 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 		Name:   "microvm",
 		Path:   manifest.ResolvedMicroVMRun(),
 		Dir:    manifest.Paths.WorkingDir,
+		Env:    []string{fmt.Sprintf("AGENTSPACE_VSOCK_CID=%d", cid)},
 		Stdout: os.Stderr,
 		Stderr: os.Stderr,
 	})
@@ -106,12 +107,12 @@ func (m *Manager) Launch(ctx context.Context, manifest *Manifest, remoteCommand 
 	started = append(started, microvm)
 
 	m.Logger.Printf("waiting for ssh readiness")
-	if err := m.waitForSSH(ctx, manifest, remoteCommand, started...); err != nil {
+	if err := m.waitForSSH(ctx, manifest, cid, started...); err != nil {
 		return err
 	}
 
 	m.Logger.Printf("starting ssh session")
-	session, err := m.startManagedProcess(buildSSHSpec(manifest, remoteCommand, true))
+	session, err := m.startManagedProcess(buildSSHSpec(manifest, cid, remoteCommand, true))
 	if err != nil {
 		return &StageError{Stage: "active session", Err: err}
 	}
@@ -178,6 +179,25 @@ func (m *Manager) startVirtioFSDaemons(manifest *Manifest) ([]*managedProcess, e
 	return started, nil
 }
 
+func (m *Manager) allocateCID(manifest *Manifest) (int, Lock, error) {
+	for cid := manifest.VSock.CIDRange.Start; cid <= manifest.VSock.CIDRange.End; cid++ {
+		lock, err := m.Locker.Acquire(manifest.ResolvedVSockLockPath(cid))
+		if err == nil {
+			return cid, lock, nil
+		}
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			continue
+		}
+		return 0, nil, err
+	}
+
+	return 0, nil, fmt.Errorf(
+		"no free vsock CID in range %d-%d",
+		manifest.VSock.CIDRange.Start,
+		manifest.VSock.CIDRange.End,
+	)
+}
+
 func (m *Manager) waitForSockets(ctx context.Context, socketPaths []string, watchers ...*managedProcess) error {
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -207,7 +227,7 @@ func (m *Manager) waitForSockets(ctx context.Context, socketPaths []string, watc
 	}
 }
 
-func (m *Manager) waitForSSH(ctx context.Context, manifest *Manifest, remoteCommand []string, watchers ...*managedProcess) error {
+func (m *Manager) waitForSSH(ctx context.Context, manifest *Manifest, cid int, watchers ...*managedProcess) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 
@@ -222,7 +242,7 @@ func (m *Manager) waitForSSH(ctx context.Context, manifest *Manifest, remoteComm
 			return err
 		}
 
-		probe, err := m.startManagedProcess(buildSSHSpec(manifest, SSHProbeCommand, false))
+		probe, err := m.startManagedProcess(buildSSHSpec(manifest, cid, SSHProbeCommand, false))
 		if err != nil {
 			return &StageError{Stage: "ssh readiness", Err: err}
 		}
@@ -376,7 +396,7 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 	return nil
 }
 
-func buildSSHSpec(manifest *Manifest, remoteCommand []string, interactive bool) ProcessSpec {
+func buildSSHSpec(manifest *Manifest, cid int, remoteCommand []string, interactive bool) ProcessSpec {
 	argv := append([]string(nil), manifest.SSH.Argv...)
 	path := argv[0]
 	args := append([]string(nil), argv[1:]...)
@@ -399,6 +419,7 @@ func buildSSHSpec(manifest *Manifest, remoteCommand []string, interactive bool) 
 	}
 
 	args = append(sshModeArgs, args...)
+	args = append(args, manifest.SSHDestination(cid))
 	args = append(args, remoteCommand...)
 
 	return ProcessSpec{
@@ -410,6 +431,18 @@ func buildSSHSpec(manifest *Manifest, remoteCommand []string, interactive bool) 
 		Stdout: stdout,
 		Stderr: stderr,
 	}
+}
+
+func joinDeferredError(target *error, fn func() error) {
+	next := fn()
+	if next == nil {
+		return
+	}
+	if *target == nil {
+		*target = next
+		return
+	}
+	*target = errors.Join(*target, next)
 }
 
 func ensureDirectories(directories []string) error {

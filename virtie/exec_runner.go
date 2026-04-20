@@ -11,6 +11,9 @@ type ExecRunner struct{}
 func (r *ExecRunner) Start(spec ProcessSpec) (Process, error) {
 	cmd := exec.Command(spec.Path, spec.Args...)
 	cmd.Dir = spec.Dir
+	if len(spec.Env) > 0 {
+		cmd.Env = append(os.Environ(), spec.Env...)
+	}
 	cmd.Stdin = spec.Stdin
 	cmd.Stdout = spec.Stdout
 	cmd.Stderr = spec.Stderr
