@@ -2,6 +2,7 @@
   mkSandbox,
   mkLaunch,
   pkgs,
+  ...
 }:
 let
   testPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBIqXkHFLTDd7n09425txXfdOgJDUb7CpMAdCPVRS94z agentspace-virtie-test";
@@ -28,13 +29,28 @@ in
       exit 1
     fi
 
-    grep -F '"microvmRun":"' ${manifest}
+    grep -F '"qemu":{"argvTemplate":[' ${manifest}
     grep -F '"argv":["${pkgs.openssh}/bin/ssh"' ${manifest}
+    grep -F '"user":"agent"' ${manifest}
     grep -F '".agentspace-test/id_ed25519"' ${manifest}
+    grep -F '"volumes":[' ${manifest}
+    grep -F '"imagePath":"nix-store-overlay.img"' ${manifest}
     grep -F '"daemons":[' ${manifest}
     grep -F '"socketPath":"' ${manifest}
     grep -F '"command":{' ${manifest}
     grep -F 'workspace' ${manifest}
+    if grep -F '"vsock":' ${manifest} >/dev/null; then
+      echo "launch-agent-virtie-contract: manifest must not explicitly supply a vsock range" >&2
+      exit 1
+    fi
+    if grep -F '@vsock/' ${manifest} >/dev/null; then
+      echo "launch-agent-virtie-contract: manifest must not embed the vsock destination" >&2
+      exit 1
+    fi
+    if grep -F '"microvmRun":"' ${manifest} >/dev/null; then
+      echo "launch-agent-virtie-contract: manifest must not reference microvm-run" >&2
+      exit 1
+    fi
     if grep -F '"virtiofsdRun":"' ${manifest} >/dev/null; then
       echo "launch-agent-virtie-contract: unexpected virtiofsd-run helper in manifest" >&2
       exit 1

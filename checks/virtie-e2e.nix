@@ -4,17 +4,29 @@
   ...
 }:
 let
-  fakeRunner = pkgs.symlinkJoin {
-    name = "virtie-fake-runner";
+  fakeTools = pkgs.symlinkJoin {
+    name = "virtie-fake-tools";
     paths = [
-      (pkgs.writeShellScriptBin "microvm-run" ''
+      (pkgs.writeShellScriptBin "qemu-system-x86_64" ''
         set -euo pipefail
 
         mkdir -p "$PWD/state"
-        touch "$PWD/state/microvm-started"
+
+        for arg in "$@"; do
+          case "$arg" in
+            *guest-cid=*)
+              cid="''${arg##*guest-cid=}"
+              printf '%s\n' "$cid" > "$PWD/state/qemu-vsock-cid"
+              ;;
+          esac
+        done
+
+        touch "$PWD/state/qemu-started"
 
         cleanup() {
-          touch "$PWD/state/microvm-stopped"
+          trap - EXIT INT TERM
+          touch "$PWD/state/qemu-stopped"
+          exit 0
         }
         trap cleanup EXIT INT TERM
 
@@ -30,14 +42,22 @@ let
         : > "$PWD/virtiofs.sock"
 
         cleanup() {
+          trap - EXIT INT TERM
           rm -f "$PWD/virtiofs.sock"
           touch "$PWD/state/virtiofsd-stopped"
+          exit 0
         }
         trap cleanup EXIT INT TERM
 
         while true; do
           sleep 1
         done
+      '')
+      (pkgs.writeShellScriptBin "mkfs.ext4" ''
+        set -euo pipefail
+
+        mkdir -p "$PWD/state"
+        printf '%s\n' "$@" > "$PWD/state/mkfs-ext4-args"
       '')
     ];
   };
@@ -47,6 +67,7 @@ let
 
     mkdir -p "$PWD/state"
     attempt_file="$PWD/state/ssh-probe-attempt"
+    destination_file="$PWD/state/ssh-destination"
     remote_command=()
     destination_seen=0
     option_takes_value=0
@@ -74,6 +95,7 @@ let
         -*)
           ;;
         *)
+          printf '%s\n' "$arg" > "$destination_file"
           destination_seen=1
           ;;
       esac
@@ -100,17 +122,34 @@ let
       identity.hostName = "virtie-fake";
       paths = {
         workingDir = ".";
-        microvmRun = "${fakeRunner}/bin/microvm-run";
         lockPath = "virtie.lock";
       };
       persistence.directories = [ "state" ];
-      ssh.argv = [ fakeSSH "agent@example" ];
+      ssh = {
+        argv = [ fakeSSH ];
+        user = "agent";
+      };
+      qemu.argvTemplate = [
+        "${fakeTools}/bin/qemu-system-x86_64"
+        "-device"
+        "vhost-vsock-pci,guest-cid={{VSOCK_CID}}"
+      ];
+      volumes = [
+        {
+          imagePath = "overlay.img";
+          sizeMiB = 64;
+          fsType = "ext4";
+          autoCreate = true;
+          label = null;
+          mkfsExtraArgs = [ ];
+        }
+      ];
       virtiofs.daemons = [
         {
           tag = "workspace";
           socketPath = "virtiofs.sock";
           command = {
-            path = "${fakeRunner}/bin/virtiofsd-workspace";
+            path = "${fakeTools}/bin/virtiofsd-workspace";
             args = [ ];
           };
         }
@@ -120,12 +159,10 @@ let
 
   launchScript = mkLaunch {
     config = {
-      microvm.declaredRunner.outPath = fakeRunner;
       agentspace.sandbox.launch = {
         commonInit = ''
           cd "$REPO_DIR"
         '';
-        sshArgv = [ ];
         virtieManifest = manifest;
       };
     };
@@ -147,7 +184,9 @@ in
     mkdir -p "$workspace_dir"
     cd "$workspace_dir"
 
-    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/microvm-started; test -f virtiofs.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
+    export PATH=${fakeTools}/bin:$PATH
+
+    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f virtiofs.sock; test -f overlay.img; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
       echo "virtie-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1
@@ -155,8 +194,12 @@ in
 
     grep -F 'AGENTSPACE_VIRTIE_OK' "$launch_log" >/dev/null
     grep -F 'virtie: starting virtiofsd [workspace]' "$launch_log" >/dev/null
-    grep -F 'virtie: starting microvm-run' "$launch_log" >/dev/null
-    test -f "$workspace_dir/state/microvm-stopped"
+    grep -F 'virtie: starting qemu' "$launch_log" >/dev/null
+    grep -F 'virtie: allocated vsock cid 3' "$launch_log" >/dev/null
+    grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
+    grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
+    grep -Fx 'overlay.img' "$workspace_dir/state/mkfs-ext4-args" >/dev/null
+    test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
 
     mkdir -p "$out"

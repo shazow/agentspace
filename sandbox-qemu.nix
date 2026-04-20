@@ -129,12 +129,6 @@ in
         internal = true;
       };
 
-      sshArgv = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        readOnly = true;
-        internal = true;
-      };
-
       virtieManifest = lib.mkOption {
         type = lib.types.path;
         readOnly = true;
@@ -170,12 +164,7 @@ in
       '';
 
       initDirs =
-        lib.pipe
-          [ cfg.persistence.homeImage cfg.persistence.storeOverlay ]
-          [
-            (builtins.filter (x: x != null))
-            (builtins.map builtins.dirOf)
-          ];
+        lib.unique (builtins.map (volume: builtins.dirOf volume.image) config.microvm.volumes);
 
       defaultInitExtra =
         ''
@@ -186,9 +175,8 @@ in
           cd "$REPO_DIR"
         '';
 
-      runnerPath = config.microvm.declaredRunner.outPath;
       airlockEnabled = lib.attrByPath [ "airlock" "enable" ] false cfg;
-      sshArgv =
+      sshBaseArgv =
         [
           "${pkgs.openssh}/bin/ssh"
           "-q"
@@ -202,9 +190,11 @@ in
         ++ lib.optionals (cfg.sshIdentityFile != null) [
           "-i"
           cfg.sshIdentityFile
-        ]
-        ++ [ "${cfg.user}@vsock/${toString config.microvm.vsock.cid}" ];
+        ];
       virtiofsShares = builtins.filter (share: share.proto == "virtiofs") config.microvm.shares;
+      qemuArgvTemplate = import ./agentspace-qemu-argv.nix {
+        inherit config lib pkgs;
+      };
 
       mkVirtioFSDaemonCommand =
         {
@@ -251,16 +241,29 @@ in
         };
       }) virtiofsShares;
 
+      manifestVolumes = builtins.map (volume: {
+        imagePath = volume.image;
+        sizeMiB = volume.size;
+        fsType = volume.fsType;
+        autoCreate = volume.autoCreate;
+        label = volume.label;
+        mkfsExtraArgs = volume.mkfsExtraArgs;
+      }) config.microvm.volumes;
+
       virtieManifest = pkgs.writeText "virtie-${cfg.hostName}.json" (
         builtins.toJSON {
           identity.hostName = cfg.hostName;
           paths = {
             workingDir = ".";
-            microvmRun = "${runnerPath}/bin/microvm-run";
             lockPath = "/tmp/agentspace-${cfg.hostName}.lock";
           };
           persistence.directories = initDirs;
-          ssh.argv = sshArgv;
+          ssh = {
+            argv = sshBaseArgv;
+            user = cfg.user;
+          };
+          qemu.argvTemplate = qemuArgvTemplate;
+          volumes = manifestVolumes;
           virtiofs.daemons = virtiofsDaemons;
         }
       );
@@ -284,11 +287,55 @@ in
             assertion = cfg.initExtra == defaultInitExtra;
             message = "Custom agentspace.sandbox.initExtra launch behavior is unsupported; only the default virtie prelaunch shell is supported right now.";
           }
+          {
+            assertion = config.microvm.hypervisor == "qemu";
+            message = "Only microvm.hypervisor = \"qemu\" is supported by the dynamic virtie vsock launcher.";
+          }
+          {
+            assertion = config.microvm.vsock.cid == null;
+            message = "Static microvm.vsock.cid is unsupported; virtie allocates the vsock CID at launch time.";
+          }
+          {
+            assertion = !config.microvm.registerWithMachined;
+            message = "microvm.registerWithMachined is unsupported until dynamic vsock CID state is plumbed through machined registration.";
+          }
+          {
+            assertion = lib.all (share: share.proto == "virtiofs") config.microvm.shares;
+            message = "Only virtiofs shares are supported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = lib.all (interface: interface.type == "user") config.microvm.interfaces;
+            message = "Only microvm.interfaces.*.type = \"user\" is supported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.graphics.enable == false;
+            message = "microvm.graphics.enable is unsupported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.devices == [ ];
+            message = "microvm.devices passthrough is unsupported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.storeOnDisk == false;
+            message = "microvm.storeOnDisk is unsupported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.preStart == "";
+            message = "microvm.preStart is unsupported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.extraArgsScript == null;
+            message = "microvm.extraArgsScript is unsupported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.qemu.pcieRootPorts == [ ];
+            message = "microvm.qemu.pcieRootPorts is unsupported by the direct virtie QEMU launcher.";
+          }
         ];
 
         agentspace.sandbox.launch = {
           commonInit = cfg.initExtra;
-          inherit sshArgv virtieManifest;
+          inherit virtieManifest;
         };
 
         networking.hostName = cfg.hostName;
@@ -404,11 +451,6 @@ in
           hypervisor = "qemu";
 
           qemu.serialConsole = false;
-
-          vsock = {
-            cid = lib.mkDefault 10;
-            ssh.enable = true;
-          };
 
           interfaces = [
             {
