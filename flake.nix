@@ -72,20 +72,6 @@
             modules = sandboxExtraModules;
           };
 
-      mkConnect =
-        nixosConfig:
-        let
-          vmConfig = nixosConfig.config;
-          script = pkgs.writeShellScriptBin "connect-agent" ''
-            set -euo pipefail
-
-            echo "connect-agent is unsupported when virtie allocates vsock CIDs at launch time." >&2
-            echo "Start a fresh session with launch-agent instead." >&2
-            exit 1
-          '';
-        in
-        "${script}/bin/connect-agent";
-
       mkLaunch =
         nixosConfig:
         let
@@ -111,18 +97,15 @@
       nixosConfigurations = vmConfigs;
 
       packages.${system} = {
-        default = mkLaunch vmConfigs.default;
         virtie = virtiePackage;
-        vm = mkLaunch vmConfigs.default;
-        connect = mkConnect vmConfigs.default;
       };
 
       lib = {
-        inherit mkSandbox mkLaunch mkConnect;
+        inherit mkSandbox mkLaunch;
       };
 
       checks.${system} = import ./checks {
-        inherit mkConnect mkLaunch mkSandbox pkgs;
+        inherit mkLaunch mkSandbox pkgs;
       };
 
       apps.${system} = {
@@ -130,10 +113,6 @@
         launch = {
           type = "app";
           program = mkLaunch vmConfigs.default;
-        };
-        connect = {
-          type = "app";
-          program = mkConnect vmConfigs.default;
         };
       };
     };

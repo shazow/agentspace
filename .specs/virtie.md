@@ -17,9 +17,7 @@ Provide the foreground launch runtime for the supported sandbox session created 
 Out of scope:
 
 - reconnect support
-- console attach
-- `9p` support
-- airlock setup or cleanup
+- alternate guest attach or share workflows beyond the supported SSH + `virtiofs` path
 - `systemd --user`, `journalctl`, or machined integration
 - bridge, tap, macvtap, graphics, or passthrough workflows
 - full `microvm-run` parity
@@ -87,7 +85,7 @@ Acceptance criteria:
   - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.
   - QMP is used for monitor readiness and graceful shutdown, not for guest readiness.
   - The old Nix-owned argv-template path has been removed from the active contract.
-- Current verification note: the Go package tests pass, and the Nix contract and fake-tools E2E checks now cover the typed manifest by default, but other unrelated checks in `checks/default.nix` remain disabled.
+- Current verification note: the Go package tests pass, and `checks/default.nix` keeps the launch-contract and fake-tools E2E coverage enabled alongside repo-level hook-compatibility checks.
 
 ```mermaid
 flowchart TD

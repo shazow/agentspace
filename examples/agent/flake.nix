@@ -25,10 +25,6 @@
           }
         ];
 
-        # Document the currently supported end-to-end launch path explicitly.
-        connectWith = "ssh";
-        protocol = "virtiofs";
-
         # Point the launcher at the matching private key on the host.
         sshIdentityFile = "./id_ed25519";
         sshAuthorizedKeys = [
@@ -40,7 +36,6 @@
         persistence.homeImage = null;
       };
       launch = agentspace.lib.mkLaunch sandbox;
-      connect = agentspace.lib.mkConnect sandbox;
     in
     {
       nixosConfigurations.agentspace = sandbox;
@@ -53,10 +48,6 @@
         launch = {
           type = "app";
           program = launch;
-        };
-        connect = {
-          type = "app";
-          program = connect;
         };
       };
     };

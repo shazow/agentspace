@@ -24,15 +24,6 @@ in
       description = "Hostname for the guest VM.";
     };
 
-    protocol = lib.mkOption {
-      type = lib.types.enum [
-        "9p"
-        "virtiofs"
-      ];
-      default = "virtiofs";
-      description = "File share protocol. '9p' runs in userland (slow), 'virtiofs' requires a daemon (fast).";
-    };
-
     persistence = {
       homeImage = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
@@ -53,12 +44,6 @@ in
       };
     };
 
-    bundle = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = "List of file paths to bundle into the VM runtime";
-    };
-
     mountWorkspace = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -69,15 +54,6 @@ in
       type = lib.types.int;
       default = 0;
       description = "Size of the guest sparse swapfile in MiB. Set to 0 to disable (e.g. 4096).";
-    };
-
-    connectWith = lib.mkOption {
-      type = lib.types.enum [
-        "console"
-        "ssh"
-      ];
-      default = "ssh";
-      description = "Auto-connect via serial console or ssh. When using ssh, make sure to set sshAuthorizedKeys.";
     };
 
     sshAuthorizedKeys = lib.mkOption {
@@ -110,18 +86,6 @@ in
       description = "Extra modules imported for NixOS.";
     };
 
-    initExtra = lib.mkOption {
-      type = lib.types.separatedString "\n";
-      description = "Extra shell snippet appended to the launch-agent script.";
-      default = ''
-        echo "🚀 Preparing Agent QEMU Sandbox..."
-      ''
-      + lib.optionalString cfg.mountWorkspace ''
-        echo "📂 Mounting current directory at ~/workspace"
-        cd "$REPO_DIR"
-      '';
-    };
-
     launch = {
       commonInit = lib.mkOption {
         type = lib.types.lines;
@@ -139,12 +103,6 @@ in
 
   config = lib.mkIf cfg.enable (
     let
-      agentspace-bundle = pkgs.writeShellScriptBin "agentspace-bundle" (
-        builtins.readFile ./scripts/agentspace-bundle
-      );
-      agentspace-init = pkgs.writeShellScriptBin "agentspace-init" (
-        builtins.readFile ./scripts/agentspace-init
-      );
       agentspace-logout = pkgs.writeShellScriptBin "agentspace-logout" ''
         set -eu
 
@@ -166,7 +124,7 @@ in
       initDirs =
         lib.unique (builtins.map (volume: builtins.dirOf volume.image) config.microvm.volumes);
 
-      defaultInitExtra =
+      commonInit =
         ''
           echo "🚀 Preparing Agent QEMU Sandbox..."
         ''
@@ -175,7 +133,6 @@ in
           cd "$REPO_DIR"
         '';
 
-      airlockEnabled = lib.attrByPath [ "airlock" "enable" ] false cfg;
       sshBaseArgv =
         [
           "${pkgs.openssh}/bin/ssh"
@@ -272,22 +229,6 @@ in
       {
         assertions = [
           {
-            assertion = cfg.protocol == "virtiofs";
-            message = "agentspace.sandbox.protocol=9p is unsupported; only virtiofs is supported by the virtie-only launcher.";
-          }
-          {
-            assertion = cfg.connectWith == "ssh";
-            message = "agentspace.sandbox.connectWith=console is unsupported; only ssh is supported by the virtie-only launcher.";
-          }
-          {
-            assertion = !airlockEnabled;
-            message = "agentspace.sandbox.airlock.enable is unsupported; airlock launch behavior has been removed until it is reimplemented on top of virtie.";
-          }
-          {
-            assertion = cfg.initExtra == defaultInitExtra;
-            message = "Custom agentspace.sandbox.initExtra launch behavior is unsupported; only the default virtie prelaunch shell is supported right now.";
-          }
-          {
             assertion = config.microvm.hypervisor == "qemu";
             message = "Only microvm.hypervisor = \"qemu\" is supported by the dynamic virtie vsock launcher.";
           }
@@ -334,7 +275,7 @@ in
         ];
 
         agentspace.sandbox.launch = {
-          commonInit = cfg.initExtra;
+          inherit commonInit;
           inherit virtieManifest;
         };
 
@@ -388,7 +329,7 @@ in
           };
         };
 
-        services.openssh = lib.mkIf (cfg.connectWith == "ssh") {
+        services.openssh = {
           enable = true;
           openFirewall = false;
           settings = {
@@ -411,19 +352,9 @@ in
           "d /home/${cfg.user} 0700 ${cfg.user} users -"
         ];
 
-        # Inbox-mounted directories are owned by root, but readable which we'll be
-        # using to clone as local user.
-        # TODO: mkOptional if we're using inboxes
-        environment.etc."gitconfig".text = ''
-          [safe]
-            directory = /home/${cfg.user}/mnt/inbox/*
-        '';
-
         # Basic Package Set
         environment.systemPackages = [
-          agentspace-init
           agentspace-logout
-          agentspace-bundle
         ]
         ++ (with pkgs; [
           bashInteractive
@@ -462,7 +393,7 @@ in
 
           shares = [
             {
-              proto = cfg.protocol;
+              proto = "virtiofs";
               tag = "ro-store";
               source = "/nix/store";
               mountPoint = "/nix/.ro-store";
@@ -471,7 +402,7 @@ in
           ]
           ++ lib.optionals cfg.mountWorkspace [
             {
-              proto = cfg.protocol;
+              proto = "virtiofs";
               tag = "workspace";
               source = ".";
               mountPoint = cfg.workspaceMountPoint;
