@@ -39,9 +39,7 @@ let
   userCfg = vmConsumer.config.users.users.${sandboxCfg.user};
   homeCfg = vmConsumer.config.home-manager.users.${sandboxCfg.user};
   manifestPath = sandboxCfg.launch.virtieManifest;
-  manifest = builtins.fromJSON (
-    builtins.unsafeDiscardStringContext (builtins.toJSON sandboxCfg.launch.virtieManifestData)
-  );
+  manifest = sandboxCfg.launch.virtieManifestData;
   launchScript = mkLaunch vmConsumer;
 
   _ =
