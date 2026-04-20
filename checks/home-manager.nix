@@ -1,6 +1,7 @@
 {
   mkSandbox,
   pkgs,
+  ...
 }:
 let
   vmHomeManager = mkSandbox {

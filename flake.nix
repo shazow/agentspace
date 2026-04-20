@@ -21,22 +21,32 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
+      lib = nixpkgs.lib;
+      virtiePackage = pkgs.buildGoModule {
+        pname = "virtie";
+        version = "0.1.0";
+        src = ./virtie;
+        vendorHash = "sha256-W6XVd68MS0ungMgam8jefYMVhyiN6/DB+bliFzs2rdk=";
+        subPackages = [ "cmd/virtie" ];
+      };
 
       mkSandbox =
         cfg:
-        nixpkgs.lib.nixosSystem {
-          inherit system;
-          modules = [
+        let
+          extraModules = cfg.extraModules or [ ];
+          sandboxCfg = builtins.removeAttrs cfg [ "extraModules" ];
+          baseModules = [
             microvm.nixosModules.microvm
             home-manager.nixosModules.home-manager
-            ./modules/virtiofsd.nix
             ./sandbox-qemu.nix
-
+          ]
+          ++ extraModules
+          ++ [
             # Module Configuration
             {
               agentspace.sandbox = {
                 enable = true;
-              } // cfg;
+              } // sandboxCfg;
 
               # System-specific overrides can still go here
               system.stateVersion = "25.11";
@@ -48,26 +58,31 @@
               ];
             }
           ];
-        };
+          baseSystem = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = baseModules;
+          };
+          sandboxExtraModules = baseSystem.config.agentspace.sandbox.extraModules;
+        in
+        if sandboxExtraModules == [ ] then
+          baseSystem
+        else
+          baseSystem.extendModules {
+            modules = sandboxExtraModules;
+          };
 
       mkConnect =
         nixosConfig:
         let
           vmConfig = nixosConfig.config;
           sandboxCfg = vmConfig.agentspace.sandbox;
-          cid = vmConfig.microvm.vsock.cid;
           script = pkgs.writeShellScriptBin "connect-agent" ''
             set -euo pipefail
 
             # Assumes systemd-ssh-proxy support is available via ssh_config.
             # Fallback (if unavailable):
             # -o ProxyCommand='socat STDIO VSOCK-CONNECT:10:22'
-            exec ${pkgs.openssh}/bin/ssh \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o GlobalKnownHostsFile=/dev/null \
-              "${sandboxCfg.user}@vsock/${toString cid}" \
-              "$@"
+            exec ${lib.escapeShellArgs sandboxCfg.launch.sshArgv} "$@"
           '';
         in
         "${script}/bin/connect-agent";
@@ -76,31 +91,21 @@
         nixosConfig:
         let
           vmConfig = nixosConfig.config;
-          runnerPath = vmConfig.microvm.declaredRunner.outPath;
+          launchCfg = vmConfig.agentspace.sandbox.launch;
           script = pkgs.writeShellScriptBin "launch-agent" ''
             set -euo pipefail
 
             REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
-            RUNNER_PATH=${runnerPath}
 
-            ${vmConfig.agentspace.sandbox.initExtra}
+            ${launchCfg.commonInit}
 
-            echo "🖥️  Running Agentspace..."
-            exec "$RUNNER_PATH/bin/microvm-run"
+            exec ${virtiePackage}/bin/virtie launch ${launchCfg.virtieManifest} -- "$@"
           '';
         in
         "${script}/bin/launch-agent";
 
       vmConfigs = {
         default = mkSandbox { };
-        withAirlock = mkSandbox {
-          extraModules = [
-            ./airlock.nix
-            {
-              agentspace.sandbox.airlock.enable = true;
-            }
-          ];
-        };
       };
     in
     {
@@ -108,8 +113,8 @@
 
       packages.${system} = {
         default = mkLaunch vmConfigs.default;
+        virtie = virtiePackage;
         vm = mkLaunch vmConfigs.default;
-        vmWithAirlock = mkLaunch vmConfigs.withAirlock;
         connect = mkConnect vmConfigs.default;
       };
 
@@ -117,13 +122,8 @@
         inherit mkSandbox mkLaunch mkConnect;
       };
 
-      checks.${system} = import ./checks.nix {
-        inherit
-          microvm
-          nixpkgs
-          pkgs
-          system
-          ;
+      checks.${system} = import ./checks {
+        inherit mkLaunch mkSandbox pkgs;
       };
 
       apps.${system} = {

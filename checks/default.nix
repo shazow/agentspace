@@ -1,13 +1,15 @@
 {
   mkSandbox,
+  mkLaunch,
   pkgs,
 }:
 let
   args = {
-    inherit mkSandbox pkgs;
+    inherit mkLaunch mkSandbox pkgs;
   };
 in
-import ./airlock.nix args
-// import ./ssh-readiness.nix args
+import ./virtie-launch.nix args
+// import ./virtie-e2e.nix args
+// import ./extra-modules.nix args
 // import ./home-manager.nix args
-// import ./example-agent-e2e.nix args
+// import ./unsupported-paths.nix args
