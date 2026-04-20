@@ -1,112 +1,15 @@
 package virtie
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
-	doQMP "github.com/digitalocean/go-qemu/qmp"
 	govmmQemu "github.com/kata-containers/govmm/qemu"
+	manifestpkg "github.com/shazow/agentspace/virtie/manifest"
 )
 
-const (
-	DefaultQMPRetryDelay     = 200 * time.Millisecond
-	DefaultQMPConnectTimeout = 500 * time.Millisecond
-	DefaultQMPQuitTimeout    = 500 * time.Millisecond
-)
-
-var errQMPTimeout = errors.New("qmp operation timed out")
-
-type QMPClient interface {
-	Quit(timeout time.Duration) error
-	Disconnect() error
-}
-
-type QMPDialer interface {
-	Dial(ctx context.Context, socketPath string, timeout time.Duration) (QMPClient, error)
-}
-
-type socketMonitorDialer struct{}
-
-type socketMonitorClient struct {
-	monitor *doQMP.SocketMonitor
-}
-
-func (d *socketMonitorDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (QMPClient, error) {
-	monitor, err := doQMP.NewSocketMonitor("unix", socketPath, timeout)
-	if err != nil {
-		return nil, err
-	}
-	if err := runQMPMonitorOp(ctx, timeout, monitor.Disconnect, monitor.Connect); err != nil {
-		_ = monitor.Disconnect()
-		if errors.Is(err, errQMPTimeout) {
-			return nil, fmt.Errorf("qmp connect timed out after %s", timeout)
-		}
-		return nil, err
-	}
-	return &socketMonitorClient{monitor: monitor}, nil
-}
-
-func (c *socketMonitorClient) Quit(timeout time.Duration) error {
-	payload, err := json.Marshal(doQMP.Command{Execute: "quit"})
-	if err != nil {
-		return fmt.Errorf("encode qmp quit: %w", err)
-	}
-	err = runQMPMonitorOp(context.Background(), timeout, c.Disconnect, func() error {
-		if _, err := c.monitor.Run(payload); err != nil {
-			return fmt.Errorf("qmp quit: %w", err)
-		}
-		return nil
-	})
-	if errors.Is(err, errQMPTimeout) {
-		return fmt.Errorf("qmp quit timed out after %s", timeout)
-	}
-	return err
-}
-
-func (c *socketMonitorClient) Disconnect() error {
-	if c == nil || c.monitor == nil {
-		return nil
-	}
-	_ = c.monitor.Disconnect()
-	return nil
-}
-
-func runQMPMonitorOp(ctx context.Context, timeout time.Duration, abort func() error, fn func() error) error {
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- fn()
-	}()
-
-	var timer *time.Timer
-	var timerCh <-chan time.Time
-	if timeout > 0 {
-		timer = time.NewTimer(timeout)
-		timerCh = timer.C
-		defer timer.Stop()
-	}
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-		if abort != nil {
-			_ = abort()
-		}
-		return ctx.Err()
-	case <-timerCh:
-		if abort != nil {
-			_ = abort()
-		}
-		return fmt.Errorf("%w after %s", errQMPTimeout, timeout)
-	}
-}
-
-func buildQEMUSpec(manifest *Manifest, cid int) (ProcessSpec, error) {
+func buildQEMUSpec(manifest *manifestpkg.Manifest, cid int) (ProcessSpec, error) {
 	qemu, err := manifest.ResolvedQEMU()
 	if err != nil {
 		return ProcessSpec{}, err
@@ -127,7 +30,7 @@ func buildQEMUSpec(manifest *Manifest, cid int) (ProcessSpec, error) {
 	}, nil
 }
 
-func buildQEMUArgs(qemu ManifestQEMU, cid int) ([]string, error) {
+func buildQEMUArgs(qemu manifestpkg.ManifestQEMU, cid int) ([]string, error) {
 	config := &govmmQemu.Config{
 		Machine: govmmQemu.Machine{
 			Type: qemu.Machine.Type,

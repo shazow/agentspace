@@ -116,6 +116,7 @@ let
         "guestfwd=${proto}:${guest.address}:${toString guest.port}-cmd:${microvm.vmHostPackages.netcat}/bin/nc ${host.address} ${toString host.port}"
       ]
   ) microvm.forwardPorts;
+
 in
 {
   binaryPath = "${microvm.qemu.package}/bin/qemu-system-${arch}";

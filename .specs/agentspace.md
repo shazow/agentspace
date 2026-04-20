@@ -10,6 +10,7 @@ Keep `mkSandbox` as the stable entrypoint for constructing the sandbox system an
 
 - Support a single active host launch path: `virtiofs + ssh + qemu`, foreground-only, through `virtie`.
 - Generate a Nix-owned launch wrapper and manifest that contain the inputs required by `virtie`.
+- Keep the public Nix surface focused on launch-shape choices, including whether the virtio-balloon device is enabled, while leaving runtime balloon policy defaults to `virtie`.
 - Reject unsupported launch configurations explicitly instead of falling back to legacy orchestration.
 - Preserve downstream extension hooks that are still part of the supported surface, especially `extraModules` and `homeModules`.
 
@@ -36,6 +37,7 @@ Acceptance criteria:
 - [x] Replace the active launch path with `virtie launch` instead of legacy host orchestration.
 - [x] Move final QEMU argv construction out of Nix and into `virtie`, leaving Nix responsible for guest evaluation plus the resolved typed QEMU launch config.
 - [x] Emit the typed QEMU manifest from `sandbox-qemu.nix` through `agentspace-qemu-config.nix`.
+- [x] Reduce the public balloon surface to `agentspace.sandbox.balloon`, with `virtie` supplying runtime balloon-control defaults when the device is enabled.
 - [x] Generate per-share `virtiofsd` commands and socket paths in the manifest instead of relying on a `virtiofsd-run` helper.
 - [x] Opt the generated manifest into XDG runtime socket placement so default `virtiofs` and QMP sockets no longer spill into the launch working directory.
 - [x] Remove `mkConnect`, `connect-agent`, and `apps.connect` so the repo exposes only the supported launch entrypoint.
@@ -53,8 +55,10 @@ Acceptance criteria:
 - Current Nix-to-virtie contract:
   - Nix still owns guest evaluation and image production through `microvm.nix`.
   - Nix resolves machine, CPU, memory, kernel, block, network, `virtiofs`, and QMP settings into the manifest.
+  - Nix exposes only `agentspace.sandbox.balloon` for enabling or disabling the virtio-balloon device.
+  - When enabled, the generated manifest includes the balloon device but leaves controller defaults to `virtie`.
   - The generated manifest sets `paths.runtimeDir = ""`, so relative socket paths resolve under the per-user XDG runtime directory by default.
-  - `virtie` owns final argv compilation, QMP lifecycle, process launch, and teardown ordering.
+  - `virtie` owns final argv compilation, the long-lived QMP lifecycle, optional runtime balloon control, process launch, and teardown ordering.
 - Current retained public hooks:
   - `extraModules`
   - `homeModules`
@@ -63,6 +67,7 @@ Acceptance criteria:
   - `mountWorkspace`, `workspaceMountPoint`
   - `persistence.*`
   - `user`, `hostName`, `swapSize`
+  - optional `balloon`
 
 ```mermaid
 flowchart TD

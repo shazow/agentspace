@@ -13,8 +13,16 @@ let
     persistence.homeImage = null;
   };
 
+  vmVirtieBalloonDisabled = mkSandbox {
+    sshAuthorizedKeys = [ testPublicKey ];
+    sshIdentityFile = ".agentspace-test/id_ed25519";
+    persistence.homeImage = null;
+    balloon = false;
+  };
+
   launchScript = mkLaunch vmVirtie;
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifest;
+  disabledBalloonManifest = vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifest;
   runner = vmVirtie.config.microvm.declaredRunner.outPath;
   virtiofsdHelper = "${runner}/bin/virtiofsd-run";
 in
@@ -73,6 +81,19 @@ in
       exit 1
     fi
 
+    touch $out
+  '';
+
+  launch-agent-virtie-balloon-controller-contract = pkgs.runCommand "launch-agent-virtie-balloon-controller-contract" { } ''
+    grep -F '"balloon":{"id":"balloon0"' ${manifest}
+    if grep -F '"controller":' ${manifest} >/dev/null; then
+      echo "launch-agent-virtie-balloon-controller-contract: balloon controller defaults must stay in virtie, not the manifest" >&2
+      exit 1
+    fi
+    if grep -F '"balloon":' ${disabledBalloonManifest} >/dev/null; then
+      echo "launch-agent-virtie-balloon-controller-contract: balloon device must be omitted when agentspace.sandbox.balloon = false" >&2
+      exit 1
+    fi
     touch $out
   '';
 }
