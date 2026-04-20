@@ -27,7 +27,10 @@ func TestManifestValidate(t *testing.T) {
 			MicroVMRun: "/tmp/microvm-run",
 			LockPath:   "/tmp/virtie.lock",
 		},
-		SSH: ManifestSSH{Argv: []string{"/bin/ssh", "agent@vsock/10"}},
+		SSH: ManifestSSH{
+			Argv: []string{"/bin/ssh"},
+			User: "agent",
+		},
 		VirtioFS: ManifestVirtioFS{Daemons: []ManifestVirtioFSDaemon{
 			{
 				Tag:        "workspace",
@@ -42,6 +45,24 @@ func TestManifestValidate(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
+	if got, want := valid.VSock.CIDRange.Start, DefaultVSockCIDStart; got != want {
+		t.Fatalf("unexpected default vsock start: got %d want %d", got, want)
+	}
+	if got, want := valid.VSock.CIDRange.End, DefaultVSockCIDEnd; got != want {
+		t.Fatalf("unexpected default vsock end: got %d want %d", got, want)
+	}
+
+	invalidUser := *valid
+	invalidUser.SSH.User = ""
+	if err := invalidUser.Validate(); err == nil {
+		t.Fatalf("expected validation error for missing ssh user")
+	}
+
+	invalidRange := *valid
+	invalidRange.VSock.CIDRange.Start = 2
+	if err := invalidRange.Validate(); err == nil {
+		t.Fatalf("expected validation error for invalid cid range")
+	}
 }
 
 func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
@@ -55,12 +76,12 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 				"-q",
 				"-o",
 				"StrictHostKeyChecking=no",
-				"agent@vsock/10",
 			},
+			User: "agent",
 		},
 	}
 
-	probe := buildSSHSpec(manifest, []string{"true"}, false)
+	probe := buildSSHSpec(manifest, 10, []string{"true"}, false)
 	wantProbeArgs := []string{
 		"-o",
 		"BatchMode=yes",
@@ -76,7 +97,7 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 		t.Fatalf("unexpected ssh probe args: got %v want %v", probe.Args, wantProbeArgs)
 	}
 
-	session := buildSSHSpec(manifest, []string{"bash", "-lc", "echo hi"}, true)
+	session := buildSSHSpec(manifest, 10, []string{"bash", "-lc", "echo hi"}, true)
 	wantSessionArgs := []string{
 		"-tt",
 		"-q",
@@ -139,7 +160,8 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 			Directories: []string{"persist"},
 		},
 		SSH: ManifestSSH{
-			Argv: []string{"/bin/ssh", "-tt", "agent@vsock/10"},
+			Argv: []string{"/bin/ssh", "-q"},
+			User: "agent",
 		},
 		VirtioFS: ManifestVirtioFS{
 			Daemons: []ManifestVirtioFSDaemon{
@@ -171,6 +193,19 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
 	}
 
+	if got, want := runner.microvmEnv, []string{"AGENTSPACE_VSOCK_CID=3"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected microvm env: got %v want %v", got, want)
+	}
+
+	if got := len(runner.sshArgs); got != 4 {
+		t.Fatalf("unexpected ssh attempts: got %d want 4", got)
+	}
+	for i, args := range runner.sshArgs {
+		if !containsString(args, "agent@vsock/3") {
+			t.Fatalf("ssh attempt %d missing runtime destination: %v", i, args)
+		}
+	}
+
 	wantSignals := []string{"ssh", "microvm", "virtiofsd[workspace]", "virtiofsd[ro-store]"}
 	if !reflect.DeepEqual(runner.signals, wantSignals) {
 		t.Fatalf("unexpected stop order: got %v want %v", runner.signals, wantSignals)
@@ -198,7 +233,8 @@ func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 			WorkingDir: t.TempDir(),
 		},
 		SSH: ManifestSSH{
-			Argv: []string{"/bin/ssh", "agent@vsock/10"},
+			Argv: []string{"/bin/ssh"},
+			User: "agent",
 		},
 	}
 
@@ -207,7 +243,7 @@ func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- manager.waitForSSH(ctx, manifest, nil)
+		errCh <- manager.waitForSSH(ctx, manifest, 10)
 	}()
 
 	probe := <-runner.started
@@ -227,12 +263,48 @@ func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 	}
 }
 
+func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifest := &Manifest{
+		Paths: ManifestPaths{
+			WorkingDir: tmpDir,
+			LockPath:   filepath.Join(tmpDir, "virtie.lock"),
+		},
+		VSock: ManifestVSock{
+			CIDRange: ManifestVSockCIDRange{
+				Start: 7,
+				End:   8,
+			},
+		},
+	}
+
+	locker := &FileLocker{}
+	held, err := locker.Acquire(manifest.ResolvedVSockLockPath(7))
+	if err != nil {
+		t.Fatalf("acquire held cid lock: %v", err)
+	}
+	defer held.Release()
+
+	manager := &Manager{Locker: locker}
+	cid, lock, err := manager.allocateCID(manifest)
+	if err != nil {
+		t.Fatalf("allocate cid: %v", err)
+	}
+	defer lock.Release()
+
+	if cid != 8 {
+		t.Fatalf("unexpected cid: got %d want 8", cid)
+	}
+}
+
 type fakeRunner struct {
-	mu      sync.Mutex
-	starts  []string
-	signals []string
-	probes  int
-	cancel  context.CancelFunc
+	mu         sync.Mutex
+	starts     []string
+	signals    []string
+	sshArgs    [][]string
+	microvmEnv []string
+	probes     int
+	cancel     context.CancelFunc
 }
 
 func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
@@ -243,8 +315,10 @@ func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
 
 	switch spec.Name {
 	case "microvm":
+		r.microvmEnv = append([]string(nil), spec.Env...)
 		return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
 	case "ssh":
+		r.sshArgs = append(r.sshArgs, append([]string(nil), spec.Args...))
 		r.probes++
 		if r.probes < 3 {
 			return &fakeProcess{
@@ -377,4 +451,13 @@ func (p *blockingSSHProcess) killCalls() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.killCount
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }

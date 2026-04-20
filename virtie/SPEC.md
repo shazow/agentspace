@@ -53,13 +53,14 @@ Behavior:
 
 1. load and validate the manifest
 2. acquire a per-sandbox lock
-3. create required host directories
-4. start the configured `virtiofsd` daemons
-5. wait for the expected virtiofs socket paths to exist
-6. start `microvm-run`
-7. retry SSH until the guest is ready
-8. attach the SSH session to the current terminal
-9. on exit or signal, stop SSH first, then the VM, then the `virtiofsd` daemons
+3. allocate and lock a free vsock CID from the configured range
+4. create required host directories
+5. start the configured `virtiofsd` daemons
+6. wait for the expected virtiofs socket paths to exist
+7. start `microvm-run`
+8. retry SSH until the guest is ready
+9. attach the SSH session to the current terminal
+10. on exit or signal, stop SSH first, then the VM, then the `virtiofsd` daemons
 
 ## Manifest Contract
 
@@ -76,7 +77,10 @@ V1 only needs fields for the single supported workflow:
 - persistence:
   - host directories that must exist before launch
 - ssh:
-  - full SSH argv template, including the vsock target and host key bypass flags
+  - SSH argv template with fixed options only
+  - SSH user
+- vsock:
+  - optional CID allocation range override
 - virtiofs:
   - per-share daemon commands and expected socket paths that must exist before starting the VM
 
@@ -104,7 +108,7 @@ This inventory reflects the specific workflow visible in `flake.nix`, `sandbox-q
 | --- | --- |
 | `virtiofsd` | launched from Nix-generated per-share commands |
 | `microvm-run` | Nix-generated VM launcher remains the source of truth |
-| `ssh` | SSH is the only supported connection mechanism |
+| `ssh` | SSH is the only supported connection mechanism; `virtie` fills in the runtime vsock destination |
 
 ### Subprocesses hidden behind helpers
 
@@ -141,7 +145,8 @@ These should be normal Go operations, not shell:
 
 - Nix has already produced valid helper binaries and a manifest
 - the host can access the configured image and socket paths
-- the guest SSH service is configured and reachable over the manifest's target
+- the guest SSH service is configured and reachable over the runtime-selected vsock CID
+- if the manifest does not specify a vsock range, `virtie` allocates from `3..65535`
 
 `virtie` should not assume:
 
@@ -154,12 +159,13 @@ These should be normal Go operations, not shell:
 The only supported v1 process flow is:
 
 1. preflight and lock acquisition
-2. start the configured `virtiofsd` daemons
-3. wait for the expected virtiofs sockets
-4. start `microvm-run`
-5. retry SSH until the guest is ready
-6. attach the SSH session
-7. on exit, stop SSH, then VM, then the `virtiofsd` daemons
+2. allocate and lock a free vsock CID
+3. start the configured `virtiofsd` daemons
+4. wait for the expected virtiofs sockets
+5. start `microvm-run` with the selected CID injected at runtime
+6. retry SSH until the guest is ready
+7. attach the SSH session
+8. on exit, stop SSH, then VM, then the `virtiofsd` daemons
 
 ### Control Flow Diagram
 
@@ -167,24 +173,25 @@ The only supported v1 process flow is:
 flowchart TD
     A[virtie launch] --> B[Load and validate manifest]
     B --> C[Acquire lock]
-    C --> D[Create required host directories]
-    D --> E[Start virtiofsd daemons]
-    E --> F[Wait for expected virtiofs sockets]
-    F --> G[Start microvm-run]
-    G --> H{SSH ready?}
-    H -- no --> I[Sleep and retry]
-    I --> H
-    H -- yes --> J[Attach SSH session]
-    J --> K[Teardown]
-    K --> L[Stop SSH if running]
-    L --> M[Stop microvm-run if running]
-    M --> N[Stop virtiofsd daemons if running]
-    N --> O[Release lock and exit]
+    C --> D[Allocate vsock CID]
+    D --> E[Create required host directories]
+    E --> F[Start virtiofsd daemons]
+    F --> G[Wait for expected virtiofs sockets]
+    G --> H[Start microvm-run]
+    H --> I{SSH ready?}
+    I -- no --> J[Sleep and retry]
+    J --> I
+    I -- yes --> K[Attach SSH session]
+    K --> L[Teardown]
+    L --> M[Stop SSH if running]
+    M --> N[Stop microvm-run if running]
+    N --> O[Stop virtiofsd daemons if running]
+    O --> P[Release locks and exit]
 
-    E -. failure .-> K
-    F -. failure .-> K
-    G -. failure .-> K
-    J -. session exits or signal .-> K
+    F -. failure .-> L
+    G -. failure .-> L
+    H -. failure .-> L
+    K -. session exits or signal .-> L
 ```
 
 Any failure after a child process has started follows the same teardown path.
@@ -199,9 +206,12 @@ Any failure after a child process has started follows the same teardown path.
 
 ## State And Locking
 
-`virtie` only needs a lock file to prevent duplicate launches.
+`virtie` needs:
 
-There is no separate runtime state for reconnect support in v1.
+- a per-sandbox lock file to prevent duplicate launches
+- a per-CID lock file to keep concurrent sessions from choosing the same vsock CID
+
+There is still no reconnect state in v1.
 
 ## Testing Requirements
 

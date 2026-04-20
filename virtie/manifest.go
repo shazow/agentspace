@@ -7,11 +7,17 @@ import (
 	"path/filepath"
 )
 
+const (
+	DefaultVSockCIDStart = 3
+	DefaultVSockCIDEnd   = 65535
+)
+
 type Manifest struct {
 	Identity    ManifestIdentity    `json:"identity"`
 	Paths       ManifestPaths       `json:"paths"`
 	Persistence ManifestPersistence `json:"persistence"`
 	SSH         ManifestSSH         `json:"ssh"`
+	VSock       ManifestVSock       `json:"vsock"`
 	VirtioFS    ManifestVirtioFS    `json:"virtiofs"`
 }
 
@@ -31,6 +37,16 @@ type ManifestPersistence struct {
 
 type ManifestSSH struct {
 	Argv []string `json:"argv"`
+	User string   `json:"user"`
+}
+
+type ManifestVSockCIDRange struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+
+type ManifestVSock struct {
+	CIDRange ManifestVSockCIDRange `json:"cidRange"`
 }
 
 type ManifestCommand struct {
@@ -66,7 +82,22 @@ func LoadManifest(path string) (*Manifest, error) {
 	return &manifest, nil
 }
 
+func (m *Manifest) ApplyDefaults() {
+	if m == nil {
+		return
+	}
+
+	if m.VSock.CIDRange.Start == 0 {
+		m.VSock.CIDRange.Start = DefaultVSockCIDStart
+	}
+	if m.VSock.CIDRange.End == 0 {
+		m.VSock.CIDRange.End = DefaultVSockCIDEnd
+	}
+}
+
 func (m *Manifest) Validate() error {
+	m.ApplyDefaults()
+
 	switch {
 	case m == nil:
 		return fmt.Errorf("manifest is nil")
@@ -80,6 +111,12 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.paths.lockPath is required")
 	case len(m.SSH.Argv) == 0:
 		return fmt.Errorf("manifest.ssh.argv must contain at least the ssh executable")
+	case m.SSH.User == "":
+		return fmt.Errorf("manifest.ssh.user is required")
+	case m.VSock.CIDRange.Start < DefaultVSockCIDStart:
+		return fmt.Errorf("manifest.vsock.cidRange.start must be at least %d", DefaultVSockCIDStart)
+	case m.VSock.CIDRange.End < m.VSock.CIDRange.Start:
+		return fmt.Errorf("manifest.vsock.cidRange.end must be greater than or equal to start")
 	case len(m.VirtioFS.Daemons) == 0:
 		return fmt.Errorf("manifest.virtiofs.daemons must contain at least one daemon")
 	}
@@ -124,6 +161,14 @@ func (m *Manifest) ResolvedLockPath() string {
 	return m.ResolvePath(m.Paths.LockPath)
 }
 
+func (m *Manifest) ResolvedVSockLockDir() string {
+	return filepath.Join(filepath.Dir(m.ResolvedLockPath()), "agentspace-vsock")
+}
+
+func (m *Manifest) ResolvedVSockLockPath(cid int) string {
+	return filepath.Join(m.ResolvedVSockLockDir(), fmt.Sprintf("%d.lock", cid))
+}
+
 func (m *Manifest) ResolvedMicroVMRun() string {
 	return m.ResolvePath(m.Paths.MicroVMRun)
 }
@@ -138,4 +183,8 @@ func (m *Manifest) ResolvedVirtioFSDaemons() []ManifestVirtioFSDaemon {
 		daemons = append(daemons, resolved)
 	}
 	return daemons
+}
+
+func (m *Manifest) SSHDestination(cid int) string {
+	return fmt.Sprintf("%s@vsock/%d", m.SSH.User, cid)
 }
