@@ -20,7 +20,7 @@ Out of scope:
 - deleting the separate file by simply inlining its contents into `sandbox-qemu.nix`
 - broadening the supported launcher surface beyond the current admitted path
 - moving guest image construction, initrd generation, or kernel builds out of Nix
-- restoring console attach, `9p`, airlock, bridge or tap networking, graphics, or passthrough support as part of this refactor
+- restoring removed prototype workflows or broadening to bridge or tap networking, graphics, or passthrough support as part of this refactor
 - changing the user-facing `virtie launch <manifest>` CLI
 
 Acceptance criteria:

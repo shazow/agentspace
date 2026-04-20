@@ -8,8 +8,6 @@ let
   testPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBIqXkHFLTDd7n09425txXfdOgJDUb7CpMAdCPVRS94z agentspace-virtie-test";
 
   vmVirtie = mkSandbox {
-    connectWith = "ssh";
-    protocol = "virtiofs";
     sshAuthorizedKeys = [ testPublicKey ];
     sshIdentityFile = ".agentspace-test/id_ed25519";
     persistence.homeImage = null;
