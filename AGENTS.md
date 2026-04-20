@@ -1,1 +1,1 @@
-
+- When testing nix builds, clean up `./result` symlinks after completion with `unlink` command.
