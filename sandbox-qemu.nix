@@ -29,7 +29,7 @@ in
         "9p"
         "virtiofs"
       ];
-      default = "9p";
+      default = "virtiofs";
       description = "File share protocol. '9p' runs in userland (slow), 'virtiofs' requires a daemon (fast).";
     };
 
@@ -76,7 +76,7 @@ in
         "console"
         "ssh"
       ];
-      default = "console";
+      default = "ssh";
       description = "Auto-connect via serial console or ssh. When using ssh, make sure to set sshAuthorizedKeys.";
     };
 
@@ -84,6 +84,12 @@ in
       type = lib.types.listOf lib.types.str;
       default = [ ];
       description = "Setup ssh access with these authorized keys.";
+    };
+
+    sshIdentityFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Optional SSH identity file passed to host-side launch/connect helpers.";
     };
 
     workspaceMountPoint = lib.mkOption {
@@ -114,6 +120,26 @@ in
         echo "📂 Mounting current directory at ~/workspace"
         cd "$REPO_DIR"
       '';
+    };
+
+    launch = {
+      commonInit = lib.mkOption {
+        type = lib.types.lines;
+        readOnly = true;
+        internal = true;
+      };
+
+      sshArgv = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        readOnly = true;
+        internal = true;
+      };
+
+      virtieManifest = lib.mkOption {
+        type = lib.types.path;
+        readOnly = true;
+        internal = true;
+      };
     };
   };
 
@@ -149,89 +175,121 @@ in
           [
             (builtins.filter (x: x != null))
             (builtins.map builtins.dirOf)
-            lib.escapeShellArgs
           ];
+
+      defaultInitExtra =
+        ''
+          echo "🚀 Preparing Agent QEMU Sandbox..."
+        ''
+        + lib.optionalString cfg.mountWorkspace ''
+          echo "📂 Mounting current directory at ~/workspace"
+          cd "$REPO_DIR"
+        '';
+
+      runnerPath = config.microvm.declaredRunner.outPath;
+      airlockEnabled = lib.attrByPath [ "airlock" "enable" ] false cfg;
+      sshArgv =
+        [
+          "${pkgs.openssh}/bin/ssh"
+          "-q"
+          "-o"
+          "StrictHostKeyChecking=no"
+          "-o"
+          "UserKnownHostsFile=/dev/null"
+          "-o"
+          "GlobalKnownHostsFile=/dev/null"
+        ]
+        ++ lib.optionals (cfg.sshIdentityFile != null) [
+          "-i"
+          cfg.sshIdentityFile
+        ]
+        ++ [ "${cfg.user}@vsock/${toString config.microvm.vsock.cid}" ];
+      virtiofsShares = builtins.filter (share: share.proto == "virtiofs") config.microvm.shares;
+
+      mkVirtioFSDaemonCommand =
+        {
+          tag,
+          socket,
+          source,
+          readOnly,
+          cache,
+          ...
+        }:
+        pkgs.writeShellScript "virtiofsd-${cfg.hostName}-${tag}" ''
+          if [ "$(id -u)" = 0 ]; then
+            opt_rlimit=(--rlimit-nofile 1048576)
+          else
+            opt_rlimit=()
+          fi
+
+          exec ${lib.getExe config.microvm.virtiofsd.package} \
+            --socket-path=${lib.escapeShellArg socket} \
+            ${lib.optionalString (config.microvm.virtiofsd.group != null)
+              "--socket-group=${config.microvm.virtiofsd.group}"
+            } \
+            --shared-dir=${lib.escapeShellArg source} \
+            "''${opt_rlimit[@]}" \
+            --thread-pool-size ${toString config.microvm.virtiofsd.threadPoolSize} \
+            --posix-acl --xattr \
+            --cache=${cache} \
+            ${
+              lib.optionalString (
+                config.microvm.virtiofsd.inodeFileHandles != null
+              ) "--inode-file-handles=${config.microvm.virtiofsd.inodeFileHandles}"
+            } \
+            ${lib.optionalString (config.microvm.hypervisor == "crosvm") "--tag=${tag}"} \
+            ${lib.optionalString readOnly "--readonly"} \
+            ${lib.escapeShellArgs config.microvm.virtiofsd.extraArgs}
+        '';
+
+      virtiofsDaemons = builtins.map (share: {
+        tag = share.tag;
+        socketPath = share.socket;
+        command = {
+          path = mkVirtioFSDaemonCommand share;
+          args = [ ];
+        };
+      }) virtiofsShares;
+
+      virtieManifest = pkgs.writeText "virtie-${cfg.hostName}.json" (
+        builtins.toJSON {
+          identity.hostName = cfg.hostName;
+          paths = {
+            workingDir = ".";
+            microvmRun = "${runnerPath}/bin/microvm-run";
+            lockPath = "/tmp/agentspace-${cfg.hostName}.lock";
+          };
+          persistence.directories = initDirs;
+          ssh.argv = sshArgv;
+          virtiofs.daemons = virtiofsDaemons;
+        }
+      );
     in
-    {
-      imports = cfg.extraModules;
-    } //
     lib.mkMerge [
       {
-        agentspace.sandbox.initExtra = lib.mkAfter (
-          lib.optionalString (initDirs != "") ''
-            mkdir -vp ${initDirs}
-          ''
-          + ''
-            name_prefix="agentspace-${cfg.hostName}";
-            vfs_unit="$name_prefix-virtiofsd"
-            vm_unit="$name_prefix-vm"
-            connect_unit="$name_prefix-connect"
-            tracked_units=()
+        assertions = [
+          {
+            assertion = cfg.protocol == "virtiofs";
+            message = "agentspace.sandbox.protocol=9p is unsupported; only virtiofs is supported by the virtie-only launcher.";
+          }
+          {
+            assertion = cfg.connectWith == "ssh";
+            message = "agentspace.sandbox.connectWith=console is unsupported; only ssh is supported by the virtie-only launcher.";
+          }
+          {
+            assertion = !airlockEnabled;
+            message = "agentspace.sandbox.airlock.enable is unsupported; airlock launch behavior has been removed until it is reimplemented on top of virtie.";
+          }
+          {
+            assertion = cfg.initExtra == defaultInitExtra;
+            message = "Custom agentspace.sandbox.initExtra launch behavior is unsupported; only the default virtie prelaunch shell is supported right now.";
+          }
+        ];
 
-            if systemctl --user --quiet is-active "$name_prefix-*.service"; then
-              echo "launch-agent: refusing to start because an agentspace unit is already active" >&2
-              exit 1
-            fi
-            systemctl --user reset-failed "$name_prefix-*.service"
-          ''
-          + lib.optionalString (cfg.protocol == "virtiofs") ''
-            echo "📦 Starting virtiofsd..."
-            tracked_units+=("$vfs_unit.service")
-            systemd-run --user \
-              --unit="$vfs_unit" \
-              --collect \
-              --service-type=exec \
-              -p KillMode=control-group \
-              -p Restart=on-failure \
-              -p RestartSec=500ms \
-              -p TimeoutStopSec=15s \
-              -p WorkingDirectory="$REPO_DIR" \
-              "$RUNNER_PATH/bin/virtiofsd-run"
-            trap 'systemctl --user stop "$vfs_unit.service" >/dev/null 2>&1 || true' EXIT INT TERM
-          ''
-          + lib.optionalString (cfg.connectWith == "ssh") ''
-            tracked_units+=("$connect_unit.service" "$vm_unit.service")
-
-            echo "🖥️  Starting microvm..."
-            systemd-run --user \
-              --unit="$vm_unit" \
-              --collect \
-              --service-type=exec \
-              ${lib.optionalString (cfg.protocol == "virtiofs") "-p BindsTo=\"$vfs_unit.service\""} \
-              ${lib.optionalString (cfg.protocol == "virtiofs") "-p After=\"$vfs_unit.service\""} \
-              -p KillMode=control-group \
-              -p TimeoutStopSec=15s \
-              -p WorkingDirectory="$REPO_DIR" \
-              "$RUNNER_PATH/bin/microvm-run"
-            journalctl --user --no-pager -u "$vm_unit.service" --invocation=0
-
-            echo "🔐 Starting SSH... (Retrying until host is ready)"
-            systemd-run --user \
-              --unit="$connect_unit" \
-              --collect \
-              --wait \
-              --pty \
-              --quiet \
-              --service-type=exec \
-              -p BindsTo="$vm_unit.service" \
-              -p After="$vm_unit.service" \
-              -p Restart=on-failure \
-              -p RestartSec=1000ms \
-              -p StartLimitIntervalSec=0 \
-              -p KillMode=control-group \
-              -p TimeoutStopSec=15s \
-              ${pkgs.openssh}/bin/ssh \
-              -tt -q \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o GlobalKnownHostsFile=/dev/null \
-              "${cfg.user}@vsock/${toString config.microvm.vsock.cid}" \
-              "$@"
-
-            systemctl --user stop "''${tracked_units[@]}" >/dev/null 2>&1 || true
-            exit
-          ''
-        );
+        agentspace.sandbox.launch = {
+          commonInit = cfg.initExtra;
+          inherit sshArgv virtieManifest;
+        };
 
         networking.hostName = cfg.hostName;
         nixpkgs.config.allowUnfree = true;
@@ -283,7 +341,7 @@ in
           };
         };
 
-        services.openssh = lib.mkIf (cfg.sshAuthorizedKeys != [ ]) {
+        services.openssh = lib.mkIf (cfg.connectWith == "ssh") {
           enable = true;
           openFirewall = false;
           settings = {
@@ -332,6 +390,11 @@ in
           which
         ]);
 
+        microvm.binScripts.virtiofsd-run = lib.mkForce ''
+          echo "virtiofsd-run is managed by virtie and should not be invoked directly." >&2
+          exit 1
+        '';
+
         # MicroVM Configuration
         microvm = {
           vcpu = lib.mkDefault 8;
@@ -340,7 +403,7 @@ in
           socket = "/tmp/vm-${cfg.hostName}.sock";
           hypervisor = "qemu";
 
-          qemu.serialConsole = cfg.connectWith == "console";
+          qemu.serialConsole = false;
 
           vsock = {
             cid = lib.mkDefault 10;
@@ -394,13 +457,6 @@ in
           ];
         };
       }
-
-      (lib.mkIf (cfg.connectWith == "console") {
-        services.getty.autologinUser = cfg.user;
-        systemd.tmpfiles.rules = lib.mkAfter [
-          "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - agentspace-logout"
-        ];
-      })
     ]
   );
 }
