@@ -85,7 +85,8 @@ in
   '';
 
   launch-agent-virtie-balloon-controller-contract = pkgs.runCommand "launch-agent-virtie-balloon-controller-contract" { } ''
-    grep -F '"balloon":{"id":"balloon0"' ${manifest}
+    grep -F '"balloon":{' ${manifest}
+    grep -F '"id":"balloon0"' ${manifest}
     if grep -F '"controller":' ${manifest} >/dev/null; then
       echo "launch-agent-virtie-balloon-controller-contract: balloon controller defaults must stay in virtie, not the manifest" >&2
       exit 1

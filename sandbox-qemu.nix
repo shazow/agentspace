@@ -99,6 +99,12 @@ in
         internal = true;
       };
 
+      virtieManifestData = lib.mkOption {
+        type = lib.types.anything;
+        readOnly = true;
+        internal = true;
+      };
+
       virtieManifest = lib.mkOption {
         type = lib.types.path;
         readOnly = true;
@@ -218,24 +224,24 @@ in
         mkfsExtraArgs = volume.mkfsExtraArgs;
       }) config.microvm.volumes;
 
-      virtieManifest = pkgs.writeText "virtie-${cfg.hostName}.json" (
-        builtins.toJSON {
-          identity.hostName = cfg.hostName;
-          paths = {
-            workingDir = ".";
-            lockPath = "/tmp/agentspace-${cfg.hostName}.lock";
-            runtimeDir = "";
-          };
-          persistence.directories = initDirs;
-          ssh = {
-            argv = sshBaseArgv;
-            user = cfg.user;
-          };
-          qemu = qemuConfig;
-          volumes = manifestVolumes;
-          virtiofs.daemons = virtiofsDaemons;
-        }
-      );
+      virtieManifestData = {
+        identity.hostName = cfg.hostName;
+        paths = {
+          workingDir = ".";
+          lockPath = "/tmp/agentspace-${cfg.hostName}.lock";
+          runtimeDir = "";
+        };
+        persistence.directories = initDirs;
+        ssh = {
+          argv = sshBaseArgv;
+          user = cfg.user;
+        };
+        qemu = qemuConfig;
+        volumes = manifestVolumes;
+        virtiofs.daemons = virtiofsDaemons;
+      };
+
+      virtieManifest = pkgs.writeText "virtie-${cfg.hostName}.json" (builtins.toJSON virtieManifestData);
     in
     lib.mkMerge [
       {
@@ -288,6 +294,7 @@ in
 
         agentspace.sandbox.launch = {
           inherit commonInit;
+          inherit virtieManifestData;
           inherit virtieManifest;
         };
 
