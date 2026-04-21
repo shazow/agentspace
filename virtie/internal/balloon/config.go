@@ -1,4 +1,10 @@
 // Package balloon implements the internal virtio-balloon feature.
+//
+// It owns the manifest-facing balloon configuration, the QEMU argument lowering
+// for the virtio-balloon device, and the optional runtime controller that
+// adjusts guest memory through QMP. The controller reads guest pressure stats,
+// applies the configured hysteresis and holdoff rules, and issues balloon
+// commands without exposing those QMP-specific details to the rest of virtie.
 package balloon
 
 import "fmt"
