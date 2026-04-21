@@ -14,35 +14,35 @@ var (
 	errQOMPathNotFound       = errors.New("balloon qom path not found")
 )
 
-type Logger interface {
+type logger interface {
 	Printf(format string, args ...any)
 }
 
-type Session interface {
-	QueryBalloon(timeout time.Duration) (Info, error)
+type session interface {
+	QueryBalloon(timeout time.Duration) (info, error)
 	SetBalloonLogicalSize(timeout time.Duration, logicalSizeBytes int64) error
 	EnableBalloonStatsPolling(timeout time.Duration, qomPath string, pollIntervalSeconds int) error
-	ReadBalloonStats(timeout time.Duration, qomPath string) (Stats, error)
-	ListQOMProperties(timeout time.Duration, path string) ([]ObjectPropertyInfo, error)
+	ReadBalloonStats(timeout time.Duration, qomPath string) (stats, error)
+	ListQOMProperties(timeout time.Duration, path string) ([]objectPropertyInfo, error)
 }
 
-type Info struct {
+type info struct {
 	ActualBytes int64
 }
 
-type Stats struct {
+type stats struct {
 	Stats      map[string]int64
 	LastUpdate time.Time
 }
 
-type ObjectPropertyInfo struct {
+type objectPropertyInfo struct {
 	Name string
 	Type string
 }
 
-type Controller struct {
-	Session    Session
-	Logger     Logger
+type controller struct {
+	Session    session
+	Logger     logger
 	DeviceID   string
 	Config     ControllerConfig
 	QMPTimeout time.Duration
@@ -60,7 +60,7 @@ type guestStatsSample struct {
 	LastUpdate           time.Time
 }
 
-func (c *Controller) Run(ctx context.Context) error {
+func (c *controller) Run(ctx context.Context) error {
 	if c == nil || c.Session == nil {
 		return nil
 	}
@@ -103,12 +103,12 @@ func (c *Controller) Run(ctx context.Context) error {
 			return err
 		}
 		if c.Logger != nil {
-			c.Logger.Printf("balloon controller set guest memory to %d MiB", target/BytesPerMiB)
+			c.Logger.Printf("balloon controller set guest memory to %d MiB", target/bytesPerMiB)
 		}
 	}
 }
 
-func AvailableMemory(stats Stats) (int64, bool) {
+func availableMemory(stats stats) (int64, bool) {
 	if value, ok := stats.Stats["stat-available-memory"]; ok && value >= 0 {
 		return value, true
 	}
@@ -118,7 +118,7 @@ func AvailableMemory(stats Stats) (int64, bool) {
 	return 0, false
 }
 
-func (c *Controller) resolveQOMPath() (string, error) {
+func (c *controller) resolveQOMPath() (string, error) {
 	expected := "/machine/peripheral/" + c.DeviceID
 	if c.qomPathSupportsGuestStats(expected) {
 		return expected, nil
@@ -157,7 +157,7 @@ func (c *Controller) resolveQOMPath() (string, error) {
 	return "", fmt.Errorf("%w for %q", errQOMPathNotFound, c.DeviceID)
 }
 
-func (c *Controller) qomPathSupportsGuestStats(path string) bool {
+func (c *controller) qomPathSupportsGuestStats(path string) bool {
 	props, err := c.Session.ListQOMProperties(c.QMPTimeout, path)
 	if err != nil {
 		return false
@@ -165,18 +165,18 @@ func (c *Controller) qomPathSupportsGuestStats(path string) bool {
 	return hasQOMProperty(props, "guest-stats") && hasQOMProperty(props, "guest-stats-polling-interval")
 }
 
-func (c *Controller) readSample(qomPath string) (Info, guestStatsSample, error) {
+func (c *controller) readSample(qomPath string) (info, guestStatsSample, error) {
 	stats, err := c.Session.ReadBalloonStats(c.QMPTimeout, qomPath)
 	if err != nil {
-		return Info{}, guestStatsSample{}, err
+		return info{}, guestStatsSample{}, err
 	}
 
 	actual, err := c.Session.QueryBalloon(c.QMPTimeout)
 	if err != nil {
-		return Info{}, guestStatsSample{}, err
+		return info{}, guestStatsSample{}, err
 	}
 
-	available, ok := AvailableMemory(stats)
+	available, ok := availableMemory(stats)
 	return actual, guestStatsSample{
 		AvailableMemoryBytes: available,
 		HasAvailableMemory:   ok,
@@ -184,7 +184,7 @@ func (c *Controller) readSample(qomPath string) (Info, guestStatsSample, error) 
 	}, nil
 }
 
-func (c *Controller) nowFunc() func() time.Time {
+func (c *controller) nowFunc() func() time.Time {
 	if c.Now != nil {
 		return c.Now
 	}
@@ -219,11 +219,11 @@ func evaluate(
 		return 0, false, nil
 	}
 
-	minActualBytes := int64(config.MinActualMiB) * BytesPerMiB
-	maxActualBytes := int64(config.MaxActualMiB) * BytesPerMiB
-	stepBytes := int64(config.StepMiB) * BytesPerMiB
-	growBelowBytes := int64(config.GrowBelowAvailableMiB) * BytesPerMiB
-	reclaimAboveBytes := int64(config.ReclaimAboveAvailableMiB) * BytesPerMiB
+	minActualBytes := int64(config.MinActualMiB) * bytesPerMiB
+	maxActualBytes := int64(config.MaxActualMiB) * bytesPerMiB
+	stepBytes := int64(config.StepMiB) * bytesPerMiB
+	growBelowBytes := int64(config.GrowBelowAvailableMiB) * bytesPerMiB
+	reclaimAboveBytes := int64(config.ReclaimAboveAvailableMiB) * bytesPerMiB
 
 	if stats.AvailableMemoryBytes < growBelowBytes {
 		state.aboveThresholdSince = time.Time{}
@@ -265,7 +265,7 @@ func evaluate(
 	return 0, false, nil
 }
 
-func hasQOMProperty(props []ObjectPropertyInfo, name string) bool {
+func hasQOMProperty(props []objectPropertyInfo, name string) bool {
 	for _, prop := range props {
 		if prop.Name == name {
 			return true

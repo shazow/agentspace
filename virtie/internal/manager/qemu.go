@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"fmt"
@@ -6,21 +6,21 @@ import (
 	"strings"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
-	"github.com/shazow/agentspace/virtie/manifest"
+	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
-func buildQEMUSpec(manifest *manifest.Manifest, cid int) (ProcessSpec, error) {
+func buildQEMUSpec(manifest *manifest.Manifest, cid int) (processSpec, error) {
 	qemu, err := manifest.ResolvedQEMU()
 	if err != nil {
-		return ProcessSpec{}, err
+		return processSpec{}, err
 	}
 
 	args, err := buildQEMUArgs(qemu, cid)
 	if err != nil {
-		return ProcessSpec{}, err
+		return processSpec{}, err
 	}
 
-	return ProcessSpec{
+	return processSpec{
 		Name:   "qemu",
 		Path:   qemu.BinaryPath,
 		Args:   args,

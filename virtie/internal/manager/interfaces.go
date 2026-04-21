@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"context"
@@ -6,30 +6,30 @@ import (
 	"os"
 )
 
-type Lock interface {
+type lock interface {
 	Release() error
 }
 
-type Locker interface {
-	Acquire(path string) (Lock, error)
+type locker interface {
+	Acquire(path string) (lock, error)
 }
 
-type Process interface {
+type process interface {
 	Wait() error
 	Signal(sig os.Signal) error
 	Kill() error
 	PID() int
 }
 
-type Runner interface {
-	Start(spec ProcessSpec) (Process, error)
+type runner interface {
+	Start(spec processSpec) (process, error)
 }
 
-type SocketWaiter interface {
+type socketWaiter interface {
 	Wait(ctx context.Context, socketPaths []string) error
 }
 
-type ProcessSpec struct {
+type processSpec struct {
 	Name   string
 	Path   string
 	Args   []string

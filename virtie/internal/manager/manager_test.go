@@ -1,7 +1,8 @@
-package virtie
+package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -14,10 +15,13 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
+	doQMP "github.com/digitalocean/go-qemu/qmp"
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
-	balloonpkg "github.com/shazow/agentspace/virtie/balloon"
-	"github.com/shazow/agentspace/virtie/manifest"
+	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
+
+const testMiB int64 = 1024 * 1024
 
 func TestManifestValidate(t *testing.T) {
 	emptyManifest := &manifest.Manifest{}
@@ -30,10 +34,10 @@ func TestManifestValidate(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
-	if got, want := valid.VSock.CIDRange.Start, manifest.DefaultVSockCIDStart; got != want {
+	if got, want := valid.VSock.CIDRange.Start, 3; got != want {
 		t.Fatalf("unexpected default vsock start: got %d want %d", got, want)
 	}
-	if got, want := valid.VSock.CIDRange.End, manifest.DefaultVSockCIDEnd; got != want {
+	if got, want := valid.VSock.CIDRange.End, 65535; got != want {
 		t.Fatalf("unexpected default vsock end: got %d want %d", got, want)
 	}
 
@@ -179,20 +183,20 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		},
 	}
 
-	manager := &Manager{
-		Locker:            &FileLocker{},
-		Runner:            runner,
-		SocketWaiter:      waiter,
-		QMPDialer:         &fakeQMPDialer{client: qmpClient},
-		Logger:            log.New(io.Discard, "", 0),
-		SSHRetryDelay:     0,
-		ShutdownDelay:     10 * time.Millisecond,
-		QMPRetryDelay:     0,
-		QMPConnectTimeout: time.Millisecond,
-		QMPQuitTimeout:    time.Millisecond,
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      waiter,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
 	}
 
-	err := manager.Launch(cancelCtx, cfg, nil)
+	err := manager.launch(cancelCtx, cfg, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
@@ -263,10 +267,10 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 
 func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 	runner := &blockingSSHRunner{started: make(chan *blockingSSHProcess, 1)}
-	manager := &Manager{
-		Runner:        runner,
-		Logger:        log.New(io.Discard, "", 0),
-		SSHRetryDelay: time.Second,
+	manager := &manager{
+		runner:        runner,
+		logger:        log.New(io.Discard, "", 0),
+		sshRetryDelay: time.Second,
 	}
 
 	manifest := &manifest.Manifest{
@@ -319,14 +323,14 @@ func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
 		},
 	}
 
-	locker := &FileLocker{}
+	locker := &fileLocker{}
 	held, err := locker.Acquire(manifest.ResolvedVSockLockPath(7))
 	if err != nil {
 		t.Fatalf("acquire held cid lock: %v", err)
 	}
 	defer held.Release()
 
-	manager := &Manager{Locker: locker}
+	manager := &manager{locker: locker}
 	cid, lock, err := manager.allocateCID(manifest)
 	if err != nil {
 		t.Fatalf("allocate cid: %v", err)
@@ -389,9 +393,9 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	manifest.Paths.RuntimeDir = stringPtr("")
 
 	runner := &fakeRunner{}
-	manager := &Manager{
-		Runner: runner,
-		Logger: log.New(io.Discard, "", 0),
+	manager := &manager{
+		runner: runner,
+		logger: log.New(io.Discard, "", 0),
 	}
 
 	if _, err := manager.startVirtioFSDaemons(manifest); err != nil {
@@ -529,7 +533,7 @@ type fakeRunner struct {
 	qemu        *fakeProcess
 }
 
-func (r *fakeRunner) Start(spec ProcessSpec) (Process, error) {
+func (r *fakeRunner) Start(spec processSpec) (process, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -642,11 +646,11 @@ func (w *fakeSocketWaiter) Wait(ctx context.Context, socketPaths []string) error
 }
 
 type fakeQMPDialer struct {
-	client   QMPClient
+	client   qmpClient
 	attempts int
 }
 
-func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (QMPClient, error) {
+func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpClient, error) {
 	d.attempts++
 	return d.client, nil
 }
@@ -656,15 +660,16 @@ type fakeQMPClient struct {
 	quitCalls                int
 	onQuit                   func()
 	onEnableBalloonStats     func()
-	listQOMProperties        map[string][]balloonpkg.ObjectPropertyInfo
+	listQOMProperties        map[string][]fakeQOMProperty
 	listQOMPropertiesErr     map[string]error
 	enableBalloonStatsErr    error
-	queryBalloonInfo         balloonpkg.Info
+	queryBalloonActualBytes  int64
 	queryBalloonErr          error
-	readBalloonStats         balloonpkg.Stats
+	readBalloonStats         map[string]int64
 	readBalloonStatsErr      error
 	readBalloonStatsDelay    time.Duration
 	readBalloonStatsComplete time.Time
+	readBalloonStatsUpdated  time.Time
 	setBalloonLogicalSizes   []int64
 	setBalloonErr            error
 }
@@ -679,78 +684,6 @@ func (c *fakeQMPClient) Quit(timeout time.Duration) error {
 		onQuit()
 	}
 	return nil
-}
-
-func (c *fakeQMPClient) QueryBalloon(timeout time.Duration) (balloonpkg.Info, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.queryBalloonErr != nil {
-		return balloonpkg.Info{}, c.queryBalloonErr
-	}
-	if c.queryBalloonInfo.ActualBytes == 0 {
-		return balloonpkg.Info{ActualBytes: int64(512) * balloonpkg.BytesPerMiB}, nil
-	}
-	return c.queryBalloonInfo, nil
-}
-
-func (c *fakeQMPClient) SetBalloonLogicalSize(timeout time.Duration, logicalSizeBytes int64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.setBalloonLogicalSizes = append(c.setBalloonLogicalSizes, logicalSizeBytes)
-	return c.setBalloonErr
-}
-
-func (c *fakeQMPClient) EnableBalloonStatsPolling(timeout time.Duration, qomPath string, pollIntervalSeconds int) error {
-	c.mu.Lock()
-	onEnable := c.onEnableBalloonStats
-	err := c.enableBalloonStatsErr
-	c.mu.Unlock()
-
-	if onEnable != nil {
-		onEnable()
-	}
-	return err
-}
-
-func (c *fakeQMPClient) ReadBalloonStats(timeout time.Duration, qomPath string) (balloonpkg.Stats, error) {
-	c.mu.Lock()
-	delay := c.readBalloonStatsDelay
-	stats := c.readBalloonStats
-	err := c.readBalloonStatsErr
-	c.mu.Unlock()
-
-	if delay > 0 {
-		time.Sleep(delay)
-	}
-
-	c.mu.Lock()
-	c.readBalloonStatsComplete = time.Now()
-	c.mu.Unlock()
-
-	if err != nil {
-		return balloonpkg.Stats{}, err
-	}
-	if stats.Stats == nil {
-		stats.Stats = map[string]int64{
-			"stat-available-memory": int64(768) * balloonpkg.BytesPerMiB,
-		}
-	}
-	if stats.LastUpdate.IsZero() {
-		stats.LastUpdate = time.Now()
-	}
-	return stats, nil
-}
-
-func (c *fakeQMPClient) ListQOMProperties(timeout time.Duration, path string) ([]balloonpkg.ObjectPropertyInfo, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err, ok := c.listQOMPropertiesErr[path]; ok {
-		return nil, err
-	}
-	if props, ok := c.listQOMProperties[path]; ok {
-		return append([]balloonpkg.ObjectPropertyInfo(nil), props...), nil
-	}
-	return nil, errors.New("unexpected qom-list path")
 }
 
 func (c *fakeQMPClient) readCompletionTime() time.Time {
@@ -770,7 +703,7 @@ func (c *fakeQMPClient) Disconnect() error {
 }
 
 func (c *fakeQMPClient) withDefaultBalloonPath(path string) *fakeQMPClient {
-	c.listQOMProperties = map[string][]balloonpkg.ObjectPropertyInfo{
+	c.listQOMProperties = map[string][]fakeQOMProperty{
 		path: {
 			{Name: "guest-stats", Type: "dict"},
 			{Name: "guest-stats-polling-interval", Type: "int"},
@@ -780,7 +713,165 @@ func (c *fakeQMPClient) withDefaultBalloonPath(path string) *fakeQMPClient {
 }
 
 func (c *fakeQMPClient) WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error {
-	return errors.New("unexpected raw qmp use in fakeQMPClient")
+	return fn(rawQMP.NewMonitor(&fakeMonitor{handler: c.handleQMP}))
+}
+
+type fakeQOMProperty struct {
+	Name string
+	Type string
+}
+
+type fakeMonitor struct {
+	handler func(message map[string]any) (map[string]any, error)
+}
+
+func (m *fakeMonitor) Connect() error {
+	return nil
+}
+
+func (m *fakeMonitor) Disconnect() error {
+	return nil
+}
+
+func (m *fakeMonitor) Run(command []byte) ([]byte, error) {
+	var message map[string]any
+	if err := json.Unmarshal(command, &message); err != nil {
+		return nil, err
+	}
+
+	response := map[string]any{"return": map[string]any{}}
+	var err error
+	if m.handler != nil {
+		response, err = m.handler(message)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(response)
+}
+
+func (m *fakeMonitor) Events(context.Context) (<-chan doQMP.Event, error) {
+	return nil, doQMP.ErrEventsNotSupported
+}
+
+func (c *fakeQMPClient) handleQMP(message map[string]any) (map[string]any, error) {
+	command, _ := message["execute"].(string)
+	args, _ := message["arguments"].(map[string]any)
+
+	switch command {
+	case "quit":
+		c.mu.Lock()
+		c.quitCalls++
+		onQuit := c.onQuit
+		c.mu.Unlock()
+		if onQuit != nil {
+			onQuit()
+		}
+		return map[string]any{"return": map[string]any{}}, nil
+	case "query-balloon":
+		c.mu.Lock()
+		actualBytes := c.queryBalloonActualBytes
+		err := c.queryBalloonErr
+		c.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		if actualBytes == 0 {
+			actualBytes = 512 * testMiB
+		}
+		return map[string]any{"return": map[string]any{"actual": actualBytes}}, nil
+	case "balloon":
+		value, _ := args["value"].(float64)
+		c.mu.Lock()
+		c.setBalloonLogicalSizes = append(c.setBalloonLogicalSizes, int64(value))
+		err := c.setBalloonErr
+		c.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"return": map[string]any{}}, nil
+	case "qom-set":
+		property, _ := args["property"].(string)
+		if property == "guest-stats-polling-interval" {
+			c.mu.Lock()
+			onEnable := c.onEnableBalloonStats
+			err := c.enableBalloonStatsErr
+			c.mu.Unlock()
+			if onEnable != nil {
+				onEnable()
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+		return map[string]any{"return": map[string]any{}}, nil
+	case "qom-get":
+		c.mu.Lock()
+		delay := c.readBalloonStatsDelay
+		err := c.readBalloonStatsErr
+		snapshot := mapsClone(c.readBalloonStats)
+		updated := c.readBalloonStatsUpdated
+		c.mu.Unlock()
+
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+
+		c.mu.Lock()
+		c.readBalloonStatsComplete = time.Now()
+		c.mu.Unlock()
+
+		if err != nil {
+			return nil, err
+		}
+		if len(snapshot) == 0 {
+			snapshot = map[string]int64{
+				"stat-available-memory": 768 * testMiB,
+			}
+		}
+		if updated.IsZero() {
+			updated = time.Now()
+		}
+		return map[string]any{
+			"return": map[string]any{
+				"stats":       snapshot,
+				"last-update": updated.Unix(),
+			},
+		}, nil
+	case "qom-list":
+		path, _ := args["path"].(string)
+		c.mu.Lock()
+		err := c.listQOMPropertiesErr[path]
+		props, ok := c.listQOMProperties[path]
+		c.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errors.New("unexpected qom-list path")
+		}
+		entries := make([]map[string]any, 0, len(props))
+		for _, prop := range props {
+			entries = append(entries, map[string]any{
+				"name": prop.Name,
+				"type": prop.Type,
+			})
+		}
+		return map[string]any{"return": entries}, nil
+	default:
+		return nil, errors.New("unexpected qmp command")
+	}
+}
+
+func mapsClone(src map[string]int64) map[string]int64 {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]int64, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 func closedErrorChannel(err error) chan error {
@@ -794,7 +885,7 @@ type blockingSSHRunner struct {
 	started chan *blockingSSHProcess
 }
 
-func (r *blockingSSHRunner) Start(spec ProcessSpec) (Process, error) {
+func (r *blockingSSHRunner) Start(spec processSpec) (process, error) {
 	if spec.Name != "ssh" {
 		return nil, errors.New("unexpected process")
 	}

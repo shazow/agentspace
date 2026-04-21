@@ -19,8 +19,8 @@ func TestEvaluateGrowsGuestMemory(t *testing.T) {
 	}
 	state := &controllerState{startedAt: now.Add(-time.Minute)}
 
-	target, apply, err := evaluate(config, state, now, int64(512)*BytesPerMiB, guestStatsSample{
-		AvailableMemoryBytes: int64(64) * BytesPerMiB,
+	target, apply, err := evaluate(config, state, now, int64(512)*bytesPerMiB, guestStatsSample{
+		AvailableMemoryBytes: int64(64) * bytesPerMiB,
 		HasAvailableMemory:   true,
 		LastUpdate:           now,
 	})
@@ -30,7 +30,7 @@ func TestEvaluateGrowsGuestMemory(t *testing.T) {
 	if !apply {
 		t.Fatal("expected grow decision")
 	}
-	if got, want := target, int64(640)*BytesPerMiB; got != want {
+	if got, want := target, int64(640)*bytesPerMiB; got != want {
 		t.Fatalf("unexpected grow target: got %d want %d", got, want)
 	}
 }
@@ -48,16 +48,16 @@ func TestEvaluateReclaimsAfterHoldoff(t *testing.T) {
 	}
 	state := &controllerState{startedAt: now.Add(-time.Minute)}
 
-	if target, apply, err := evaluate(config, state, now, int64(512)*BytesPerMiB, guestStatsSample{
-		AvailableMemoryBytes: int64(900) * BytesPerMiB,
+	if target, apply, err := evaluate(config, state, now, int64(512)*bytesPerMiB, guestStatsSample{
+		AvailableMemoryBytes: int64(900) * bytesPerMiB,
 		HasAvailableMemory:   true,
 		LastUpdate:           now,
 	}); err != nil || apply || target != 0 {
 		t.Fatalf("expected holdoff arm only, got target=%d apply=%v err=%v", target, apply, err)
 	}
 
-	target, apply, err := evaluate(config, state, now.Add(30*time.Second), int64(512)*BytesPerMiB, guestStatsSample{
-		AvailableMemoryBytes: int64(900) * BytesPerMiB,
+	target, apply, err := evaluate(config, state, now.Add(30*time.Second), int64(512)*bytesPerMiB, guestStatsSample{
+		AvailableMemoryBytes: int64(900) * bytesPerMiB,
 		HasAvailableMemory:   true,
 		LastUpdate:           now.Add(30 * time.Second),
 	})
@@ -67,7 +67,7 @@ func TestEvaluateReclaimsAfterHoldoff(t *testing.T) {
 	if !apply {
 		t.Fatal("expected reclaim decision")
 	}
-	if got, want := target, int64(384)*BytesPerMiB; got != want {
+	if got, want := target, int64(384)*bytesPerMiB; got != want {
 		t.Fatalf("unexpected reclaim target: got %d want %d", got, want)
 	}
 }
@@ -88,8 +88,8 @@ func TestEvaluateNoopsWithinHysteresis(t *testing.T) {
 		aboveThresholdSince: now.Add(-time.Second),
 	}
 
-	target, apply, err := evaluate(config, state, now, int64(512)*BytesPerMiB, guestStatsSample{
-		AvailableMemoryBytes: int64(512) * BytesPerMiB,
+	target, apply, err := evaluate(config, state, now, int64(512)*bytesPerMiB, guestStatsSample{
+		AvailableMemoryBytes: int64(512) * bytesPerMiB,
 		HasAvailableMemory:   true,
 		LastUpdate:           now,
 	})
@@ -117,8 +117,8 @@ func TestEvaluateRejectsStaleStats(t *testing.T) {
 	}
 	state := &controllerState{startedAt: now.Add(-time.Minute)}
 
-	_, _, err := evaluate(config, state, now, int64(512)*BytesPerMiB, guestStatsSample{
-		AvailableMemoryBytes: int64(512) * BytesPerMiB,
+	_, _, err := evaluate(config, state, now, int64(512)*bytesPerMiB, guestStatsSample{
+		AvailableMemoryBytes: int64(512) * bytesPerMiB,
 		HasAvailableMemory:   true,
 		LastUpdate:           now.Add(-11 * time.Second),
 	})
@@ -140,7 +140,7 @@ func TestEvaluateRejectsUnavailableStats(t *testing.T) {
 	}
 	state := &controllerState{startedAt: now.Add(-11 * time.Second)}
 
-	_, _, err := evaluate(config, state, now, int64(512)*BytesPerMiB, guestStatsSample{})
+	_, _, err := evaluate(config, state, now, int64(512)*bytesPerMiB, guestStatsSample{})
 	if !errors.Is(err, errGuestStatsUnavailable) {
 		t.Fatalf("expected unavailable stats error, got %v", err)
 	}
@@ -159,15 +159,15 @@ func TestEvaluateClampsToBounds(t *testing.T) {
 	}
 	state := &controllerState{startedAt: now.Add(-time.Minute)}
 
-	target, apply, err := evaluate(config, state, now, int64(960)*BytesPerMiB, guestStatsSample{
-		AvailableMemoryBytes: int64(64) * BytesPerMiB,
+	target, apply, err := evaluate(config, state, now, int64(960)*bytesPerMiB, guestStatsSample{
+		AvailableMemoryBytes: int64(64) * bytesPerMiB,
 		HasAvailableMemory:   true,
 		LastUpdate:           now,
 	})
 	if err != nil || !apply {
 		t.Fatalf("expected clamped grow, got target=%d apply=%v err=%v", target, apply, err)
 	}
-	if got, want := target, int64(1024)*BytesPerMiB; got != want {
+	if got, want := target, int64(1024)*bytesPerMiB; got != want {
 		t.Fatalf("unexpected max clamp: got %d want %d", got, want)
 	}
 
@@ -175,21 +175,21 @@ func TestEvaluateClampsToBounds(t *testing.T) {
 		startedAt:           now.Add(-time.Minute),
 		aboveThresholdSince: now.Add(-31 * time.Second),
 	}
-	target, apply, err = evaluate(config, state, now, int64(300)*BytesPerMiB, guestStatsSample{
-		AvailableMemoryBytes: int64(900) * BytesPerMiB,
+	target, apply, err = evaluate(config, state, now, int64(300)*bytesPerMiB, guestStatsSample{
+		AvailableMemoryBytes: int64(900) * bytesPerMiB,
 		HasAvailableMemory:   true,
 		LastUpdate:           now,
 	})
 	if err != nil || !apply {
 		t.Fatalf("expected clamped reclaim, got target=%d apply=%v err=%v", target, apply, err)
 	}
-	if got, want := target, int64(256)*BytesPerMiB; got != want {
+	if got, want := target, int64(256)*bytesPerMiB; got != want {
 		t.Fatalf("unexpected min clamp: got %d want %d", got, want)
 	}
 }
 
 func TestAvailableMemoryFallsBackToFreeMemory(t *testing.T) {
-	available, ok := AvailableMemory(Stats{
+	available, ok := availableMemory(stats{
 		Stats: map[string]int64{
 			"stat-free-memory": 1234,
 		},
@@ -204,7 +204,7 @@ func TestAvailableMemoryFallsBackToFreeMemory(t *testing.T) {
 
 func TestControllerResolveQOMPathFallsBackToQOMList(t *testing.T) {
 	session := &fakeSession{
-		listQOMProperties: map[string][]ObjectPropertyInfo{
+		listQOMProperties: map[string][]objectPropertyInfo{
 			"/machine/peripheral": {
 				{Name: "rng0", Type: "child<virtio-rng-device>"},
 			},
@@ -221,7 +221,7 @@ func TestControllerResolveQOMPathFallsBackToQOMList(t *testing.T) {
 		},
 	}
 
-	controller := &Controller{
+	controller := &controller{
 		Session:    session,
 		DeviceID:   "balloon0",
 		QMPTimeout: time.Second,
@@ -237,19 +237,19 @@ func TestControllerResolveQOMPathFallsBackToQOMList(t *testing.T) {
 }
 
 type fakeSession struct {
-	queryBalloonInfo      Info
+	queryBalloonInfo      info
 	queryBalloonErr       error
 	setBalloonErr         error
 	enableBalloonStatsErr error
-	readBalloonStats      Stats
+	readBalloonStats      stats
 	readBalloonStatsErr   error
-	listQOMProperties     map[string][]ObjectPropertyInfo
+	listQOMProperties     map[string][]objectPropertyInfo
 	listQOMPropertiesErr  map[string]error
 }
 
-func (f *fakeSession) QueryBalloon(timeout time.Duration) (Info, error) {
+func (f *fakeSession) QueryBalloon(timeout time.Duration) (info, error) {
 	if f.queryBalloonErr != nil {
-		return Info{}, f.queryBalloonErr
+		return info{}, f.queryBalloonErr
 	}
 	return f.queryBalloonInfo, nil
 }
@@ -262,19 +262,19 @@ func (f *fakeSession) EnableBalloonStatsPolling(timeout time.Duration, qomPath s
 	return f.enableBalloonStatsErr
 }
 
-func (f *fakeSession) ReadBalloonStats(timeout time.Duration, qomPath string) (Stats, error) {
+func (f *fakeSession) ReadBalloonStats(timeout time.Duration, qomPath string) (stats, error) {
 	if f.readBalloonStatsErr != nil {
-		return Stats{}, f.readBalloonStatsErr
+		return stats{}, f.readBalloonStatsErr
 	}
 	return f.readBalloonStats, nil
 }
 
-func (f *fakeSession) ListQOMProperties(timeout time.Duration, path string) ([]ObjectPropertyInfo, error) {
+func (f *fakeSession) ListQOMProperties(timeout time.Duration, path string) ([]objectPropertyInfo, error) {
 	if err, ok := f.listQOMPropertiesErr[path]; ok {
 		return nil, err
 	}
 	if props, ok := f.listQOMProperties[path]; ok {
-		return append([]ObjectPropertyInfo(nil), props...), nil
+		return append([]objectPropertyInfo(nil), props...), nil
 	}
 	return nil, errors.New("unexpected qom-list path")
 }

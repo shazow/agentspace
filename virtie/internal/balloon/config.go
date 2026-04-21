@@ -1,13 +1,14 @@
+// Package balloon implements the internal virtio-balloon feature.
 package balloon
 
 import "fmt"
 
 const (
-	BytesPerMiB int64 = 1024 * 1024
+	bytesPerMiB int64 = 1024 * 1024
 
-	DefaultControllerStepMiB          = 256
-	DefaultControllerPollIntervalSecs = 5
-	DefaultControllerReclaimHoldoff   = 30
+	defaultControllerStepMiB          = 256
+	defaultControllerPollIntervalSecs = 5
+	defaultControllerReclaimHoldoff   = 30
 )
 
 type Device struct {
@@ -55,13 +56,13 @@ func ApplyDefaults(memoryMiB int, device *Device) {
 		controller.ReclaimAboveAvailableMiB = defaultReclaimAboveAvailableMiB(idleTargetMiB)
 	}
 	if controller.StepMiB == 0 {
-		controller.StepMiB = DefaultControllerStepMiB
+		controller.StepMiB = defaultControllerStepMiB
 	}
 	if controller.PollIntervalSeconds == 0 {
-		controller.PollIntervalSeconds = DefaultControllerPollIntervalSecs
+		controller.PollIntervalSeconds = defaultControllerPollIntervalSecs
 	}
 	if controller.ReclaimHoldoffSeconds == 0 {
-		controller.ReclaimHoldoffSeconds = DefaultControllerReclaimHoldoff
+		controller.ReclaimHoldoffSeconds = defaultControllerReclaimHoldoff
 	}
 }
 

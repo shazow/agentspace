@@ -12,7 +12,7 @@ import (
 	"github.com/adrg/xdg"
 )
 
-func TestLoadManifestReadsFromReader(t *testing.T) {
+func TestLoadReadsFromReader(t *testing.T) {
 	manifest := validManifest()
 	manifest.QEMU.BinaryPath = "bin/qemu-system-x86_64"
 	manifest.QEMU.Kernel.Path = "boot/vmlinuz"
@@ -25,7 +25,7 @@ func TestLoadManifestReadsFromReader(t *testing.T) {
 		t.Fatalf("marshal manifest: %v", err)
 	}
 
-	loaded, err := LoadManifest(bytes.NewReader(data))
+	loaded, err := Load(bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
@@ -67,13 +67,13 @@ func TestLoadManifestReadsFromReader(t *testing.T) {
 	}
 }
 
-func TestLoadManifestRejectsTrailingData(t *testing.T) {
+func TestLoadRejectsTrailingData(t *testing.T) {
 	data, err := json.Marshal(validManifest())
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)
 	}
 
-	_, err = LoadManifest(strings.NewReader(string(data) + "\n{}"))
+	_, err = Load(strings.NewReader(string(data) + "\n{}"))
 	if err == nil {
 		t.Fatal("expected trailing data error")
 	}

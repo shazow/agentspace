@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"context"
@@ -14,19 +14,19 @@ import (
 )
 
 const (
-	DefaultQMPRetryDelay     = 200 * time.Millisecond
-	DefaultQMPConnectTimeout = 500 * time.Millisecond
-	DefaultQMPQuitTimeout    = 500 * time.Millisecond
+	defaultQMPRetryDelay     = 200 * time.Millisecond
+	defaultQMPConnectTimeout = 500 * time.Millisecond
+	defaultQMPQuitTimeout    = 500 * time.Millisecond
 )
 
-type QMPClient interface {
+type qmpClient interface {
 	WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error
 	Quit(timeout time.Duration) error
 	Disconnect() error
 }
 
-type QMPDialer interface {
-	Dial(ctx context.Context, socketPath string, timeout time.Duration) (QMPClient, error)
+type qmpDialer interface {
+	Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpClient, error)
 }
 
 type socketMonitorDialer struct{}
@@ -37,7 +37,7 @@ type socketMonitorClient struct {
 	mu      sync.Mutex
 }
 
-func (d *socketMonitorDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (QMPClient, error) {
+func (d *socketMonitorDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpClient, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}

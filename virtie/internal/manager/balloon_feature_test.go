@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	balloonpkg "github.com/shazow/agentspace/virtie/balloon"
+	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
 )
 
 func TestBuildQEMUSpecAppendsBalloonFeatureArgs(t *testing.T) {
@@ -56,14 +56,12 @@ func TestManagerLaunchStartsBalloonControllerAfterSSHReadinessAndStopsItBeforeQu
 			enableProbes = runner.probes
 			runner.mu.Unlock()
 		},
-		readBalloonStats: balloonpkg.Stats{
-			Stats: map[string]int64{
-				"stat-available-memory": int64(900) * balloonpkg.BytesPerMiB,
-			},
-			LastUpdate: time.Now(),
+		readBalloonStats: map[string]int64{
+			"stat-available-memory": 900 * testMiB,
 		},
-		readBalloonStatsDelay: 400 * time.Millisecond,
-		queryBalloonInfo:      balloonpkg.Info{ActualBytes: int64(512) * balloonpkg.BytesPerMiB},
+		readBalloonStatsDelay:   400 * time.Millisecond,
+		readBalloonStatsUpdated: time.Now(),
+		queryBalloonActualBytes: 512 * testMiB,
 	}).withDefaultBalloonPath("/machine/peripheral/balloon0")
 
 	waiter := &fakeSocketWaiter{
@@ -79,20 +77,20 @@ func TestManagerLaunchStartsBalloonControllerAfterSSHReadinessAndStopsItBeforeQu
 		},
 	}
 
-	manager := &Manager{
-		Locker:            &FileLocker{},
-		Runner:            runner,
-		SocketWaiter:      waiter,
-		QMPDialer:         &fakeQMPDialer{client: qmpClient},
-		Logger:            log.New(io.Discard, "", 0),
-		SSHRetryDelay:     0,
-		ShutdownDelay:     10 * time.Millisecond,
-		QMPRetryDelay:     0,
-		QMPConnectTimeout: time.Second,
-		QMPQuitTimeout:    time.Second,
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      waiter,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Second,
+		qmpQuitTimeout:    time.Second,
 	}
 
-	err := manager.Launch(cancelCtx, manifest, nil)
+	err := manager.launch(cancelCtx, manifest, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
@@ -142,20 +140,20 @@ func TestManagerLaunchDoesNotAbortOnBalloonControllerFailure(t *testing.T) {
 		},
 	}
 
-	manager := &Manager{
-		Locker:            &FileLocker{},
-		Runner:            runner,
-		SocketWaiter:      waiter,
-		QMPDialer:         &fakeQMPDialer{client: qmpClient},
-		Logger:            log.New(io.Discard, "", 0),
-		SSHRetryDelay:     0,
-		ShutdownDelay:     10 * time.Millisecond,
-		QMPRetryDelay:     0,
-		QMPConnectTimeout: time.Second,
-		QMPQuitTimeout:    time.Second,
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      waiter,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Second,
+		qmpQuitTimeout:    time.Second,
 	}
 
-	err := manager.Launch(cancelCtx, manifest, nil)
+	err := manager.launch(cancelCtx, manifest, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
@@ -199,13 +197,11 @@ func TestBalloonControllerTaskWithNilLoggerDoesNotPanicOnAdjustment(t *testing.T
 	defer cancel()
 
 	qmpClient := (&fakeQMPClient{
-		readBalloonStats: balloonpkg.Stats{
-			Stats: map[string]int64{
-				"stat-available-memory": int64(500) * balloonpkg.BytesPerMiB,
-			},
-			LastUpdate: time.Now(),
+		readBalloonStats: map[string]int64{
+			"stat-available-memory": 500 * testMiB,
 		},
-		queryBalloonInfo: balloonpkg.Info{ActualBytes: int64(512) * balloonpkg.BytesPerMiB},
+		readBalloonStatsUpdated: time.Now(),
+		queryBalloonActualBytes: 512 * testMiB,
 	}).withDefaultBalloonPath("/machine/peripheral/balloon0")
 	task := balloonpkg.ControllerTask(nil, time.Second, qmpClient, &balloonpkg.Device{
 		ID:        "balloon0",

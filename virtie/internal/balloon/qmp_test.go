@@ -14,7 +14,7 @@ func TestQMPSessionQueryBalloon(t *testing.T) {
 	session, commands := newTestQMPSession(t, func(message map[string]any) map[string]any {
 		return map[string]any{
 			"return": map[string]any{
-				"actual": int64(512) * BytesPerMiB,
+				"actual": int64(512) * bytesPerMiB,
 			},
 		}
 	})
@@ -23,7 +23,7 @@ func TestQMPSessionQueryBalloon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query balloon: %v", err)
 	}
-	if got, want := info.ActualBytes, int64(512)*BytesPerMiB; got != want {
+	if got, want := info.ActualBytes, int64(512)*bytesPerMiB; got != want {
 		t.Fatalf("unexpected balloon actual: got %d want %d", got, want)
 	}
 
@@ -35,13 +35,13 @@ func TestQMPSessionSetBalloonLogicalSize(t *testing.T) {
 		return map[string]any{"return": map[string]any{}}
 	})
 
-	if err := session.SetBalloonLogicalSize(time.Second, int64(640)*BytesPerMiB); err != nil {
+	if err := session.SetBalloonLogicalSize(time.Second, int64(640)*bytesPerMiB); err != nil {
 		t.Fatalf("set balloon logical size: %v", err)
 	}
 
 	command := assertQMPCommand(t, commands, "balloon")
 	args := commandArguments(t, command)
-	if got, want := int64(args["value"].(float64)), int64(640)*BytesPerMiB; got != want {
+	if got, want := int64(args["value"].(float64)), int64(640)*bytesPerMiB; got != want {
 		t.Fatalf("unexpected balloon value: got %d want %d", got, want)
 	}
 }
@@ -73,8 +73,8 @@ func TestQMPSessionReadBalloonStats(t *testing.T) {
 		return map[string]any{
 			"return": map[string]any{
 				"stats": map[string]any{
-					"stat-available-memory": int64(123) * BytesPerMiB,
-					"stat-free-memory":      int64(45) * BytesPerMiB,
+					"stat-available-memory": int64(123) * bytesPerMiB,
+					"stat-free-memory":      int64(45) * bytesPerMiB,
 				},
 				"last-update": 1_700_000_000,
 			},
@@ -85,7 +85,7 @@ func TestQMPSessionReadBalloonStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read balloon stats: %v", err)
 	}
-	if got, want := stats.Stats["stat-available-memory"], int64(123)*BytesPerMiB; got != want {
+	if got, want := stats.Stats["stat-available-memory"], int64(123)*bytesPerMiB; got != want {
 		t.Fatalf("unexpected stat-available-memory: got %d want %d", got, want)
 	}
 	if got, want := stats.LastUpdate.Unix(), int64(1_700_000_000); got != want {
@@ -102,7 +102,7 @@ func TestQMPSessionReadBalloonStats(t *testing.T) {
 	}
 }
 
-func newTestQMPSession(t *testing.T, handler func(message map[string]any) map[string]any) (Session, <-chan map[string]any) {
+func newTestQMPSession(t *testing.T, handler func(message map[string]any) map[string]any) (session, <-chan map[string]any) {
 	t.Helper()
 
 	monitor := &fakeMonitor{
@@ -110,7 +110,7 @@ func newTestQMPSession(t *testing.T, handler func(message map[string]any) map[st
 		commands: make(chan map[string]any, 8),
 	}
 	rawMonitor := rawQMP.NewMonitor(monitor)
-	return NewQMPSession(&fakeRawSession{monitor: rawMonitor}), monitor.commands
+	return newQMPSession(&fakeRawSession{monitor: rawMonitor}), monitor.commands
 }
 
 type fakeRawSession struct {

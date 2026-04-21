@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"context"
@@ -7,16 +7,16 @@ import (
 	"time"
 )
 
-const DefaultSocketPollInterval = 100 * time.Millisecond
+const defaultSocketPollInterval = 100 * time.Millisecond
 
-type PollingSocketWaiter struct {
+type pollingSocketWaiter struct {
 	PollInterval time.Duration
 }
 
-func (w *PollingSocketWaiter) Wait(ctx context.Context, socketPaths []string) error {
+func (w *pollingSocketWaiter) Wait(ctx context.Context, socketPaths []string) error {
 	interval := w.PollInterval
 	if interval <= 0 {
-		interval = DefaultSocketPollInterval
+		interval = defaultSocketPollInterval
 	}
 
 	ticker := time.NewTicker(interval)
