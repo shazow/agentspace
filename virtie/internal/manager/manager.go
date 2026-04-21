@@ -1,4 +1,11 @@
 // Package manager runs the host-side sandbox launcher lifecycle.
+//
+// It takes a validated launch manifest, prepares runtime directories and
+// volume images, starts the supporting host processes, waits for QMP and SSH
+// readiness, and then hands control to the interactive SSH session. Teardown
+// also lives here: optional feature tasks stop first, then the active session
+// and helper daemons are shut down, and QEMU is asked to exit through QMP
+// before any forced process cleanup is used.
 package manager
 
 import (

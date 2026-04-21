@@ -1,4 +1,10 @@
 // Package manifest defines the internal virtie launch contract.
+//
+// It owns the JSON schema that Nix emits for virtie, along with the defaulting
+// and validation rules that keep the runtime assumptions consistent. The
+// package also resolves working-directory and runtime-directory paths into the
+// concrete host-side paths that the manager uses for sockets, lock files,
+// volumes, QEMU binaries, and virtiofs daemons.
 package manifest
 
 import (
