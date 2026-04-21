@@ -63,7 +63,7 @@ in
 
     balloon = lib.mkOption {
       type = lib.types.bool;
-      default = true;
+      default = false;
       description = "Enable the virtio-balloon device and virtie's default runtime balloon controller.";
     };
 
