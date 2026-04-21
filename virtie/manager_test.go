@@ -16,11 +16,12 @@ import (
 	"github.com/adrg/xdg"
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 	balloonpkg "github.com/shazow/agentspace/virtie/balloon"
+	"github.com/shazow/agentspace/virtie/manifest"
 )
 
 func TestManifestValidate(t *testing.T) {
-	manifest := &Manifest{}
-	if err := manifest.Validate(); err == nil {
+	emptyManifest := &manifest.Manifest{}
+	if err := emptyManifest.Validate(); err == nil {
 		t.Fatalf("expected validation error for empty manifest")
 	}
 
@@ -29,10 +30,10 @@ func TestManifestValidate(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
-	if got, want := valid.VSock.CIDRange.Start, DefaultVSockCIDStart; got != want {
+	if got, want := valid.VSock.CIDRange.Start, manifest.DefaultVSockCIDStart; got != want {
 		t.Fatalf("unexpected default vsock start: got %d want %d", got, want)
 	}
-	if got, want := valid.VSock.CIDRange.End, DefaultVSockCIDEnd; got != want {
+	if got, want := valid.VSock.CIDRange.End, manifest.DefaultVSockCIDEnd; got != want {
 		t.Fatalf("unexpected default vsock end: got %d want %d", got, want)
 	}
 
@@ -56,11 +57,11 @@ func TestManifestValidate(t *testing.T) {
 }
 
 func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
-	manifest := &Manifest{
-		Paths: ManifestPaths{
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{
 			WorkingDir: "/tmp/work",
 		},
-		SSH: ManifestSSH{
+		SSH: manifest.SSH{
 			Argv: []string{
 				"/bin/ssh",
 				"-q",
@@ -109,12 +110,12 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 
 func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	tmpDir := t.TempDir()
-	manifest := validManifest(tmpDir)
-	manifest.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
-	manifest.Persistence.Directories = []string{"persist"}
-	manifest.QEMU.QMP.SocketPath = "qmp.sock"
-	manifest.QEMU.Devices.Block[0].ImagePath = "overlay.img"
-	manifest.Volumes = []ManifestVolume{
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Persistence.Directories = []string{"persist"}
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.Devices.Block[0].ImagePath = "overlay.img"
+	cfg.Volumes = []manifest.Volume{
 		{
 			ImagePath:  "overlay.img",
 			SizeMiB:    64,
@@ -122,23 +123,23 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 			AutoCreate: true,
 		},
 	}
-	manifest.VirtioFS.Daemons = []ManifestVirtioFSDaemon{
+	cfg.VirtioFS.Daemons = []manifest.VirtioFSDaemon{
 		{
 			Tag:        "ro-store",
 			SocketPath: "sock-a",
-			Command: ManifestCommand{
+			Command: manifest.Command{
 				Path: "/bin/virtiofsd-ro-store",
 			},
 		},
 		{
 			Tag:        "workspace",
 			SocketPath: "sock-b",
-			Command: ManifestCommand{
+			Command: manifest.Command{
 				Path: "/bin/virtiofsd-workspace",
 			},
 		},
 	}
-	manifest.QEMU.Devices.VirtioFS = []ManifestQEMUVirtioFSShare{
+	cfg.QEMU.Devices.VirtioFS = []manifest.QEMUVirtioFSShare{
 		{ID: "fs0", SocketPath: "sock-a", Tag: "ro-store", Transport: "pci"},
 		{ID: "fs1", SocketPath: "sock-b", Tag: "workspace", Transport: "pci"},
 	}
@@ -191,7 +192,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		QMPQuitTimeout:    time.Millisecond,
 	}
 
-	err := manager.Launch(cancelCtx, manifest, nil)
+	err := manager.Launch(cancelCtx, cfg, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
@@ -268,11 +269,11 @@ func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 		SSHRetryDelay: time.Second,
 	}
 
-	manifest := &Manifest{
-		Paths: ManifestPaths{
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{
 			WorkingDir: t.TempDir(),
 		},
-		SSH: ManifestSSH{
+		SSH: manifest.SSH{
 			Argv: []string{"/bin/ssh"},
 			User: "agent",
 		},
@@ -305,13 +306,13 @@ func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 
 func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
 	tmpDir := t.TempDir()
-	manifest := &Manifest{
-		Paths: ManifestPaths{
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{
 			WorkingDir: tmpDir,
 			LockPath:   filepath.Join(tmpDir, "virtie.lock"),
 		},
-		VSock: ManifestVSock{
-			CIDRange: ManifestVSockCIDRange{
+		VSock: manifest.VSock{
+			CIDRange: manifest.VSockCIDRange{
 				Start: 7,
 				End:   8,
 			},
@@ -380,102 +381,6 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	}
 }
 
-func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
-	runtimeDir := t.TempDir()
-	setXDGTestRuntimeDir(t, runtimeDir)
-
-	tests := []struct {
-		name       string
-		runtimeDir *string
-		socketPath string
-		wantSocket string
-		wantQMP    string
-	}{
-		{
-			name:       "legacy working dir",
-			runtimeDir: nil,
-			socketPath: "fs.sock",
-			wantSocket: "/tmp/work/fs.sock",
-			wantQMP:    "/tmp/work/qmp.sock",
-		},
-		{
-			name:       "default runtime dir",
-			runtimeDir: stringPtr(""),
-			socketPath: "fs.sock",
-			wantSocket: filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "fs.sock"),
-			wantQMP:    filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qmp.sock"),
-		},
-		{
-			name:       "relative runtime dir",
-			runtimeDir: stringPtr("runtime"),
-			socketPath: "fs.sock",
-			wantSocket: "/tmp/work/runtime/fs.sock",
-			wantQMP:    "/tmp/work/runtime/qmp.sock",
-		},
-		{
-			name:       "absolute runtime dir",
-			runtimeDir: stringPtr("/tmp/runtime"),
-			socketPath: "fs.sock",
-			wantSocket: "/tmp/runtime/fs.sock",
-			wantQMP:    "/tmp/runtime/qmp.sock",
-		},
-		{
-			name:       "absolute socket path bypasses runtime dir",
-			runtimeDir: stringPtr(""),
-			socketPath: "/tmp/explicit-fs.sock",
-			wantSocket: "/tmp/explicit-fs.sock",
-			wantQMP:    "/tmp/explicit-qmp.sock",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			manifest := validManifest("/tmp/work")
-			manifest.Paths.RuntimeDir = tt.runtimeDir
-			manifest.VirtioFS.Daemons[0].SocketPath = tt.socketPath
-			manifest.QEMU.Devices.VirtioFS[0].SocketPath = tt.socketPath
-			if tt.name == "absolute socket path bypasses runtime dir" {
-				manifest.QEMU.QMP.SocketPath = "/tmp/explicit-qmp.sock"
-			}
-
-			socketPaths, err := manifest.ResolvedSocketPaths()
-			if err != nil {
-				t.Fatalf("resolve socket paths: %v", err)
-			}
-			if got, want := socketPaths, []string{tt.wantSocket}; !reflect.DeepEqual(got, want) {
-				t.Fatalf("unexpected socket paths: got %v want %v", got, want)
-			}
-
-			qmpSocketPath, err := manifest.ResolvedQMPSocketPath()
-			if err != nil {
-				t.Fatalf("resolve qmp socket path: %v", err)
-			}
-			if qmpSocketPath != tt.wantQMP {
-				t.Fatalf("unexpected qmp socket path: got %q want %q", qmpSocketPath, tt.wantQMP)
-			}
-
-			qemu, err := manifest.ResolvedQEMU()
-			if err != nil {
-				t.Fatalf("resolve qemu config: %v", err)
-			}
-			if got, want := qemu.Devices.VirtioFS[0].SocketPath, tt.wantSocket; got != want {
-				t.Fatalf("unexpected qemu virtiofs socket path: got %q want %q", got, want)
-			}
-			if got, want := qemu.QMP.SocketPath, tt.wantQMP; got != want {
-				t.Fatalf("unexpected qemu qmp socket path: got %q want %q", got, want)
-			}
-
-			daemons, err := manifest.ResolvedVirtioFSDaemons()
-			if err != nil {
-				t.Fatalf("resolve virtiofs daemons: %v", err)
-			}
-			if got, want := daemons[0].SocketPath, tt.wantSocket; got != want {
-				t.Fatalf("unexpected daemon socket path: got %q want %q", got, want)
-			}
-		})
-	}
-}
-
 func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)
@@ -499,59 +404,59 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	}
 }
 
-func validManifest(workingDir string) *Manifest {
-	return &Manifest{
-		Identity: ManifestIdentity{HostName: "agent-sandbox"},
-		Paths: ManifestPaths{
+func validManifest(workingDir string) *manifest.Manifest {
+	return &manifest.Manifest{
+		Identity: manifest.Identity{HostName: "agent-sandbox"},
+		Paths: manifest.Paths{
 			WorkingDir: workingDir,
 			LockPath:   "/tmp/virtie.lock",
 		},
-		SSH: ManifestSSH{
+		SSH: manifest.SSH{
 			Argv: []string{"/bin/ssh"},
 			User: "agent",
 		},
-		QEMU: ManifestQEMU{
+		QEMU: manifest.QEMU{
 			BinaryPath: "/bin/qemu-system-x86_64",
 			Name:       "agent-sandbox",
-			Machine: ManifestQEMUMachine{
+			Machine: manifest.QEMUMachine{
 				Type:    "microvm",
 				Options: []string{"accel=kvm:tcg"},
 			},
-			CPU: ManifestQEMUCPU{
+			CPU: manifest.QEMUCPU{
 				Model:     "host",
 				EnableKVM: true,
 			},
-			Memory: ManifestQEMUMemory{
+			Memory: manifest.QEMUMemory{
 				SizeMiB: 1024,
 				Backend: "memfd",
 				Shared:  true,
 			},
-			Kernel: ManifestQEMUKernel{
+			Kernel: manifest.QEMUKernel{
 				Path:       "/tmp/vmlinuz",
 				InitrdPath: "/tmp/initrd",
 				Params:     "panic=-1",
 			},
-			SMP: ManifestQEMUSMP{
+			SMP: manifest.QEMUSMP{
 				CPUs: 2,
 			},
-			Console: ManifestQEMUConsole{
+			Console: manifest.QEMUConsole{
 				StdioChardev: true,
 			},
-			Knobs: ManifestQEMUKnobs{
+			Knobs: manifest.QEMUKnobs{
 				NoDefaults:   true,
 				NoUserConfig: true,
 				NoReboot:     true,
 				NoGraphic:    true,
 			},
-			QMP: ManifestQEMUQMP{
+			QMP: manifest.QEMUQMP{
 				SocketPath: "qmp.sock",
 			},
-			Devices: ManifestQEMUDevices{
-				RNG: ManifestQEMURNGDevice{
+			Devices: manifest.QEMUDevices{
+				RNG: manifest.QEMURNGDevice{
 					ID:        "rng0",
 					Transport: "pci",
 				},
-				VirtioFS: []ManifestQEMUVirtioFSShare{
+				VirtioFS: []manifest.QEMUVirtioFSShare{
 					{
 						ID:         "fs0",
 						SocketPath: "fs.sock",
@@ -559,7 +464,7 @@ func validManifest(workingDir string) *Manifest {
 						Transport:  "pci",
 					},
 				},
-				Block: []ManifestQEMUBlockDevice{
+				Block: []manifest.QEMUBlockDevice{
 					{
 						ID:        "vda",
 						ImagePath: "root.img",
@@ -567,7 +472,7 @@ func validManifest(workingDir string) *Manifest {
 						Transport: "pci",
 					},
 				},
-				Network: []ManifestQEMUNetDevice{
+				Network: []manifest.QEMUNetDevice{
 					{
 						ID:         "net0",
 						Backend:    "user",
@@ -575,13 +480,13 @@ func validManifest(workingDir string) *Manifest {
 						Transport:  "pci",
 					},
 				},
-				VSOCK: ManifestQEMUVSOCKDevice{
+				VSOCK: manifest.QEMUVSOCKDevice{
 					ID:        "vsock0",
 					Transport: "pci",
 				},
 			},
 		},
-		Volumes: []ManifestVolume{
+		Volumes: []manifest.Volume{
 			{
 				ImagePath:  "root.img",
 				SizeMiB:    64,
@@ -589,11 +494,11 @@ func validManifest(workingDir string) *Manifest {
 				AutoCreate: true,
 			},
 		},
-		VirtioFS: ManifestVirtioFS{Daemons: []ManifestVirtioFSDaemon{
+		VirtioFS: manifest.VirtioFS{Daemons: []manifest.VirtioFSDaemon{
 			{
 				Tag:        "workspace",
 				SocketPath: "fs.sock",
-				Command: ManifestCommand{
+				Command: manifest.Command{
 					Path: "/tmp/virtiofsd-workspace",
 				},
 			},
@@ -601,7 +506,7 @@ func validManifest(workingDir string) *Manifest {
 	}
 }
 
-func validManifestWithBalloon(workingDir string) *Manifest {
+func validManifestWithBalloon(workingDir string) *manifest.Manifest {
 	manifest := validManifest(workingDir)
 	manifest.QEMU.Devices.Balloon = &balloonpkg.Device{
 		ID:        "balloon0",

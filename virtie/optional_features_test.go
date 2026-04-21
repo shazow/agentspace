@@ -11,7 +11,7 @@ import (
 	"time"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
-	manifestpkg "github.com/shazow/agentspace/virtie/manifest"
+	"github.com/shazow/agentspace/virtie/manifest"
 )
 
 type fakeOptionalFeature struct {
@@ -98,7 +98,7 @@ func TestManagerLaunchStartsOptionalFeatureAfterSSHReadinessAndStopsItBeforeQuit
 }
 
 func (f *fakeOptionalFeature) AppendQEMUArgs(
-	qemu manifestpkg.ManifestQEMU,
+	qemu manifest.QEMU,
 	config *govmmQemu.Config,
 	resolveTransport qemuTransportResolver,
 	args []string,
@@ -109,7 +109,7 @@ func (f *fakeOptionalFeature) AppendQEMUArgs(
 	return append(args, "-device", f.appendMarker), nil
 }
 
-func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *Manifest, qmpClient QMPClient) *managedTask {
+func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, qmpClient QMPClient) *managedTask {
 	if f.runner != nil {
 		f.runner.mu.Lock()
 		f.startedAfterProbes = f.runner.probes

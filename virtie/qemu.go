@@ -6,10 +6,10 @@ import (
 	"strings"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
-	manifestpkg "github.com/shazow/agentspace/virtie/manifest"
+	"github.com/shazow/agentspace/virtie/manifest"
 )
 
-func buildQEMUSpec(manifest *manifestpkg.Manifest, cid int) (ProcessSpec, error) {
+func buildQEMUSpec(manifest *manifest.Manifest, cid int) (ProcessSpec, error) {
 	qemu, err := manifest.ResolvedQEMU()
 	if err != nil {
 		return ProcessSpec{}, err
@@ -30,7 +30,7 @@ func buildQEMUSpec(manifest *manifestpkg.Manifest, cid int) (ProcessSpec, error)
 	}, nil
 }
 
-func buildQEMUArgs(qemu manifestpkg.ManifestQEMU, cid int) ([]string, error) {
+func buildQEMUArgs(qemu manifest.QEMU, cid int) ([]string, error) {
 	config := &govmmQemu.Config{
 		Machine: govmmQemu.Machine{
 			Type: qemu.Machine.Type,

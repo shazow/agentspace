@@ -7,7 +7,7 @@ import (
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
 	"github.com/shazow/agentspace/virtie/balloon"
-	manifestpkg "github.com/shazow/agentspace/virtie/manifest"
+	"github.com/shazow/agentspace/virtie/manifest"
 )
 
 type qemuTransportResolver func(string) (govmmQemu.VirtioTransport, error)
@@ -19,7 +19,7 @@ type optionalFeatureRuntime struct {
 
 type optionalFeature interface {
 	AppendQEMUArgs(
-		qemu manifestpkg.ManifestQEMU,
+		qemu manifest.QEMU,
 		config *govmmQemu.Config,
 		resolveTransport qemuTransportResolver,
 		args []string,
@@ -27,7 +27,7 @@ type optionalFeature interface {
 	StartTask(
 		ctx context.Context,
 		runtime optionalFeatureRuntime,
-		manifest *manifestpkg.Manifest,
+		manifest *manifest.Manifest,
 		qmpClient QMPClient,
 	) *managedTask
 }
@@ -40,7 +40,7 @@ var builtinOptionalFeatures = []optionalFeature{
 
 var optionalFeatures = builtinOptionalFeatures
 
-func appendOptionalFeatureQEMUArgs(qemu manifestpkg.ManifestQEMU, config *govmmQemu.Config, args []string) ([]string, error) {
+func appendOptionalFeatureQEMUArgs(qemu manifest.QEMU, config *govmmQemu.Config, args []string) ([]string, error) {
 	var err error
 	for _, feature := range optionalFeatures {
 		args, err = feature.AppendQEMUArgs(qemu, config, resolveQEMUTransport, args)
@@ -54,7 +54,7 @@ func appendOptionalFeatureQEMUArgs(qemu manifestpkg.ManifestQEMU, config *govmmQ
 func startOptionalFeatureTasks(
 	ctx context.Context,
 	runtime optionalFeatureRuntime,
-	manifest *manifestpkg.Manifest,
+	manifest *manifest.Manifest,
 	qmpClient QMPClient,
 ) managedTaskGroup {
 	var tasks managedTaskGroup
@@ -65,7 +65,7 @@ func startOptionalFeatureTasks(
 }
 
 func (balloonFeature) AppendQEMUArgs(
-	qemu manifestpkg.ManifestQEMU,
+	qemu manifest.QEMU,
 	config *govmmQemu.Config,
 	resolveTransport qemuTransportResolver,
 	args []string,
@@ -76,7 +76,7 @@ func (balloonFeature) AppendQEMUArgs(
 func (balloonFeature) StartTask(
 	ctx context.Context,
 	runtime optionalFeatureRuntime,
-	manifest *manifestpkg.Manifest,
+	manifest *manifest.Manifest,
 	qmpClient QMPClient,
 ) *managedTask {
 	if manifest == nil || qmpClient == nil {

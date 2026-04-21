@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	manifestpkg "github.com/shazow/agentspace/virtie/manifest"
+	"github.com/shazow/agentspace/virtie/manifest"
 )
 
 const (
@@ -50,7 +50,7 @@ func NewManager() *Manager {
 	}
 }
 
-func (m *Manager) Launch(ctx context.Context, manifest *manifestpkg.Manifest, remoteCommand []string) (err error) {
+func (m *Manager) Launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) (err error) {
 	if err := manifest.Validate(); err != nil {
 		return err
 	}
@@ -196,7 +196,7 @@ func (m *Manager) startManagedProcess(spec ProcessSpec) (*managedProcess, error)
 	return mp, nil
 }
 
-func (m *Manager) startVirtioFSDaemons(manifest *manifestpkg.Manifest) ([]*managedProcess, error) {
+func (m *Manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedProcess, error) {
 	daemons, err := manifest.ResolvedVirtioFSDaemons()
 	if err != nil {
 		return nil, err
@@ -232,7 +232,7 @@ func (m *Manager) startVirtioFSDaemons(manifest *manifestpkg.Manifest) ([]*manag
 	return started, nil
 }
 
-func (m *Manager) allocateCID(manifest *manifestpkg.Manifest) (int, Lock, error) {
+func (m *Manager) allocateCID(manifest *manifest.Manifest) (int, Lock, error) {
 	for cid := manifest.VSock.CIDRange.Start; cid <= manifest.VSock.CIDRange.End; cid++ {
 		lock, err := m.Locker.Acquire(manifest.ResolvedVSockLockPath(cid))
 		if err == nil {
@@ -364,7 +364,7 @@ func (m *Manager) effectiveQMPCommandTimeout() time.Duration {
 	return m.effectiveQMPConnectTimeout()
 }
 
-func (m *Manager) waitForSSH(ctx context.Context, manifest *manifestpkg.Manifest, cid int, watchers ...*managedProcess) error {
+func (m *Manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, cid int, watchers ...*managedProcess) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 
@@ -555,7 +555,7 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 	return nil
 }
 
-func buildSSHSpec(manifest *manifestpkg.Manifest, cid int, remoteCommand []string, interactive bool) ProcessSpec {
+func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, interactive bool) ProcessSpec {
 	argv := append([]string(nil), manifest.SSH.Argv...)
 	path := argv[0]
 	args := append([]string(nil), argv[1:]...)
@@ -613,7 +613,7 @@ func ensureDirectories(directories []string) error {
 	return nil
 }
 
-func volumeImagePaths(volumes []manifestpkg.ManifestVolume) []string {
+func volumeImagePaths(volumes []manifest.Volume) []string {
 	paths := make([]string, 0, len(volumes))
 	for _, volume := range volumes {
 		paths = append(paths, volume.ImagePath)
@@ -621,7 +621,7 @@ func volumeImagePaths(volumes []manifestpkg.ManifestVolume) []string {
 	return paths
 }
 
-func ensureVolumeImages(volumes []manifestpkg.ManifestVolume) error {
+func ensureVolumeImages(volumes []manifest.Volume) error {
 	for _, volume := range volumes {
 		if !volume.AutoCreate {
 			continue
@@ -646,7 +646,7 @@ func ensureVolumeImages(volumes []manifestpkg.ManifestVolume) error {
 	return nil
 }
 
-func createVolumeImage(volume manifestpkg.ManifestVolume) error {
+func createVolumeImage(volume manifest.Volume) error {
 	file, err := os.OpenFile(volume.ImagePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return fmt.Errorf("create volume image %q: %w", volume.ImagePath, err)
