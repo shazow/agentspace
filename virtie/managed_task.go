@@ -2,6 +2,7 @@ package virtie
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -10,6 +11,10 @@ type managedTask struct {
 	done   chan error
 	once   sync.Once
 	err    error
+}
+
+type managedTaskGroup struct {
+	tasks []*managedTask
 }
 
 func startManagedTask(ctx context.Context, fn func(context.Context) error) *managedTask {
@@ -37,4 +42,23 @@ func (t *managedTask) Stop() error {
 		t.err = <-t.done
 	})
 	return t.err
+}
+
+func (g *managedTaskGroup) Add(task *managedTask) {
+	if g == nil || task == nil {
+		return
+	}
+	g.tasks = append(g.tasks, task)
+}
+
+func (g *managedTaskGroup) Stop() error {
+	if g == nil {
+		return nil
+	}
+
+	errs := make([]error, 0, len(g.tasks))
+	for i := len(g.tasks) - 1; i >= 0; i-- {
+		errs = append(errs, g.tasks[i].Stop())
+	}
+	return errors.Join(errs...)
 }

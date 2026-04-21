@@ -102,9 +102,9 @@ func (m *Manager) Launch(ctx context.Context, manifest *manifestpkg.Manifest, re
 
 	var started []*managedProcess
 	var qmpClient QMPClient
-	var featureTask *managedTask
+	var featureTasks managedTaskGroup
 	defer func() {
-		featureErr := featureTask.Stop()
+		featureErr := featureTasks.Stop()
 		stopErr := m.stopAll(started)
 		var disconnectErr error
 		if qmpClient != nil {
@@ -154,7 +154,10 @@ func (m *Manager) Launch(ctx context.Context, manifest *manifestpkg.Manifest, re
 		return err
 	}
 
-	featureTask = m.startBalloonController(ctx, manifest, qmpClient)
+	featureTasks = startOptionalFeatureTasks(ctx, optionalFeatureRuntime{
+		Logger:     m.Logger,
+		QMPTimeout: m.effectiveQMPCommandTimeout(),
+	}, manifest, qmpClient)
 
 	m.Logger.Printf("starting ssh session")
 	session, err := m.startManagedProcess(buildSSHSpec(manifest, cid, remoteCommand, true))
