@@ -11,14 +11,11 @@ import (
 	govmmQemu "github.com/kata-containers/govmm/qemu"
 )
 
-func SessionFromRaw(session RawSession) Session {
+func sessionFromMonitor(session MonitorSession) session {
 	if session == nil {
 		return nil
 	}
-	if adapted, ok := any(session).(Session); ok {
-		return adapted
-	}
-	return NewQMPSession(session)
+	return newQMPSession(session)
 }
 
 func AppendQEMUArgs(
@@ -46,18 +43,18 @@ func AppendQEMUArgs(
 	return append(args, "-device", strings.Join(deviceParams, ",")), nil
 }
 
-func ControllerTask(logger *log.Logger, qmpTimeout time.Duration, session RawSession, device *Device) func(context.Context) error {
+func ControllerTask(stdLogger *log.Logger, qmpTimeout time.Duration, session MonitorSession, device *Device) func(context.Context) error {
 	if device == nil || device.Controller == nil || session == nil {
 		return nil
 	}
 
-	var controllerLogger Logger
-	if logger != nil {
-		controllerLogger = logger
+	var controllerLogger logger
+	if stdLogger != nil {
+		controllerLogger = stdLogger
 	}
 
-	controller := &Controller{
-		Session:    SessionFromRaw(session),
+	controller := &controller{
+		Session:    sessionFromMonitor(session),
 		Logger:     controllerLogger,
 		DeviceID:   device.ID,
 		Config:     *device.Controller,

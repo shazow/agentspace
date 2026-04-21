@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"fmt"
@@ -6,9 +6,9 @@ import (
 	"os/exec"
 )
 
-type ExecRunner struct{}
+type execRunner struct{}
 
-func (r *ExecRunner) Start(spec ProcessSpec) (Process, error) {
+func (r *execRunner) Start(spec processSpec) (process, error) {
 	cmd := exec.Command(spec.Path, spec.Args...)
 	cmd.Dir = spec.Dir
 	if len(spec.Env) > 0 {

@@ -8,32 +8,32 @@ import (
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 )
 
-type RawSession interface {
+type MonitorSession interface {
 	WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error
 }
 
 type qmpSession struct {
-	session RawSession
+	session MonitorSession
 }
 
-func NewQMPSession(session RawSession) Session {
+func newQMPSession(session MonitorSession) session {
 	return &qmpSession{session: session}
 }
 
-func (s *qmpSession) QueryBalloon(timeout time.Duration) (Info, error) {
-	var info rawQMP.BalloonInfo
+func (s *qmpSession) QueryBalloon(timeout time.Duration) (info, error) {
+	var balloonInfo rawQMP.BalloonInfo
 	err := s.session.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {
 		var err error
-		info, err = monitor.QueryBalloon()
+		balloonInfo, err = monitor.QueryBalloon()
 		if err != nil {
 			return fmt.Errorf("qmp query-balloon: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return Info{}, err
+		return info{}, err
 	}
-	return Info{ActualBytes: info.Actual}, nil
+	return info{ActualBytes: balloonInfo.Actual}, nil
 }
 
 func (s *qmpSession) SetBalloonLogicalSize(timeout time.Duration, logicalSizeBytes int64) error {
@@ -54,7 +54,7 @@ func (s *qmpSession) EnableBalloonStatsPolling(timeout time.Duration, qomPath st
 	})
 }
 
-func (s *qmpSession) ReadBalloonStats(timeout time.Duration, qomPath string) (Stats, error) {
+func (s *qmpSession) ReadBalloonStats(timeout time.Duration, qomPath string) (stats, error) {
 	var value interface{}
 	err := s.session.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {
 		var err error
@@ -65,7 +65,7 @@ func (s *qmpSession) ReadBalloonStats(timeout time.Duration, qomPath string) (St
 		return nil
 	})
 	if err != nil {
-		return Stats{}, err
+		return stats{}, err
 	}
 
 	type guestStats struct {
@@ -75,17 +75,17 @@ func (s *qmpSession) ReadBalloonStats(timeout time.Duration, qomPath string) (St
 
 	payload, err := json.Marshal(value)
 	if err != nil {
-		return Stats{}, fmt.Errorf("encode qmp guest-stats: %w", err)
+		return stats{}, fmt.Errorf("encode qmp guest-stats: %w", err)
 	}
 
 	var decoded guestStats
 	if err := json.Unmarshal(payload, &decoded); err != nil {
-		return Stats{}, fmt.Errorf("decode qmp guest-stats: %w", err)
+		return stats{}, fmt.Errorf("decode qmp guest-stats: %w", err)
 	}
 
-	stats := make(map[string]int64, len(decoded.Stats))
+	snapshot := make(map[string]int64, len(decoded.Stats))
 	for key, value := range decoded.Stats {
-		stats[key] = value
+		snapshot[key] = value
 	}
 
 	var lastUpdate time.Time
@@ -93,13 +93,13 @@ func (s *qmpSession) ReadBalloonStats(timeout time.Duration, qomPath string) (St
 		lastUpdate = time.Unix(decoded.LastUpdate, 0)
 	}
 
-	return Stats{
-		Stats:      stats,
+	return stats{
+		Stats:      snapshot,
 		LastUpdate: lastUpdate,
 	}, nil
 }
 
-func (s *qmpSession) ListQOMProperties(timeout time.Duration, path string) ([]ObjectPropertyInfo, error) {
+func (s *qmpSession) ListQOMProperties(timeout time.Duration, path string) ([]objectPropertyInfo, error) {
 	var props []rawQMP.ObjectPropertyInfo
 	err := s.session.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {
 		var err error
@@ -113,9 +113,9 @@ func (s *qmpSession) ListQOMProperties(timeout time.Duration, path string) ([]Ob
 		return nil, err
 	}
 
-	result := make([]ObjectPropertyInfo, 0, len(props))
+	result := make([]objectPropertyInfo, 0, len(props))
 	for _, prop := range props {
-		result = append(result, ObjectPropertyInfo{
+		result = append(result, objectPropertyInfo{
 			Name: prop.Name,
 			Type: prop.Type,
 		})

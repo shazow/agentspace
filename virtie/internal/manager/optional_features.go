@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"context"
@@ -6,15 +6,15 @@ import (
 	"time"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
-	"github.com/shazow/agentspace/virtie/balloon"
-	"github.com/shazow/agentspace/virtie/manifest"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
 type qemuTransportResolver func(string) (govmmQemu.VirtioTransport, error)
 
 type optionalFeatureRuntime struct {
-	Logger     *log.Logger
-	QMPTimeout time.Duration
+	logger     *log.Logger
+	qmpTimeout time.Duration
 }
 
 type optionalFeature interface {
@@ -28,7 +28,7 @@ type optionalFeature interface {
 		ctx context.Context,
 		runtime optionalFeatureRuntime,
 		manifest *manifest.Manifest,
-		qmpClient QMPClient,
+		qmpClient qmpClient,
 	) *managedTask
 }
 
@@ -55,7 +55,7 @@ func startOptionalFeatureTasks(
 	ctx context.Context,
 	runtime optionalFeatureRuntime,
 	manifest *manifest.Manifest,
-	qmpClient QMPClient,
+	qmpClient qmpClient,
 ) managedTaskGroup {
 	var tasks managedTaskGroup
 	for _, feature := range optionalFeatures {
@@ -77,13 +77,13 @@ func (balloonFeature) StartTask(
 	ctx context.Context,
 	runtime optionalFeatureRuntime,
 	manifest *manifest.Manifest,
-	qmpClient QMPClient,
+	qmpClient qmpClient,
 ) *managedTask {
 	if manifest == nil || qmpClient == nil {
 		return nil
 	}
 
-	task := balloon.ControllerTask(runtime.Logger, runtime.QMPTimeout, qmpClient, manifest.QEMU.Devices.Balloon)
+	task := balloon.ControllerTask(runtime.logger, runtime.qmpTimeout, qmpClient, manifest.QEMU.Devices.Balloon)
 	if task == nil {
 		return nil
 	}

@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"errors"
@@ -9,9 +9,9 @@ import (
 	"syscall"
 )
 
-type FileLocker struct{}
+type fileLocker struct{}
 
-func (l *FileLocker) Acquire(path string) (Lock, error) {
+func (l *fileLocker) Acquire(path string) (lock, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create lock directory for %q: %w", path, err)
 	}

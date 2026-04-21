@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"context"

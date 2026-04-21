@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"path/filepath"
@@ -6,7 +6,7 @@ import (
 )
 
 func TestFileLockerRejectsConcurrentAcquire(t *testing.T) {
-	locker := &FileLocker{}
+	locker := &fileLocker{}
 	lockPath := filepath.Join(t.TempDir(), "virtie.lock")
 
 	lock, err := locker.Acquire(lockPath)
@@ -21,7 +21,7 @@ func TestFileLockerRejectsConcurrentAcquire(t *testing.T) {
 }
 
 func TestFileLockerRecoversAfterUncleanClose(t *testing.T) {
-	locker := &FileLocker{}
+	locker := &fileLocker{}
 	lockPath := filepath.Join(t.TempDir(), "virtie.lock")
 
 	lock, err := locker.Acquire(lockPath)

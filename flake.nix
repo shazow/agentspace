@@ -27,7 +27,7 @@
         version = "0.1.0";
         src = ./virtie;
         vendorHash = "sha256-zgrEcEl+75sTcATL7n5gb+hoQguDEnJMIIs0OkuXsuI=";
-        subPackages = [ "cmd/virtie" ];
+        subPackages = [ "." ];
         env.CGO_ENABLED = 0;
       };
 

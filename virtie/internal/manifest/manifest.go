@@ -1,3 +1,4 @@
+// Package manifest defines the internal virtie launch contract.
 package manifest
 
 import (
@@ -7,13 +8,13 @@ import (
 	"path/filepath"
 
 	"github.com/adrg/xdg"
-	"github.com/shazow/agentspace/virtie/balloon"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
 )
 
 const (
-	DefaultVSockCIDStart = 3
-	DefaultVSockCIDEnd   = 65535
-	DefaultVolumeFSType  = "ext4"
+	defaultVSockCIDStart = 3
+	defaultVSockCIDEnd   = 65535
+	defaultVolumeFSType  = "ext4"
 )
 
 type Manifest struct {
@@ -185,7 +186,7 @@ type VirtioFS struct {
 	Daemons []VirtioFSDaemon `json:"daemons"`
 }
 
-func LoadManifest(r io.Reader) (*Manifest, error) {
+func Load(r io.Reader) (*Manifest, error) {
 	var manifest Manifest
 	decoder := json.NewDecoder(r)
 	if err := decoder.Decode(&manifest); err != nil {
@@ -205,21 +206,21 @@ func LoadManifest(r io.Reader) (*Manifest, error) {
 	return &manifest, nil
 }
 
-func (m *Manifest) ApplyDefaults() {
+func (m *Manifest) applyDefaults() {
 	if m == nil {
 		return
 	}
 
 	if m.VSock.CIDRange.Start == 0 {
-		m.VSock.CIDRange.Start = DefaultVSockCIDStart
+		m.VSock.CIDRange.Start = defaultVSockCIDStart
 	}
 	if m.VSock.CIDRange.End == 0 {
-		m.VSock.CIDRange.End = DefaultVSockCIDEnd
+		m.VSock.CIDRange.End = defaultVSockCIDEnd
 	}
 
 	for i := range m.Volumes {
 		if m.Volumes[i].FSType == "" {
-			m.Volumes[i].FSType = DefaultVolumeFSType
+			m.Volumes[i].FSType = defaultVolumeFSType
 		}
 	}
 
@@ -227,7 +228,7 @@ func (m *Manifest) ApplyDefaults() {
 }
 
 func (m *Manifest) Validate() error {
-	m.ApplyDefaults()
+	m.applyDefaults()
 
 	switch {
 	case m == nil:
@@ -260,8 +261,8 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.smp.cpus must be greater than zero")
 	case m.QEMU.QMP.SocketPath == "":
 		return fmt.Errorf("manifest.qemu.qmp.socketPath is required")
-	case m.VSock.CIDRange.Start < DefaultVSockCIDStart:
-		return fmt.Errorf("manifest.vsock.cidRange.start must be at least %d", DefaultVSockCIDStart)
+	case m.VSock.CIDRange.Start < defaultVSockCIDStart:
+		return fmt.Errorf("manifest.vsock.cidRange.start must be at least %d", defaultVSockCIDStart)
 	case m.VSock.CIDRange.End < m.VSock.CIDRange.Start:
 		return fmt.Errorf("manifest.vsock.cidRange.end must be greater than or equal to start")
 	case len(m.VirtioFS.Daemons) == 0:
@@ -353,7 +354,7 @@ func validQEMUTransport(transport string) bool {
 	}
 }
 
-func (m *Manifest) ResolvePath(path string) string {
+func (m *Manifest) resolvePath(path string) string {
 	if path == "" || filepath.IsAbs(path) {
 		return path
 	}
@@ -364,7 +365,7 @@ func (m *Manifest) ResolvePath(path string) string {
 func (m *Manifest) ResolvedPersistenceDirectories() []string {
 	dirs := make([]string, 0, len(m.Persistence.Directories))
 	for _, dir := range m.Persistence.Directories {
-		dirs = append(dirs, m.ResolvePath(dir))
+		dirs = append(dirs, m.resolvePath(dir))
 	}
 	return dirs
 }
@@ -375,7 +376,7 @@ func (m *Manifest) resolveSocketPath(path string) (string, error) {
 	}
 
 	if m.Paths.RuntimeDir == nil {
-		return m.ResolvePath(path), nil
+		return m.resolvePath(path), nil
 	}
 
 	if *m.Paths.RuntimeDir == "" {
@@ -386,7 +387,7 @@ func (m *Manifest) resolveSocketPath(path string) (string, error) {
 		return resolved, nil
 	}
 
-	return filepath.Join(m.ResolvePath(*m.Paths.RuntimeDir), path), nil
+	return filepath.Join(m.resolvePath(*m.Paths.RuntimeDir), path), nil
 }
 
 func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
@@ -402,15 +403,15 @@ func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
 }
 
 func (m *Manifest) ResolvedLockPath() string {
-	return m.ResolvePath(m.Paths.LockPath)
+	return m.resolvePath(m.Paths.LockPath)
 }
 
-func (m *Manifest) ResolvedVSockLockDir() string {
+func (m *Manifest) resolvedVSockLockDir() string {
 	return filepath.Join(filepath.Dir(m.ResolvedLockPath()), "agentspace-vsock")
 }
 
 func (m *Manifest) ResolvedVSockLockPath(cid int) string {
-	return filepath.Join(m.ResolvedVSockLockDir(), fmt.Sprintf("%d.lock", cid))
+	return filepath.Join(m.resolvedVSockLockDir(), fmt.Sprintf("%d.lock", cid))
 }
 
 func (m *Manifest) ResolvedQMPSocketPath() (string, error) {
@@ -419,9 +420,9 @@ func (m *Manifest) ResolvedQMPSocketPath() (string, error) {
 
 func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved := m.QEMU
-	resolved.BinaryPath = m.ResolvePath(resolved.BinaryPath)
-	resolved.Kernel.Path = m.ResolvePath(resolved.Kernel.Path)
-	resolved.Kernel.InitrdPath = m.ResolvePath(resolved.Kernel.InitrdPath)
+	resolved.BinaryPath = m.resolvePath(resolved.BinaryPath)
+	resolved.Kernel.Path = m.resolvePath(resolved.Kernel.Path)
+	resolved.Kernel.InitrdPath = m.resolvePath(resolved.Kernel.InitrdPath)
 	resolved.PassthroughArgs = append([]string(nil), resolved.PassthroughArgs...)
 
 	qmpSocketPath, err := m.resolveSocketPath(resolved.QMP.SocketPath)
@@ -448,7 +449,7 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 
 	resolved.Devices.Block = append([]QEMUBlockDevice(nil), resolved.Devices.Block...)
 	for i := range resolved.Devices.Block {
-		resolved.Devices.Block[i].ImagePath = m.ResolvePath(resolved.Devices.Block[i].ImagePath)
+		resolved.Devices.Block[i].ImagePath = m.resolvePath(resolved.Devices.Block[i].ImagePath)
 		if resolved.Devices.Block[i].Cache != nil {
 			value := *resolved.Devices.Block[i].Cache
 			resolved.Devices.Block[i].Cache = &value
@@ -482,7 +483,7 @@ func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
 			return nil, err
 		}
 		resolved.SocketPath = socketPath
-		resolved.Command.Path = m.ResolvePath(daemon.Command.Path)
+		resolved.Command.Path = m.resolvePath(daemon.Command.Path)
 		resolved.Command.Args = append([]string(nil), daemon.Command.Args...)
 		daemons = append(daemons, resolved)
 	}
@@ -493,7 +494,7 @@ func (m *Manifest) ResolvedVolumes() []Volume {
 	volumes := make([]Volume, 0, len(m.Volumes))
 	for _, volume := range m.Volumes {
 		resolved := volume
-		resolved.ImagePath = m.ResolvePath(volume.ImagePath)
+		resolved.ImagePath = m.resolvePath(volume.ImagePath)
 		resolved.MkfsExtraArgs = append([]string(nil), volume.MkfsExtraArgs...)
 		volumes = append(volumes, resolved)
 	}

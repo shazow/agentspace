@@ -3,7 +3,7 @@ package manifest
 import (
 	"testing"
 
-	"github.com/shazow/agentspace/virtie/balloon"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
 )
 
 func TestValidateAppliesBalloonDefaults(t *testing.T) {
@@ -27,13 +27,13 @@ func TestValidateAppliesBalloonDefaults(t *testing.T) {
 	if got, want := manifest.QEMU.Devices.Balloon.Controller.ReclaimAboveAvailableMiB, 512; got != want {
 		t.Fatalf("unexpected balloon controller reclaim threshold default: got %d want %d", got, want)
 	}
-	if got, want := manifest.QEMU.Devices.Balloon.Controller.StepMiB, balloon.DefaultControllerStepMiB; got != want {
+	if got, want := manifest.QEMU.Devices.Balloon.Controller.StepMiB, 256; got != want {
 		t.Fatalf("unexpected balloon controller step default: got %d want %d", got, want)
 	}
-	if got, want := manifest.QEMU.Devices.Balloon.Controller.PollIntervalSeconds, balloon.DefaultControllerPollIntervalSecs; got != want {
+	if got, want := manifest.QEMU.Devices.Balloon.Controller.PollIntervalSeconds, 5; got != want {
 		t.Fatalf("unexpected balloon controller poll interval default: got %d want %d", got, want)
 	}
-	if got, want := manifest.QEMU.Devices.Balloon.Controller.ReclaimHoldoffSeconds, balloon.DefaultControllerReclaimHoldoff; got != want {
+	if got, want := manifest.QEMU.Devices.Balloon.Controller.ReclaimHoldoffSeconds, 30; got != want {
 		t.Fatalf("unexpected balloon controller reclaim holdoff default: got %d want %d", got, want)
 	}
 }

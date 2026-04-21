@@ -1,4 +1,4 @@
-package virtie
+package manager
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"time"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
-	"github.com/shazow/agentspace/virtie/manifest"
+	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
 type fakeOptionalFeature struct {
@@ -69,20 +69,20 @@ func TestManagerLaunchStartsOptionalFeatureAfterSSHReadinessAndStopsItBeforeQuit
 		},
 	}
 
-	manager := &Manager{
-		Locker:            &FileLocker{},
-		Runner:            runner,
-		SocketWaiter:      waiter,
-		QMPDialer:         &fakeQMPDialer{client: qmpClient},
-		Logger:            log.New(io.Discard, "", 0),
-		SSHRetryDelay:     0,
-		ShutdownDelay:     10 * time.Millisecond,
-		QMPRetryDelay:     0,
-		QMPConnectTimeout: time.Second,
-		QMPQuitTimeout:    time.Second,
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      waiter,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Second,
+		qmpQuitTimeout:    time.Second,
 	}
 
-	err := manager.Launch(cancelCtx, manifest, nil)
+	err := manager.launch(cancelCtx, manifest, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
@@ -109,7 +109,7 @@ func (f *fakeOptionalFeature) AppendQEMUArgs(
 	return append(args, "-device", f.appendMarker), nil
 }
 
-func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, qmpClient QMPClient) *managedTask {
+func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, qmpClient qmpClient) *managedTask {
 	if f.runner != nil {
 		f.runner.mu.Lock()
 		f.startedAfterProbes = f.runner.probes

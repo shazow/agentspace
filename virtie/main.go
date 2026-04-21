@@ -1,3 +1,4 @@
+// Command virtie launches the supported agentspace sandbox session.
 package main
 
 import (
@@ -10,8 +11,8 @@ import (
 	"syscall"
 
 	"github.com/jessevdk/go-flags"
-	"github.com/shazow/agentspace/virtie"
-	"github.com/shazow/agentspace/virtie/manifest"
+	"github.com/shazow/agentspace/virtie/internal/manager"
+	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
 type options struct{}
@@ -32,7 +33,6 @@ func (c *launchCommand) Execute(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	manager := virtie.NewManager()
 	return manager.Launch(ctx, manifest, c.Args.RemoteCommand)
 }
 
@@ -48,7 +48,7 @@ func loadManifest(path string) (*manifest.Manifest, error) {
 	}
 	defer file.Close()
 
-	manifest, err := manifest.LoadManifest(file)
+	manifest, err := manifest.Load(file)
 	if err != nil {
 		return nil, fmt.Errorf("load manifest %q: %w", resolvedPath, err)
 	}
@@ -77,19 +77,6 @@ func main() {
 		}
 
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(exitCode(err))
+		os.Exit(manager.ExitCode(err))
 	}
-}
-
-func exitCode(err error) int {
-	var cmdErr *virtie.CommandError
-	if errors.As(err, &cmdErr) && cmdErr.ExitCode >= 0 {
-		return cmdErr.ExitCode
-	}
-
-	if errors.Is(err, context.Canceled) {
-		return 130
-	}
-
-	return 1
 }

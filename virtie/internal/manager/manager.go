@@ -1,4 +1,5 @@
-package virtie
+// Package manager runs the host-side sandbox launcher lifecycle.
+package manager
 
 import (
 	"context"
@@ -12,96 +13,101 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/shazow/agentspace/virtie/manifest"
+	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
 const (
-	DefaultSSHRetryDelay = 1 * time.Second
-	DefaultShutdownDelay = 15 * time.Second
+	defaultSSHRetryDelay = 1 * time.Second
+	defaultShutdownDelay = 15 * time.Second
 )
 
-var SSHProbeCommand = []string{"true"}
+var sshProbeCommand = []string{"true"}
 
-type Manager struct {
-	Locker            Locker
-	Runner            Runner
-	SocketWaiter      SocketWaiter
-	QMPDialer         QMPDialer
-	Logger            *log.Logger
-	SSHRetryDelay     time.Duration
-	ShutdownDelay     time.Duration
-	QMPRetryDelay     time.Duration
-	QMPConnectTimeout time.Duration
-	QMPQuitTimeout    time.Duration
+type manager struct {
+	locker            locker
+	runner            runner
+	socketWaiter      socketWaiter
+	qmpDialer         qmpDialer
+	logger            *log.Logger
+	sshRetryDelay     time.Duration
+	shutdownDelay     time.Duration
+	qmpRetryDelay     time.Duration
+	qmpConnectTimeout time.Duration
+	qmpQuitTimeout    time.Duration
 }
 
-func NewManager() *Manager {
-	return &Manager{
-		Locker:            &FileLocker{},
-		Runner:            &ExecRunner{},
-		SocketWaiter:      &PollingSocketWaiter{},
-		QMPDialer:         &socketMonitorDialer{},
-		Logger:            log.New(os.Stderr, "virtie: ", 0),
-		SSHRetryDelay:     DefaultSSHRetryDelay,
-		ShutdownDelay:     DefaultShutdownDelay,
-		QMPRetryDelay:     DefaultQMPRetryDelay,
-		QMPConnectTimeout: DefaultQMPConnectTimeout,
-		QMPQuitTimeout:    DefaultQMPQuitTimeout,
+func newManager() *manager {
+	return &manager{
+		locker:            &fileLocker{},
+		runner:            &execRunner{},
+		socketWaiter:      &pollingSocketWaiter{},
+		qmpDialer:         &socketMonitorDialer{},
+		logger:            log.New(os.Stderr, "virtie: ", 0),
+		sshRetryDelay:     defaultSSHRetryDelay,
+		shutdownDelay:     defaultShutdownDelay,
+		qmpRetryDelay:     defaultQMPRetryDelay,
+		qmpConnectTimeout: defaultQMPConnectTimeout,
+		qmpQuitTimeout:    defaultQMPQuitTimeout,
 	}
 }
 
-func (m *Manager) Launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) (err error) {
+// Launch runs the supported virtie sandbox session.
+func Launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) error {
+	return newManager().launch(ctx, manifest, remoteCommand)
+}
+
+func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) (err error) {
 	if err := manifest.Validate(); err != nil {
 		return err
 	}
 
 	socketPaths, err := manifest.ResolvedSocketPaths()
 	if err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	qmpSocketPath, err := manifest.ResolvedQMPSocketPath()
 	if err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	volumes := manifest.ResolvedVolumes()
 
-	lock, err := m.Locker.Acquire(manifest.ResolvedLockPath())
+	lock, err := m.locker.Acquire(manifest.ResolvedLockPath())
 	if err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	defer joinDeferredError(&err, lock.Release)
 
 	cid, cidLock, err := m.allocateCID(manifest)
 	if err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	defer joinDeferredError(&err, cidLock.Release)
-	m.Logger.Printf("allocated vsock cid %d", cid)
+	m.logger.Printf("allocated vsock cid %d", cid)
 
 	if err := ensureDirectories(manifest.ResolvedPersistenceDirectories()); err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureParentDirectories(socketPaths); err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureParentDirectories([]string{qmpSocketPath}); err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := removeSocketPaths(socketPaths); err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := removeSocketPaths([]string{qmpSocketPath}); err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureVolumeImages(volumes); err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 
 	var started []*managedProcess
-	var qmpClient QMPClient
+	var qmpClient qmpClient
 	var featureTasks managedTaskGroup
 	defer func() {
 		featureErr := featureTasks.Stop()
@@ -120,27 +126,27 @@ func (m *Manager) Launch(ctx context.Context, manifest *manifest.Manifest, remot
 
 	virtiofsd, err := m.startVirtioFSDaemons(manifest)
 	if err != nil {
-		return &StageError{Stage: "virtiofs startup", Err: err}
+		return &stageError{Stage: "virtiofs startup", Err: err}
 	}
 	started = append(started, virtiofsd...)
 
-	m.Logger.Printf("waiting for virtiofs sockets")
+	m.logger.Printf("waiting for virtiofs sockets")
 	if err := m.waitForSockets(ctx, socketPaths, started...); err != nil {
 		return err
 	}
 
-	m.Logger.Printf("starting qemu")
+	m.logger.Printf("starting qemu")
 	qemuSpec, err := buildQEMUSpec(manifest, cid)
 	if err != nil {
-		return &StageError{Stage: "preflight", Err: err}
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	qemu, err := m.startManagedProcess(qemuSpec)
 	if err != nil {
-		return &StageError{Stage: "vm startup", Err: err}
+		return &stageError{Stage: "vm startup", Err: err}
 	}
 	started = append(started, qemu)
 
-	m.Logger.Printf("waiting for qmp readiness")
+	m.logger.Printf("waiting for qmp readiness")
 	qmpClient, err = m.waitForQMP(ctx, qmpSocketPath, qemu)
 	if err != nil {
 		return err
@@ -149,20 +155,20 @@ func (m *Manager) Launch(ctx context.Context, manifest *manifest.Manifest, remot
 		return qmpClient.Quit(m.effectiveQMPQuitTimeout())
 	}
 
-	m.Logger.Printf("waiting for ssh readiness")
+	m.logger.Printf("waiting for ssh readiness")
 	if err := m.waitForSSH(ctx, manifest, cid, started...); err != nil {
 		return err
 	}
 
 	featureTasks = startOptionalFeatureTasks(ctx, optionalFeatureRuntime{
-		Logger:     m.Logger,
-		QMPTimeout: m.effectiveQMPCommandTimeout(),
+		logger:     m.logger,
+		qmpTimeout: m.effectiveQMPCommandTimeout(),
 	}, manifest, qmpClient)
 
-	m.Logger.Printf("starting ssh session")
+	m.logger.Printf("starting ssh session")
 	session, err := m.startManagedProcess(buildSSHSpec(manifest, cid, remoteCommand, true))
 	if err != nil {
-		return &StageError{Stage: "active session", Err: err}
+		return &stageError{Stage: "active session", Err: err}
 	}
 	started = append(started, session)
 
@@ -171,13 +177,13 @@ func (m *Manager) Launch(ctx context.Context, manifest *manifest.Manifest, remot
 
 type managedProcess struct {
 	name     string
-	proc     Process
+	proc     process
 	done     chan error
 	shutdown func() error
 }
 
-func (m *Manager) startManagedProcess(spec ProcessSpec) (*managedProcess, error) {
-	proc, err := m.Runner.Start(spec)
+func (m *manager) startManagedProcess(spec processSpec) (*managedProcess, error) {
+	proc, err := m.runner.Start(spec)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +202,7 @@ func (m *Manager) startManagedProcess(spec ProcessSpec) (*managedProcess, error)
 	return mp, nil
 }
 
-func (m *Manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedProcess, error) {
+func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedProcess, error) {
 	daemons, err := manifest.ResolvedVirtioFSDaemons()
 	if err != nil {
 		return nil, err
@@ -207,12 +213,12 @@ func (m *Manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 		name := "virtiofsd"
 		if daemon.Tag != "" {
 			name = fmt.Sprintf("virtiofsd[%s]", daemon.Tag)
-			m.Logger.Printf("starting virtiofsd [%s]", daemon.Tag)
+			m.logger.Printf("starting virtiofsd [%s]", daemon.Tag)
 		} else {
-			m.Logger.Printf("starting virtiofsd")
+			m.logger.Printf("starting virtiofsd")
 		}
 
-		process, err := m.startManagedProcess(ProcessSpec{
+		process, err := m.startManagedProcess(processSpec{
 			Name:   name,
 			Path:   daemon.Command.Path,
 			Args:   daemon.Command.Args,
@@ -232,9 +238,9 @@ func (m *Manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 	return started, nil
 }
 
-func (m *Manager) allocateCID(manifest *manifest.Manifest) (int, Lock, error) {
+func (m *manager) allocateCID(manifest *manifest.Manifest) (int, lock, error) {
 	for cid := manifest.VSock.CIDRange.Start; cid <= manifest.VSock.CIDRange.End; cid++ {
-		lock, err := m.Locker.Acquire(manifest.ResolvedVSockLockPath(cid))
+		lock, err := m.locker.Acquire(manifest.ResolvedVSockLockPath(cid))
 		if err == nil {
 			return cid, lock, nil
 		}
@@ -251,23 +257,23 @@ func (m *Manager) allocateCID(manifest *manifest.Manifest) (int, Lock, error) {
 	)
 }
 
-func (m *Manager) waitForSockets(ctx context.Context, socketPaths []string, watchers ...*managedProcess) error {
+func (m *manager) waitForSockets(ctx context.Context, socketPaths []string, watchers ...*managedProcess) error {
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- m.SocketWaiter.Wait(waitCtx, socketPaths)
+		errCh <- m.socketWaiter.Wait(waitCtx, socketPaths)
 	}()
 
-	ticker := time.NewTicker(DefaultSocketPollInterval)
+	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				return &StageError{Stage: "virtiofs startup", Err: err}
+				return &stageError{Stage: "virtiofs startup", Err: err}
 			}
 			return nil
 		case <-ticker.C:
@@ -275,28 +281,28 @@ func (m *Manager) waitForSockets(ctx context.Context, socketPaths []string, watc
 				return err
 			}
 		case <-ctx.Done():
-			return &StageError{Stage: "virtiofs startup", Err: ctx.Err()}
+			return &stageError{Stage: "virtiofs startup", Err: ctx.Err()}
 		}
 	}
 }
 
-func (m *Manager) waitForQMP(ctx context.Context, socketPath string, watchers ...*managedProcess) (QMPClient, error) {
+func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers ...*managedProcess) (qmpClient, error) {
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- m.SocketWaiter.Wait(waitCtx, []string{socketPath})
+		errCh <- m.socketWaiter.Wait(waitCtx, []string{socketPath})
 	}()
 
-	ticker := time.NewTicker(DefaultSocketPollInterval)
+	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				return nil, &StageError{Stage: "vm startup", Err: err}
+				return nil, &stageError{Stage: "vm startup", Err: err}
 			}
 			return m.connectQMP(ctx, socketPath, watchers...)
 		case <-ticker.C:
@@ -304,20 +310,20 @@ func (m *Manager) waitForQMP(ctx context.Context, socketPath string, watchers ..
 				return nil, err
 			}
 		case <-ctx.Done():
-			return nil, &StageError{Stage: "vm startup", Err: ctx.Err()}
+			return nil, &stageError{Stage: "vm startup", Err: ctx.Err()}
 		}
 	}
 }
 
-func (m *Manager) connectQMP(ctx context.Context, socketPath string, watchers ...*managedProcess) (QMPClient, error) {
-	dialer := m.QMPDialer
+func (m *manager) connectQMP(ctx context.Context, socketPath string, watchers ...*managedProcess) (qmpClient, error) {
+	dialer := m.qmpDialer
 	if dialer == nil {
 		dialer = &socketMonitorDialer{}
 	}
 	connectTimeout := m.effectiveQMPConnectTimeout()
-	retryDelay := m.QMPRetryDelay
+	retryDelay := m.qmpRetryDelay
 	if retryDelay <= 0 {
-		retryDelay = DefaultQMPRetryDelay
+		retryDelay = defaultQMPRetryDelay
 	}
 
 	timer := time.NewTimer(0)
@@ -326,7 +332,7 @@ func (m *Manager) connectQMP(ctx context.Context, socketPath string, watchers ..
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, &StageError{Stage: "vm startup", Err: ctx.Err()}
+			return nil, &stageError{Stage: "vm startup", Err: ctx.Err()}
 		case <-timer.C:
 		}
 
@@ -339,39 +345,39 @@ func (m *Manager) connectQMP(ctx context.Context, socketPath string, watchers ..
 			return client, nil
 		}
 		if ctx.Err() != nil {
-			return nil, &StageError{Stage: "vm startup", Err: ctx.Err()}
+			return nil, &stageError{Stage: "vm startup", Err: ctx.Err()}
 		}
 
 		timer.Reset(retryDelay)
 	}
 }
 
-func (m *Manager) effectiveQMPConnectTimeout() time.Duration {
-	if m.QMPConnectTimeout > 0 {
-		return m.QMPConnectTimeout
+func (m *manager) effectiveQMPConnectTimeout() time.Duration {
+	if m.qmpConnectTimeout > 0 {
+		return m.qmpConnectTimeout
 	}
-	return DefaultQMPConnectTimeout
+	return defaultQMPConnectTimeout
 }
 
-func (m *Manager) effectiveQMPQuitTimeout() time.Duration {
-	if m.QMPQuitTimeout > 0 {
-		return m.QMPQuitTimeout
+func (m *manager) effectiveQMPQuitTimeout() time.Duration {
+	if m.qmpQuitTimeout > 0 {
+		return m.qmpQuitTimeout
 	}
-	return DefaultQMPQuitTimeout
+	return defaultQMPQuitTimeout
 }
 
-func (m *Manager) effectiveQMPCommandTimeout() time.Duration {
+func (m *manager) effectiveQMPCommandTimeout() time.Duration {
 	return m.effectiveQMPConnectTimeout()
 }
 
-func (m *Manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, cid int, watchers ...*managedProcess) error {
+func (m *manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, cid int, watchers ...*managedProcess) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return &StageError{Stage: "ssh readiness", Err: ctx.Err()}
+			return &stageError{Stage: "ssh readiness", Err: ctx.Err()}
 		case <-timer.C:
 		}
 
@@ -379,9 +385,9 @@ func (m *Manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, c
 			return err
 		}
 
-		probe, err := m.startManagedProcess(buildSSHSpec(manifest, cid, SSHProbeCommand, false))
+		probe, err := m.startManagedProcess(buildSSHSpec(manifest, cid, sshProbeCommand, false))
 		if err != nil {
-			return &StageError{Stage: "ssh readiness", Err: err}
+			return &stageError{Stage: "ssh readiness", Err: err}
 		}
 
 		ready, err := m.waitForSSHProbe(ctx, probe, watchers...)
@@ -392,12 +398,12 @@ func (m *Manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, c
 			return nil
 		}
 
-		timer.Reset(m.SSHRetryDelay)
+		timer.Reset(m.sshRetryDelay)
 	}
 }
 
-func (m *Manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, watchers ...*managedProcess) (bool, error) {
-	ticker := time.NewTicker(DefaultSocketPollInterval)
+func (m *manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, watchers ...*managedProcess) (bool, error) {
+	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -412,7 +418,7 @@ func (m *Manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, wa
 				return false, err
 			}
 		case <-ctx.Done():
-			stageErr := &StageError{Stage: "ssh readiness", Err: ctx.Err()}
+			stageErr := &stageError{Stage: "ssh readiness", Err: ctx.Err()}
 			if abortErr := m.killProcess(probe); abortErr != nil {
 				return false, errors.Join(stageErr, abortErr)
 			}
@@ -421,8 +427,8 @@ func (m *Manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, wa
 	}
 }
 
-func (m *Manager) waitForSession(ctx context.Context, session *managedProcess, watchers ...*managedProcess) error {
-	ticker := time.NewTicker(DefaultSocketPollInterval)
+func (m *manager) waitForSession(ctx context.Context, session *managedProcess, watchers ...*managedProcess) error {
+	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -437,12 +443,12 @@ func (m *Manager) waitForSession(ctx context.Context, session *managedProcess, w
 				return err
 			}
 		case <-ctx.Done():
-			return &StageError{Stage: "active session", Err: ctx.Err()}
+			return &stageError{Stage: "active session", Err: ctx.Err()}
 		}
 	}
 }
 
-func (m *Manager) stopAll(processes []*managedProcess) error {
+func (m *manager) stopAll(processes []*managedProcess) error {
 	var errs []error
 	for i := len(processes) - 1; i >= 0; i-- {
 		if err := m.stopProcess(processes[i]); err != nil {
@@ -452,7 +458,7 @@ func (m *Manager) stopAll(processes []*managedProcess) error {
 	return errors.Join(errs...)
 }
 
-func (m *Manager) killProcess(process *managedProcess) error {
+func (m *manager) killProcess(process *managedProcess) error {
 	if process == nil {
 		return nil
 	}
@@ -469,7 +475,7 @@ func (m *Manager) killProcess(process *managedProcess) error {
 	return nil
 }
 
-func (m *Manager) stopProcess(process *managedProcess) error {
+func (m *manager) stopProcess(process *managedProcess) error {
 	if process == nil {
 		return nil
 	}
@@ -483,7 +489,7 @@ func (m *Manager) stopProcess(process *managedProcess) error {
 		if err := process.shutdown(); err != nil {
 			shutdownErr = fmt.Errorf("shutdown %s: %w", process.name, err)
 		} else {
-			timer := time.NewTimer(m.ShutdownDelay)
+			timer := time.NewTimer(m.shutdownDelay)
 			defer timer.Stop()
 
 			select {
@@ -501,7 +507,7 @@ func (m *Manager) stopProcess(process *managedProcess) error {
 		return fmt.Errorf("stop %s: %w", process.name, err)
 	}
 
-	timer := time.NewTimer(m.ShutdownDelay)
+	timer := time.NewTimer(m.shutdownDelay)
 	defer timer.Stop()
 
 	select {
@@ -543,7 +549,7 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 		}
 
 		if err == nil {
-			return &StageError{
+			return &stageError{
 				Stage: stage,
 				Err:   fmt.Errorf("%s exited unexpectedly", process.name),
 			}
@@ -555,7 +561,7 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 	return nil
 }
 
-func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, interactive bool) ProcessSpec {
+func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, interactive bool) processSpec {
 	argv := append([]string(nil), manifest.SSH.Argv...)
 	path := argv[0]
 	args := append([]string(nil), argv[1:]...)
@@ -581,7 +587,7 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, 
 	args = append(args, manifest.SSHDestination(cid))
 	args = append(args, remoteCommand...)
 
-	return ProcessSpec{
+	return processSpec{
 		Name:   "ssh",
 		Path:   path,
 		Args:   args,
@@ -726,7 +732,7 @@ func wrapCommandError(stage string, command string, err error) error {
 
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return &CommandError{
+		return &commandError{
 			Stage:    stage,
 			Command:  command,
 			ExitCode: exitErr.ExitCode(),
@@ -734,7 +740,7 @@ func wrapCommandError(stage string, command string, err error) error {
 		}
 	}
 
-	return &CommandError{
+	return &commandError{
 		Stage:    stage,
 		Command:  command,
 		ExitCode: -1,

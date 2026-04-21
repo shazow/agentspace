@@ -3,7 +3,7 @@ package manifest
 import (
 	"fmt"
 
-	"github.com/shazow/agentspace/virtie/balloon"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
 )
 
 func applyBalloonDefaults(memoryMiB int, device *balloon.Device) {
