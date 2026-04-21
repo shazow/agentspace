@@ -7,6 +7,11 @@
 
 let
   cfg = config.agentspace.sandbox;
+  balloonTransport =
+    if (!lib.hasPrefix "microvm" config.microvm.qemu.machine) || config.microvm.shares != [ ] then
+      "pci"
+    else
+      "mmio";
 in
 {
   options.agentspace.sandbox = {
@@ -161,8 +166,18 @@ in
           cfg.sshIdentityFile
         ];
       virtiofsShares = builtins.filter (share: share.proto == "virtiofs") config.microvm.shares;
-      qemuConfig = import ./agentspace-qemu-config.nix {
+      baseQemuConfig = import ./agentspace-qemu-config.nix {
         inherit config lib pkgs;
+      };
+      qemuConfig = baseQemuConfig // {
+        devices = baseQemuConfig.devices // lib.optionalAttrs config.microvm.balloon {
+          balloon = {
+            id = "balloon0";
+            transport = balloonTransport;
+            deflateOnOOM = config.microvm.deflateOnOOM;
+            freePageReporting = true;
+          };
+        };
       };
 
       mkVirtioFSDaemonCommand =

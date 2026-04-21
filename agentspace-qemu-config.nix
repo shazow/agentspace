@@ -214,14 +214,6 @@ in
         id = "vsock0";
         inherit transport;
       };
-    }
-    // lib.optionalAttrs microvm.balloon {
-      balloon = {
-        id = "balloon0";
-        inherit transport;
-        deflateOnOOM = microvm.deflateOnOOM;
-        freePageReporting = true;
-      };
     };
 
   passthroughArgs =

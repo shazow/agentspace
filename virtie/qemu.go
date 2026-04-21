@@ -37,19 +37,6 @@ func buildQEMUArgs(qemu manifestpkg.ManifestQEMU, cid int) ([]string, error) {
 		},
 	}
 
-	transport := func(value string) (govmmQemu.VirtioTransport, error) {
-		switch value {
-		case "pci":
-			return govmmQemu.TransportPCI, nil
-		case "mmio":
-			return govmmQemu.TransportMMIO, nil
-		case "ccw":
-			return govmmQemu.TransportCCW, nil
-		default:
-			return "", fmt.Errorf("unsupported qemu transport %q", value)
-		}
-	}
-
 	args := make([]string, 0, 64)
 
 	args = append(args, "-name", qemu.Name)
@@ -80,7 +67,7 @@ func buildQEMUArgs(qemu manifestpkg.ManifestQEMU, cid int) ([]string, error) {
 		args = append(args, "-chardev", "stdio,id=stdio,signal=off")
 	}
 
-	rngTransport, err := transport(qemu.Devices.RNG.Transport)
+	rngTransport, err := resolveQEMUTransport(qemu.Devices.RNG.Transport)
 	if err != nil {
 		return nil, err
 	}
@@ -127,23 +114,13 @@ func buildQEMUArgs(qemu manifestpkg.ManifestQEMU, cid int) ([]string, error) {
 		return nil, fmt.Errorf("unsupported qemu memory backend %q", qemu.Memory.Backend)
 	}
 
-	if qemu.Devices.Balloon != nil {
-		balloonTransport, err := transport(qemu.Devices.Balloon.Transport)
-		if err != nil {
-			return nil, err
-		}
-		driver := govmmQemu.BalloonDeviceTransport[balloonTransport]
-		deviceParams := []string{
-			driver,
-			fmt.Sprintf("id=%s", qemu.Devices.Balloon.ID),
-			fmt.Sprintf("deflate-on-oom=%s", onOff(qemu.Devices.Balloon.DeflateOnOOM)),
-			fmt.Sprintf("free-page-reporting=%s", onOff(qemu.Devices.Balloon.FreePageReporting)),
-		}
-		args = append(args, "-device", strings.Join(deviceParams, ","))
+	args, err = appendOptionalFeatureQEMUArgs(qemu, config, args)
+	if err != nil {
+		return nil, err
 	}
 
 	for _, share := range qemu.Devices.VirtioFS {
-		shareTransport, err := transport(share.Transport)
+		shareTransport, err := resolveQEMUTransport(share.Transport)
 		if err != nil {
 			return nil, err
 		}
@@ -157,7 +134,7 @@ func buildQEMUArgs(qemu manifestpkg.ManifestQEMU, cid int) ([]string, error) {
 	}
 
 	for _, block := range qemu.Devices.Block {
-		blockTransport, err := transport(block.Transport)
+		blockTransport, err := resolveQEMUTransport(block.Transport)
 		if err != nil {
 			return nil, err
 		}
@@ -191,7 +168,7 @@ func buildQEMUArgs(qemu manifestpkg.ManifestQEMU, cid int) ([]string, error) {
 	}
 
 	for _, netdev := range qemu.Devices.Network {
-		netTransport, err := transport(netdev.Transport)
+		netTransport, err := resolveQEMUTransport(netdev.Transport)
 		if err != nil {
 			return nil, err
 		}
@@ -219,7 +196,7 @@ func buildQEMUArgs(qemu manifestpkg.ManifestQEMU, cid int) ([]string, error) {
 		args = append(args, "-device", strings.Join(deviceParams, ","))
 	}
 
-	vsockTransport, err := transport(qemu.Devices.VSOCK.Transport)
+	vsockTransport, err := resolveQEMUTransport(qemu.Devices.VSOCK.Transport)
 	if err != nil {
 		return nil, err
 	}
@@ -232,6 +209,19 @@ func buildQEMUArgs(qemu manifestpkg.ManifestQEMU, cid int) ([]string, error) {
 	args = append(args, qemu.PassthroughArgs...)
 
 	return args, nil
+}
+
+func resolveQEMUTransport(value string) (govmmQemu.VirtioTransport, error) {
+	switch value {
+	case "pci":
+		return govmmQemu.TransportPCI, nil
+	case "mmio":
+		return govmmQemu.TransportMMIO, nil
+	case "ccw":
+		return govmmQemu.TransportCCW, nil
+	default:
+		return "", fmt.Errorf("unsupported qemu transport %q", value)
+	}
 }
 
 func onOff(v bool) string {
