@@ -68,44 +68,44 @@ func validManifestWithBalloon() *Manifest {
 
 func validManifest() *Manifest {
 	return &Manifest{
-		Identity: ManifestIdentity{HostName: "agent-sandbox"},
-		Paths: ManifestPaths{
+		Identity: Identity{HostName: "agent-sandbox"},
+		Paths: Paths{
 			WorkingDir: "/tmp/work",
 			LockPath:   "/tmp/virtie.lock",
 		},
-		SSH: ManifestSSH{
+		SSH: SSH{
 			Argv: []string{"/bin/ssh"},
 			User: "agent",
 		},
-		QEMU: ManifestQEMU{
+		QEMU: QEMU{
 			BinaryPath: "/bin/qemu-system-x86_64",
 			Name:       "agent-sandbox",
-			Machine: ManifestQEMUMachine{
+			Machine: QEMUMachine{
 				Type:    "microvm",
 				Options: []string{"accel=kvm:tcg"},
 			},
-			CPU: ManifestQEMUCPU{
+			CPU: QEMUCPU{
 				Model: "host",
 			},
-			Memory: ManifestQEMUMemory{
+			Memory: QEMUMemory{
 				SizeMiB: 1024,
 			},
-			Kernel: ManifestQEMUKernel{
+			Kernel: QEMUKernel{
 				Path:       "/tmp/vmlinuz",
 				InitrdPath: "/tmp/initrd",
 			},
-			SMP: ManifestQEMUSMP{
+			SMP: QEMUSMP{
 				CPUs: 2,
 			},
-			QMP: ManifestQEMUQMP{
+			QMP: QEMUQMP{
 				SocketPath: "qmp.sock",
 			},
-			Devices: ManifestQEMUDevices{
-				RNG: ManifestQEMURNGDevice{
+			Devices: QEMUDevices{
+				RNG: QEMURNGDevice{
 					ID:        "rng0",
 					Transport: "pci",
 				},
-				VirtioFS: []ManifestQEMUVirtioFSShare{
+				VirtioFS: []QEMUVirtioFSShare{
 					{
 						ID:         "fs0",
 						SocketPath: "fs.sock",
@@ -113,14 +113,14 @@ func validManifest() *Manifest {
 						Transport:  "pci",
 					},
 				},
-				Block: []ManifestQEMUBlockDevice{
+				Block: []QEMUBlockDevice{
 					{
 						ID:        "vda",
 						ImagePath: "root.img",
 						Transport: "pci",
 					},
 				},
-				Network: []ManifestQEMUNetDevice{
+				Network: []QEMUNetDevice{
 					{
 						ID:         "net0",
 						Backend:    "user",
@@ -128,13 +128,13 @@ func validManifest() *Manifest {
 						Transport:  "pci",
 					},
 				},
-				VSOCK: ManifestQEMUVSOCKDevice{
+				VSOCK: QEMUVSOCKDevice{
 					ID:        "vsock0",
 					Transport: "pci",
 				},
 			},
 		},
-		Volumes: []ManifestVolume{
+		Volumes: []Volume{
 			{
 				ImagePath:  "root.img",
 				SizeMiB:    64,
@@ -142,11 +142,11 @@ func validManifest() *Manifest {
 				AutoCreate: true,
 			},
 		},
-		VirtioFS: ManifestVirtioFS{Daemons: []ManifestVirtioFSDaemon{
+		VirtioFS: VirtioFS{Daemons: []VirtioFSDaemon{
 			{
 				Tag:        "workspace",
 				SocketPath: "fs.sock",
-				Command: ManifestCommand{
+				Command: Command{
 					Path: "/tmp/virtiofsd-workspace",
 				},
 			},

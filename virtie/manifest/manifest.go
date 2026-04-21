@@ -3,7 +3,7 @@ package manifest
 import (
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 
 	"github.com/adrg/xdg"
@@ -17,92 +17,92 @@ const (
 )
 
 type Manifest struct {
-	Identity    ManifestIdentity    `json:"identity"`
-	Paths       ManifestPaths       `json:"paths"`
-	Persistence ManifestPersistence `json:"persistence"`
-	SSH         ManifestSSH         `json:"ssh"`
-	QEMU        ManifestQEMU        `json:"qemu"`
-	Volumes     []ManifestVolume    `json:"volumes,omitempty"`
-	VSock       ManifestVSock       `json:"vsock"`
-	VirtioFS    ManifestVirtioFS    `json:"virtiofs"`
+	Identity    Identity    `json:"identity"`
+	Paths       Paths       `json:"paths"`
+	Persistence Persistence `json:"persistence"`
+	SSH         SSH         `json:"ssh"`
+	QEMU        QEMU        `json:"qemu"`
+	Volumes     []Volume    `json:"volumes,omitempty"`
+	VSock       VSock       `json:"vsock"`
+	VirtioFS    VirtioFS    `json:"virtiofs"`
 }
 
-type ManifestIdentity struct {
+type Identity struct {
 	HostName string `json:"hostName"`
 }
 
-type ManifestPaths struct {
+type Paths struct {
 	WorkingDir string  `json:"workingDir"`
 	LockPath   string  `json:"lockPath"`
 	RuntimeDir *string `json:"runtimeDir,omitempty"`
 }
 
-type ManifestPersistence struct {
+type Persistence struct {
 	Directories []string `json:"directories"`
 }
 
-type ManifestSSH struct {
+type SSH struct {
 	Argv []string `json:"argv"`
 	User string   `json:"user"`
 }
 
-type ManifestVSockCIDRange struct {
+type VSockCIDRange struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
 }
 
-type ManifestVSock struct {
-	CIDRange ManifestVSockCIDRange `json:"cidRange"`
+type VSock struct {
+	CIDRange VSockCIDRange `json:"cidRange"`
 }
 
-type ManifestQEMU struct {
-	BinaryPath      string              `json:"binaryPath"`
-	Name            string              `json:"name"`
-	Machine         ManifestQEMUMachine `json:"machine"`
-	CPU             ManifestQEMUCPU     `json:"cpu"`
-	Memory          ManifestQEMUMemory  `json:"memory"`
-	Kernel          ManifestQEMUKernel  `json:"kernel"`
-	SMP             ManifestQEMUSMP     `json:"smp"`
-	Console         ManifestQEMUConsole `json:"console"`
-	Knobs           ManifestQEMUKnobs   `json:"knobs"`
-	QMP             ManifestQEMUQMP     `json:"qmp"`
-	Devices         ManifestQEMUDevices `json:"devices"`
-	MachineID       *string             `json:"machineId,omitempty"`
-	PassthroughArgs []string            `json:"passthroughArgs,omitempty"`
+type QEMU struct {
+	BinaryPath      string      `json:"binaryPath"`
+	Name            string      `json:"name"`
+	Machine         QEMUMachine `json:"machine"`
+	CPU             QEMUCPU     `json:"cpu"`
+	Memory          QEMUMemory  `json:"memory"`
+	Kernel          QEMUKernel  `json:"kernel"`
+	SMP             QEMUSMP     `json:"smp"`
+	Console         QEMUConsole `json:"console"`
+	Knobs           QEMUKnobs   `json:"knobs"`
+	QMP             QEMUQMP     `json:"qmp"`
+	Devices         QEMUDevices `json:"devices"`
+	MachineID       *string     `json:"machineId,omitempty"`
+	PassthroughArgs []string    `json:"passthroughArgs,omitempty"`
 }
 
-type ManifestQEMUMachine struct {
+type QEMUMachine struct {
 	Type    string   `json:"type"`
 	Options []string `json:"options,omitempty"`
 }
 
-type ManifestQEMUCPU struct {
+type QEMUCPU struct {
 	Model     string `json:"model"`
 	EnableKVM bool   `json:"enableKvm,omitempty"`
 }
 
-type ManifestQEMUMemory struct {
+type QEMUMemory struct {
 	SizeMiB int    `json:"sizeMiB"`
 	Backend string `json:"backend,omitempty"`
 	Shared  bool   `json:"shared,omitempty"`
 }
 
-type ManifestQEMUKernel struct {
+type QEMUKernel struct {
 	Path       string `json:"path"`
 	InitrdPath string `json:"initrdPath"`
 	Params     string `json:"params,omitempty"`
 }
 
-type ManifestQEMUSMP struct {
+type QEMUSMP struct {
 	CPUs int `json:"cpus"`
 }
 
-type ManifestQEMUConsole struct {
+type QEMUConsole struct {
 	StdioChardev  bool `json:"stdioChardev,omitempty"`
 	SerialConsole bool `json:"serialConsole,omitempty"`
 }
 
-type ManifestQEMUKnobs struct {
+type QEMUKnobs struct {
 	NoDefaults     bool `json:"noDefaults,omitempty"`
 	NoUserConfig   bool `json:"noUserConfig,omitempty"`
 	NoReboot       bool `json:"noReboot,omitempty"`
@@ -110,33 +110,33 @@ type ManifestQEMUKnobs struct {
 	SeccompSandbox bool `json:"seccompSandbox,omitempty"`
 }
 
-type ManifestQEMUQMP struct {
+type QEMUQMP struct {
 	SocketPath string `json:"socketPath"`
 }
 
-type ManifestQEMUDevices struct {
-	RNG      ManifestQEMURNGDevice       `json:"rng"`
-	I8042    bool                        `json:"i8042,omitempty"`
-	Balloon  *balloon.Device             `json:"balloon,omitempty"`
-	VirtioFS []ManifestQEMUVirtioFSShare `json:"virtiofs,omitempty"`
-	Block    []ManifestQEMUBlockDevice   `json:"block,omitempty"`
-	Network  []ManifestQEMUNetDevice     `json:"network,omitempty"`
-	VSOCK    ManifestQEMUVSOCKDevice     `json:"vsock"`
+type QEMUDevices struct {
+	RNG      QEMURNGDevice       `json:"rng"`
+	I8042    bool                `json:"i8042,omitempty"`
+	Balloon  *balloon.Device     `json:"balloon,omitempty"`
+	VirtioFS []QEMUVirtioFSShare `json:"virtiofs,omitempty"`
+	Block    []QEMUBlockDevice   `json:"block,omitempty"`
+	Network  []QEMUNetDevice     `json:"network,omitempty"`
+	VSOCK    QEMUVSOCKDevice     `json:"vsock"`
 }
 
-type ManifestQEMURNGDevice struct {
+type QEMURNGDevice struct {
 	ID        string `json:"id"`
 	Transport string `json:"transport"`
 }
 
-type ManifestQEMUVirtioFSShare struct {
+type QEMUVirtioFSShare struct {
 	ID         string `json:"id"`
 	SocketPath string `json:"socketPath"`
 	Tag        string `json:"tag"`
 	Transport  string `json:"transport"`
 }
 
-type ManifestQEMUBlockDevice struct {
+type QEMUBlockDevice struct {
 	ID        string  `json:"id"`
 	ImagePath string  `json:"imagePath"`
 	AIO       string  `json:"aio,omitempty"`
@@ -146,7 +146,7 @@ type ManifestQEMUBlockDevice struct {
 	Transport string  `json:"transport"`
 }
 
-type ManifestQEMUNetDevice struct {
+type QEMUNetDevice struct {
 	ID            string   `json:"id"`
 	Backend       string   `json:"backend"`
 	MacAddress    string   `json:"macAddress"`
@@ -156,12 +156,12 @@ type ManifestQEMUNetDevice struct {
 	MQVectors     int      `json:"mqVectors,omitempty"`
 }
 
-type ManifestQEMUVSOCKDevice struct {
+type QEMUVSOCKDevice struct {
 	ID        string `json:"id"`
 	Transport string `json:"transport"`
 }
 
-type ManifestVolume struct {
+type Volume struct {
 	ImagePath     string   `json:"imagePath"`
 	SizeMiB       int      `json:"sizeMiB,omitempty"`
 	FSType        string   `json:"fsType,omitempty"`
@@ -170,30 +170,32 @@ type ManifestVolume struct {
 	MkfsExtraArgs []string `json:"mkfsExtraArgs,omitempty"`
 }
 
-type ManifestCommand struct {
+type Command struct {
 	Path string   `json:"path"`
 	Args []string `json:"args,omitempty"`
 }
 
-type ManifestVirtioFSDaemon struct {
-	Tag        string          `json:"tag"`
-	SocketPath string          `json:"socketPath"`
-	Command    ManifestCommand `json:"command"`
+type VirtioFSDaemon struct {
+	Tag        string  `json:"tag"`
+	SocketPath string  `json:"socketPath"`
+	Command    Command `json:"command"`
 }
 
-type ManifestVirtioFS struct {
-	Daemons []ManifestVirtioFSDaemon `json:"daemons"`
+type VirtioFS struct {
+	Daemons []VirtioFSDaemon `json:"daemons"`
 }
 
-func LoadManifest(path string) (*Manifest, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read manifest %q: %w", path, err)
-	}
-
+func LoadManifest(r io.Reader) (*Manifest, error) {
 	var manifest Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest %q: %w", path, err)
+	decoder := json.NewDecoder(r)
+	if err := decoder.Decode(&manifest); err != nil {
+		return nil, fmt.Errorf("decode manifest: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("decode manifest: unexpected trailing data")
+		}
+		return nil, fmt.Errorf("decode manifest: %w", err)
 	}
 
 	if err := manifest.Validate(); err != nil {
@@ -415,7 +417,7 @@ func (m *Manifest) ResolvedQMPSocketPath() (string, error) {
 	return m.resolveSocketPath(m.QEMU.QMP.SocketPath)
 }
 
-func (m *Manifest) ResolvedQEMU() (ManifestQEMU, error) {
+func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved := m.QEMU
 	resolved.BinaryPath = m.ResolvePath(resolved.BinaryPath)
 	resolved.Kernel.Path = m.ResolvePath(resolved.Kernel.Path)
@@ -424,7 +426,7 @@ func (m *Manifest) ResolvedQEMU() (ManifestQEMU, error) {
 
 	qmpSocketPath, err := m.resolveSocketPath(resolved.QMP.SocketPath)
 	if err != nil {
-		return ManifestQEMU{}, err
+		return QEMU{}, err
 	}
 	resolved.QMP.SocketPath = qmpSocketPath
 
@@ -435,16 +437,16 @@ func (m *Manifest) ResolvedQEMU() (ManifestQEMU, error) {
 
 	resolved.Machine.Options = append([]string(nil), resolved.Machine.Options...)
 
-	resolved.Devices.VirtioFS = append([]ManifestQEMUVirtioFSShare(nil), resolved.Devices.VirtioFS...)
+	resolved.Devices.VirtioFS = append([]QEMUVirtioFSShare(nil), resolved.Devices.VirtioFS...)
 	for i := range resolved.Devices.VirtioFS {
 		socketPath, err := m.resolveSocketPath(resolved.Devices.VirtioFS[i].SocketPath)
 		if err != nil {
-			return ManifestQEMU{}, err
+			return QEMU{}, err
 		}
 		resolved.Devices.VirtioFS[i].SocketPath = socketPath
 	}
 
-	resolved.Devices.Block = append([]ManifestQEMUBlockDevice(nil), resolved.Devices.Block...)
+	resolved.Devices.Block = append([]QEMUBlockDevice(nil), resolved.Devices.Block...)
 	for i := range resolved.Devices.Block {
 		resolved.Devices.Block[i].ImagePath = m.ResolvePath(resolved.Devices.Block[i].ImagePath)
 		if resolved.Devices.Block[i].Cache != nil {
@@ -457,7 +459,7 @@ func (m *Manifest) ResolvedQEMU() (ManifestQEMU, error) {
 		}
 	}
 
-	resolved.Devices.Network = append([]ManifestQEMUNetDevice(nil), resolved.Devices.Network...)
+	resolved.Devices.Network = append([]QEMUNetDevice(nil), resolved.Devices.Network...)
 	for i := range resolved.Devices.Network {
 		resolved.Devices.Network[i].NetdevOptions = append([]string(nil), resolved.Devices.Network[i].NetdevOptions...)
 		if resolved.Devices.Network[i].RomFile != nil {
@@ -471,8 +473,8 @@ func (m *Manifest) ResolvedQEMU() (ManifestQEMU, error) {
 	return resolved, nil
 }
 
-func (m *Manifest) ResolvedVirtioFSDaemons() ([]ManifestVirtioFSDaemon, error) {
-	daemons := make([]ManifestVirtioFSDaemon, 0, len(m.VirtioFS.Daemons))
+func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
+	daemons := make([]VirtioFSDaemon, 0, len(m.VirtioFS.Daemons))
 	for _, daemon := range m.VirtioFS.Daemons {
 		resolved := daemon
 		socketPath, err := m.resolveSocketPath(daemon.SocketPath)
@@ -487,8 +489,8 @@ func (m *Manifest) ResolvedVirtioFSDaemons() ([]ManifestVirtioFSDaemon, error) {
 	return daemons, nil
 }
 
-func (m *Manifest) ResolvedVolumes() []ManifestVolume {
-	volumes := make([]ManifestVolume, 0, len(m.Volumes))
+func (m *Manifest) ResolvedVolumes() []Volume {
+	volumes := make([]Volume, 0, len(m.Volumes))
 	for _, volume := range m.Volumes {
 		resolved := volume
 		resolved.ImagePath = m.ResolvePath(volume.ImagePath)

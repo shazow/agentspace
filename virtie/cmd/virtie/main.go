@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/jessevdk/go-flags"
 	"github.com/shazow/agentspace/virtie"
+	"github.com/shazow/agentspace/virtie/manifest"
 )
 
 type options struct{}
@@ -22,7 +24,7 @@ type launchCommand struct {
 }
 
 func (c *launchCommand) Execute(args []string) error {
-	manifest, err := virtie.LoadManifest(c.Args.Manifest)
+	manifest, err := loadManifest(c.Args.Manifest)
 	if err != nil {
 		return err
 	}
@@ -32,6 +34,26 @@ func (c *launchCommand) Execute(args []string) error {
 
 	manager := virtie.NewManager()
 	return manager.Launch(ctx, manifest, c.Args.RemoteCommand)
+}
+
+func loadManifest(path string) (*manifest.Manifest, error) {
+	resolvedPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve manifest path %q: %w", path, err)
+	}
+
+	file, err := os.Open(resolvedPath)
+	if err != nil {
+		return nil, fmt.Errorf("open manifest %q: %w", resolvedPath, err)
+	}
+	defer file.Close()
+
+	manifest, err := manifest.LoadManifest(file)
+	if err != nil {
+		return nil, fmt.Errorf("load manifest %q: %w", resolvedPath, err)
+	}
+
+	return manifest, nil
 }
 
 func main() {
