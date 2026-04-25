@@ -308,6 +308,41 @@ func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 	}
 }
 
+func TestWaitForSSHRetriesTimedOutProbe(t *testing.T) {
+	runner := &timeoutThenReadySSHRunner{firstStarted: make(chan *blockingSSHProcess, 1)}
+	manager := &manager{
+		runner:          runner,
+		logger:          log.New(io.Discard, "", 0),
+		sshRetryDelay:   0,
+		sshProbeTimeout: 10 * time.Millisecond,
+	}
+
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{
+			WorkingDir: t.TempDir(),
+		},
+		SSH: manifest.SSH{
+			Argv: []string{"/bin/ssh"},
+			User: "agent",
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := manager.waitForSSH(ctx, manifest, 10); err != nil {
+		t.Fatalf("waitForSSH returned error: %v", err)
+	}
+
+	firstProbe := <-runner.firstStarted
+	if got, want := firstProbe.killCalls(), 1; got != want {
+		t.Fatalf("unexpected timed out probe kills: got %d want %d", got, want)
+	}
+	if got, want := runner.starts(), 2; got != want {
+		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
+	}
+}
+
 func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
 	tmpDir := t.TempDir()
 	manifest := &manifest.Manifest{
@@ -934,6 +969,40 @@ func (p *blockingSSHProcess) killCalls() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.killCount
+}
+
+type timeoutThenReadySSHRunner struct {
+	mu           sync.Mutex
+	startCount   int
+	firstStarted chan *blockingSSHProcess
+}
+
+func (r *timeoutThenReadySSHRunner) Start(spec processSpec) (process, error) {
+	if spec.Name != "ssh" {
+		return nil, errors.New("unexpected process")
+	}
+
+	r.mu.Lock()
+	r.startCount++
+	startCount := r.startCount
+	r.mu.Unlock()
+
+	if startCount == 1 {
+		process := &blockingSSHProcess{done: make(chan error, 1)}
+		r.firstStarted <- process
+		return process, nil
+	}
+
+	return &fakeProcess{
+		name: spec.Name,
+		done: closedErrorChannel(nil),
+	}, nil
+}
+
+func (r *timeoutThenReadySSHRunner) starts() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.startCount
 }
 
 func containsString(values []string, needle string) bool {
