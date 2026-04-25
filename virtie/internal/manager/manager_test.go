@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -85,6 +86,8 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 		"-q",
 		"-o",
 		"StrictHostKeyChecking=no",
+		"-o",
+		"LogLevel=ERROR",
 		"agent@vsock/10",
 		"true",
 	}
@@ -308,13 +311,14 @@ func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 	}
 }
 
-func TestWaitForSSHRetriesTimedOutProbe(t *testing.T) {
-	runner := &timeoutThenReadySSHRunner{firstStarted: make(chan *blockingSSHProcess, 1)}
+func TestWaitForSSHLogsPermissionDeniedHint(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	runner := &permissionDeniedThenCancelSSHRunner{cancel: cancel}
+	var logOutput bytes.Buffer
 	manager := &manager{
-		runner:          runner,
-		logger:          log.New(io.Discard, "", 0),
-		sshRetryDelay:   0,
-		sshProbeTimeout: 10 * time.Millisecond,
+		runner:        runner,
+		logger:        log.New(&logOutput, "", 0),
+		sshRetryDelay: 0,
 	}
 
 	manifest := &manifest.Manifest{
@@ -327,19 +331,35 @@ func TestWaitForSSHRetriesTimedOutProbe(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	if err := manager.waitForSSH(ctx, manifest, 10); err != nil {
-		t.Fatalf("waitForSSH returned error: %v", err)
+	if err := manager.waitForSSH(ctx, manifest, 10); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	firstProbe := <-runner.firstStarted
-	if got, want := firstProbe.killCalls(), 1; got != want {
-		t.Fatalf("unexpected timed out probe kills: got %d want %d", got, want)
+	logs := logOutput.String()
+	if !strings.Contains(logs, "Permission denied (publickey)") {
+		t.Fatalf("expected permission denied hint in logs, got %q", logs)
 	}
-	if got, want := runner.starts(), 2; got != want {
-		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
+	if !strings.Contains(logs, "ssh-add") {
+		t.Fatalf("expected ssh-add hint in logs, got %q", logs)
+	}
+}
+
+func TestSSHPermissionDeniedMatchesPublicKeyAuthFailures(t *testing.T) {
+	tests := []struct {
+		stderr string
+		want   bool
+	}{
+		{stderr: "agent@vsock/10: Permission denied (publickey).\n", want: true},
+		{stderr: "ssh: connect to host vsock/10 port 22: Connection refused\n", want: false},
+		{stderr: "Connection timed out during banner exchange\n", want: false},
+	}
+
+	for _, tt := range tests {
+		if got := sshPermissionDenied(tt.stderr); got != tt.want {
+			t.Fatalf("sshPermissionDenied(%q) = %v, want %v", tt.stderr, got, tt.want)
+		}
 	}
 }
 
@@ -971,13 +991,13 @@ func (p *blockingSSHProcess) killCalls() int {
 	return p.killCount
 }
 
-type timeoutThenReadySSHRunner struct {
-	mu           sync.Mutex
-	startCount   int
-	firstStarted chan *blockingSSHProcess
+type permissionDeniedThenCancelSSHRunner struct {
+	mu         sync.Mutex
+	startCount int
+	cancel     context.CancelFunc
 }
 
-func (r *timeoutThenReadySSHRunner) Start(spec processSpec) (process, error) {
+func (r *permissionDeniedThenCancelSSHRunner) Start(spec processSpec) (process, error) {
 	if spec.Name != "ssh" {
 		return nil, errors.New("unexpected process")
 	}
@@ -988,21 +1008,18 @@ func (r *timeoutThenReadySSHRunner) Start(spec processSpec) (process, error) {
 	r.mu.Unlock()
 
 	if startCount == 1 {
-		process := &blockingSSHProcess{done: make(chan error, 1)}
-		r.firstStarted <- process
-		return process, nil
+		if spec.Stderr != nil {
+			_, _ = io.WriteString(spec.Stderr, "agent@vsock/10: Permission denied (publickey).\n")
+		}
+		return &fakeProcess{
+			name: spec.Name,
+			done: closedErrorChannel(errors.New("exit status 255")),
+		}, nil
 	}
 
-	return &fakeProcess{
-		name: spec.Name,
-		done: closedErrorChannel(nil),
-	}, nil
-}
-
-func (r *timeoutThenReadySSHRunner) starts() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.startCount
+	process := &blockingSSHProcess{done: make(chan error, 1)}
+	r.cancel()
+	return process, nil
 }
 
 func containsString(values []string, needle string) bool {

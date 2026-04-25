@@ -9,6 +9,7 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,9 +26,8 @@ import (
 )
 
 const (
-	defaultSSHRetryDelay   = 1 * time.Second
-	defaultSSHProbeTimeout = 5 * time.Second
-	defaultShutdownDelay   = 15 * time.Second
+	defaultSSHRetryDelay = 1 * time.Second
+	defaultShutdownDelay = 15 * time.Second
 )
 
 var sshProbeCommand = []string{"true"}
@@ -38,7 +39,6 @@ type manager struct {
 	qmpDialer         qmpDialer
 	logger            *log.Logger
 	sshRetryDelay     time.Duration
-	sshProbeTimeout   time.Duration
 	shutdownDelay     time.Duration
 	qmpRetryDelay     time.Duration
 	qmpConnectTimeout time.Duration
@@ -53,7 +53,6 @@ func newManager() *manager {
 		qmpDialer:         &socketMonitorDialer{},
 		logger:            log.New(os.Stderr, "virtie: ", 0),
 		sshRetryDelay:     defaultSSHRetryDelay,
-		sshProbeTimeout:   defaultSSHProbeTimeout,
 		shutdownDelay:     defaultShutdownDelay,
 		qmpRetryDelay:     defaultQMPRetryDelay,
 		qmpConnectTimeout: defaultQMPConnectTimeout,
@@ -369,13 +368,6 @@ func (m *manager) effectiveQMPConnectTimeout() time.Duration {
 	return defaultQMPConnectTimeout
 }
 
-func (m *manager) effectiveSSHProbeTimeout() time.Duration {
-	if m.sshProbeTimeout > 0 {
-		return m.sshProbeTimeout
-	}
-	return defaultSSHProbeTimeout
-}
-
 func (m *manager) effectiveQMPQuitTimeout() time.Duration {
 	if m.qmpQuitTimeout > 0 {
 		return m.qmpQuitTimeout
@@ -390,6 +382,7 @@ func (m *manager) effectiveQMPCommandTimeout() time.Duration {
 func (m *manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, cid int, watchers ...*managedProcess) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	loggedPermissionHint := false
 
 	for {
 		select {
@@ -402,7 +395,11 @@ func (m *manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, c
 			return err
 		}
 
-		probe, err := m.startManagedProcess(buildSSHSpec(manifest, cid, sshProbeCommand, false))
+		spec := buildSSHSpec(manifest, cid, sshProbeCommand, false)
+		var stderr bytes.Buffer
+		spec.Stderr = &stderr
+
+		probe, err := m.startManagedProcess(spec)
 		if err != nil {
 			return &stageError{Stage: "ssh readiness", Err: err}
 		}
@@ -414,6 +411,10 @@ func (m *manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, c
 		if ready {
 			return nil
 		}
+		if !loggedPermissionHint && sshPermissionDenied(stderr.String()) {
+			m.logger.Printf("ssh readiness failed with Permission denied (publickey); ensure SSH keys are unlocked in ssh-agent with ssh-add")
+			loggedPermissionHint = true
+		}
 
 		timer.Reset(m.sshRetryDelay)
 	}
@@ -423,19 +424,10 @@ func (m *manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, wa
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
-	timeout := time.NewTimer(m.effectiveSSHProbeTimeout())
-	defer timeout.Stop()
-
 	for {
 		select {
 		case err := <-probe.done:
 			return err == nil, nil
-		case <-timeout.C:
-			m.logger.Printf("ssh readiness probe timed out; retrying")
-			if abortErr := m.killProcess(probe); abortErr != nil {
-				return false, &stageError{Stage: "ssh readiness", Err: abortErr}
-			}
-			return false, nil
 		case <-ticker.C:
 			if err := firstUnexpectedExit("ssh readiness", watchers...); err != nil {
 				if abortErr := m.killProcess(probe); abortErr != nil {
@@ -451,6 +443,10 @@ func (m *manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, wa
 			return false, stageErr
 		}
 	}
+}
+
+func sshPermissionDenied(stderr string) bool {
+	return strings.Contains(stderr, "Permission denied (publickey")
 }
 
 func (m *manager) waitForSession(ctx context.Context, session *managedProcess, watchers ...*managedProcess) error {
@@ -610,6 +606,9 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, 
 	}
 
 	args = append(sshModeArgs, args...)
+	if !interactive {
+		args = append(args, "-o", "LogLevel=ERROR")
+	}
 	args = append(args, manifest.SSHDestination(cid))
 	args = append(args, remoteCommand...)
 
