@@ -7,6 +7,8 @@
 
 Commit message style: `git commit -m "<component name>: <short description of changes>" -m "<Additional details about the changes worth noting>"`
 
+When written the a coding agent, final line should include: `Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL1] [TOOL2]`
+
 Example resulting commit message:
 
 ```
@@ -19,4 +21,6 @@ Validation performed:
 - ...
 
 Closes #123
+
+Assisted-by: codex:gpt-5.5-xhigh
 ```
