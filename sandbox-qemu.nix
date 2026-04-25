@@ -7,6 +7,11 @@
 
 let
   cfg = config.agentspace.sandbox;
+  balloonTransport =
+    if (!lib.hasPrefix "microvm" config.microvm.qemu.machine) || config.microvm.shares != [ ] then
+      "pci"
+    else
+      "mmio";
 in
 {
   options.agentspace.sandbox = {
@@ -22,15 +27,6 @@ in
       type = lib.types.str;
       default = "agent-sandbox";
       description = "Hostname for the guest VM.";
-    };
-
-    protocol = lib.mkOption {
-      type = lib.types.enum [
-        "9p"
-        "virtiofs"
-      ];
-      default = "9p";
-      description = "File share protocol. '9p' runs in userland (slow), 'virtiofs' requires a daemon (fast).";
     };
 
     persistence = {
@@ -53,12 +49,6 @@ in
       };
     };
 
-    bundle = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = "List of file paths to bundle into the VM runtime";
-    };
-
     mountWorkspace = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -71,19 +61,22 @@ in
       description = "Size of the guest sparse swapfile in MiB. Set to 0 to disable (e.g. 4096).";
     };
 
-    connectWith = lib.mkOption {
-      type = lib.types.enum [
-        "console"
-        "ssh"
-      ];
-      default = "console";
-      description = "Auto-connect via serial console or ssh. When using ssh, make sure to set sshAuthorizedKeys.";
+    balloon = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Enable the virtio-balloon device and virtie's default runtime balloon controller.";
     };
 
     sshAuthorizedKeys = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
       description = "Setup ssh access with these authorized keys.";
+    };
+
+    sshIdentityFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Optional SSH identity file passed to host-side launch/connect helpers.";
     };
 
     workspaceMountPoint = lib.mkOption {
@@ -104,27 +97,29 @@ in
       description = "Extra modules imported for NixOS.";
     };
 
-    initExtra = lib.mkOption {
-      type = lib.types.separatedString "\n";
-      description = "Extra shell snippet appended to the launch-agent script.";
-      default = ''
-        echo "🚀 Preparing Agent QEMU Sandbox..."
-      ''
-      + lib.optionalString cfg.mountWorkspace ''
-        echo "📂 Mounting current directory at ~/workspace"
-        cd "$REPO_DIR"
-      '';
+    launch = {
+      commonInit = lib.mkOption {
+        type = lib.types.lines;
+        readOnly = true;
+        internal = true;
+      };
+
+      virtieManifestData = lib.mkOption {
+        type = lib.types.anything;
+        readOnly = true;
+        internal = true;
+      };
+
+      virtieManifest = lib.mkOption {
+        type = lib.types.path;
+        readOnly = true;
+        internal = true;
+      };
     };
   };
 
   config = lib.mkIf cfg.enable (
     let
-      agentspace-bundle = pkgs.writeShellScriptBin "agentspace-bundle" (
-        builtins.readFile ./scripts/agentspace-bundle
-      );
-      agentspace-init = pkgs.writeShellScriptBin "agentspace-init" (
-        builtins.readFile ./scripts/agentspace-init
-      );
       agentspace-logout = pkgs.writeShellScriptBin "agentspace-logout" ''
         set -eu
 
@@ -144,94 +139,179 @@ in
       '';
 
       initDirs =
-        lib.pipe
-          [ cfg.persistence.homeImage cfg.persistence.storeOverlay ]
-          [
-            (builtins.filter (x: x != null))
-            (builtins.map builtins.dirOf)
-            lib.escapeShellArgs
-          ];
+        lib.unique (builtins.map (volume: builtins.dirOf volume.image) config.microvm.volumes);
+
+      commonInit =
+        ''
+          echo "🚀 Preparing Agent QEMU Sandbox..."
+        ''
+        + lib.optionalString cfg.mountWorkspace ''
+          echo "📂 Mounting current directory at ~/workspace"
+          cd "$REPO_DIR"
+        '';
+
+      sshBaseArgv =
+        [
+          "${pkgs.openssh}/bin/ssh"
+          "-q"
+          "-o"
+          "StrictHostKeyChecking=no"
+          "-o"
+          "UserKnownHostsFile=/dev/null"
+          "-o"
+          "GlobalKnownHostsFile=/dev/null"
+        ]
+        ++ lib.optionals (cfg.sshIdentityFile != null) [
+          "-i"
+          cfg.sshIdentityFile
+        ];
+      virtiofsShares = builtins.filter (share: share.proto == "virtiofs") config.microvm.shares;
+      baseQemuConfig = import ./agentspace-qemu-config.nix {
+        inherit config lib pkgs;
+      };
+      qemuConfig = baseQemuConfig // {
+        devices = baseQemuConfig.devices // lib.optionalAttrs config.microvm.balloon {
+          balloon = {
+            id = "balloon0";
+            transport = balloonTransport;
+            deflateOnOOM = config.microvm.deflateOnOOM;
+            freePageReporting = true;
+          };
+        };
+      };
+
+      mkVirtioFSDaemonCommand =
+        {
+          tag,
+          socket,
+          source,
+          readOnly,
+          cache,
+          ...
+        }:
+        pkgs.writeShellScript "virtiofsd-${cfg.hostName}-${tag}" ''
+          if [ "$(id -u)" = 0 ]; then
+            opt_rlimit=(--rlimit-nofile 1048576)
+          else
+            opt_rlimit=()
+          fi
+
+          socket_path=${lib.escapeShellArg socket}
+          if [ -n "''${VIRTIE_SOCKET_PATH-}" ]; then
+            socket_path="$VIRTIE_SOCKET_PATH"
+          fi
+
+          exec ${lib.getExe config.microvm.virtiofsd.package} \
+            --socket-path="$socket_path" \
+            ${lib.optionalString (config.microvm.virtiofsd.group != null)
+              "--socket-group=${config.microvm.virtiofsd.group}"
+            } \
+            --shared-dir=${lib.escapeShellArg source} \
+            "''${opt_rlimit[@]}" \
+            --thread-pool-size ${toString config.microvm.virtiofsd.threadPoolSize} \
+            --posix-acl --xattr \
+            --cache=${cache} \
+            ${
+              lib.optionalString (
+                config.microvm.virtiofsd.inodeFileHandles != null
+              ) "--inode-file-handles=${config.microvm.virtiofsd.inodeFileHandles}"
+            } \
+            ${lib.optionalString (config.microvm.hypervisor == "crosvm") "--tag=${tag}"} \
+            ${lib.optionalString readOnly "--readonly"} \
+            ${lib.escapeShellArgs config.microvm.virtiofsd.extraArgs}
+        '';
+
+      virtiofsDaemons = builtins.map (share: {
+        tag = share.tag;
+        socketPath = share.socket;
+        command = {
+          path = mkVirtioFSDaemonCommand share;
+          args = [ ];
+        };
+      }) virtiofsShares;
+
+      manifestVolumes = builtins.map (volume: {
+        imagePath = volume.image;
+        sizeMiB = volume.size;
+        fsType = volume.fsType;
+        autoCreate = volume.autoCreate;
+        label = volume.label;
+        mkfsExtraArgs = volume.mkfsExtraArgs;
+      }) config.microvm.volumes;
+
+      virtieManifestData = {
+        identity.hostName = cfg.hostName;
+        paths = {
+          workingDir = ".";
+          lockPath = "/tmp/agentspace-${cfg.hostName}.lock";
+          runtimeDir = "";
+        };
+        persistence.directories = initDirs;
+        ssh = {
+          argv = sshBaseArgv;
+          user = cfg.user;
+        };
+        qemu = qemuConfig;
+        volumes = manifestVolumes;
+        virtiofs.daemons = virtiofsDaemons;
+      };
+
+      virtieManifest = pkgs.writeText "virtie-${cfg.hostName}.json" (builtins.toJSON virtieManifestData);
     in
-    {
-      imports = cfg.extraModules;
-    } //
     lib.mkMerge [
       {
-        agentspace.sandbox.initExtra = lib.mkAfter (
-          lib.optionalString (initDirs != "") ''
-            mkdir -vp ${initDirs}
-          ''
-          + ''
-            name_prefix="agentspace-${cfg.hostName}";
-            vfs_unit="$name_prefix-virtiofsd"
-            vm_unit="$name_prefix-vm"
-            connect_unit="$name_prefix-connect"
-            tracked_units=()
+        assertions = [
+          {
+            assertion = config.microvm.hypervisor == "qemu";
+            message = "Only microvm.hypervisor = \"qemu\" is supported by the dynamic virtie vsock launcher.";
+          }
+          {
+            assertion = config.microvm.vsock.cid == null;
+            message = "Static microvm.vsock.cid is unsupported; virtie allocates the vsock CID at launch time.";
+          }
+          {
+            assertion = !config.microvm.registerWithMachined;
+            message = "microvm.registerWithMachined is unsupported until dynamic vsock CID state is plumbed through machined registration.";
+          }
+          {
+            assertion = lib.all (share: share.proto == "virtiofs") config.microvm.shares;
+            message = "Only virtiofs shares are supported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = lib.all (interface: interface.type == "user") config.microvm.interfaces;
+            message = "Only microvm.interfaces.*.type = \"user\" is supported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.graphics.enable == false;
+            message = "microvm.graphics.enable is unsupported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.devices == [ ];
+            message = "microvm.devices passthrough is unsupported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.storeOnDisk == false;
+            message = "microvm.storeOnDisk is unsupported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.preStart == "";
+            message = "microvm.preStart is unsupported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.extraArgsScript == null;
+            message = "microvm.extraArgsScript is unsupported by the direct virtie QEMU launcher.";
+          }
+          {
+            assertion = config.microvm.qemu.pcieRootPorts == [ ];
+            message = "microvm.qemu.pcieRootPorts is unsupported by the direct virtie QEMU launcher.";
+          }
+        ];
 
-            if systemctl --user --quiet is-active "$name_prefix-*.service"; then
-              echo "launch-agent: refusing to start because an agentspace unit is already active" >&2
-              exit 1
-            fi
-            systemctl --user reset-failed "$name_prefix-*.service"
-          ''
-          + lib.optionalString (cfg.protocol == "virtiofs") ''
-            echo "📦 Starting virtiofsd..."
-            tracked_units+=("$vfs_unit.service")
-            systemd-run --user \
-              --unit="$vfs_unit" \
-              --collect \
-              --service-type=exec \
-              -p KillMode=control-group \
-              -p Restart=on-failure \
-              -p RestartSec=500ms \
-              -p TimeoutStopSec=15s \
-              -p WorkingDirectory="$REPO_DIR" \
-              "$RUNNER_PATH/bin/virtiofsd-run"
-            trap 'systemctl --user stop "$vfs_unit.service" >/dev/null 2>&1 || true' EXIT INT TERM
-          ''
-          + lib.optionalString (cfg.connectWith == "ssh") ''
-            tracked_units+=("$connect_unit.service" "$vm_unit.service")
-
-            echo "🖥️  Starting microvm..."
-            systemd-run --user \
-              --unit="$vm_unit" \
-              --collect \
-              --service-type=exec \
-              ${lib.optionalString (cfg.protocol == "virtiofs") "-p BindsTo=\"$vfs_unit.service\""} \
-              ${lib.optionalString (cfg.protocol == "virtiofs") "-p After=\"$vfs_unit.service\""} \
-              -p KillMode=control-group \
-              -p TimeoutStopSec=15s \
-              -p WorkingDirectory="$REPO_DIR" \
-              "$RUNNER_PATH/bin/microvm-run"
-            journalctl --user --no-pager -u "$vm_unit.service" --invocation=0
-
-            echo "🔐 Starting SSH... (Retrying until host is ready)"
-            systemd-run --user \
-              --unit="$connect_unit" \
-              --collect \
-              --wait \
-              --pty \
-              --quiet \
-              --service-type=exec \
-              -p BindsTo="$vm_unit.service" \
-              -p After="$vm_unit.service" \
-              -p Restart=on-failure \
-              -p RestartSec=1000ms \
-              -p StartLimitIntervalSec=0 \
-              -p KillMode=control-group \
-              -p TimeoutStopSec=15s \
-              ${pkgs.openssh}/bin/ssh \
-              -tt -q \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o GlobalKnownHostsFile=/dev/null \
-              "${cfg.user}@vsock/${toString config.microvm.vsock.cid}" \
-              "$@"
-
-            systemctl --user stop "''${tracked_units[@]}" >/dev/null 2>&1 || true
-            exit
-          ''
-        );
+        agentspace.sandbox.launch = {
+          inherit commonInit;
+          inherit virtieManifestData;
+          inherit virtieManifest;
+        };
 
         networking.hostName = cfg.hostName;
         nixpkgs.config.allowUnfree = true;
@@ -283,7 +363,7 @@ in
           };
         };
 
-        services.openssh = lib.mkIf (cfg.sshAuthorizedKeys != [ ]) {
+        services.openssh = {
           enable = true;
           openFirewall = false;
           settings = {
@@ -306,19 +386,9 @@ in
           "d /home/${cfg.user} 0700 ${cfg.user} users -"
         ];
 
-        # Inbox-mounted directories are owned by root, but readable which we'll be
-        # using to clone as local user.
-        # TODO: mkOptional if we're using inboxes
-        environment.etc."gitconfig".text = ''
-          [safe]
-            directory = /home/${cfg.user}/mnt/inbox/*
-        '';
-
         # Basic Package Set
         environment.systemPackages = [
-          agentspace-init
           agentspace-logout
-          agentspace-bundle
         ]
         ++ (with pkgs; [
           bashInteractive
@@ -332,20 +402,20 @@ in
           which
         ]);
 
+        microvm.binScripts.virtiofsd-run = lib.mkForce ''
+          echo "virtiofsd-run is managed by virtie and should not be invoked directly." >&2
+          exit 1
+        '';
+
         # MicroVM Configuration
         microvm = {
           vcpu = lib.mkDefault 8;
           mem = lib.mkDefault (4 * 1024);
-          balloon = true;
-          socket = "/tmp/vm-${cfg.hostName}.sock";
+          balloon = lib.mkDefault cfg.balloon;
+          socket = "qmp.sock";
           hypervisor = "qemu";
 
-          qemu.serialConsole = cfg.connectWith == "console";
-
-          vsock = {
-            cid = lib.mkDefault 10;
-            ssh.enable = true;
-          };
+          qemu.serialConsole = false;
 
           interfaces = [
             {
@@ -357,7 +427,7 @@ in
 
           shares = [
             {
-              proto = cfg.protocol;
+              proto = "virtiofs";
               tag = "ro-store";
               source = "/nix/store";
               mountPoint = "/nix/.ro-store";
@@ -366,7 +436,7 @@ in
           ]
           ++ lib.optionals cfg.mountWorkspace [
             {
-              proto = cfg.protocol;
+              proto = "virtiofs";
               tag = "workspace";
               source = ".";
               mountPoint = cfg.workspaceMountPoint;
@@ -394,13 +464,6 @@ in
           ];
         };
       }
-
-      (lib.mkIf (cfg.connectWith == "console") {
-        services.getty.autologinUser = cfg.user;
-        systemd.tmpfiles.rules = lib.mkAfter [
-          "f /home/${cfg.user}/.bash_logout 0600 ${cfg.user} users - agentspace-logout"
-        ];
-      })
     ]
   );
 }
