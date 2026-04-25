@@ -1,6 +1,12 @@
+# Agent Instructions
+
 - Specification and progress is tracked in `.specs/*.md`
 - When testing nix builds, clean up `./result` symlinks after completion with `unlink` command.
 - This project should prioritize working on NixOS, but ideally also support macOS. Surface any concerns that may break macOS compatibility.
+
+## Code Style
+
+- Avoid making helpers that are only used once unless the helper code needs to be tested.
 
 ## Commits
 - Consider committing major component changes separately if the changes work stand-alone. Order the commits incrementally so that they work as a unit.
