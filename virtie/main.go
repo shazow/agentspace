@@ -40,6 +40,7 @@ func (c *launchCommand) Execute(args []string) error {
 
 type suspendCommand struct {
 	manifestOption
+	Exit bool `long:"exit" description:"Save QEMU state to disk and exit the launch session"`
 }
 
 func (c *suspendCommand) Execute(args []string) error {
@@ -51,7 +52,7 @@ func (c *suspendCommand) Execute(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	return manager.Suspend(ctx, manifest)
+	return manager.Suspend(ctx, manifest, manager.SuspendOptions{Exit: c.Exit})
 }
 
 type resumeCommand struct {

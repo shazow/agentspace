@@ -102,6 +102,37 @@ func TestQMPClientStopContAndQueryStatus(t *testing.T) {
 	assertQMPCommand(t, commands, "cont")
 }
 
+func TestQMPClientMigrationCommands(t *testing.T) {
+	client, commands, cleanup := newTestQMPClient(t, func(message map[string]any) map[string]any {
+		switch message["execute"] {
+		case "query-migrate":
+			return map[string]any{"return": map[string]any{"status": "completed"}}
+		default:
+			return map[string]any{"return": map[string]any{}}
+		}
+	})
+	defer cleanup()
+
+	if err := client.MigrateToFile(time.Second, "/tmp/vm.state"); err != nil {
+		t.Fatalf("migrate to file: %v", err)
+	}
+	status, err := client.QueryMigrate(time.Second)
+	if err != nil {
+		t.Fatalf("query migrate: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("unexpected migration status: got %q want completed", status)
+	}
+	if err := client.MigrateIncoming(time.Second, "/tmp/vm.state"); err != nil {
+		t.Fatalf("migrate incoming: %v", err)
+	}
+
+	assertHandshakeCommand(t, commands)
+	assertQMPCommand(t, commands, "migrate")
+	assertQMPCommand(t, commands, "query-migrate")
+	assertQMPCommand(t, commands, "migrate-incoming")
+}
+
 func TestQMPDialContextCancelsDuringHandshake(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "qmp.sock")
 	listener, err := net.Listen("unix", socketPath)

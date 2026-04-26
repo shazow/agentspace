@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	defaultQMPRetryDelay     = 200 * time.Millisecond
-	defaultQMPConnectTimeout = 500 * time.Millisecond
-	defaultQMPQuitTimeout    = 500 * time.Millisecond
+	defaultQMPRetryDelay       = 200 * time.Millisecond
+	defaultQMPConnectTimeout   = 500 * time.Millisecond
+	defaultQMPQuitTimeout      = 500 * time.Millisecond
+	defaultQMPMigrationTimeout = 30 * time.Second
 )
 
 type qmpClient interface {
@@ -24,6 +25,9 @@ type qmpClient interface {
 	Stop(timeout time.Duration) error
 	Cont(timeout time.Duration) error
 	QueryStatus(timeout time.Duration) (string, error)
+	MigrateToFile(timeout time.Duration, path string) error
+	MigrateIncoming(timeout time.Duration, path string) error
+	QueryMigrate(timeout time.Duration) (string, error)
 	Quit(timeout time.Duration) error
 	Disconnect() error
 }
@@ -149,6 +153,52 @@ func (c *socketMonitorClient) QueryStatus(timeout time.Duration) (string, error)
 	})
 	if isTimeoutError(err) {
 		return "", fmt.Errorf("qmp query-status timed out after %s", timeout)
+	}
+	return status, err
+}
+
+func (c *socketMonitorClient) MigrateToFile(timeout time.Duration, path string) error {
+	uri := "file:" + path
+	err := c.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {
+		if err := monitor.Migrate(uri, nil, nil, nil); err != nil {
+			return fmt.Errorf("qmp migrate %q: %w", uri, err)
+		}
+		return nil
+	})
+	if isTimeoutError(err) {
+		return fmt.Errorf("qmp migrate %q timed out after %s", uri, timeout)
+	}
+	return err
+}
+
+func (c *socketMonitorClient) MigrateIncoming(timeout time.Duration, path string) error {
+	uri := "file:" + path
+	err := c.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {
+		if err := monitor.MigrateIncoming(uri); err != nil {
+			return fmt.Errorf("qmp migrate-incoming %q: %w", uri, err)
+		}
+		return nil
+	})
+	if isTimeoutError(err) {
+		return fmt.Errorf("qmp migrate-incoming %q timed out after %s", uri, timeout)
+	}
+	return err
+}
+
+func (c *socketMonitorClient) QueryMigrate(timeout time.Duration) (string, error) {
+	var status string
+	err := c.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {
+		info, err := monitor.QueryMigrate()
+		if err != nil {
+			return fmt.Errorf("qmp query-migrate: %w", err)
+		}
+		if info.Status != nil {
+			status = info.Status.String()
+		}
+		return nil
+	})
+	if isTimeoutError(err) {
+		return "", fmt.Errorf("qmp query-migrate timed out after %s", timeout)
 	}
 	return status, err
 }

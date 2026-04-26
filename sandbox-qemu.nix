@@ -12,6 +12,16 @@ let
       "pci"
     else
       "mmio";
+  persistenceBaseDir = cfg.persistence.basedir;
+  persistenceStateDir = "${persistenceBaseDir}/.virtie";
+  resolvePersistencePath =
+    path:
+    if path == null || lib.hasPrefix "/" path then
+      path
+    else
+      "${persistenceBaseDir}/${path}";
+  resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
+  resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
 in
 {
   imports = [
@@ -34,6 +44,12 @@ in
     };
 
     persistence = {
+      basedir = lib.mkOption {
+        type = lib.types.str;
+        default = ".agentspace";
+        description = "Base directory for generated sandbox persistence paths.";
+      };
+
       homeImage = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = "home.img";
@@ -126,6 +142,12 @@ in
       };
 
       virtieManifest = lib.mkOption {
+        type = lib.types.str;
+        readOnly = true;
+        internal = true;
+      };
+
+      virtieManifestTemplate = lib.mkOption {
         type = lib.types.path;
         readOnly = true;
         internal = true;
@@ -276,7 +298,11 @@ in
           lockPath = "/tmp/agentspace-${cfg.hostName}.lock";
           runtimeDir = "";
         };
-        persistence.directories = initDirs;
+        persistence = {
+          directories = initDirs;
+          baseDir = persistenceBaseDir;
+          stateDir = persistenceStateDir;
+        };
         ssh = {
           argv = sshBaseArgv;
           user = cfg.user;
@@ -286,7 +312,9 @@ in
         virtiofs.daemons = virtiofsDaemons;
       };
 
-      virtieManifest = pkgs.writeText "virtie-${cfg.hostName}.json" (builtins.toJSON virtieManifestData);
+      virtieManifestTemplate =
+        pkgs.writeText "virtie-${cfg.hostName}.json" (builtins.toJSON virtieManifestData);
+      virtieManifest = "${persistenceBaseDir}/virtie-${cfg.hostName}.json";
     in
     lib.mkMerge [
       {
@@ -294,6 +322,7 @@ in
           inherit commonInit;
           inherit virtieManifestData;
           inherit virtieManifest;
+          inherit virtieManifestTemplate;
         };
 
         networking.hostName = cfg.hostName;
@@ -430,14 +459,14 @@ in
 
           volumes = [
             {
-              image = cfg.persistence.storeOverlay;
+              image = resolvedStoreOverlay;
               mountPoint = "/nix/.rw-store";
               size = 2 * 4096;
             }
           ]
           ++ lib.optionals (cfg.persistence.homeImage != null) [
             {
-              image = cfg.persistence.homeImage;
+              image = resolvedHomeImage;
               mountPoint = "/home/${cfg.user}";
               fsType = "ext4";
               size = cfg.persistence.homeSize;

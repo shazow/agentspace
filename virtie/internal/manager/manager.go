@@ -27,40 +27,44 @@ import (
 )
 
 const (
-	defaultSSHRetryDelay = 1 * time.Second
-	defaultShutdownDelay = 15 * time.Second
+	defaultSSHRetryDelay      = 1 * time.Second
+	defaultShutdownDelay      = 15 * time.Second
+	defaultMigrationPollDelay = 100 * time.Millisecond
 )
 
 var sshProbeCommand = []string{"true"}
+var errSuspendExit = errors.New("suspend exit requested")
 
 type manager struct {
-	locker            locker
-	runner            runner
-	socketWaiter      socketWaiter
-	qmpDialer         qmpDialer
-	logger            *log.Logger
-	sshRetryDelay     time.Duration
-	shutdownDelay     time.Duration
-	qmpRetryDelay     time.Duration
-	qmpConnectTimeout time.Duration
-	qmpQuitTimeout    time.Duration
-	signals           <-chan os.Signal
-	selfStop          func() error
-	pidSignaler       pidSignaler
+	locker              locker
+	runner              runner
+	socketWaiter        socketWaiter
+	qmpDialer           qmpDialer
+	logger              *log.Logger
+	sshRetryDelay       time.Duration
+	shutdownDelay       time.Duration
+	qmpRetryDelay       time.Duration
+	qmpConnectTimeout   time.Duration
+	qmpQuitTimeout      time.Duration
+	qmpMigrationTimeout time.Duration
+	signals             <-chan os.Signal
+	selfStop            func() error
+	pidSignaler         pidSignaler
 }
 
 func newManager() *manager {
 	return &manager{
-		locker:            &fileLocker{},
-		runner:            &execRunner{},
-		socketWaiter:      &pollingSocketWaiter{},
-		qmpDialer:         &socketMonitorDialer{},
-		logger:            log.New(os.Stderr, "virtie: ", 0),
-		sshRetryDelay:     defaultSSHRetryDelay,
-		shutdownDelay:     defaultShutdownDelay,
-		qmpRetryDelay:     defaultQMPRetryDelay,
-		qmpConnectTimeout: defaultQMPConnectTimeout,
-		qmpQuitTimeout:    defaultQMPQuitTimeout,
+		locker:              &fileLocker{},
+		runner:              &execRunner{},
+		socketWaiter:        &pollingSocketWaiter{},
+		qmpDialer:           &socketMonitorDialer{},
+		logger:              log.New(os.Stderr, "virtie: ", 0),
+		sshRetryDelay:       defaultSSHRetryDelay,
+		shutdownDelay:       defaultShutdownDelay,
+		qmpRetryDelay:       defaultQMPRetryDelay,
+		qmpConnectTimeout:   defaultQMPConnectTimeout,
+		qmpQuitTimeout:      defaultQMPQuitTimeout,
+		qmpMigrationTimeout: defaultQMPMigrationTimeout,
 	}
 }
 
@@ -125,6 +129,9 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	defer joinDeferredError(&err, lock.Release)
 
 	if err := removeSuspendState(manifest); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	if err := removeSuspendRequest(manifest); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := writeLaunchPID(manifest, os.Getpid()); err != nil {
@@ -229,7 +236,7 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	}
 	started = append(started, session)
 
-	return m.waitForSession(launchCtx, session, manifest, qmpSocketPath, qmpClient, sessionSignals, started[:len(started)-1]...)
+	return m.waitForSession(launchCtx, session, manifest, qmpSocketPath, qmpClient, cid, sessionSignals, started[:len(started)-1]...)
 }
 
 func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
@@ -325,6 +332,17 @@ func (m *manager) allocateCID(manifest *manifest.Manifest) (int, lock, error) {
 		manifest.VSock.CIDRange.Start,
 		manifest.VSock.CIDRange.End,
 	)
+}
+
+func (m *manager) acquireCID(manifest *manifest.Manifest, cid int) (lock, error) {
+	if cid < manifest.VSock.CIDRange.Start || cid > manifest.VSock.CIDRange.End {
+		return nil, fmt.Errorf("saved vsock CID %d is outside manifest range %d-%d", cid, manifest.VSock.CIDRange.Start, manifest.VSock.CIDRange.End)
+	}
+	lock, err := m.locker.Acquire(manifest.ResolvedVSockLockPath(cid))
+	if err != nil {
+		return nil, err
+	}
+	return lock, nil
 }
 
 func (m *manager) waitForSockets(ctx context.Context, socketPaths []string, watchers ...*managedProcess) error {
@@ -436,6 +454,13 @@ func (m *manager) effectiveQMPQuitTimeout() time.Duration {
 	return defaultQMPQuitTimeout
 }
 
+func (m *manager) effectiveQMPMigrationTimeout() time.Duration {
+	if m.qmpMigrationTimeout > 0 {
+		return m.qmpMigrationTimeout
+	}
+	return defaultQMPMigrationTimeout
+}
+
 func (m *manager) effectiveQMPCommandTimeout() time.Duration {
 	return m.effectiveQMPConnectTimeout()
 }
@@ -510,7 +535,7 @@ func sshPermissionDenied(stderr string) bool {
 	return strings.Contains(stderr, "Permission denied (publickey")
 }
 
-func (m *manager) waitForSession(ctx context.Context, session *managedProcess, manifest *manifest.Manifest, qmpSocketPath string, qmpClient qmpClient, signalCh <-chan os.Signal, watchers ...*managedProcess) error {
+func (m *manager) waitForSession(ctx context.Context, session *managedProcess, manifest *manifest.Manifest, qmpSocketPath string, qmpClient qmpClient, cid int, signalCh <-chan os.Signal, watchers ...*managedProcess) error {
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
@@ -530,7 +555,10 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, m
 				signalCh = nil
 				continue
 			}
-			if err := m.handleSessionSignal(ctx, sig, manifest, qmpSocketPath, qmpClient, session); err != nil {
+			if err := m.handleSessionSignal(ctx, sig, manifest, qmpSocketPath, qmpClient, cid, session); err != nil {
+				if errors.Is(err, errSuspendExit) {
+					return nil
+				}
 				return err
 			}
 		case <-ctx.Done():
@@ -539,9 +567,24 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, m
 	}
 }
 
-func (m *manager) handleSessionSignal(ctx context.Context, sig os.Signal, manifest *manifest.Manifest, qmpSocketPath string, qmpClient qmpClient, session *managedProcess) error {
+func (m *manager) handleSessionSignal(ctx context.Context, sig os.Signal, manifest *manifest.Manifest, qmpSocketPath string, qmpClient qmpClient, cid int, session *managedProcess) error {
 	switch sig {
 	case syscall.SIGTSTP:
+		request, requestErr := readSuspendRequest(manifest)
+		if requestErr != nil && !errors.Is(requestErr, os.ErrNotExist) {
+			return &stageError{Stage: "qmp suspend", Err: requestErr}
+		}
+		if requestErr == nil {
+			if err := removeSuspendRequest(manifest); err != nil {
+				return &stageError{Stage: "qmp suspend", Err: err}
+			}
+		}
+		if request.Mode == "exit" {
+			if err := m.suspendExitConnected(ctx, manifest, qmpSocketPath, qmpClient, cid); err != nil {
+				return err
+			}
+			return errSuspendExit
+		}
 		if err := m.suspendConnected(manifest, qmpSocketPath, qmpClient); err != nil {
 			return err
 		}
@@ -569,6 +612,85 @@ func (m *manager) handleSessionSignal(ctx context.Context, sig os.Signal, manife
 		}
 	}
 	return nil
+}
+
+func (m *manager) suspendExitConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int) error {
+	timeout := m.effectiveQMPCommandTimeout()
+
+	status, err := client.QueryStatus(timeout)
+	if err != nil {
+		return &stageError{Stage: "qmp suspend", Err: err}
+	}
+	switch status {
+	case "paused":
+	case "running":
+		if err := client.Stop(timeout); err != nil {
+			return &stageError{Stage: "qmp suspend", Err: err}
+		}
+	default:
+		return &stageError{Stage: "qmp suspend", Err: fmt.Errorf("cannot save VM while QMP status is %q", status)}
+	}
+
+	statePath := vmStatePath(manifest)
+	if err := ensureParentDirectories([]string{statePath}); err != nil {
+		return &stageError{Stage: "qmp suspend", Err: err}
+	}
+	if err := os.Remove(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return &stageError{Stage: "qmp suspend", Err: fmt.Errorf("remove stale vm state %q: %w", statePath, err)}
+	}
+	if err := client.MigrateToFile(m.effectiveQMPMigrationTimeout(), statePath); err != nil {
+		return &stageError{Stage: "qmp suspend", Err: err}
+	}
+	if err := m.waitForMigration(ctx, client); err != nil {
+		return &stageError{Stage: "qmp suspend", Err: err}
+	}
+
+	if err := writeSuspendStateData(manifest, suspendState{
+		HostName:      manifest.Identity.HostName,
+		QMPSocketPath: qmpSocketPath,
+		VMStatePath:   statePath,
+		CID:           cid,
+		Status:        "saved",
+	}); err != nil {
+		return &stageError{Stage: "qmp suspend", Err: err}
+	}
+	return nil
+}
+
+func (m *manager) waitForMigration(ctx context.Context, client qmpClient) error {
+	timeout := m.effectiveQMPMigrationTimeout()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(defaultMigrationPollDelay)
+	defer ticker.Stop()
+
+	var lastStatus string
+	for {
+		status, err := client.QueryMigrate(m.effectiveQMPCommandTimeout())
+		if err != nil {
+			return err
+		}
+		if status != "" {
+			lastStatus = status
+		}
+		switch status {
+		case "completed":
+			return nil
+		case "failed", "cancelled":
+			return fmt.Errorf("migration %s", status)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			if lastStatus == "" {
+				lastStatus = "unknown"
+			}
+			return fmt.Errorf("migration did not complete within %s; last status %q", timeout, lastStatus)
+		case <-ticker.C:
+		}
+	}
 }
 
 func (m *manager) stopSelf() error {

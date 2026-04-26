@@ -84,7 +84,12 @@
 
             ${launchCfg.commonInit}
 
-            exec ${virtiePackage}/bin/virtie launch --manifest=${launchCfg.virtieManifest} -- "$@"
+            MANIFEST_PATH=${lib.escapeShellArg launchCfg.virtieManifest}
+            ${pkgs.coreutils}/bin/mkdir -p "$(${pkgs.coreutils}/bin/dirname "$MANIFEST_PATH")"
+            ${pkgs.coreutils}/bin/rm -f "$MANIFEST_PATH"
+            ${pkgs.coreutils}/bin/install -m 0644 ${lib.escapeShellArg launchCfg.virtieManifestTemplate} "$MANIFEST_PATH"
+
+            exec ${virtiePackage}/bin/virtie launch --manifest="$MANIFEST_PATH" -- "$@"
           '';
         in
         "${script}/bin/launch-agent";

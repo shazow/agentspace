@@ -46,6 +46,8 @@ type Paths struct {
 
 type Persistence struct {
 	Directories []string `json:"directories"`
+	BaseDir     string   `json:"baseDir,omitempty"`
+	StateDir    string   `json:"stateDir,omitempty"`
 }
 
 type SSH struct {
@@ -382,6 +384,20 @@ func (m *Manifest) ResolvedPersistenceDirectories() []string {
 		dirs = append(dirs, m.resolvePath(dir))
 	}
 	return dirs
+}
+
+func (m *Manifest) ResolvedPersistenceBaseDir() string {
+	if m.Persistence.BaseDir == "" {
+		return m.resolvePath(".")
+	}
+	return m.resolvePath(m.Persistence.BaseDir)
+}
+
+func (m *Manifest) ResolvedPersistenceStateDir() string {
+	if m.Persistence.StateDir != "" {
+		return m.resolvePath(m.Persistence.StateDir)
+	}
+	return filepath.Join(m.ResolvedPersistenceBaseDir(), ".virtie")
 }
 
 func (m *Manifest) resolveSocketPath(path string) (string, error) {

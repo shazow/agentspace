@@ -13,12 +13,17 @@ let
 
         mkdir -p "$PWD/state"
         qmp_socket=""
+        incoming=""
 
         while [ "$#" -gt 0 ]; do
           case "$1" in
             -qmp)
               shift
               qmp_socket="$1"
+              ;;
+            -incoming)
+              shift
+              incoming="$1"
               ;;
             *guest-cid=*)
               cid="''${1##*guest-cid=}"
@@ -44,6 +49,9 @@ let
         esac
 
         touch "$PWD/state/qemu-started"
+        if [ "$incoming" = "defer" ]; then
+          touch "$PWD/state/qemu-incoming-defer"
+        fi
 
         export QMP_SOCKET="$qmp_socket"
         export QEMU_PARENT_PID="$$"
@@ -68,6 +76,7 @@ server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(socket_path)
 server.listen(16)
 status = "running"
+migration_status = "none"
 status_lock = threading.Lock()
 accepted_connections = 0
 accept_lock = threading.Lock()
@@ -78,6 +87,7 @@ def touch(name):
 
 def handle(conn):
     global status
+    global migration_status
     def send(message):
         conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
 
@@ -133,6 +143,28 @@ def handle(conn):
                     status = "running"
                 touch("qemu-resumed")
                 send({"return": {}})
+            elif command == "migrate":
+                uri = message.get("arguments", {}).get("uri", "")
+                if uri.startswith("file:"):
+                    with open(uri.removeprefix("file:"), "w", encoding="utf-8") as state_file:
+                        state_file.write("fake migration state\n")
+                with status_lock:
+                    migration_status = "completed"
+                touch("qemu-migrated")
+                send({"return": {}})
+            elif command == "migrate-incoming":
+                uri = message.get("arguments", {}).get("uri", "")
+                if uri.startswith("file:") and not os.path.exists(uri.removeprefix("file:")):
+                    send({"error": {"class": "GenericError", "desc": "missing migration file"}})
+                    continue
+                with status_lock:
+                    migration_status = "completed"
+                touch("qemu-migrate-incoming")
+                send({"return": {}})
+            elif command == "query-migrate":
+                with status_lock:
+                    current_migration_status = migration_status
+                send({"return": {"status": current_migration_status}})
             elif command == "quit":
                 send({"return": {}})
                 os.kill(parent_pid, signal.SIGTERM)
@@ -258,6 +290,13 @@ PY
       exit 0
     fi
 
+    if [ "''${#remote_command[@]}" -eq 0 ]; then
+      while [ ! -f "$PWD/state/ssh-session-finished" ]; do
+        sleep 0.1
+      done
+      exit 0
+    fi
+
     exec "''${remote_command[@]}"
   '';
 
@@ -269,7 +308,11 @@ PY
         lockPath = "virtie.lock";
         runtimeDir = "";
       };
-      persistence.directories = [ "state" ];
+      persistence = {
+        directories = [ "state" ];
+        baseDir = ".agentspace";
+        stateDir = ".agentspace/.virtie";
+      };
       ssh = {
         argv = [ fakeSSH ];
         user = "agent";
@@ -372,7 +415,8 @@ PY
         commonInit = ''
           cd "$REPO_DIR"
         '';
-        virtieManifest = manifest;
+        virtieManifest = ".agentspace/virtie-fake.json";
+        virtieManifestTemplate = manifest;
       };
     };
   };
@@ -391,6 +435,11 @@ in
         kill -CONT "$launch_pid" 2>/dev/null || true
         wait "$launch_pid" 2>/dev/null || true
       fi
+      if [ -n "''${resume_pid:-}" ]; then
+        touch "$PWD/state/ssh-session-finished" 2>/dev/null || true
+        kill "$resume_pid" 2>/dev/null || true
+        wait "$resume_pid" 2>/dev/null || true
+      fi
       rm -rf "$tmpdir"
     }
     trap cleanup EXIT INT TERM
@@ -402,7 +451,7 @@ in
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f .virtie/virtie-fake.pid; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
+    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f .agentspace/virtie-fake.json; test -f .agentspace/.virtie/virtie-fake.pid; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
       echo "virtie-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1
@@ -417,7 +466,7 @@ in
     grep -Fx 'overlay.img' "$workspace_dir/state/mkfs-ext4-args" >/dev/null
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
-    test ! -e "$workspace_dir/.virtie/virtie-fake.pid"
+    test ! -e "$workspace_dir/.agentspace/.virtie/virtie-fake.pid"
 
     pause_workspace_dir="$tmpdir/pause-workspace"
     pause_log="$tmpdir/virtie-pause.log"
@@ -428,7 +477,7 @@ in
     launch_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .virtie/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/.virtie/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
         break
       fi
       sleep 0.1
@@ -440,18 +489,19 @@ in
       exit 1
     fi
 
-    ${virtiePackage}/bin/virtie suspend --manifest=${manifest}
+    runtime_manifest="$pause_workspace_dir/.agentspace/virtie-fake.json"
+    ${virtiePackage}/bin/virtie suspend --manifest="$runtime_manifest"
     test -f "$pause_workspace_dir/state/qemu-paused"
     test ! -e "$pause_workspace_dir/state/qmp-second-client"
-    test -f "$pause_workspace_dir/.virtie/virtie-fake.pid"
-    test -f "$pause_workspace_dir/.virtie/virtie-fake.suspend.json"
-    grep -F '"status": "paused"' "$pause_workspace_dir/.virtie/virtie-fake.suspend.json" >/dev/null
+    test -f "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+    test -f "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json"
+    grep -F '"status": "paused"' "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json" >/dev/null
 
-    ${virtiePackage}/bin/virtie resume --manifest=${manifest}
+    ${virtiePackage}/bin/virtie resume --manifest="$runtime_manifest"
     test -f "$pause_workspace_dir/state/qemu-resumed"
     test ! -e "$pause_workspace_dir/state/qmp-second-client"
-    test -f "$pause_workspace_dir/.virtie/virtie-fake.pid"
-    test ! -e "$pause_workspace_dir/.virtie/virtie-fake.suspend.json"
+    test -f "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+    test ! -e "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json"
 
     touch "$pause_workspace_dir/state/resume-finished"
     if ! wait "$launch_pid"; then
@@ -459,10 +509,71 @@ in
       cat "$pause_log" >&2
       exit 1
     fi
-    test ! -e "$pause_workspace_dir/.virtie/virtie-fake.pid"
+    test ! -e "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+
+    disk_workspace_dir="$tmpdir/disk-workspace"
+    disk_log="$tmpdir/virtie-disk.log"
+    disk_resume_log="$tmpdir/virtie-disk-resume.log"
+    mkdir -p "$disk_workspace_dir"
+    cd "$disk_workspace_dir"
+
+    ${launchScript} >"$disk_log" 2>&1 &
+    launch_pid=$!
+
+    for _ in $(seq 1 100); do
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/.virtie/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    disk_manifest="$disk_workspace_dir/.agentspace/virtie-fake.json"
+    ${virtiePackage}/bin/virtie suspend --exit --manifest="$disk_manifest"
+    test -f "$disk_workspace_dir/state/qemu-paused"
+    test -f "$disk_workspace_dir/state/qemu-migrated"
+    test -f "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.vmstate"
+    test -f "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json"
+    test ! -e "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+    grep -F '"status": "saved"' "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json" >/dev/null
+    grep -F '"cid": 3' "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json" >/dev/null
+
+    if ! wait "$launch_pid"; then
+      echo "virtie-launch-e2e: disk suspend launch exited non-zero" >&2
+      cat "$disk_log" >&2
+      exit 1
+    fi
+    unset launch_pid
+
+    ${virtiePackage}/bin/virtie resume --manifest="$disk_manifest" >"$disk_resume_log" 2>&1 &
+    resume_pid=$!
+    for _ in $(seq 1 100); do
+      if [ -f "$disk_workspace_dir/state/qemu-migrate-incoming" ] && [ -f "$disk_workspace_dir/state/qemu-resumed" ] && [ -f "$disk_workspace_dir/state/ssh-destination" ]; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    test -f "$disk_workspace_dir/state/qemu-incoming-defer"
+    test -f "$disk_workspace_dir/state/qemu-migrate-incoming"
+    test -f "$disk_workspace_dir/state/qemu-resumed"
+    grep -Fx '3' "$disk_workspace_dir/state/qemu-vsock-cid" >/dev/null
+    test ! -e "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.vmstate"
+    test ! -e "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json"
+    test -f "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+
+    touch "$disk_workspace_dir/state/ssh-session-finished"
+    if ! wait "$resume_pid"; then
+      echo "virtie-launch-e2e: disk resume exited non-zero" >&2
+      cat "$disk_resume_log" >&2
+      exit 1
+    fi
+    unset resume_pid
+    test ! -e "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
 
     mkdir -p "$out"
     cp "$launch_log" "$out/virtie.log"
     cp "$pause_log" "$out/virtie-pause.log"
+    cp "$disk_log" "$out/virtie-disk.log"
+    cp "$disk_resume_log" "$out/virtie-disk-resume.log"
   '';
 }

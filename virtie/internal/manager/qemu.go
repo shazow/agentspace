@@ -10,12 +10,20 @@ import (
 )
 
 func buildQEMUSpec(manifest *manifest.Manifest, cid int) (processSpec, error) {
+	return buildQEMUSpecWithIncoming(manifest, cid, false)
+}
+
+func buildIncomingQEMUSpec(manifest *manifest.Manifest, cid int) (processSpec, error) {
+	return buildQEMUSpecWithIncoming(manifest, cid, true)
+}
+
+func buildQEMUSpecWithIncoming(manifest *manifest.Manifest, cid int, incoming bool) (processSpec, error) {
 	qemu, err := manifest.ResolvedQEMU()
 	if err != nil {
 		return processSpec{}, err
 	}
 
-	args, err := buildQEMUArgs(qemu, cid)
+	args, err := buildQEMUArgs(qemu, cid, incoming)
 	if err != nil {
 		return processSpec{}, err
 	}
@@ -30,7 +38,7 @@ func buildQEMUSpec(manifest *manifest.Manifest, cid int) (processSpec, error) {
 	}, nil
 }
 
-func buildQEMUArgs(qemu manifest.QEMU, cid int) ([]string, error) {
+func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error) {
 	config := &govmmQemu.Config{
 		Machine: govmmQemu.Machine{
 			Type: qemu.Machine.Type,
@@ -205,6 +213,10 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int) ([]string, error) {
 		ContextID: uint64(cid),
 		Transport: vsockTransport,
 	}.QemuParams(config)...)
+
+	if incoming {
+		args = append(args, "-incoming", "defer")
+	}
 
 	args = append(args, qemu.PassthroughArgs...)
 

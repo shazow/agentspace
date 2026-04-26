@@ -18,6 +18,7 @@ The supported CLI is:
 ```console
 virtie launch --manifest=MANIFEST [-- <remote-cmd...>]
 virtie suspend --manifest=MANIFEST
+virtie suspend --exit --manifest=MANIFEST
 virtie resume --manifest=MANIFEST
 ```
 
@@ -31,20 +32,22 @@ hand. See the root flake for packaging and launch integration.
 - Starts `virtiofsd`, launches QEMU, waits for SSH readiness, and attaches the
   active session.
 - Uses QMP for readiness and graceful shutdown.
-- Records the active launch PID at `<workingDir>/.virtie/<hostName>.pid`.
+- Records the active launch PID under the manifest persistence state directory.
   `virtie suspend` sends `SIGTSTP` to that process, and `virtie resume` sends
   `SIGCONT`; only the launch process talks to QMP.
-- Records advisory suspend state at
-  `<workingDir>/.virtie/<hostName>.suspend.json`; QMP status remains
-  authoritative.
+- `virtie suspend --exit` asks the launch process to save QEMU migration state
+  to disk, tear down the foreground session, and exit. A later `virtie resume`
+  restores from that saved state when no valid launch PID exists.
+- Records advisory suspend state under the persistence state directory; QMP
+  status remains authoritative for live sessions.
 - Tears down guest and host-side processes in a defined order on exit or
   signal.
 
 ## Notes
 
 - The manifest format is owned by this repository and is intentionally narrow.
-- Suspend/resume is a pause/resume lifecycle for a still-running QEMU process,
-  not full RAM/device hibernation and restore.
+- Plain suspend/resume is a pause/resume lifecycle for a still-running QEMU
+  process. `suspend --exit` uses QEMU migration-to-file for disk-backed restore.
 - `SIGTSTP` is used for suspend control because `SIGSTOP` cannot be caught by
   the launch process before it stops itself.
 - `virtie` currently assumes the surrounding Nix flow has already resolved the

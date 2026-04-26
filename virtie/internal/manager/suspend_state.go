@@ -17,26 +17,44 @@ import (
 type suspendState struct {
 	HostName      string    `json:"hostName"`
 	QMPSocketPath string    `json:"qmpSocketPath"`
+	VMStatePath   string    `json:"vmStatePath,omitempty"`
+	CID           int       `json:"cid,omitempty"`
 	Timestamp     time.Time `json:"timestamp"`
 	Status        string    `json:"status"`
 }
 
 func suspendStatePath(manifest *manifest.Manifest) string {
-	return filepath.Join(manifest.Paths.WorkingDir, ".virtie", manifest.Identity.HostName+".suspend.json")
+	return filepath.Join(manifest.ResolvedPersistenceStateDir(), manifest.Identity.HostName+".suspend.json")
+}
+
+func suspendRequestPath(manifest *manifest.Manifest) string {
+	return filepath.Join(manifest.ResolvedPersistenceStateDir(), manifest.Identity.HostName+".suspend-request.json")
+}
+
+func vmStatePath(manifest *manifest.Manifest) string {
+	return filepath.Join(manifest.ResolvedPersistenceStateDir(), manifest.Identity.HostName+".vmstate")
 }
 
 func launchPIDPath(manifest *manifest.Manifest) string {
-	return filepath.Join(manifest.Paths.WorkingDir, ".virtie", manifest.Identity.HostName+".pid")
+	return filepath.Join(manifest.ResolvedPersistenceStateDir(), manifest.Identity.HostName+".pid")
 }
 
 func writeSuspendState(manifest *manifest.Manifest, qmpSocketPath string, status string) error {
-	state := suspendState{
+	return writeSuspendStateData(manifest, suspendState{
 		HostName:      manifest.Identity.HostName,
 		QMPSocketPath: qmpSocketPath,
 		Timestamp:     time.Now().UTC(),
 		Status:        status,
-	}
+	})
+}
 
+func writeSuspendStateData(manifest *manifest.Manifest, state suspendState) error {
+	if state.HostName == "" {
+		state.HostName = manifest.Identity.HostName
+	}
+	if state.Timestamp.IsZero() {
+		state.Timestamp = time.Now().UTC()
+	}
 	path := suspendStatePath(manifest)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create suspend state directory: %w", err)
@@ -79,10 +97,62 @@ func hasPausedSuspendState(manifest *manifest.Manifest) (bool, error) {
 	return state.Status == "paused", nil
 }
 
+func hasSavedSuspendState(manifest *manifest.Manifest) (bool, error) {
+	state, err := readSuspendState(manifest)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return state.Status == "saved", nil
+}
+
 func removeSuspendState(manifest *manifest.Manifest) error {
 	path := suspendStatePath(manifest)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove suspend state %q: %w", path, err)
+	}
+	return nil
+}
+
+type suspendRequest struct {
+	Mode string `json:"mode"`
+}
+
+func writeSuspendRequest(manifest *manifest.Manifest, mode string) error {
+	path := suspendRequestPath(manifest)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create suspend request directory: %w", err)
+	}
+	data, err := json.MarshalIndent(suspendRequest{Mode: mode}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode suspend request: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write suspend request %q: %w", path, err)
+	}
+	return nil
+}
+
+func readSuspendRequest(manifest *manifest.Manifest) (suspendRequest, error) {
+	path := suspendRequestPath(manifest)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return suspendRequest{}, err
+	}
+	var request suspendRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		return suspendRequest{}, fmt.Errorf("decode suspend request %q: %w", path, err)
+	}
+	return request, nil
+}
+
+func removeSuspendRequest(manifest *manifest.Manifest) error {
+	path := suspendRequestPath(manifest)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove suspend request %q: %w", path, err)
 	}
 	return nil
 }

@@ -47,6 +47,8 @@ let
     assert builtins.length manifest.qemu.machine.options > 0;
     assert manifest.qemu.machine.type == "microvm";
     assert manifest.paths.runtimeDir == "";
+    assert manifest.persistence.baseDir == ".agentspace";
+    assert manifest.persistence.stateDir == ".agentspace/.virtie";
     assert manifest.qemu.qmp.socketPath == "qmp.sock";
     assert manifest.qemu.devices.rng.id == "rng0";
     assert builtins.length manifest.qemu.devices.virtiofs > 0;
@@ -57,7 +59,7 @@ let
     assert manifest.ssh.user == "agent";
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.argv;
     assert builtins.length manifest.volumes > 0;
-    assert builtins.any (volume: volume.imagePath == "nix-store-overlay.img") manifest.volumes;
+    assert builtins.any (volume: volume.imagePath == ".agentspace/nix-store-overlay.img") manifest.volumes;
     assert builtins.length manifest.virtiofs.daemons > 0;
     assert builtins.all (
       daemon: daemon.socketPath != "" && daemon.command.path != ""
