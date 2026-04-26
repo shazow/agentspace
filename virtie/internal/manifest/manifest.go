@@ -271,8 +271,6 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.vsock.cidRange.start must be at least %d", defaultVSockCIDStart)
 	case m.VSock.CIDRange.End < m.VSock.CIDRange.Start:
 		return fmt.Errorf("manifest.vsock.cidRange.end must be greater than or equal to start")
-	case len(m.VirtioFS.Daemons) == 0:
-		return fmt.Errorf("manifest.virtiofs.daemons must contain at least one daemon")
 	case m.QEMU.Devices.RNG.ID == "":
 		return fmt.Errorf("manifest.qemu.devices.rng.id is required")
 	case !validQEMUTransport(m.QEMU.Devices.RNG.Transport):
@@ -289,7 +287,17 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.devices.vsock.transport must be one of pci, mmio, or ccw")
 	}
 
+	virtioFSShareTags := make(map[string]struct{}, len(m.QEMU.Devices.VirtioFS))
+	for _, share := range m.QEMU.Devices.VirtioFS {
+		virtioFSShareTags[share.Tag] = struct{}{}
+	}
 	for i, daemon := range m.VirtioFS.Daemons {
+		if daemon.Tag == "" {
+			return fmt.Errorf("manifest.virtiofs.daemons[%d].tag is required", i)
+		}
+		if _, ok := virtioFSShareTags[daemon.Tag]; !ok {
+			return fmt.Errorf("manifest.virtiofs.daemons[%d].tag must match a qemu virtiofs share", i)
+		}
 		if daemon.SocketPath == "" {
 			return fmt.Errorf("manifest.virtiofs.daemons[%d].socketPath is required", i)
 		}
@@ -400,6 +408,18 @@ func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
 	paths := make([]string, 0, len(m.VirtioFS.Daemons))
 	for _, daemon := range m.VirtioFS.Daemons {
 		resolved, err := m.resolveSocketPath(daemon.SocketPath)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, resolved)
+	}
+	return paths, nil
+}
+
+func (m *Manifest) ResolvedVirtioFSSocketPaths() ([]string, error) {
+	paths := make([]string, 0, len(m.QEMU.Devices.VirtioFS))
+	for _, share := range m.QEMU.Devices.VirtioFS {
+		resolved, err := m.resolveSocketPath(share.SocketPath)
 		if err != nil {
 			return nil, err
 		}

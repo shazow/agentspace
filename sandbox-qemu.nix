@@ -85,6 +85,17 @@ in
       description = "Where to mount the current working directory inside the VM.";
     };
 
+    nixStoreShareSocket = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/var/run/virtiofs-nix-store.sock";
+      description = ''
+        Existing host-side virtiofsd socket for the Nix store share. If
+        provided, QEMU uses this socket instead of having virtie start a
+        userland virtiofsd process for the share.
+      '';
+    };
+
     homeModules = lib.mkOption {
       type = lib.types.listOf lib.types.raw;
       default = [ ];
@@ -138,46 +149,59 @@ in
         exec sudo poweroff
       '';
 
-      initDirs =
-        lib.unique (builtins.map (volume: builtins.dirOf volume.image) config.microvm.volumes);
+      initDirs = lib.unique (builtins.map (volume: builtins.dirOf volume.image) config.microvm.volumes);
 
-      commonInit =
-        ''
-          echo "🚀 Preparing Agent QEMU Sandbox..."
-        ''
-        + lib.optionalString cfg.mountWorkspace ''
-          echo "📂 Mounting current directory at ~/workspace"
-          cd "$REPO_DIR"
-        '';
+      commonInit = ''
+        echo "🚀 Preparing Agent QEMU Sandbox..."
+      ''
+      + lib.optionalString cfg.mountWorkspace ''
+        echo "📂 Mounting current directory at ~/workspace"
+        cd "$REPO_DIR"
+      '';
 
-      sshBaseArgv =
-        [
-          "${pkgs.openssh}/bin/ssh"
-          "-q"
-          "-o"
-          "StrictHostKeyChecking=no"
-          "-o"
-          "UserKnownHostsFile=/dev/null"
-          "-o"
-          "GlobalKnownHostsFile=/dev/null"
-        ]
-        ++ lib.optionals (cfg.sshIdentityFile != null) [
-          "-i"
-          cfg.sshIdentityFile
-        ];
+      sshBaseArgv = [
+        "${pkgs.openssh}/bin/ssh"
+        "-q"
+        "-o"
+        "StrictHostKeyChecking=no"
+        "-o"
+        "UserKnownHostsFile=/dev/null"
+        "-o"
+        "GlobalKnownHostsFile=/dev/null"
+      ]
+      ++ lib.optionals (cfg.sshIdentityFile != null) [
+        "-i"
+        cfg.sshIdentityFile
+      ];
       virtiofsShares = builtins.filter (share: share.proto == "virtiofs") config.microvm.shares;
       baseQemuConfig = import ./agentspace-qemu-config.nix {
         inherit config lib pkgs;
       };
+      nixStoreShareUsesSocket = cfg.nixStoreShareSocket != null;
+      isNixStoreShare = share: share.tag == "ro-store";
+      managedVirtioFSShares = builtins.filter (
+        share: !(nixStoreShareUsesSocket && isNixStoreShare share)
+      ) virtiofsShares;
       qemuConfig = baseQemuConfig // {
-        devices = baseQemuConfig.devices // lib.optionalAttrs config.microvm.balloon {
-          balloon = {
-            id = "balloon0";
-            transport = balloonTransport;
-            deflateOnOOM = config.microvm.deflateOnOOM;
-            freePageReporting = true;
+        devices =
+          baseQemuConfig.devices
+          // {
+            virtiofs = builtins.map (
+              share:
+              if nixStoreShareUsesSocket && isNixStoreShare share then
+                share // { socketPath = cfg.nixStoreShareSocket; }
+              else
+                share
+            ) baseQemuConfig.devices.virtiofs;
+          }
+          // lib.optionalAttrs config.microvm.balloon {
+            balloon = {
+              id = "balloon0";
+              transport = balloonTransport;
+              deflateOnOOM = config.microvm.deflateOnOOM;
+              freePageReporting = true;
+            };
           };
-        };
       };
 
       mkVirtioFSDaemonCommand =
@@ -203,8 +227,10 @@ in
 
           exec ${lib.getExe config.microvm.virtiofsd.package} \
             --socket-path="$socket_path" \
-            ${lib.optionalString (config.microvm.virtiofsd.group != null)
-              "--socket-group=${config.microvm.virtiofsd.group}"
+            ${
+              lib.optionalString (
+                config.microvm.virtiofsd.group != null
+              ) "--socket-group=${config.microvm.virtiofsd.group}"
             } \
             --shared-dir=${lib.escapeShellArg source} \
             "''${opt_rlimit[@]}" \
@@ -228,7 +254,7 @@ in
           path = mkVirtioFSDaemonCommand share;
           args = [ ];
         };
-      }) virtiofsShares;
+      }) managedVirtioFSShares;
 
       manifestVolumes = builtins.map (volume: {
         imagePath = volume.image;
@@ -337,7 +363,6 @@ in
           # so unlikely to work in all scenarios.
           "vm.vfs_cache_pressure" = 1000; # Default: 100
         };
-
 
         # User Configuration
         users.users.${cfg.user} = {

@@ -147,6 +147,13 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			if got, want := socketPaths, []string{tt.wantSocket}; !reflect.DeepEqual(got, want) {
 				t.Fatalf("unexpected socket paths: got %v want %v", got, want)
 			}
+			virtioFSSocketPaths, err := manifest.ResolvedVirtioFSSocketPaths()
+			if err != nil {
+				t.Fatalf("resolve virtiofs socket paths: %v", err)
+			}
+			if got, want := virtioFSSocketPaths, []string{tt.wantSocket}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("unexpected virtiofs socket paths: got %v want %v", got, want)
+			}
 
 			qmpSocketPath, err := manifest.ResolvedQMPSocketPath()
 			if err != nil {
@@ -175,6 +182,32 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 				t.Fatalf("unexpected daemon socket path: got %q want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
+	manifest := validManifest()
+	manifest.VirtioFS.Daemons = nil
+	manifest.QEMU.Devices.VirtioFS[0].SocketPath = "/var/run/virtiofs-nix-store.sock"
+
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+
+	managedSocketPaths, err := manifest.ResolvedSocketPaths()
+	if err != nil {
+		t.Fatalf("resolve managed socket paths: %v", err)
+	}
+	if len(managedSocketPaths) != 0 {
+		t.Fatalf("unexpected managed socket paths: got %v want none", managedSocketPaths)
+	}
+
+	virtioFSSocketPaths, err := manifest.ResolvedVirtioFSSocketPaths()
+	if err != nil {
+		t.Fatalf("resolve virtiofs socket paths: %v", err)
+	}
+	if got, want := virtioFSSocketPaths, []string{"/var/run/virtiofs-nix-store.sock"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected virtiofs socket paths: got %v want %v", got, want)
 	}
 }
 

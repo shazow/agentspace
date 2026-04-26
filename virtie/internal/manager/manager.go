@@ -70,7 +70,11 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 		return err
 	}
 
-	socketPaths, err := manifest.ResolvedSocketPaths()
+	managedSocketPaths, err := manifest.ResolvedSocketPaths()
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	virtioFSSocketPaths, err := manifest.ResolvedVirtioFSSocketPaths()
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -96,7 +100,7 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	if err := ensureDirectories(manifest.ResolvedPersistenceDirectories()); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := ensureParentDirectories(socketPaths); err != nil {
+	if err := ensureParentDirectories(managedSocketPaths); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureParentDirectories([]string{qmpSocketPath}); err != nil {
@@ -105,7 +109,7 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := removeSocketPaths(socketPaths); err != nil {
+	if err := removeSocketPaths(managedSocketPaths); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := removeSocketPaths([]string{qmpSocketPath}); err != nil {
@@ -125,7 +129,7 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 		if qmpClient != nil {
 			disconnectErr = qmpClient.Disconnect()
 		}
-		cleanupErr := removeSocketPaths(append([]string{qmpSocketPath}, socketPaths...))
+		cleanupErr := removeSocketPaths(append([]string{qmpSocketPath}, managedSocketPaths...))
 		if err == nil {
 			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
 		} else if featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {
@@ -140,7 +144,7 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	started = append(started, virtiofsd...)
 
 	m.logger.Printf("waiting for virtiofs sockets")
-	if err := m.waitForSockets(ctx, socketPaths, started...); err != nil {
+	if err := m.waitForSockets(ctx, virtioFSSocketPaths, started...); err != nil {
 		return err
 	}
 

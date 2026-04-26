@@ -45,6 +45,7 @@ Acceptance criteria:
 - [x] Implement volume auto-create handling, including filesystem defaults and `mkfs.<fsType>` execution.
 - [x] Implement per-sandbox and per-CID lock files for concurrent session safety.
 - [x] Add runtime-dir-based socket resolution for relative QMP and `virtiofs` sockets, using XDG defaults when requested by the manifest.
+- [x] Allow the Nix store `virtiofs` share to target a provided host socket while `virtie` only starts and removes sockets listed under `virtiofs.daemons`.
 - [x] Implement stage-aware errors and foreground SSH exit-code propagation.
 - [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH retry behavior, and launch/teardown ordering with Go tests.
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
@@ -82,6 +83,7 @@ Acceptance criteria:
   - `volumes[].imagePath`, `sizeMiB`, `fsType`, `autoCreate`, optional `label`, `mkfsExtraArgs`
   - `virtiofs.daemons[].socketPath`
   - `virtiofs.daemons[].command`
+  - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set.
   - optional `vsock.cidRange`, defaulting to `3..65535`
 - Runtime assumptions:
   - Nix has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.

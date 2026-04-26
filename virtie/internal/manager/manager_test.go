@@ -268,6 +268,61 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.Devices.Block[0].ImagePath = "root.img"
+	cfg.Volumes[0].AutoCreate = false
+	externalSocket := filepath.Join(tmpDir, "virtiofs-nix-store.sock")
+	if err := os.WriteFile(externalSocket, []byte("existing"), 0o600); err != nil {
+		t.Fatalf("write external socket placeholder: %v", err)
+	}
+	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
+	cfg.VirtioFS.Daemons = nil
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &fakeRunner{cancel: cancel}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	waiter := &fakeSocketWaiter{
+		callback: func(paths []string) error {
+			return nil
+		},
+	}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      waiter,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launch(cancelCtx, cfg, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+
+	if containsString(runner.starts, "virtiofsd[workspace]") {
+		t.Fatalf("unexpected managed virtiofsd start for external socket: %v", runner.starts)
+	}
+	if _, err := os.Stat(externalSocket); err != nil {
+		t.Fatalf("expected external socket path to be left alone: %v", err)
+	}
+	if len(waiter.paths) == 0 || !reflect.DeepEqual(waiter.paths[0], []string{externalSocket}) {
+		t.Fatalf("expected virtiofs readiness wait to use external socket, got %v", waiter.paths)
+	}
+}
+
 func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 	runner := &blockingSSHRunner{started: make(chan *blockingSSHProcess, 1)}
 	manager := &manager{
@@ -692,11 +747,13 @@ func (p *fakeProcess) complete(err error) {
 
 type fakeSocketWaiter struct {
 	calls    int
+	paths    [][]string
 	callback func(paths []string) error
 }
 
 func (w *fakeSocketWaiter) Wait(ctx context.Context, socketPaths []string) error {
 	w.calls++
+	w.paths = append(w.paths, append([]string(nil), socketPaths...))
 	return w.callback(socketPaths)
 }
 

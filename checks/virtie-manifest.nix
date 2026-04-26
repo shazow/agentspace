@@ -12,6 +12,13 @@ let
     persistence.homeImage = null;
   };
 
+  vmVirtieBalloonEnabled = mkSandbox {
+    sshAuthorizedKeys = [ testPublicKey ];
+    sshIdentityFile = ".agentspace-test/id_ed25519";
+    persistence.homeImage = null;
+    balloon = true;
+  };
+
   vmVirtieBalloonDisabled = mkSandbox {
     sshAuthorizedKeys = [ testPublicKey ];
     sshIdentityFile = ".agentspace-test/id_ed25519";
@@ -19,8 +26,20 @@ let
     balloon = false;
   };
 
+  vmVirtieExternalStoreSocket = mkSandbox {
+    sshAuthorizedKeys = [ testPublicKey ];
+    sshIdentityFile = ".agentspace-test/id_ed25519";
+    persistence.homeImage = null;
+    mountWorkspace = false;
+    nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
-  disabledBalloonManifest = vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
+  enabledBalloonManifest = vmVirtieBalloonEnabled.config.agentspace.sandbox.launch.virtieManifestData;
+  disabledBalloonManifest =
+    vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
+  externalStoreSocketManifest =
+    vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
 
   _ =
     assert manifest.qemu.binaryPath != "";
@@ -40,7 +59,9 @@ let
     assert builtins.length manifest.volumes > 0;
     assert builtins.any (volume: volume.imagePath == "nix-store-overlay.img") manifest.volumes;
     assert builtins.length manifest.virtiofs.daemons > 0;
-    assert builtins.all (daemon: daemon.socketPath != "" && daemon.command.path != "") manifest.virtiofs.daemons;
+    assert builtins.all (
+      daemon: daemon.socketPath != "" && daemon.command.path != ""
+    ) manifest.virtiofs.daemons;
     assert builtins.any (daemon: daemon.tag == "workspace") manifest.virtiofs.daemons;
     assert !(manifest ? vsock);
     assert !(manifest.ssh ? destination);
@@ -51,14 +72,34 @@ let
     true;
 
   _balloon =
-    assert manifest.qemu.devices ? balloon;
-    assert manifest.qemu.devices.balloon.id == "balloon0";
-    assert !(manifest.qemu.devices.balloon ? controller);
+    assert enabledBalloonManifest.qemu.devices ? balloon;
+    assert enabledBalloonManifest.qemu.devices.balloon.id == "balloon0";
+    assert !(enabledBalloonManifest.qemu.devices.balloon ? controller);
     assert !(disabledBalloonManifest.qemu.devices ? balloon);
+    true;
+
+  _externalStoreSocket =
+    assert builtins.length externalStoreSocketManifest.qemu.devices.virtiofs == 1;
+    assert
+      builtins.head externalStoreSocketManifest.qemu.devices.virtiofs == {
+        id = "fs0";
+        socketPath = "/var/run/virtiofs-nix-store.sock";
+        tag = "ro-store";
+        transport = "pci";
+      };
+    assert externalStoreSocketManifest.virtiofs.daemons == [ ];
     true;
 in
 {
-  virtie-manifest-contract = assert _; pkgs.runCommand "virtie-manifest-contract" { } "touch $out";
+  virtie-manifest-contract =
+    assert _;
+    pkgs.runCommand "virtie-manifest-contract" { } "touch $out";
 
-  virtie-manifest-balloon-contract = assert _balloon; pkgs.runCommand "virtie-manifest-balloon-contract" { } "touch $out";
+  virtie-manifest-balloon-contract =
+    assert _balloon;
+    pkgs.runCommand "virtie-manifest-balloon-contract" { } "touch $out";
+
+  virtie-manifest-external-store-socket-contract =
+    assert _externalStoreSocket;
+    pkgs.runCommand "virtie-manifest-external-store-socket-contract" { } "touch $out";
 }
