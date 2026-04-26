@@ -124,6 +124,9 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	}
 	defer joinDeferredError(&err, lock.Release)
 
+	if err := removeSuspendState(manifest); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
 	if err := writeLaunchPID(manifest, os.Getpid()); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -577,9 +580,6 @@ func (m *manager) stopSelf() error {
 
 func signalProcessIfRunning(process *managedProcess, sig os.Signal) error {
 	if process == nil {
-		return nil
-	}
-	if exited, _ := process.pollExit(); exited {
 		return nil
 	}
 	if err := process.proc.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {

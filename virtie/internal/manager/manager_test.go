@@ -152,6 +152,9 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		{ID: "fs0", SocketPath: "sock-a", Tag: "ro-store", Transport: "pci"},
 		{ID: "fs1", SocketPath: "sock-b", Tag: "workspace", Transport: "pci"},
 	}
+	if err := writeSuspendState(cfg, filepath.Join(tmpDir, "old-qmp.sock"), "paused"); err != nil {
+		t.Fatalf("write stale suspend state: %v", err)
+	}
 
 	volumeImage := filepath.Join(tmpDir, "overlay.img")
 	mkfsLog := filepath.Join(tmpDir, "mkfs.log")
@@ -267,6 +270,9 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("expected mkfs log: %v", err)
 	} else if got, want := strings.TrimSpace(string(data)), volumeImage; got != want {
 		t.Fatalf("unexpected mkfs args: got %q want %q", got, want)
+	}
+	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
+		t.Fatalf("expected launch to clear stale suspend state, stat err: %v", err)
 	}
 }
 
@@ -670,6 +676,32 @@ func TestHandleSessionSuspendSignalPausesBeforeSelfStopThenResumes(t *testing.T)
 	}
 	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
 		t.Fatalf("expected suspend state to be removed after resume, stat err: %v", err)
+	}
+}
+
+func TestSignalProcessIfRunningDoesNotDrainSessionCompletion(t *testing.T) {
+	runner := &fakeRunner{}
+	waitErr := errors.New("ssh exited")
+	session := &managedProcess{
+		name: "ssh",
+		proc: &fakeProcess{name: "ssh", runner: runner, done: make(chan error, 1)},
+		done: closedErrorChannel(waitErr),
+	}
+
+	if err := signalProcessIfRunning(session, syscall.SIGCONT); err != nil {
+		t.Fatalf("signal process: %v", err)
+	}
+
+	select {
+	case got, ok := <-session.done:
+		if !ok {
+			t.Fatal("session completion channel was drained")
+		}
+		if !errors.Is(got, waitErr) {
+			t.Fatalf("unexpected session completion: got %v want %v", got, waitErr)
+		}
+	default:
+		t.Fatal("session completion was not preserved")
 	}
 }
 
