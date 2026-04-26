@@ -13,9 +13,10 @@
 
 - Consider committing major component changes separately if the changes work stand-alone. Order the commits incrementally so that they work as a unit.
 
-Commit message style: `git commit -m "<component name>: <short description of changes>" -m "<Additional details about the changes worth noting>"`
-
-When written the a coding agent, final line should include: `Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL1] [TOOL2]`
+Commit message style:
+- First line: `<component name>: <short description of changes>`
+- Following paragraph: `<Additional details about the changes worth noting>`
+- When written the a coding agent, final line should include: `Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL1] [TOOL2]`
 
 Example resulting commit message:
 
