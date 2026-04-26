@@ -12,11 +12,13 @@ Provide the foreground launch runtime for the supported sandbox session created 
 - Allocate and lock a runtime vsock CID for each session.
 - Create missing auto-created volume images, start `virtiofsd`, launch QEMU directly, wait for SSH readiness, and attach the active SSH session.
 - Keep a long-lived QMP session open after boot for graceful shutdown and optional runtime balloon control.
+- Support keep-alive pause/resume of the active QEMU process through QMP.
 - Tear down SSH, QEMU, and `virtiofsd` in the correct order on exit or signal.
 - Surface stage-specific failures clearly enough to debug preflight, startup, readiness, session, and teardown problems.
 
 Out of scope:
 
+- full hibernation restore from RAM and device state
 - reconnect support
 - alternate guest attach or share workflows beyond the supported SSH + `virtiofs` path
 - `systemd --user`, `journalctl`, or machined integration
@@ -25,7 +27,9 @@ Out of scope:
 
 Acceptance criteria:
 
-- [x] `virtie launch <manifest> [-- <remote-cmd...>]` is the supported user-facing command.
+- [x] `virtie launch --manifest=MANIFEST [-- <remote-cmd...>]` is the supported launch command.
+- [x] `virtie suspend --manifest=MANIFEST` pauses a running VM through QMP `stop`, writes advisory state under `.virtie`, and tolerates an already paused VM.
+- [x] `virtie resume --manifest=MANIFEST` continues a paused VM through QMP `cont`, removes advisory state, and tolerates stale state when QMP reports running.
 - [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, QEMU devices, `virtiofs` daemons, and auto-created volumes.
 - [x] QEMU launch is compiled from the typed manifest plus the runtime-selected CID rather than string-substituting a Nix-generated argv template.
 - [x] Launch acquires per-sandbox and per-CID locks before starting guest processes.
@@ -47,6 +51,8 @@ Acceptance criteria:
 - [x] Add runtime-dir-based socket resolution for relative QMP and `virtiofs` sockets, using XDG defaults when requested by the manifest.
 - [x] Allow the Nix store `virtiofs` share to target a provided host socket while `virtie` only starts and removes sockets listed under `virtiofs.daemons`.
 - [x] Implement stage-aware errors and foreground SSH exit-code propagation.
+- [x] Add explicit launch signal handling for interrupt/terminate teardown and terminal suspend/resume through QMP.
+- [x] Add keep-alive suspend/resume commands and advisory suspend state records under `paths.workingDir/.virtie`.
 - [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH retry behavior, and launch/teardown ordering with Go tests.
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
 - [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface.
@@ -95,7 +101,8 @@ Acceptance criteria:
   - `virtie` injects `VIRTIE_SOCKET_PATH` for each `virtiofsd` daemon process so launch scripts can consume the resolved socket path.
 - Implementation notes:
   - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.
-  - QMP is used for monitor readiness, graceful shutdown, and optional runtime balloon control, not for guest readiness.
+  - QMP is used for monitor readiness, graceful shutdown, keep-alive pause/resume, and optional runtime balloon control, not for guest readiness.
+  - Suspend state is advisory. `query-status` is authoritative for whether QEMU is paused or running.
   - When `qemu.devices.balloon` is present, `virtie` resolves the balloon QOM path, enables `guest-stats-polling-interval`, reads `guest-stats` plus `query-balloon`, and adjusts the logical guest memory size within configured or synthesized bounds.
   - If the manifest omits `qemu.devices.balloon.controller`, `virtie` defaults to `maxActualMiB = qemu.memory.sizeMiB`, an idle reclaim target of 50% of that max, a grow threshold at 25% available memory, and the existing step, poll, and reclaim-holdoff defaults.
   - The old Nix-owned argv-template path has been removed from the active contract.
@@ -103,7 +110,7 @@ Acceptance criteria:
 
 ```mermaid
 flowchart TD
-  A[virtie launch manifest] --> B[Load and validate manifest]
+  A[virtie launch --manifest=MANIFEST] --> B[Load and validate manifest]
   B --> C[Acquire sandbox lock]
   C --> D[Allocate and lock free vsock CID]
   D --> E[Create required directories and auto-created volumes]

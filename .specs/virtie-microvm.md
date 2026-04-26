@@ -21,7 +21,7 @@ Out of scope:
 - broadening the supported launcher surface beyond the current admitted path
 - moving guest image construction, initrd generation, or kernel builds out of Nix
 - restoring removed prototype workflows or broadening to bridge or tap networking, graphics, or passthrough support as part of this refactor
-- changing the user-facing `virtie launch <manifest>` CLI
+- changing the user-facing `virtie launch --manifest=MANIFEST` CLI
 
 Acceptance criteria:
 

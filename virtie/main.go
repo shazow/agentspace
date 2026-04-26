@@ -17,15 +17,33 @@ import (
 
 type options struct{}
 
+type manifestOption struct {
+	Manifest string `long:"manifest" value-name:"MANIFEST" required:"yes" description:"Path to the virtie manifest"`
+}
+
 type launchCommand struct {
+	manifestOption
+
 	Args struct {
-		Manifest      string   `positional-arg-name:"manifest" required:"yes"`
 		RemoteCommand []string `positional-arg-name:"remote-cmd"`
 	} `positional-args:"yes"`
 }
 
 func (c *launchCommand) Execute(args []string) error {
-	manifest, err := loadManifest(c.Args.Manifest)
+	manifest, err := loadManifest(c.Manifest)
+	if err != nil {
+		return err
+	}
+
+	return manager.Launch(context.Background(), manifest, c.Args.RemoteCommand)
+}
+
+type suspendCommand struct {
+	manifestOption
+}
+
+func (c *suspendCommand) Execute(args []string) error {
+	manifest, err := loadManifest(c.Manifest)
 	if err != nil {
 		return err
 	}
@@ -33,7 +51,23 @@ func (c *launchCommand) Execute(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	return manager.Launch(ctx, manifest, c.Args.RemoteCommand)
+	return manager.Suspend(ctx, manifest)
+}
+
+type resumeCommand struct {
+	manifestOption
+}
+
+func (c *resumeCommand) Execute(args []string) error {
+	manifest, err := loadManifest(c.Manifest)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	return manager.Resume(ctx, manifest)
 }
 
 func loadManifest(path string) (*manifest.Manifest, error) {
@@ -57,6 +91,20 @@ func loadManifest(path string) (*manifest.Manifest, error) {
 }
 
 func main() {
+	parser := newParser()
+
+	if _, err := parser.Parse(); err != nil {
+		var flagsErr *flags.Error
+		if errors.As(err, &flagsErr) && flagsErr.Type == flags.ErrHelp {
+			os.Exit(0)
+		}
+
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(manager.ExitCode(err))
+	}
+}
+
+func newParser() *flags.Parser {
 	var opts options
 	parser := flags.NewParser(&opts, flags.Default|flags.PassDoubleDash)
 
@@ -70,13 +118,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := parser.Parse(); err != nil {
-		var flagsErr *flags.Error
-		if errors.As(err, &flagsErr) && flagsErr.Type == flags.ErrHelp {
-			os.Exit(0)
-		}
-
+	if _, err := parser.AddCommand(
+		"suspend",
+		"Suspend a running sandbox session",
+		"Pause the configured QEMU process through QMP and record advisory suspend state.",
+		&suspendCommand{},
+	); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(manager.ExitCode(err))
+		os.Exit(1)
 	}
+
+	if _, err := parser.AddCommand(
+		"resume",
+		"Resume a suspended sandbox session",
+		"Continue the configured QEMU process through QMP and remove advisory suspend state.",
+		&resumeCommand{},
+	); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	return parser
 }

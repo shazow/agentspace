@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -320,6 +321,188 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 	}
 	if len(waiter.paths) == 0 || !reflect.DeepEqual(waiter.paths[0], []string{externalSocket}) {
 		t.Fatalf("expected virtiofs readiness wait to use external socket, got %v", waiter.paths)
+	}
+}
+
+func TestManagerSuspendQueriesStopsAndWritesState(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+
+	qmpClient := &fakeQMPClient{status: "running"}
+	manager := &manager{
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		qmpConnectTimeout: time.Millisecond,
+	}
+
+	if err := manager.suspend(context.Background(), cfg); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+
+	qmpClient.mu.Lock()
+	queryStatusCalls := qmpClient.queryStatusCalls
+	stopCalls := qmpClient.stopCalls
+	status := qmpClient.status
+	qmpClient.mu.Unlock()
+
+	if queryStatusCalls != 1 {
+		t.Fatalf("expected query-status once, got %d", queryStatusCalls)
+	}
+	if stopCalls != 1 {
+		t.Fatalf("expected stop once, got %d", stopCalls)
+	}
+	if status != "paused" {
+		t.Fatalf("expected paused status, got %q", status)
+	}
+
+	statePath := suspendStatePath(cfg)
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read suspend state: %v", err)
+	}
+	var state suspendState
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("decode suspend state: %v", err)
+	}
+	if state.HostName != cfg.Identity.HostName {
+		t.Fatalf("unexpected state host: got %q want %q", state.HostName, cfg.Identity.HostName)
+	}
+	if state.QMPSocketPath != filepath.Join(tmpDir, "qmp.sock") {
+		t.Fatalf("unexpected state qmp socket: got %q", state.QMPSocketPath)
+	}
+	if state.Status != "paused" {
+		t.Fatalf("unexpected state status: got %q", state.Status)
+	}
+}
+
+func TestManagerSuspendAlreadyPausedRefreshesState(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	qmpClient := &fakeQMPClient{status: "paused"}
+	manager := &manager{qmpDialer: &fakeQMPDialer{client: qmpClient}}
+
+	if err := manager.suspend(context.Background(), cfg); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+
+	qmpClient.mu.Lock()
+	stopCalls := qmpClient.stopCalls
+	qmpClient.mu.Unlock()
+	if stopCalls != 0 {
+		t.Fatalf("expected no stop call for already paused VM, got %d", stopCalls)
+	}
+	if _, err := os.Stat(suspendStatePath(cfg)); err != nil {
+		t.Fatalf("expected suspend state to be written: %v", err)
+	}
+}
+
+func TestManagerResumeContinuesAndRemovesState(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeSuspendState(cfg, filepath.Join(tmpDir, "qmp.sock"), "paused"); err != nil {
+		t.Fatalf("write initial suspend state: %v", err)
+	}
+
+	qmpClient := &fakeQMPClient{status: "paused"}
+	manager := &manager{
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		qmpConnectTimeout: time.Millisecond,
+	}
+
+	if err := manager.resume(context.Background(), cfg); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	qmpClient.mu.Lock()
+	contCalls := qmpClient.contCalls
+	status := qmpClient.status
+	qmpClient.mu.Unlock()
+
+	if contCalls != 1 {
+		t.Fatalf("expected cont once, got %d", contCalls)
+	}
+	if status != "running" {
+		t.Fatalf("expected running status, got %q", status)
+	}
+	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
+		t.Fatalf("expected suspend state to be removed, stat err: %v", err)
+	}
+}
+
+func TestManagerResumeRunningRemovesStaleState(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeSuspendState(cfg, filepath.Join(tmpDir, "qmp.sock"), "paused"); err != nil {
+		t.Fatalf("write initial suspend state: %v", err)
+	}
+
+	qmpClient := &fakeQMPClient{status: "running"}
+	manager := &manager{qmpDialer: &fakeQMPDialer{client: qmpClient}}
+
+	if err := manager.resume(context.Background(), cfg); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	qmpClient.mu.Lock()
+	contCalls := qmpClient.contCalls
+	qmpClient.mu.Unlock()
+	if contCalls != 0 {
+		t.Fatalf("expected no cont call for already running VM, got %d", contCalls)
+	}
+	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
+		t.Fatalf("expected stale suspend state to be removed, stat err: %v", err)
+	}
+}
+
+func TestHandleSessionSuspendSignalPausesBeforeSelfStopThenResumes(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	qmpSocketPath := filepath.Join(tmpDir, "qmp.sock")
+
+	var mu sync.Mutex
+	var sequence []string
+	record := func(event string) {
+		mu.Lock()
+		sequence = append(sequence, event)
+		mu.Unlock()
+	}
+
+	qmpClient := &fakeQMPClient{
+		status: "running",
+		onStop: func() {
+			record("stop")
+		},
+		onCont: func() {
+			record("cont")
+		},
+	}
+	runner := &fakeRunner{}
+	session := &managedProcess{
+		name: "ssh",
+		proc: &fakeProcess{name: "ssh", runner: runner, done: make(chan error, 1)},
+		done: make(chan error, 1),
+	}
+	manager := &manager{
+		selfStop: func() error {
+			record("self-stop")
+			return nil
+		},
+	}
+
+	if err := manager.handleSessionSignal(context.Background(), syscall.SIGTSTP, cfg, qmpSocketPath, qmpClient, session); err != nil {
+		t.Fatalf("handle SIGTSTP: %v", err)
+	}
+
+	mu.Lock()
+	gotSequence := append([]string(nil), sequence...)
+	mu.Unlock()
+
+	wantSequence := []string{"stop", "self-stop", "cont"}
+	if !reflect.DeepEqual(gotSequence, wantSequence) {
+		t.Fatalf("unexpected signal sequence: got %v want %v", gotSequence, wantSequence)
+	}
+	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
+		t.Fatalf("expected suspend state to be removed after resume, stat err: %v", err)
 	}
 }
 
@@ -770,7 +953,13 @@ func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout tim
 type fakeQMPClient struct {
 	mu                       sync.Mutex
 	quitCalls                int
+	stopCalls                int
+	contCalls                int
+	queryStatusCalls         int
+	status                   string
 	onQuit                   func()
+	onStop                   func()
+	onCont                   func()
 	onEnableBalloonStats     func()
 	listQOMProperties        map[string][]fakeQOMProperty
 	listQOMPropertiesErr     map[string]error
@@ -796,6 +985,41 @@ func (c *fakeQMPClient) Quit(timeout time.Duration) error {
 		onQuit()
 	}
 	return nil
+}
+
+func (c *fakeQMPClient) Stop(timeout time.Duration) error {
+	c.mu.Lock()
+	c.stopCalls++
+	c.status = "paused"
+	onStop := c.onStop
+	c.mu.Unlock()
+	if onStop != nil {
+		onStop()
+	}
+	return nil
+}
+
+func (c *fakeQMPClient) Cont(timeout time.Duration) error {
+	c.mu.Lock()
+	c.contCalls++
+	c.status = "running"
+	onCont := c.onCont
+	c.mu.Unlock()
+	if onCont != nil {
+		onCont()
+	}
+	return nil
+}
+
+func (c *fakeQMPClient) QueryStatus(timeout time.Duration) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.queryStatusCalls++
+	if c.status == "" {
+		c.status = "running"
+	}
+	return c.status, nil
 }
 
 func (c *fakeQMPClient) readCompletionTime() time.Time {
@@ -871,6 +1095,28 @@ func (c *fakeQMPClient) handleQMP(message map[string]any) (map[string]any, error
 	args, _ := message["arguments"].(map[string]any)
 
 	switch command {
+	case "query-status":
+		status, err := c.QueryStatus(time.Second)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"return": map[string]any{
+				"running":    status == "running",
+				"singlestep": false,
+				"status":     status,
+			},
+		}, nil
+	case "stop":
+		if err := c.Stop(time.Second); err != nil {
+			return nil, err
+		}
+		return map[string]any{"return": map[string]any{}}, nil
+	case "cont":
+		if err := c.Cont(time.Second); err != nil {
+			return nil, err
+		}
+		return map[string]any{"return": map[string]any{}}, nil
 	case "quit":
 		c.mu.Lock()
 		c.quitCalls++

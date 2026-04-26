@@ -4,7 +4,8 @@
 
 It reads a Nix-generated manifest, starts the required host processes, launches
 QEMU, waits for guest SSH readiness, and attaches the active session. It also
-handles teardown, QMP-based shutdown, and runtime vsock CID allocation.
+handles teardown, QMP-based shutdown, keep-alive pause/resume, and runtime vsock
+CID allocation.
 
 This is currently a small internal component, not a general-purpose VM runner.
 The supported shape today is the built-in `virtiofs + ssh + qemu` flow used by
@@ -15,7 +16,9 @@ the main flake.
 The supported CLI is:
 
 ```console
-virtie launch <manifest> [-- <remote-cmd...>]
+virtie launch --manifest=MANIFEST [-- <remote-cmd...>]
+virtie suspend --manifest=MANIFEST
+virtie resume --manifest=MANIFEST
 ```
 
 In normal use this is invoked by the generated launch wrapper rather than by
@@ -28,12 +31,19 @@ hand. See the root flake for packaging and launch integration.
 - Starts `virtiofsd`, launches QEMU, waits for SSH readiness, and attaches the
   active session.
 - Uses QMP for readiness and graceful shutdown.
+- Uses QMP `stop`, `cont`, and `query-status` for keep-alive suspend/resume of
+  the active QEMU process.
+- Records advisory suspend state at
+  `<workingDir>/.virtie/<hostName>.suspend.json`; QMP status remains
+  authoritative.
 - Tears down guest and host-side processes in a defined order on exit or
   signal.
 
 ## Notes
 
 - The manifest format is owned by this repository and is intentionally narrow.
+- Suspend/resume is a pause/resume lifecycle for a still-running QEMU process,
+  not full RAM/device hibernation and restore.
 - `virtie` currently assumes the surrounding Nix flow has already resolved the
   guest image inputs and host-side launch settings.
 - The project is developed with NixOS as the primary target. Some host

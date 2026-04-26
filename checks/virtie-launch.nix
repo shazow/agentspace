@@ -20,7 +20,7 @@ let
 in
 {
   launch-agent-virtie-contract = pkgs.runCommand "launch-agent-virtie-contract" { } ''
-    grep -F 'virtie launch' ${launchScript}
+    grep -F 'virtie launch --manifest=' ${launchScript}
     grep -F ${pkgs.lib.escapeShellArg manifestPath} ${launchScript}
     if grep -F 'systemd-run' ${launchScript} >/dev/null; then
       echo "launch-agent-virtie-contract: unexpected legacy systemd-run in virtie wrapper" >&2

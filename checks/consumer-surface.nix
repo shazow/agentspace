@@ -62,7 +62,7 @@ let
 in
 {
   sandbox-consumer-surface = assert _; pkgs.runCommand "sandbox-consumer-surface" { } ''
-    grep -F 'virtie launch' ${launchScript}
+    grep -F 'virtie launch --manifest=' ${launchScript}
     grep -F ${pkgs.lib.escapeShellArg manifestPath} ${launchScript}
 
     touch $out

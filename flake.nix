@@ -84,7 +84,7 @@
 
             ${launchCfg.commonInit}
 
-            exec ${virtiePackage}/bin/virtie launch ${launchCfg.virtieManifest} -- "$@"
+            exec ${virtiePackage}/bin/virtie launch --manifest=${launchCfg.virtieManifest} -- "$@"
           '';
         in
         "${script}/bin/launch-agent";
@@ -105,7 +105,7 @@
       };
 
       checks.${system} = import ./checks {
-        inherit mkLaunch mkSandbox pkgs;
+        inherit mkLaunch mkSandbox pkgs virtiePackage;
       };
 
       apps.${system} = {

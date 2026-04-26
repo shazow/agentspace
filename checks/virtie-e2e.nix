@@ -1,6 +1,7 @@
 {
   mkLaunch,
   pkgs,
+  virtiePackage,
   ...
 }:
 let
@@ -51,9 +52,11 @@ import json
 import os
 import signal
 import socket
+import threading
 
 socket_path = os.environ["QMP_SOCKET"]
 parent_pid = int(os.environ["QEMU_PARENT_PID"])
+state_dir = os.path.join(os.getcwd(), "state")
 
 os.makedirs(os.path.dirname(socket_path) or ".", exist_ok=True)
 try:
@@ -63,58 +66,82 @@ except FileNotFoundError:
 
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(socket_path)
-server.listen(1)
-conn, _ = server.accept()
+server.listen(16)
+status = "running"
+status_lock = threading.Lock()
 
-def send(message):
-    conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
+def touch(name):
+    with open(os.path.join(state_dir, name), "a", encoding="utf-8"):
+        pass
 
-send(
-    {
-        "QMP": {
-            "version": {
-                "qemu": {"major": 8, "minor": 2, "micro": 0},
-                "package": "",
-            },
-            "capabilities": [],
+def handle(conn):
+    global status
+    def send(message):
+        conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
+
+    send(
+        {
+            "QMP": {
+                "version": {
+                    "qemu": {"major": 8, "minor": 2, "micro": 0},
+                    "package": "",
+                },
+                "capabilities": [],
+            }
         }
-    }
-)
+    )
 
-decoder = json.JSONDecoder()
-buffer = ""
-quit_requested = False
-while True:
-    chunk = conn.recv(4096)
-    if not chunk:
-        break
-    buffer += chunk.decode("utf-8")
+    decoder = json.JSONDecoder()
+    buffer = ""
     while True:
-        stripped = buffer.lstrip()
-        if not stripped:
-            buffer = ""
+        chunk = conn.recv(4096)
+        if not chunk:
             break
-        try:
-            message, consumed = decoder.raw_decode(stripped)
-        except json.JSONDecodeError:
-            break
-        buffer = stripped[consumed:]
-        command = message.get("execute")
-        send({"return": {}})
-        if command == "quit":
-            os.kill(parent_pid, signal.SIGTERM)
-            buffer = ""
-            quit_requested = True
-            break
-    if quit_requested:
-        break
+        buffer += chunk.decode("utf-8")
+        while True:
+            stripped = buffer.lstrip()
+            if not stripped:
+                buffer = ""
+                break
+            try:
+                message, consumed = decoder.raw_decode(stripped)
+            except json.JSONDecodeError:
+                break
+            buffer = stripped[consumed:]
+            command = message.get("execute")
+            if command == "query-status":
+                with status_lock:
+                    current_status = status
+                send(
+                    {
+                        "return": {
+                            "running": current_status == "running",
+                            "singlestep": False,
+                            "status": current_status,
+                        }
+                    }
+                )
+            elif command == "stop":
+                with status_lock:
+                    status = "paused"
+                touch("qemu-paused")
+                send({"return": {}})
+            elif command == "cont":
+                with status_lock:
+                    status = "running"
+                touch("qemu-resumed")
+                send({"return": {}})
+            elif command == "quit":
+                send({"return": {}})
+                os.kill(parent_pid, signal.SIGTERM)
+                return
+            else:
+                send({"return": {}})
+    conn.close()
 
-conn.close()
-server.close()
-try:
-    os.unlink(socket_path)
-except FileNotFoundError:
-    pass
+while True:
+    conn, _ = server.accept()
+    threading.Thread(target=handle, args=(conn,), daemon=True).start()
 PY
         qmp_pid=$!
 
@@ -343,6 +370,10 @@ in
     launch_log="$tmpdir/virtie.log"
 
     cleanup() {
+      if [ -n "''${launch_pid:-}" ]; then
+        kill "$launch_pid" 2>/dev/null || true
+        wait "$launch_pid" 2>/dev/null || true
+      fi
       rm -rf "$tmpdir"
     }
     trap cleanup EXIT INT TERM
@@ -370,7 +401,45 @@ in
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
 
+    pause_workspace_dir="$tmpdir/pause-workspace"
+    pause_log="$tmpdir/virtie-pause.log"
+    mkdir -p "$pause_workspace_dir"
+    cd "$pause_workspace_dir"
+
+    ${launchScript} sh -c 'while [ ! -f state/resume-finished ]; do sleep 0.1; done' >"$pause_log" 2>&1 &
+    launch_pid=$!
+
+    for _ in $(seq 1 100); do
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f state/ssh-destination ]; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    if [ ! -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ]; then
+      echo "virtie-launch-e2e: qmp socket did not appear for suspend/resume case" >&2
+      cat "$pause_log" >&2
+      exit 1
+    fi
+
+    ${virtiePackage}/bin/virtie suspend --manifest=${manifest}
+    test -f "$pause_workspace_dir/state/qemu-paused"
+    test -f "$pause_workspace_dir/.virtie/virtie-fake.suspend.json"
+    grep -F '"status": "paused"' "$pause_workspace_dir/.virtie/virtie-fake.suspend.json" >/dev/null
+
+    ${virtiePackage}/bin/virtie resume --manifest=${manifest}
+    test -f "$pause_workspace_dir/state/qemu-resumed"
+    test ! -e "$pause_workspace_dir/.virtie/virtie-fake.suspend.json"
+
+    touch "$pause_workspace_dir/state/resume-finished"
+    if ! wait "$launch_pid"; then
+      echo "virtie-launch-e2e: suspend/resume launch exited non-zero" >&2
+      cat "$pause_log" >&2
+      exit 1
+    fi
+
     mkdir -p "$out"
     cp "$launch_log" "$out/virtie.log"
+    cp "$pause_log" "$out/virtie-pause.log"
   '';
 }

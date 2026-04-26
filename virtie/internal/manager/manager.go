@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -43,6 +44,8 @@ type manager struct {
 	qmpRetryDelay     time.Duration
 	qmpConnectTimeout time.Duration
 	qmpQuitTimeout    time.Duration
+	signals           <-chan os.Signal
+	selfStop          func() error
 }
 
 func newManager() *manager {
@@ -69,6 +72,36 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	if err := manifest.Validate(); err != nil {
 		return err
 	}
+
+	launchCtx, cancelLaunch := context.WithCancel(ctx)
+	defer cancelLaunch()
+
+	signalCh, stopSignals := m.launchSignalChannel()
+	signalDone := make(chan struct{})
+	sessionSignals := make(chan os.Signal, 8)
+	go func() {
+		for {
+			select {
+			case <-signalDone:
+				return
+			case sig, ok := <-signalCh:
+				if !ok {
+					return
+				}
+				switch sig {
+				case os.Interrupt, syscall.SIGTERM:
+					cancelLaunch()
+				case syscall.SIGTSTP, syscall.SIGCONT:
+					select {
+					case sessionSignals <- sig:
+					default:
+					}
+				}
+			}
+		}
+	}()
+	defer close(signalDone)
+	defer stopSignals()
 
 	managedSocketPaths, err := manifest.ResolvedSocketPaths()
 	if err != nil {
@@ -144,7 +177,7 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	started = append(started, virtiofsd...)
 
 	m.logger.Printf("waiting for virtiofs sockets")
-	if err := m.waitForSockets(ctx, virtioFSSocketPaths, started...); err != nil {
+	if err := m.waitForSockets(launchCtx, virtioFSSocketPaths, started...); err != nil {
 		return err
 	}
 
@@ -160,7 +193,7 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	started = append(started, qemu)
 
 	m.logger.Printf("waiting for qmp readiness")
-	qmpClient, err = m.waitForQMP(ctx, qmpSocketPath, qemu)
+	qmpClient, err = m.waitForQMP(launchCtx, qmpSocketPath, qemu)
 	if err != nil {
 		return err
 	}
@@ -169,11 +202,11 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	}
 
 	m.logger.Printf("waiting for ssh readiness")
-	if err := m.waitForSSH(ctx, manifest, cid, started...); err != nil {
+	if err := m.waitForSSH(launchCtx, manifest, cid, started...); err != nil {
 		return err
 	}
 
-	featureTasks = startOptionalFeatureTasks(ctx, optionalFeatureRuntime{
+	featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
 		logger:     m.logger,
 		qmpTimeout: m.effectiveQMPCommandTimeout(),
 	}, manifest, qmpClient)
@@ -185,7 +218,20 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	}
 	started = append(started, session)
 
-	return m.waitForSession(ctx, session, started[:len(started)-1]...)
+	return m.waitForSession(launchCtx, session, manifest, qmpSocketPath, qmpClient, sessionSignals, started[:len(started)-1]...)
+}
+
+func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
+	if m.signals != nil {
+		return m.signals, func() {}
+	}
+
+	ch := make(chan os.Signal, 8)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGTSTP, syscall.SIGCONT)
+	return ch, func() {
+		signal.Stop(ch)
+		close(ch)
+	}
 }
 
 type managedProcess struct {
@@ -453,7 +499,7 @@ func sshPermissionDenied(stderr string) bool {
 	return strings.Contains(stderr, "Permission denied (publickey")
 }
 
-func (m *manager) waitForSession(ctx context.Context, session *managedProcess, watchers ...*managedProcess) error {
+func (m *manager) waitForSession(ctx context.Context, session *managedProcess, manifest *manifest.Manifest, qmpSocketPath string, qmpClient qmpClient, signalCh <-chan os.Signal, watchers ...*managedProcess) error {
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
@@ -468,10 +514,70 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, w
 			if err := firstUnexpectedExit("active session", watchers...); err != nil {
 				return err
 			}
+		case sig, ok := <-signalCh:
+			if !ok {
+				signalCh = nil
+				continue
+			}
+			if err := m.handleSessionSignal(ctx, sig, manifest, qmpSocketPath, qmpClient, session); err != nil {
+				return err
+			}
 		case <-ctx.Done():
 			return &stageError{Stage: "active session", Err: ctx.Err()}
 		}
 	}
+}
+
+func (m *manager) handleSessionSignal(ctx context.Context, sig os.Signal, manifest *manifest.Manifest, qmpSocketPath string, qmpClient qmpClient, session *managedProcess) error {
+	switch sig {
+	case syscall.SIGTSTP:
+		if err := m.suspendConnected(manifest, qmpSocketPath, qmpClient); err != nil {
+			return err
+		}
+		if err := signalProcessIfRunning(session, syscall.SIGTSTP); err != nil {
+			return &stageError{Stage: "active session", Err: err}
+		}
+		if err := m.stopSelf(); err != nil {
+			return &stageError{Stage: "active session", Err: err}
+		}
+		if ctx.Err() != nil {
+			return &stageError{Stage: "active session", Err: ctx.Err()}
+		}
+		if err := m.resumeConnected(manifest, qmpClient); err != nil {
+			return err
+		}
+		if err := signalProcessIfRunning(session, syscall.SIGCONT); err != nil {
+			return &stageError{Stage: "active session", Err: err}
+		}
+	case syscall.SIGCONT:
+		if err := m.resumeConnected(manifest, qmpClient); err != nil {
+			return err
+		}
+		if err := signalProcessIfRunning(session, syscall.SIGCONT); err != nil {
+			return &stageError{Stage: "active session", Err: err}
+		}
+	}
+	return nil
+}
+
+func (m *manager) stopSelf() error {
+	if m.selfStop != nil {
+		return m.selfStop()
+	}
+	return syscall.Kill(os.Getpid(), syscall.SIGSTOP)
+}
+
+func signalProcessIfRunning(process *managedProcess, sig os.Signal) error {
+	if process == nil {
+		return nil
+	}
+	if exited, _ := process.pollExit(); exited {
+		return nil
+	}
+	if err := process.proc.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return fmt.Errorf("signal %s: %w", process.name, err)
+	}
+	return nil
 }
 
 func (m *manager) stopAll(processes []*managedProcess) error {
