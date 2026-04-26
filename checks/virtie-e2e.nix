@@ -69,6 +69,8 @@ server.bind(socket_path)
 server.listen(16)
 status = "running"
 status_lock = threading.Lock()
+accepted_connections = 0
+accept_lock = threading.Lock()
 
 def touch(name):
     with open(os.path.join(state_dir, name), "a", encoding="utf-8"):
@@ -139,8 +141,22 @@ def handle(conn):
                 send({"return": {}})
     conn.close()
 
+def hold_second_client(conn):
+    try:
+        while conn.recv(4096):
+            pass
+    finally:
+        conn.close()
+
 while True:
     conn, _ = server.accept()
+    with accept_lock:
+        accepted_connections += 1
+        connection_number = accepted_connections
+    if connection_number > 1:
+        touch("qmp-second-client")
+        threading.Thread(target=hold_second_client, args=(conn,), daemon=True).start()
+        continue
     threading.Thread(target=handle, args=(conn,), daemon=True).start()
 PY
         qmp_pid=$!
@@ -372,6 +388,7 @@ in
     cleanup() {
       if [ -n "''${launch_pid:-}" ]; then
         kill "$launch_pid" 2>/dev/null || true
+        kill -CONT "$launch_pid" 2>/dev/null || true
         wait "$launch_pid" 2>/dev/null || true
       fi
       rm -rf "$tmpdir"
@@ -385,7 +402,7 @@ in
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
+    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f .virtie/virtie-fake.pid; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
       echo "virtie-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1
@@ -400,6 +417,7 @@ in
     grep -Fx 'overlay.img' "$workspace_dir/state/mkfs-ext4-args" >/dev/null
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
+    test ! -e "$workspace_dir/.virtie/virtie-fake.pid"
 
     pause_workspace_dir="$tmpdir/pause-workspace"
     pause_log="$tmpdir/virtie-pause.log"
@@ -410,7 +428,7 @@ in
     launch_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f state/ssh-destination ]; then
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .virtie/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
         break
       fi
       sleep 0.1
@@ -424,11 +442,15 @@ in
 
     ${virtiePackage}/bin/virtie suspend --manifest=${manifest}
     test -f "$pause_workspace_dir/state/qemu-paused"
+    test ! -e "$pause_workspace_dir/state/qmp-second-client"
+    test -f "$pause_workspace_dir/.virtie/virtie-fake.pid"
     test -f "$pause_workspace_dir/.virtie/virtie-fake.suspend.json"
     grep -F '"status": "paused"' "$pause_workspace_dir/.virtie/virtie-fake.suspend.json" >/dev/null
 
     ${virtiePackage}/bin/virtie resume --manifest=${manifest}
     test -f "$pause_workspace_dir/state/qemu-resumed"
+    test ! -e "$pause_workspace_dir/state/qmp-second-client"
+    test -f "$pause_workspace_dir/.virtie/virtie-fake.pid"
     test ! -e "$pause_workspace_dir/.virtie/virtie-fake.suspend.json"
 
     touch "$pause_workspace_dir/state/resume-finished"
@@ -437,6 +459,7 @@ in
       cat "$pause_log" >&2
       exit 1
     fi
+    test ! -e "$pause_workspace_dir/.virtie/virtie-fake.pid"
 
     mkdir -p "$out"
     cp "$launch_log" "$out/virtie.log"

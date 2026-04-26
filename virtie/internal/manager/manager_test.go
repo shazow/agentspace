@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -324,18 +325,15 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 	}
 }
 
-func TestManagerSuspendQueriesStopsAndWritesState(t *testing.T) {
+func TestSuspendConnectedQueriesStopsAndWritesState(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.QEMU.QMP.SocketPath = "qmp.sock"
 
 	qmpClient := &fakeQMPClient{status: "running"}
-	manager := &manager{
-		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		qmpConnectTimeout: time.Millisecond,
-	}
+	manager := &manager{qmpConnectTimeout: time.Millisecond}
 
-	if err := manager.suspend(context.Background(), cfg); err != nil {
+	if err := manager.suspendConnected(cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 
@@ -375,13 +373,185 @@ func TestManagerSuspendQueriesStopsAndWritesState(t *testing.T) {
 	}
 }
 
-func TestManagerSuspendAlreadyPausedRefreshesState(t *testing.T) {
+func TestManagerSuspendSignalsLaunchPIDAndWaitsWithoutQMP(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	releaseLock := acquireTestLaunchLock(t, cfg, 12345)
+	defer releaseLock()
+
+	dialer := &fakeQMPDialer{}
+	signaler := &fakePIDSignaler{
+		onSignal: func(pid int, sig os.Signal) error {
+			if pid != 12345 {
+				t.Fatalf("unexpected pid: got %d want 12345", pid)
+			}
+			if sig != syscall.SIGTSTP {
+				t.Fatalf("unexpected signal: got %v want %v", sig, syscall.SIGTSTP)
+			}
+			return writeSuspendState(cfg, filepath.Join(tmpDir, "qmp.sock"), "paused")
+		},
+	}
+	manager := &manager{
+		qmpDialer:         dialer,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		pidSignaler:       signaler,
+	}
+
+	if err := manager.suspend(context.Background(), cfg); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+
+	if dialer.attempts != 0 {
+		t.Fatalf("expected no direct qmp dial attempts, got %d", dialer.attempts)
+	}
+	if !reflect.DeepEqual(signaler.signals, []pidSignal{{pid: 12345, sig: syscall.SIGTSTP}}) {
+		t.Fatalf("unexpected signals: got %v", signaler.signals)
+	}
+	if _, err := os.Stat(suspendStatePath(cfg)); err != nil {
+		t.Fatalf("expected suspend state to be written: %v", err)
+	}
+}
+
+func TestManagerSuspendPreservesExistingPausedStateWithoutSignal(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	releaseLock := acquireTestLaunchLock(t, cfg, 12345)
+	defer releaseLock()
+	if err := writeSuspendState(cfg, filepath.Join(tmpDir, "qmp.sock"), "paused"); err != nil {
+		t.Fatalf("write initial suspend state: %v", err)
+	}
+
+	signaler := &fakePIDSignaler{}
+	manager := &manager{
+		qmpDialer:   &fakeQMPDialer{},
+		pidSignaler: signaler,
+	}
+
+	if err := manager.suspend(context.Background(), cfg); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+
+	if len(signaler.signals) != 0 {
+		t.Fatalf("expected no signal for repeated suspend, got %v", signaler.signals)
+	}
+	state, err := readSuspendState(cfg)
+	if err != nil {
+		t.Fatalf("read suspend state: %v", err)
+	}
+	if state.Status != "paused" {
+		t.Fatalf("expected paused state to be preserved, got %q", state.Status)
+	}
+}
+
+func TestManagerResumeSignalsLaunchPIDAndWaitsWithoutQMP(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	releaseLock := acquireTestLaunchLock(t, cfg, 12345)
+	defer releaseLock()
+	if err := writeSuspendState(cfg, filepath.Join(tmpDir, "qmp.sock"), "paused"); err != nil {
+		t.Fatalf("write initial suspend state: %v", err)
+	}
+
+	dialer := &fakeQMPDialer{}
+	signaler := &fakePIDSignaler{
+		onSignal: func(pid int, sig os.Signal) error {
+			if pid != 12345 {
+				t.Fatalf("unexpected pid: got %d want 12345", pid)
+			}
+			if sig != syscall.SIGCONT {
+				t.Fatalf("unexpected signal: got %v want %v", sig, syscall.SIGCONT)
+			}
+			return removeSuspendState(cfg)
+		},
+	}
+	manager := &manager{
+		qmpDialer:         dialer,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		pidSignaler:       signaler,
+	}
+
+	if err := manager.resume(context.Background(), cfg); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	if dialer.attempts != 0 {
+		t.Fatalf("expected no direct qmp dial attempts, got %d", dialer.attempts)
+	}
+	if !reflect.DeepEqual(signaler.signals, []pidSignal{{pid: 12345, sig: syscall.SIGCONT}}) {
+		t.Fatalf("unexpected signals: got %v", signaler.signals)
+	}
+	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
+		t.Fatalf("expected suspend state to be removed, stat err: %v", err)
+	}
+}
+
+func TestManagerSuspendMissingPIDReportsLaunchError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+
+	err := (&manager{pidSignaler: &fakePIDSignaler{}}).suspend(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected missing pid error")
+	}
+	if !strings.Contains(err.Error(), "launch pid file") || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("unexpected missing pid error: %v", err)
+	}
+}
+
+func TestManagerResumeStalePIDReportsLaunchError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+
+	err := (&manager{pidSignaler: &fakePIDSignaler{existsErr: syscall.ESRCH}}).resume(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected stale pid error")
+	}
+	if !strings.Contains(err.Error(), "stale launch pid 12345") {
+		t.Fatalf("unexpected stale pid error: %v", err)
+	}
+}
+
+func TestManagerResumeReusedPIDWithoutLockReportsLaunchError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.ResolvedLockPath()), 0o755); err != nil {
+		t.Fatalf("create lock directory: %v", err)
+	}
+	if err := os.WriteFile(cfg.ResolvedLockPath(), []byte("12345\n"), 0o600); err != nil {
+		t.Fatalf("write unlocked launch lock: %v", err)
+	}
+
+	err := (&manager{pidSignaler: &fakePIDSignaler{}}).resume(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected reused pid without lock error")
+	}
+	if !strings.Contains(err.Error(), "sandbox lock") || !strings.Contains(err.Error(), "is not held") {
+		t.Fatalf("unexpected reused pid error: %v", err)
+	}
+}
+
+func TestSuspendConnectedAlreadyPausedRefreshesState(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	qmpClient := &fakeQMPClient{status: "paused"}
-	manager := &manager{qmpDialer: &fakeQMPDialer{client: qmpClient}}
+	manager := &manager{}
 
-	if err := manager.suspend(context.Background(), cfg); err != nil {
+	if err := manager.suspendConnected(cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 
@@ -396,7 +566,7 @@ func TestManagerSuspendAlreadyPausedRefreshesState(t *testing.T) {
 	}
 }
 
-func TestManagerResumeContinuesAndRemovesState(t *testing.T) {
+func TestResumeConnectedContinuesAndRemovesState(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	if err := writeSuspendState(cfg, filepath.Join(tmpDir, "qmp.sock"), "paused"); err != nil {
@@ -404,12 +574,9 @@ func TestManagerResumeContinuesAndRemovesState(t *testing.T) {
 	}
 
 	qmpClient := &fakeQMPClient{status: "paused"}
-	manager := &manager{
-		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		qmpConnectTimeout: time.Millisecond,
-	}
+	manager := &manager{qmpConnectTimeout: time.Millisecond}
 
-	if err := manager.resume(context.Background(), cfg); err != nil {
+	if err := manager.resumeConnected(cfg, qmpClient); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 
@@ -429,7 +596,7 @@ func TestManagerResumeContinuesAndRemovesState(t *testing.T) {
 	}
 }
 
-func TestManagerResumeRunningRemovesStaleState(t *testing.T) {
+func TestResumeConnectedRunningRemovesStaleState(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	if err := writeSuspendState(cfg, filepath.Join(tmpDir, "qmp.sock"), "paused"); err != nil {
@@ -437,9 +604,9 @@ func TestManagerResumeRunningRemovesStaleState(t *testing.T) {
 	}
 
 	qmpClient := &fakeQMPClient{status: "running"}
-	manager := &manager{qmpDialer: &fakeQMPDialer{client: qmpClient}}
+	manager := &manager{}
 
-	if err := manager.resume(context.Background(), cfg); err != nil {
+	if err := manager.resumeConnected(cfg, qmpClient); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 
@@ -948,6 +1115,57 @@ type fakeQMPDialer struct {
 func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpClient, error) {
 	d.attempts++
 	return d.client, nil
+}
+
+type pidSignal struct {
+	pid int
+	sig os.Signal
+}
+
+type fakePIDSignaler struct {
+	existsErr error
+	signalErr error
+	signals   []pidSignal
+	onSignal  func(pid int, sig os.Signal) error
+}
+
+func (s *fakePIDSignaler) Exists(pid int) error {
+	return s.existsErr
+}
+
+func (s *fakePIDSignaler) Signal(pid int, sig os.Signal) error {
+	s.signals = append(s.signals, pidSignal{pid: pid, sig: sig})
+	if s.onSignal != nil {
+		return s.onSignal(pid, sig)
+	}
+	return s.signalErr
+}
+
+func acquireTestLaunchLock(t *testing.T, manifest *manifest.Manifest, pid int) func() {
+	t.Helper()
+
+	path := manifest.ResolvedLockPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create lock directory: %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("open lock: %v", err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		t.Fatalf("flock lock: %v", err)
+	}
+	if _, err := file.WriteString(fmt.Sprintf("%d\n", pid)); err != nil {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		file.Close()
+		t.Fatalf("write lock pid: %v", err)
+	}
+
+	return func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	}
 }
 
 type fakeQMPClient struct {

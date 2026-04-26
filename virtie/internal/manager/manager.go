@@ -46,6 +46,7 @@ type manager struct {
 	qmpQuitTimeout    time.Duration
 	signals           <-chan os.Signal
 	selfStop          func() error
+	pidSignaler       pidSignaler
 }
 
 func newManager() *manager {
@@ -122,6 +123,13 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	defer joinDeferredError(&err, lock.Release)
+
+	if err := writeLaunchPID(manifest, os.Getpid()); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	defer joinDeferredError(&err, func() error {
+		return removeLaunchPID(manifest, os.Getpid())
+	})
 
 	cid, cidLock, err := m.allocateCID(manifest)
 	if err != nil {

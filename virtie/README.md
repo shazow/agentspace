@@ -31,8 +31,9 @@ hand. See the root flake for packaging and launch integration.
 - Starts `virtiofsd`, launches QEMU, waits for SSH readiness, and attaches the
   active session.
 - Uses QMP for readiness and graceful shutdown.
-- Uses QMP `stop`, `cont`, and `query-status` for keep-alive suspend/resume of
-  the active QEMU process.
+- Records the active launch PID at `<workingDir>/.virtie/<hostName>.pid`.
+  `virtie suspend` sends `SIGTSTP` to that process, and `virtie resume` sends
+  `SIGCONT`; only the launch process talks to QMP.
 - Records advisory suspend state at
   `<workingDir>/.virtie/<hostName>.suspend.json`; QMP status remains
   authoritative.
@@ -44,6 +45,8 @@ hand. See the root flake for packaging and launch integration.
 - The manifest format is owned by this repository and is intentionally narrow.
 - Suspend/resume is a pause/resume lifecycle for a still-running QEMU process,
   not full RAM/device hibernation and restore.
+- `SIGTSTP` is used for suspend control because `SIGSTOP` cannot be caught by
+  the launch process before it stops itself.
 - `virtie` currently assumes the surrounding Nix flow has already resolved the
   guest image inputs and host-side launch settings.
 - The project is developed with NixOS as the primary target. Some host

@@ -121,7 +121,7 @@ func newParser() *flags.Parser {
 	if _, err := parser.AddCommand(
 		"suspend",
 		"Suspend a running sandbox session",
-		"Pause the configured QEMU process through QMP and record advisory suspend state.",
+		"Ask the configured launch process to pause QEMU and record advisory suspend state.",
 		&suspendCommand{},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -131,7 +131,7 @@ func newParser() *flags.Parser {
 	if _, err := parser.AddCommand(
 		"resume",
 		"Resume a suspended sandbox session",
-		"Continue the configured QEMU process through QMP and remove advisory suspend state.",
+		"Ask the configured launch process to continue QEMU and remove advisory suspend state.",
 		&resumeCommand{},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)
