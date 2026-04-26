@@ -10,6 +10,11 @@ let
   vmVirtie = mkSandbox {
     sshAuthorizedKeys = [ testPublicKey ];
     sshIdentityFile = ".agentspace-test/id_ed25519";
+    command = [
+      "bash"
+      "-lc"
+      "echo configured"
+    ];
     persistence.homeImage = null;
   };
 
@@ -28,6 +33,7 @@ in
     grep -F 'rm -f "$MANIFEST_PATH"' ${launchScript}
     grep -F 'install -m 0644 ${pkgs.lib.escapeShellArg manifestTemplate} "$MANIFEST_PATH"' ${launchScript}
     test ${pkgs.lib.escapeShellArg manifestPath} = '.agentspace/virtie-agent-sandbox.json'
+    grep -F " -- bash -lc 'echo configured' \"\$@\"" ${launchScript}
     if grep -F 'systemd-run' ${launchScript} >/dev/null; then
       echo "launch-agent-virtie-contract: unexpected legacy systemd-run in virtie wrapper" >&2
       exit 1

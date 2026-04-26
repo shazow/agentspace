@@ -850,7 +850,9 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, 
 		args = append(args, "-o", "LogLevel=ERROR")
 	}
 	args = append(args, manifest.SSHDestination(cid))
-	args = append(args, remoteCommand...)
+	if len(remoteCommand) > 0 {
+		args = append(args, shellQuoteArgs(remoteCommand))
+	}
 
 	return processSpec{
 		Name:   "ssh",
@@ -861,6 +863,38 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, 
 		Stdout: stdout,
 		Stderr: stderr,
 	}
+}
+
+func shellQuoteArgs(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuoteArg(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuoteArg(arg string) string {
+	if arg == "" {
+		return "''"
+	}
+	if shellSafeArg(arg) {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
+}
+
+func shellSafeArg(arg string) bool {
+	for _, ch := range arg {
+		switch {
+		case ch >= 'A' && ch <= 'Z':
+		case ch >= 'a' && ch <= 'z':
+		case ch >= '0' && ch <= '9':
+		case strings.ContainsRune("_@%+=:,./-", ch):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func joinDeferredError(target *error, fn func() error) {

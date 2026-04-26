@@ -4,6 +4,27 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-04-26: sandbox launch command option
+
+### Who Is Affected
+
+- Consumers that want `nix run`/`mkLaunch` to start a specific in-guest command
+  without passing command arguments at the shell each time.
+- Tooling that inspects generated launch wrapper command lines.
+
+### What Changed
+
+`agentspace.sandbox.command` is now available as a list of strings. The
+generated launch wrapper passes this list to `virtie launch` as the remote SSH
+command after `--`, then appends any arguments supplied to the wrapper. `virtie`
+shell-quotes the resulting argv vector into one OpenSSH remote command string so
+arguments containing whitespace or shell metacharacters keep their boundaries.
+
+### Migration Steps
+
+No migration is required. The default is `[ ]`, preserving the previous
+interactive session behavior.
+
 ## 2026-04-26: persistence base directory and disk suspend
 
 ### Who Is Affected

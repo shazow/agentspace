@@ -291,13 +291,16 @@ PY
     fi
 
     if [ "''${#remote_command[@]}" -eq 0 ]; then
+      touch "$PWD/state/ssh-session-started"
       while [ ! -f "$PWD/state/ssh-session-finished" ]; do
         sleep 0.1
       done
       exit 0
     fi
 
-    exec "''${remote_command[@]}"
+    command_string="''${remote_command[*]}"
+    printf '%s\n' "$command_string" > "$PWD/state/ssh-remote-command"
+    exec ${pkgs.runtimeShell} -c "$command_string"
   '';
 
   manifest = pkgs.writeText "virtie-fake-manifest.json" (
@@ -411,6 +414,24 @@ PY
 
   launchScript = mkLaunch {
     config = {
+      agentspace.sandbox.command = [ ];
+      agentspace.sandbox.launch = {
+        commonInit = ''
+          cd "$REPO_DIR"
+        '';
+        virtieManifest = ".agentspace/virtie-fake.json";
+        virtieManifestTemplate = manifest;
+      };
+    };
+  };
+
+  commandLaunchScript = mkLaunch {
+    config = {
+      agentspace.sandbox.command = [
+        "sh"
+        "-c"
+        "printf '%s\n' 'configured value with spaces' > state/configured-command"
+      ];
       agentspace.sandbox.launch = {
         commonInit = ''
           cd "$REPO_DIR"
@@ -428,8 +449,21 @@ in
     tmpdir="$(mktemp -d)"
     workspace_dir="$tmpdir/workspace"
     launch_log="$tmpdir/virtie.log"
+    failed=0
+    trap 'echo "virtie-launch-e2e: command failed at line $LINENO" >&2' ERR
 
     cleanup() {
+      status=$?
+      if [ "$status" -ne 0 ] && [ "$failed" -eq 0 ]; then
+        failed=1
+        echo "virtie-launch-e2e: failed with status $status" >&2
+        for log in "$tmpdir"/*.log; do
+          if [ -f "$log" ]; then
+            echo "== $log ==" >&2
+            cat "$log" >&2
+          fi
+        done
+      fi
       if [ -n "''${launch_pid:-}" ]; then
         kill "$launch_pid" 2>/dev/null || true
         kill -CONT "$launch_pid" 2>/dev/null || true
@@ -467,6 +501,22 @@ in
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
     test ! -e "$workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+
+    command_workspace_dir="$tmpdir/command-workspace"
+    command_log="$tmpdir/virtie-command.log"
+    mkdir -p "$command_workspace_dir"
+    cd "$command_workspace_dir"
+
+    if ! ${commandLaunchScript} >"$command_log" 2>&1; then
+      echo "virtie-launch-e2e: configured command launch exited non-zero" >&2
+      cat "$command_log" >&2
+      exit 1
+    fi
+    grep -Fx 'configured value with spaces' "$command_workspace_dir/state/configured-command" >/dev/null
+    grep -F "configured value with spaces" "$command_workspace_dir/state/ssh-remote-command" >/dev/null
+    test -f "$command_workspace_dir/state/qemu-stopped"
+    test -f "$command_workspace_dir/state/virtiofsd-stopped"
+    test ! -e "$command_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
 
     pause_workspace_dir="$tmpdir/pause-workspace"
     pause_log="$tmpdir/virtie-pause.log"
@@ -547,7 +597,7 @@ in
     ${virtiePackage}/bin/virtie resume --manifest="$disk_manifest" >"$disk_resume_log" 2>&1 &
     resume_pid=$!
     for _ in $(seq 1 100); do
-      if [ -f "$disk_workspace_dir/state/qemu-migrate-incoming" ] && [ -f "$disk_workspace_dir/state/qemu-resumed" ] && [ -f "$disk_workspace_dir/state/ssh-destination" ]; then
+      if [ -f "$disk_workspace_dir/state/qemu-migrate-incoming" ] && [ -f "$disk_workspace_dir/state/qemu-resumed" ] && [ -f "$disk_workspace_dir/state/ssh-session-started" ]; then
         break
       fi
       sleep 0.1
@@ -572,6 +622,7 @@ in
 
     mkdir -p "$out"
     cp "$launch_log" "$out/virtie.log"
+    cp "$command_log" "$out/virtie-command.log"
     cp "$pause_log" "$out/virtie-pause.log"
     cp "$disk_log" "$out/virtie-disk.log"
     cp "$disk_resume_log" "$out/virtie-disk-resume.log"

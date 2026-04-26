@@ -77,6 +77,7 @@
         let
           vmConfig = nixosConfig.config;
           launchCfg = vmConfig.agentspace.sandbox.launch;
+          remoteCommand = vmConfig.agentspace.sandbox.command or [ ];
           script = pkgs.writeShellScriptBin "launch-agent" ''
             set -euo pipefail
 
@@ -89,7 +90,7 @@
             ${pkgs.coreutils}/bin/rm -f "$MANIFEST_PATH"
             ${pkgs.coreutils}/bin/install -m 0644 ${lib.escapeShellArg launchCfg.virtieManifestTemplate} "$MANIFEST_PATH"
 
-            exec ${virtiePackage}/bin/virtie launch --manifest="$MANIFEST_PATH" -- "$@"
+            exec ${virtiePackage}/bin/virtie launch --manifest="$MANIFEST_PATH" -- ${lib.escapeShellArgs remoteCommand} "$@"
           '';
         in
         "${script}/bin/launch-agent";

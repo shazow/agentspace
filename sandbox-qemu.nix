@@ -43,6 +43,12 @@ in
       description = "Hostname for the guest VM.";
     };
 
+    command = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Default remote command passed to the sandbox SSH session.";
+    };
+
     persistence = {
       basedir = lib.mkOption {
         type = lib.types.str;

@@ -104,9 +104,7 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 		"-o",
 		"StrictHostKeyChecking=no",
 		"agent@vsock/10",
-		"bash",
-		"-lc",
-		"echo hi",
+		"bash -lc 'echo hi'",
 	}
 	if !reflect.DeepEqual(session.Args, wantSessionArgs) {
 		t.Fatalf("unexpected ssh session args: got %v want %v", session.Args, wantSessionArgs)
@@ -114,6 +112,22 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 
 	if session.Stdin != os.Stdin || session.Stdout != os.Stdout || session.Stderr != os.Stderr {
 		t.Fatalf("expected interactive ssh session to inherit stdio")
+	}
+}
+
+func TestBuildSSHSpecShellQuotesRemoteCommand(t *testing.T) {
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{WorkingDir: "/tmp/work"},
+		SSH: manifest.SSH{
+			Argv: []string{"/bin/ssh"},
+			User: "agent",
+		},
+	}
+
+	session := buildSSHSpec(manifest, 10, []string{"printf", "%s\n", "it's $HOME", ""}, true)
+	want := "printf '%s\n' 'it'\"'\"'s $HOME' ''"
+	if got := session.Args[len(session.Args)-1]; got != want {
+		t.Fatalf("unexpected quoted remote command: got %q want %q", got, want)
 	}
 }
 
