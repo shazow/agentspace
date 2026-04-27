@@ -34,12 +34,27 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
+  vmVirtieWriteFiles = mkSandbox {
+    sshAuthorizedKeys = [ testPublicKey ];
+    sshIdentityFile = ".agentspace-test/id_ed25519";
+    persistence.homeImage = null;
+    writeFiles = {
+      "/etc/agentspace-inline" = {
+        content = "aGVsbG8=";
+      };
+      "/etc/agentspace-host" = {
+        path = ".agentspace-test/host-file";
+      };
+    };
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   enabledBalloonManifest = vmVirtieBalloonEnabled.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
+  writeFilesManifest = vmVirtieWriteFiles.config.agentspace.sandbox.launch.virtieManifestData;
 
   _ =
     assert manifest.qemu.binaryPath != "";
@@ -50,6 +65,8 @@ let
     assert manifest.persistence.baseDir == ".agentspace";
     assert manifest.persistence.stateDir == ".agentspace";
     assert manifest.qemu.qmp.socketPath == "qmp.sock";
+    assert manifest.qemu.guestAgent.socketPath == "qga.sock";
+    assert manifest.writeFiles == { };
     assert manifest.qemu.devices.rng.id == "rng0";
     assert builtins.length manifest.qemu.devices.virtiofs > 0;
     assert builtins.length manifest.qemu.devices.block > 0;
@@ -91,6 +108,14 @@ let
       };
     assert externalStoreSocketManifest.virtiofs.daemons == [ ];
     true;
+
+  _writeFiles =
+    assert writeFilesManifest.qemu.guestAgent.socketPath == "qga.sock";
+    assert writeFilesManifest.writeFiles."/etc/agentspace-inline".content == "aGVsbG8=";
+    assert writeFilesManifest.writeFiles."/etc/agentspace-inline".path == null;
+    assert writeFilesManifest.writeFiles."/etc/agentspace-host".content == null;
+    assert writeFilesManifest.writeFiles."/etc/agentspace-host".path == ".agentspace-test/host-file";
+    true;
 in
 {
   virtie-manifest-contract =
@@ -104,4 +129,8 @@ in
   virtie-manifest-external-store-socket-contract =
     assert _externalStoreSocket;
     pkgs.runCommand "virtie-manifest-external-store-socket-contract" { } "touch $out";
+
+  virtie-manifest-write-files-contract =
+    assert _writeFiles;
+    pkgs.runCommand "virtie-manifest-write-files-contract" { } "touch $out";
 }

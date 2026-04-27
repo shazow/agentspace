@@ -4,6 +4,51 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-04-27: manifest writeFiles and guest-agent socket
+
+### Who Is Affected
+
+- Consumers that generate or validate virtie manifests directly.
+- Nix consumers that want boot-time file injection into a fresh guest.
+
+### What Changed
+
+Generated manifests now include `qemu.guestAgent.socketPath`, resolved with the
+same runtime-directory policy as QMP and virtiofs sockets. The sandbox module
+also enables the in-guest QEMU guest agent service.
+
+The manifest accepts an optional `writeFiles` map:
+
+```json
+{
+  "writeFiles": {
+    "/etc/example.conf": { "content": "YmFzZTY0IGJ5dGVz" },
+    "/etc/from-host": { "path": "relative-or-absolute-host-path" }
+  }
+}
+```
+
+Exactly one of `content` or `path` is required for each entry. `content` must
+already be base64-encoded. Relative host `path` values resolve against
+`paths.workingDir`; guest target paths must be absolute.
+
+For Nix users, the equivalent option is:
+
+```nix
+agentspace.sandbox.writeFiles."/etc/example.conf".content = "YmFzZTY0IGJ5dGVz";
+agentspace.sandbox.writeFiles."/etc/from-host".path = "relative-host-path";
+```
+
+`virtie launch` writes these files after QMP readiness and guest-agent ping, and
+before SSH readiness. File injection runs only for fresh launches; restores via
+`virtie launch --resume=auto` or `--resume=force` skip `writeFiles`.
+
+### Migration Steps
+
+No migration is required for consumers that do not set `writeFiles`. Direct
+manifest producers should include `qemu.guestAgent.socketPath` when using
+`writeFiles`.
+
 ## 2026-04-27: launch resume modes replace `virtie resume`
 
 ### Who Is Affected

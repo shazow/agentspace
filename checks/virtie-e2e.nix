@@ -13,6 +13,7 @@ let
 
         mkdir -p "$PWD/state"
         qmp_socket=""
+        qga_socket=""
         incoming=""
 
         while [ "$#" -gt 0 ]; do
@@ -20,6 +21,20 @@ let
             -qmp)
               shift
               qmp_socket="$1"
+              ;;
+            -chardev)
+              shift
+              chardev_spec="$1"
+              case "$chardev_spec" in
+                socket,*id=qga0*|socket,*id=qga0)
+                  IFS=',' read -r -a chardev_parts <<< "$chardev_spec"
+                  for chardev_part in "''${chardev_parts[@]}"; do
+                    case "$chardev_part" in
+                      path=*) qga_socket="''${chardev_part#path=}" ;;
+                    esac
+                  done
+                  ;;
+              esac
               ;;
             -incoming)
               shift
@@ -54,6 +69,7 @@ let
         fi
 
         export QMP_SOCKET="$qmp_socket"
+        export QGA_SOCKET="$qga_socket"
         export QEMU_PARENT_PID="$$"
         ${pkgs.python3}/bin/python - <<'PY' &
 import json
@@ -63,6 +79,7 @@ import socket
 import threading
 
 socket_path = os.environ["QMP_SOCKET"]
+qga_socket_path = os.environ.get("QGA_SOCKET", "")
 parent_pid = int(os.environ["QEMU_PARENT_PID"])
 state_dir = os.path.join(os.getcwd(), "state")
 
@@ -79,6 +96,8 @@ status = "running"
 migration_status = "none"
 status_lock = threading.Lock()
 client_count = 0
+qga_handles = {}
+qga_next_handle = 0
 
 def touch(name):
     with open(os.path.join(state_dir, name), "a", encoding="utf-8"):
@@ -172,6 +191,72 @@ def handle(conn):
                 send({"return": {}})
     conn.close()
 
+def qga_handle(conn):
+    global qga_next_handle
+    decoder = json.JSONDecoder()
+    buffer = ""
+
+    def send(message):
+        conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
+
+    while True:
+        chunk = conn.recv(4096)
+        if not chunk:
+            break
+        buffer += chunk.decode("utf-8")
+        while True:
+            stripped = buffer.lstrip()
+            if not stripped:
+                buffer = ""
+                break
+            try:
+                message, consumed = decoder.raw_decode(stripped)
+            except json.JSONDecodeError:
+                break
+            buffer = stripped[consumed:]
+            command = message.get("execute")
+            args = message.get("arguments", {})
+            if command == "guest-ping":
+                touch("guest-agent-ping")
+                send({"return": {}})
+            elif command == "guest-file-open":
+                qga_next_handle += 1
+                qga_handles[qga_next_handle] = args.get("path", "")
+                send({"return": qga_next_handle})
+            elif command == "guest-file-write":
+                handle = args.get("handle")
+                path = qga_handles.get(handle, "")
+                payload = args.get("buf-b64", "")
+                with open(os.path.join(state_dir, "guest-agent-writes"), "a", encoding="utf-8") as writes:
+                    writes.write(f"{path} {payload}\n")
+                send({"return": {"count": len(payload), "eof": False}})
+            elif command == "guest-file-close":
+                handle = args.get("handle")
+                path = qga_handles.pop(handle, "")
+                with open(os.path.join(state_dir, "guest-agent-closes"), "a", encoding="utf-8") as closes:
+                    closes.write(f"{path}\n")
+                send({"return": {}})
+            else:
+                send({"return": {}})
+    conn.close()
+
+def qga_serve():
+    if not qga_socket_path:
+        return
+    os.makedirs(os.path.dirname(qga_socket_path) or ".", exist_ok=True)
+    try:
+        os.unlink(qga_socket_path)
+    except FileNotFoundError:
+        pass
+    qga_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    qga_server.bind(qga_socket_path)
+    qga_server.listen(16)
+    while True:
+        conn, _ = qga_server.accept()
+        threading.Thread(target=qga_handle, args=(conn,), daemon=True).start()
+
+threading.Thread(target=qga_serve, daemon=True).start()
+
 while True:
     conn, _ = server.accept()
     with status_lock:
@@ -189,7 +274,7 @@ PY
           trap - EXIT INT TERM
           kill "$qmp_pid" 2>/dev/null || true
           wait "$qmp_pid" 2>/dev/null || true
-          rm -f "$qmp_socket"
+          rm -f "$qmp_socket" "$qga_socket"
           touch "$PWD/state/qemu-stopped"
           exit 0
         }
@@ -346,6 +431,9 @@ PY
         qmp = {
           socketPath = "qmp.sock";
         };
+        guestAgent = {
+          socketPath = "qga.sock";
+        };
         devices = {
           rng = {
             id = "rng0";
@@ -401,6 +489,14 @@ PY
           };
         }
       ];
+      writeFiles = {
+        "/etc/virtie-inline" = {
+          content = "aW5saW5lLWZyb20tbWFuaWZlc3Q=";
+        };
+        "/etc/virtie-host" = {
+          path = "host-write-file";
+        };
+      };
     }
   );
 
@@ -475,12 +571,13 @@ in
 
     mkdir -p "$workspace_dir"
     cd "$workspace_dir"
+    printf '%s' 'host payload' > host-write-file
 
     export PATH=${fakeTools}/bin:$PATH
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
+    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qga.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
       echo "virtie-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1
@@ -490,11 +587,17 @@ in
     grep -F 'virtie: starting virtiofsd [workspace]' "$launch_log" >/dev/null
     grep -F 'virtie: starting qemu' "$launch_log" >/dev/null
     grep -F 'virtie: allocated vsock cid 3' "$launch_log" >/dev/null
+    grep -F 'virtie: wrote guest file /etc/virtie-inline' "$launch_log" >/dev/null
+    grep -F 'virtie: wrote guest file /etc/virtie-host' "$launch_log" >/dev/null
     workspace_real="$(${pkgs.coreutils}/bin/realpath "$workspace_dir")"
     grep -F '"workingDir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtie-fake.json" >/dev/null
     grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
     grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
     grep -Fx "$workspace_real/overlay.img" "$workspace_dir/state/mkfs-ext4-args" >/dev/null
+    grep -Fx '/etc/virtie-inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
+    grep -Fx '/etc/virtie-host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
+    grep -Fx '/etc/virtie-inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
+    grep -Fx '/etc/virtie-host' "$workspace_dir/state/guest-agent-closes" >/dev/null
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
     test ! -e "$workspace_dir/.agentspace/virtie-fake.pid"
@@ -503,6 +606,7 @@ in
     command_log="$tmpdir/virtie-command.log"
     mkdir -p "$command_workspace_dir"
     cd "$command_workspace_dir"
+    printf '%s' 'host payload' > host-write-file
 
     if ! ${commandLaunchScript} >"$command_log" 2>&1; then
       echo "virtie-launch-e2e: configured command launch exited non-zero" >&2
@@ -520,6 +624,7 @@ in
     disk_resume_log="$tmpdir/virtie-disk-resume.log"
     mkdir -p "$disk_workspace_dir"
     cd "$disk_workspace_dir"
+    printf '%s' 'host payload' > host-write-file
 
     ${launchScript} >"$disk_log" 2>&1 &
     launch_pid=$!

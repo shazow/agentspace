@@ -105,6 +105,31 @@ in
       description = "Optional SSH identity file passed to host-side launch/connect helpers.";
     };
 
+    writeFiles = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule (
+          { ... }:
+          {
+            options = {
+              content = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Base64-encoded content to write into the guest file.";
+              };
+
+              path = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Host path whose bytes are base64-encoded and written into the guest file.";
+              };
+            };
+          }
+        )
+      );
+      default = { };
+      description = "Files to write into the guest during fresh VM launch, keyed by absolute guest path.";
+    };
+
     workspaceMountPoint = lib.mkOption {
       type = lib.types.str;
       default = "/home/${cfg.user}/workspace";
@@ -316,6 +341,7 @@ in
         qemu = qemuConfig;
         volumes = manifestVolumes;
         virtiofs.daemons = virtiofsDaemons;
+        writeFiles = cfg.writeFiles;
       };
 
       virtieManifestTemplate =
@@ -389,6 +415,7 @@ in
             PermitRootLogin = "no";
           };
         };
+        services.qemuGuest.enable = true;
 
         security.sudo.wheelNeedsPassword = false;
         swapDevices = lib.optionals (cfg.swapSize > 0) [

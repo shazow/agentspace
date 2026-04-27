@@ -92,6 +92,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 		socketPath string
 		wantSocket string
 		wantQMP    string
+		wantQGA    string
 	}{
 		{
 			name:       "legacy working dir",
@@ -99,6 +100,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			socketPath: "fs.sock",
 			wantSocket: "/tmp/work/fs.sock",
 			wantQMP:    "/tmp/work/qmp.sock",
+			wantQGA:    "/tmp/work/qga.sock",
 		},
 		{
 			name:       "default runtime dir",
@@ -106,6 +108,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			socketPath: "fs.sock",
 			wantSocket: filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "fs.sock"),
 			wantQMP:    filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qmp.sock"),
+			wantQGA:    filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qga.sock"),
 		},
 		{
 			name:       "relative runtime dir",
@@ -113,6 +116,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			socketPath: "fs.sock",
 			wantSocket: "/tmp/work/runtime/fs.sock",
 			wantQMP:    "/tmp/work/runtime/qmp.sock",
+			wantQGA:    "/tmp/work/runtime/qga.sock",
 		},
 		{
 			name:       "absolute runtime dir",
@@ -120,6 +124,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			socketPath: "fs.sock",
 			wantSocket: "/tmp/runtime/fs.sock",
 			wantQMP:    "/tmp/runtime/qmp.sock",
+			wantQGA:    "/tmp/runtime/qga.sock",
 		},
 		{
 			name:       "absolute socket path bypasses runtime dir",
@@ -127,6 +132,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			socketPath: "/tmp/explicit-fs.sock",
 			wantSocket: "/tmp/explicit-fs.sock",
 			wantQMP:    "/tmp/explicit-qmp.sock",
+			wantQGA:    "/tmp/explicit-qga.sock",
 		},
 	}
 
@@ -136,8 +142,10 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			manifest.Paths.RuntimeDir = tt.runtimeDir
 			manifest.VirtioFS.Daemons[0].SocketPath = tt.socketPath
 			manifest.QEMU.Devices.VirtioFS[0].SocketPath = tt.socketPath
+			manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 			if tt.name == "absolute socket path bypasses runtime dir" {
 				manifest.QEMU.QMP.SocketPath = "/tmp/explicit-qmp.sock"
+				manifest.QEMU.GuestAgent.SocketPath = "/tmp/explicit-qga.sock"
 			}
 
 			socketPaths, err := manifest.ResolvedSocketPaths()
@@ -162,6 +170,13 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			if qmpSocketPath != tt.wantQMP {
 				t.Fatalf("unexpected qmp socket path: got %q want %q", qmpSocketPath, tt.wantQMP)
 			}
+			guestAgentSocketPath, err := manifest.ResolvedGuestAgentSocketPath()
+			if err != nil {
+				t.Fatalf("resolve guest agent socket path: %v", err)
+			}
+			if guestAgentSocketPath != tt.wantQGA {
+				t.Fatalf("unexpected guest agent socket path: got %q want %q", guestAgentSocketPath, tt.wantQGA)
+			}
 
 			qemu, err := manifest.ResolvedQEMU()
 			if err != nil {
@@ -173,6 +188,9 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			if got, want := qemu.QMP.SocketPath, tt.wantQMP; got != want {
 				t.Fatalf("unexpected qemu qmp socket path: got %q want %q", got, want)
 			}
+			if got, want := qemu.GuestAgent.SocketPath, tt.wantQGA; got != want {
+				t.Fatalf("unexpected qemu guest agent socket path: got %q want %q", got, want)
+			}
 
 			daemons, err := manifest.ResolvedVirtioFSDaemons()
 			if err != nil {
@@ -182,6 +200,127 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 				t.Fatalf("unexpected daemon socket path: got %q want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestManifestWriteFilesValidation(t *testing.T) {
+	validContent := "aGVsbG8="
+
+	tests := []struct {
+		name      string
+		configure func(*Manifest)
+		wantError string
+	}{
+		{
+			name: "valid content",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Content: &validContent},
+				}
+			},
+		},
+		{
+			name: "valid host path",
+			configure: func(manifest *Manifest) {
+				hostPath := "agent.conf"
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Path: &hostPath},
+				}
+			},
+		},
+		{
+			name: "requires guest agent socket",
+			configure: func(manifest *Manifest) {
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Content: &validContent},
+				}
+			},
+			wantError: "manifest.qemu.guestAgent.socketPath is required",
+		},
+		{
+			name: "rejects relative guest path",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"etc/agent.conf": {Content: &validContent},
+				}
+			},
+			wantError: "guest path must be absolute",
+		},
+		{
+			name: "rejects missing source",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {},
+				}
+			},
+			wantError: "must set exactly one",
+		},
+		{
+			name: "rejects duplicate source",
+			configure: func(manifest *Manifest) {
+				hostPath := "agent.conf"
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Content: &validContent, Path: &hostPath},
+				}
+			},
+			wantError: "must set exactly one",
+		},
+		{
+			name: "rejects invalid base64",
+			configure: func(manifest *Manifest) {
+				invalidContent := "not base64"
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Content: &invalidContent},
+				}
+			},
+			wantError: "content must be valid base64",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := validManifest()
+			tt.configure(manifest)
+
+			err := manifest.Validate()
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("unexpected validation error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected validation error containing %q, got %v", tt.wantError, err)
+			}
+		})
+	}
+}
+
+func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
+	manifest := validManifest()
+	content := "aGVsbG8="
+	relativeHostPath := "files/agent.conf"
+	absoluteHostPath := "/tmp/host.conf"
+	manifest.WriteFiles = WriteFiles{
+		"/etc/a.conf": {Path: &relativeHostPath},
+		"/etc/b.conf": {Content: &content},
+		"/etc/c.conf": {Path: &absoluteHostPath},
+	}
+
+	got := manifest.ResolvedWriteFiles()
+	want := []ResolvedWriteFile{
+		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf")},
+		{GuestPath: "/etc/b.conf", Content: &content},
+		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected resolved write files: got %#v want %#v", got, want)
 	}
 }
 

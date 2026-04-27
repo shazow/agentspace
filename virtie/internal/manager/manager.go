@@ -53,6 +53,7 @@ type manager struct {
 	runner              runner
 	socketWaiter        socketWaiter
 	qmpDialer           qmpDialer
+	guestAgentDialer    guestAgentDialer
 	logger              *log.Logger
 	sshRetryDelay       time.Duration
 	shutdownDelay       time.Duration
@@ -70,6 +71,7 @@ func newManager() *manager {
 		runner:              &execRunner{},
 		socketWaiter:        &pollingSocketWaiter{},
 		qmpDialer:           &socketMonitorDialer{},
+		guestAgentDialer:    &socketGuestAgentDialer{},
 		logger:              log.New(os.Stderr, "virtie: ", 0),
 		sshRetryDelay:       defaultSSHRetryDelay,
 		shutdownDelay:       defaultShutdownDelay,
@@ -149,6 +151,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	guestAgentSocketPath, err := manifest.ResolvedGuestAgentSocketPath()
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
 	volumes := manifest.ResolvedVolumes()
 
 	lock, err := m.locker.Acquire(manifest.ResolvedLockPath())
@@ -192,6 +198,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err := ensureParentDirectories([]string{qmpSocketPath}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	if guestAgentSocketPath != "" {
+		if err := ensureParentDirectories([]string{guestAgentSocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
+	}
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -200,6 +211,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	if err := removeSocketPaths([]string{qmpSocketPath}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
+	}
+	if guestAgentSocketPath != "" {
+		if err := removeSocketPaths([]string{guestAgentSocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
 	}
 	if err := ensureVolumeImages(volumes); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -218,7 +234,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if qmpClient != nil {
 			disconnectErr = qmpClient.Disconnect()
 		}
-		cleanupErr := removeSocketPaths(append([]string{qmpSocketPath}, managedSocketPaths...))
+		cleanupPaths := append([]string{qmpSocketPath}, managedSocketPaths...)
+		if guestAgentSocketPath != "" {
+			cleanupPaths = append(cleanupPaths, guestAgentSocketPath)
+		}
+		cleanupErr := removeSocketPaths(cleanupPaths)
 		if err == nil {
 			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
 		} else if featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {
@@ -275,6 +295,12 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid)
 	if err := m.handlePendingSuspendRequest(launchCtx, suspendRequests, suspendHandler); err != nil {
 		return err
+	}
+
+	if resumeState == nil {
+		if err := m.writeGuestFiles(launchCtx, manifest, qemu); err != nil {
+			return err
+		}
 	}
 
 	m.logger.Printf("waiting for ssh readiness")

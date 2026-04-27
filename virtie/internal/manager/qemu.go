@@ -113,6 +113,18 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 
 	args = append(args, "-qmp", fmt.Sprintf("unix:%s,server,nowait", qemu.QMP.SocketPath))
 
+	if qemu.GuestAgent.SocketPath != "" {
+		serialDriver, err := guestAgentSerialDriver(qemu.Devices.VSOCK.Transport)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args,
+			"-chardev", fmt.Sprintf("socket,path=%s,server=on,wait=off,id=qga0", qemu.GuestAgent.SocketPath),
+			"-device", fmt.Sprintf("%s,id=qga0-serial", serialDriver),
+			"-device", "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
+		)
+	}
+
 	switch qemu.Memory.Backend {
 	case "", "default":
 		// No extra memory object required.
@@ -222,6 +234,19 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	args = append(args, qemu.PassthroughArgs...)
 
 	return args, nil
+}
+
+func guestAgentSerialDriver(transport string) (string, error) {
+	switch transport {
+	case "pci":
+		return "virtio-serial-pci", nil
+	case "mmio":
+		return "virtio-serial-device", nil
+	case "ccw":
+		return "virtio-serial-ccw", nil
+	default:
+		return "", fmt.Errorf("unsupported qemu transport %q", transport)
+	}
 }
 
 func resolveQEMUTransport(value string) (govmmQemu.VirtioTransport, error) {

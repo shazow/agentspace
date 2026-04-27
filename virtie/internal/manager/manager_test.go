@@ -296,6 +296,156 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	hostPath := "host-file"
+	hostBytes := []byte("from host")
+	if err := os.WriteFile(filepath.Join(tmpDir, hostPath), hostBytes, 0o644); err != nil {
+		t.Fatalf("write host fixture: %v", err)
+	}
+	inlineContent := "aW5saW5l"
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/inline": {Content: &inlineContent},
+		"/etc/host":   {Path: &hostPath},
+	}
+
+	var eventMu sync.Mutex
+	var events []string
+	record := func(event string) {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		events = append(events, event)
+	}
+
+	runner := &fakeRunner{
+		finishInteractiveSSH: true,
+		onStart: func(spec processSpec) {
+			record("start:" + spec.Name)
+		},
+	}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{record: record}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	if got, want := guestAgent.writes["/etc/inline"], inlineContent; got != want {
+		t.Fatalf("unexpected inline write content: got %q want %q", got, want)
+	}
+	if got, want := guestAgent.writes["/etc/host"], "ZnJvbSBob3N0"; got != want {
+		t.Fatalf("unexpected host write content: got %q want %q", got, want)
+	}
+
+	firstSSH := indexString(events, "start:ssh")
+	ping := indexString(events, "guest-ping")
+	closeHost := indexString(events, "guest-close:/etc/host")
+	if firstSSH < 0 || ping < 0 || closeHost < 0 {
+		t.Fatalf("expected guest agent and ssh events, got %v", events)
+	}
+	if !(ping < firstSSH && closeHost < firstSSH) {
+		t.Fatalf("expected guest writes before ssh readiness, got events %v", events)
+	}
+}
+
+func TestManagerLaunchSkipsGuestFilesOnResume(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+	inlineContent := "aW5saW5l"
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/inline": {Content: &inlineContent},
+	}
+
+	vmStatePath := filepath.Join(tmpDir, ".agentspace", "agent-sandbox.vmstate")
+	if err := os.MkdirAll(filepath.Dir(vmStatePath), 0o755); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	if err := os.WriteFile(vmStatePath, []byte("state"), 0o644); err != nil {
+		t.Fatalf("write vm state: %v", err)
+	}
+	if err := writeSuspendStateData(cfg, suspendState{
+		HostName:      cfg.Identity.HostName,
+		QMPSocketPath: filepath.Join(tmpDir, "old-qmp.sock"),
+		VMStatePath:   vmStatePath,
+		CID:           3,
+		Status:        "saved",
+	}); err != nil {
+		t.Fatalf("write suspend state: %v", err)
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestDialer := &fakeGuestAgentDialer{client: &fakeGuestAgentClient{}}
+	manager := &manager{
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:    guestDialer,
+		logger:              log.New(io.Discard, "", 0),
+		sshRetryDelay:       0,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpRetryDelay:       0,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Millisecond,
+	}
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce}); err != nil {
+		t.Fatalf("resume launch: %v", err)
+	}
+	if guestDialer.attempts != 0 {
+		t.Fatalf("expected resume launch to skip guest agent writes, got %d dial attempts", guestDialer.attempts)
+	}
+	if qmpClient.migrateIncomingCalls != 1 || qmpClient.contCalls != 1 {
+		t.Fatalf("expected resume path to restore and continue, migrate=%d cont=%d", qmpClient.migrateIncomingCalls, qmpClient.contCalls)
+	}
+}
+
+func TestManagerWriteGuestFileClosesAfterWriteFailure(t *testing.T) {
+	client := &fakeGuestAgentClient{writeErr: errors.New("write failed")}
+	manager := &manager{qmpConnectTimeout: time.Millisecond}
+
+	err := manager.writeGuestFile(client, "/etc/fail", "ZmFpbA==")
+	if err == nil || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("expected write failure, got %v", err)
+	}
+	if len(client.closes) != 1 || client.closes[0] != "/etc/fail" {
+		t.Fatalf("expected close after write failure, got closes %v", client.closes)
+	}
+}
+
 func TestManagerLaunchSavesQueuedSuspendDuringSSHReadiness(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -1228,11 +1378,34 @@ func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	if !containsString(spec.Args, "unix:/tmp/work/qmp.sock,server,nowait") {
 		t.Fatalf("expected qemu args to include the qmp socket: %v", spec.Args)
 	}
+	if containsString(spec.Args, "qga0") {
+		t.Fatalf("expected qemu args to omit guest agent device when socket is unset: %v", spec.Args)
+	}
 	if !containsString(spec.Args, "memory-backend-memfd,id=mem,size=1024M,share=on") {
 		t.Fatalf("expected qemu args to include the shared memory backend: %v", spec.Args)
 	}
 	if !spec.ProcessGroup {
 		t.Fatal("expected qemu to run in its own process group")
+	}
+}
+
+func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
+	manifest := validManifest("/tmp/work")
+	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+
+	spec, err := buildQEMUSpec(manifest, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	if !containsString(spec.Args, "socket,path=/tmp/work/qga.sock,server=on,wait=off,id=qga0") {
+		t.Fatalf("expected qemu args to include guest agent chardev: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "virtio-serial-pci,id=qga0-serial") {
+		t.Fatalf("expected qemu args to include guest agent serial device: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0") {
+		t.Fatalf("expected qemu args to include guest agent port: %v", spec.Args)
 	}
 }
 
@@ -1242,6 +1415,7 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 
 	manifest := validManifest("/tmp/work")
 	manifest.Paths.RuntimeDir = stringPtr("")
+	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 
 	spec, err := buildQEMUSpec(manifest, 42)
 	if err != nil {
@@ -1251,6 +1425,10 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	wantQMP := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "qmp.sock")
 	if !containsString(spec.Args, "unix:"+wantQMP+",server,nowait") {
 		t.Fatalf("expected qemu args to include runtime qmp socket %q: %v", wantQMP, spec.Args)
+	}
+	wantQGA := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "qga.sock")
+	if !containsString(spec.Args, "socket,path="+wantQGA+",server=on,wait=off,id=qga0") {
+		t.Fatalf("expected qemu args to include runtime guest agent socket %q: %v", wantQGA, spec.Args)
 	}
 }
 
@@ -1556,6 +1734,89 @@ type fakeQMPDialer struct {
 func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpClient, error) {
 	d.attempts++
 	return d.client, nil
+}
+
+type fakeGuestAgentDialer struct {
+	client   guestAgentClient
+	attempts int
+}
+
+func (d *fakeGuestAgentDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (guestAgentClient, error) {
+	d.attempts++
+	return d.client, nil
+}
+
+type fakeGuestAgentClient struct {
+	mu          sync.Mutex
+	nextHandle  int
+	handles     map[int]string
+	writes      map[string]string
+	closes      []string
+	writeErr    error
+	closeErr    error
+	pingErr     error
+	openErr     error
+	disconnects int
+	record      func(string)
+}
+
+func (c *fakeGuestAgentClient) Ping(timeout time.Duration) error {
+	if c.record != nil {
+		c.record("guest-ping")
+	}
+	return c.pingErr
+}
+
+func (c *fakeGuestAgentClient) OpenFile(timeout time.Duration, path string) (int, error) {
+	if c.record != nil {
+		c.record("guest-open:" + path)
+	}
+	if c.openErr != nil {
+		return 0, c.openErr
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.handles == nil {
+		c.handles = make(map[int]string)
+	}
+	c.nextHandle++
+	c.handles[c.nextHandle] = path
+	return c.nextHandle, nil
+}
+
+func (c *fakeGuestAgentClient) WriteFile(timeout time.Duration, handle int, contentBase64 string) error {
+	c.mu.Lock()
+	path := c.handles[handle]
+	if c.writes == nil {
+		c.writes = make(map[string]string)
+	}
+	c.writes[path] = contentBase64
+	c.mu.Unlock()
+
+	if c.record != nil {
+		c.record("guest-write:" + path)
+	}
+	return c.writeErr
+}
+
+func (c *fakeGuestAgentClient) CloseFile(timeout time.Duration, handle int) error {
+	c.mu.Lock()
+	path := c.handles[handle]
+	c.closes = append(c.closes, path)
+	c.mu.Unlock()
+
+	if c.record != nil {
+		c.record("guest-close:" + path)
+	}
+	return c.closeErr
+}
+
+func (c *fakeGuestAgentClient) Disconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.disconnects++
+	return nil
 }
 
 type pidSignal struct {
@@ -2069,6 +2330,15 @@ func containsString(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func indexString(values []string, needle string) int {
+	for i, value := range values {
+		if value == needle {
+			return i
+		}
+	}
+	return -1
 }
 
 func stringPtr(value string) *string {
