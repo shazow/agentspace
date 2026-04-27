@@ -129,6 +129,12 @@ func TestBuildSSHSpecShellQuotesRemoteCommand(t *testing.T) {
 	if got := session.Args[len(session.Args)-1]; got != want {
 		t.Fatalf("unexpected quoted remote command: got %q want %q", got, want)
 	}
+
+	configuredCommand := buildSSHSpec(manifest, 10, []string{"tmux new-session -A -s codex \"npx @openai/codex --yolo\""}, true)
+	wantConfigured := "tmux new-session -A -s codex \"npx @openai/codex --yolo\""
+	if got := configuredCommand.Args[len(configuredCommand.Args)-1]; got != wantConfigured {
+		t.Fatalf("unexpected configured remote command: got %q want %q", got, wantConfigured)
+	}
 }
 
 func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {

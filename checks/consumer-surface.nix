@@ -10,11 +10,7 @@ let
   vmConsumer = mkSandbox {
     sshAuthorizedKeys = [ consumerPublicKey ];
     sshIdentityFile = "./id_ed25519";
-    command = [
-      "bash"
-      "-lc"
-      "pwd"
-    ];
+    command = "bash -lc pwd";
     persistence = {
       homeImage = "/var/lib/agentspace/home.img";
       storeOverlay = "/var/lib/agentspace/nix-store-overlay.img";
@@ -49,11 +45,7 @@ let
 
   _ =
     assert sandboxCfg.sshIdentityFile == "./id_ed25519";
-    assert sandboxCfg.command == [
-      "bash"
-      "-lc"
-      "pwd"
-    ];
+    assert sandboxCfg.command == "bash -lc pwd";
     assert sandboxCfg.persistence.homeImage == "/var/lib/agentspace/home.img";
     assert sandboxCfg.persistence.storeOverlay == "/var/lib/agentspace/nix-store-overlay.img";
     assert vmConsumer.config.microvm.vcpu == 16;
@@ -74,7 +66,7 @@ in
   sandbox-consumer-surface = assert _; pkgs.runCommand "sandbox-consumer-surface" { } ''
     grep -F 'virtie launch --manifest=' ${launchScript}
     grep -F ${pkgs.lib.escapeShellArg manifestPath} ${launchScript}
-    grep -F " -- bash -lc pwd \"\$@\"" ${launchScript}
+    grep -F "bash -lc pwd" ${launchScript}
 
     touch $out
   '';

@@ -851,7 +851,7 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, 
 	}
 	args = append(args, manifest.SSHDestination(cid))
 	if len(remoteCommand) > 0 {
-		args = append(args, shellQuoteArgs(remoteCommand))
+		args = append(args, encodeRemoteCommand(remoteCommand))
 	}
 
 	return processSpec{
@@ -863,6 +863,13 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, 
 		Stdout: stdout,
 		Stderr: stderr,
 	}
+}
+
+func encodeRemoteCommand(args []string) string {
+	if len(args) == 1 {
+		return args[0]
+	}
+	return shellQuoteArgs(args)
 }
 
 func shellQuoteArgs(args []string) string {

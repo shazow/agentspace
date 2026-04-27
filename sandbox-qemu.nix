@@ -44,9 +44,9 @@ in
     };
 
     command = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = "Default remote command passed to the sandbox SSH session.";
+      type = lib.types.str;
+      default = "";
+      description = "Default remote shell command passed to the sandbox SSH session.";
     };
 
     persistence = {

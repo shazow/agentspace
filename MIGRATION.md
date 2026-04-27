@@ -14,15 +14,14 @@ flake output, manifest contract, or generated wrapper behavior changes.
 
 ### What Changed
 
-`agentspace.sandbox.command` is now available as a list of strings. The
-generated launch wrapper passes this list to `virtie launch` as the remote SSH
-command after `--`, then appends any arguments supplied to the wrapper. `virtie`
-shell-quotes the resulting argv vector into one OpenSSH remote command string so
-arguments containing whitespace or shell metacharacters keep their boundaries.
+`agentspace.sandbox.command` is now available as a string. The generated launch
+wrapper passes it to `virtie launch` as the remote SSH command when the wrapper
+is invoked without command arguments. Arguments supplied to the wrapper override
+the configured command for that launch.
 
 ### Migration Steps
 
-No migration is required. The default is `[ ]`, preserving the previous
+No migration is required. The default is `""`, preserving the previous
 interactive session behavior.
 
 ## 2026-04-26: persistence base directory and disk suspend

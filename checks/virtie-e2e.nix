@@ -414,7 +414,7 @@ PY
 
   launchScript = mkLaunch {
     config = {
-      agentspace.sandbox.command = [ ];
+      agentspace.sandbox.command = "";
       agentspace.sandbox.launch = {
         commonInit = ''
           cd "$REPO_DIR"
@@ -427,11 +427,9 @@ PY
 
   commandLaunchScript = mkLaunch {
     config = {
-      agentspace.sandbox.command = [
-        "sh"
-        "-c"
-        "printf '%s\n' 'configured value with spaces' > state/configured-command"
-      ];
+      agentspace.sandbox.command = ''
+        sh -c 'printf "%s\n" "configured value with spaces" > state/configured-command'
+      '';
       agentspace.sandbox.launch = {
         commonInit = ''
           cd "$REPO_DIR"
