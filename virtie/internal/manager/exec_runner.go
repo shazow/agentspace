@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 )
 
 type execRunner struct{}
@@ -13,6 +14,9 @@ func (r *execRunner) Start(spec processSpec) (process, error) {
 	cmd.Dir = spec.Dir
 	if len(spec.Env) > 0 {
 		cmd.Env = append(os.Environ(), spec.Env...)
+	}
+	if spec.ProcessGroup {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
 	cmd.Stdin = spec.Stdin
 	cmd.Stdout = spec.Stdout

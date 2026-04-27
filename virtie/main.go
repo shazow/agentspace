@@ -2,7 +2,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -30,7 +32,7 @@ type launchCommand struct {
 }
 
 func (c *launchCommand) Execute(args []string) error {
-	manifest, err := loadManifest(c.Manifest)
+	manifest, err := loadLaunchManifest(c.Manifest)
 	if err != nil {
 		return err
 	}
@@ -71,24 +73,91 @@ func (c *resumeCommand) Execute(args []string) error {
 	return manager.Resume(ctx, manifest)
 }
 
+func loadLaunchManifest(path string) (*manifest.Manifest, error) {
+	manifest, resolvedPath, data, err := loadManifestData(path)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.IsAbs(manifest.Paths.WorkingDir) {
+		return manifest, nil
+	}
+
+	workingDir, err := filepath.Abs(manifest.Paths.WorkingDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve manifest working directory %q: %w", manifest.Paths.WorkingDir, err)
+	}
+	manifest.Paths.WorkingDir = workingDir
+
+	if err := writeManifestWorkingDir(resolvedPath, data, workingDir); err != nil {
+		return nil, err
+	}
+	return manifest, nil
+}
+
 func loadManifest(path string) (*manifest.Manifest, error) {
+	manifest, _, _, err := loadManifestData(path)
+	return manifest, err
+}
+
+func loadManifestData(path string) (*manifest.Manifest, string, []byte, error) {
 	resolvedPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("resolve manifest path %q: %w", path, err)
+		return nil, "", nil, fmt.Errorf("resolve manifest path %q: %w", path, err)
 	}
 
-	file, err := os.Open(resolvedPath)
+	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
-		return nil, fmt.Errorf("open manifest %q: %w", resolvedPath, err)
+		return nil, "", nil, fmt.Errorf("open manifest %q: %w", resolvedPath, err)
 	}
-	defer file.Close()
-
-	manifest, err := manifest.Load(file)
+	manifest, err := manifest.Load(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("load manifest %q: %w", resolvedPath, err)
+		return nil, "", nil, fmt.Errorf("load manifest %q: %w", resolvedPath, err)
 	}
 
-	return manifest, nil
+	return manifest, resolvedPath, data, nil
+}
+
+func writeManifestWorkingDir(path string, data []byte, workingDir string) error {
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("decode manifest %q for update: %w", path, err)
+	}
+
+	paths, ok := document["paths"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("decode manifest %q for update: manifest.paths must be an object", path)
+	}
+	paths["workingDir"] = workingDir
+
+	updated, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode manifest %q: %w", path, err)
+	}
+	updated = append(updated, '\n')
+
+	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary manifest %q: %w", path, err)
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = os.Remove(tempPath)
+	}()
+
+	if _, err := temp.Write(updated); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("write temporary manifest %q: %w", tempPath, err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close temporary manifest %q: %w", tempPath, err)
+	}
+	if err := os.Chmod(tempPath, 0o644); err != nil {
+		return fmt.Errorf("chmod temporary manifest %q: %w", tempPath, err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("replace manifest %q: %w", path, err)
+	}
+	return nil
 }
 
 func main() {

@@ -48,7 +48,7 @@ let
     assert manifest.qemu.machine.type == "microvm";
     assert manifest.paths.runtimeDir == "";
     assert manifest.persistence.baseDir == ".agentspace";
-    assert manifest.persistence.stateDir == ".agentspace/.virtie";
+    assert manifest.persistence.stateDir == ".agentspace";
     assert manifest.qemu.qmp.socketPath == "qmp.sock";
     assert manifest.qemu.devices.rng.id == "rng0";
     assert builtins.length manifest.qemu.devices.virtiofs > 0;

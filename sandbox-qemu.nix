@@ -13,7 +13,7 @@ let
     else
       "mmio";
   persistenceBaseDir = cfg.persistence.basedir;
-  persistenceStateDir = "${persistenceBaseDir}/.virtie";
+  persistenceStateDir = persistenceBaseDir;
   resolvePersistencePath =
     path:
     if path == null || lib.hasPrefix "/" path then

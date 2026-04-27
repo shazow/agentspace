@@ -4,6 +4,32 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-04-27: persistence state directory and resume workspace
+
+### Who Is Affected
+
+- Tooling that reads virtie PID, suspend, or VM state files directly.
+- Direct users of `virtie resume` that run it from a different directory than
+  the original launch.
+
+### What Changed
+
+Virtie runtime state now lives directly under the manifest persistence base
+directory. With the default `agentspace.sandbox.persistence.basedir = ".agentspace"`,
+files such as `<hostName>.pid`, `<hostName>.suspend.json`, and `<hostName>.vmstate`
+are written to `.agentspace/` instead of `.agentspace/.virtie/`.
+
+`virtie launch` also rewrites the copied runtime manifest so
+`paths.workingDir` is the absolute launch workspace. `virtie resume` now uses
+that manifest path to restore the original workspace share, even if resume is
+invoked from another current working directory.
+
+### Migration Steps
+
+Update tooling to read virtie state files from `<basedir>/` and continue
+passing the copied runtime manifest, for example
+`.agentspace/virtie-<hostName>.json`, to `virtie suspend` and `virtie resume`.
+
 ## 2026-04-26: sandbox launch command option
 
 ### Who Is Affected

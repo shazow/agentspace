@@ -296,13 +296,14 @@ func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 		}
 
 		process, err := m.startManagedProcess(processSpec{
-			Name:   name,
-			Path:   daemon.Command.Path,
-			Args:   daemon.Command.Args,
-			Dir:    manifest.Paths.WorkingDir,
-			Env:    []string{fmt.Sprintf("VIRTIE_SOCKET_PATH=%s", daemon.SocketPath)},
-			Stdout: os.Stderr,
-			Stderr: os.Stderr,
+			Name:         name,
+			Path:         daemon.Command.Path,
+			Args:         daemon.Command.Args,
+			Dir:          manifest.Paths.WorkingDir,
+			Env:          []string{fmt.Sprintf("VIRTIE_SOCKET_PATH=%s", daemon.SocketPath)},
+			ProcessGroup: true,
+			Stdout:       os.Stderr,
+			Stderr:       os.Stderr,
 		})
 		if err != nil {
 			_ = m.stopAll(started)

@@ -314,7 +314,7 @@ PY
       persistence = {
         directories = [ "state" ];
         baseDir = ".agentspace";
-        stateDir = ".agentspace/.virtie";
+        stateDir = ".agentspace";
       };
       ssh = {
         argv = [ fakeSSH ];
@@ -461,6 +461,12 @@ in
             cat "$log" >&2
           fi
         done
+        for manifest_file in "$tmpdir"/*/.agentspace/virtie-fake.json; do
+          if [ -f "$manifest_file" ]; then
+            echo "== $manifest_file ==" >&2
+            cat "$manifest_file" >&2
+          fi
+        done
       fi
       if [ -n "''${launch_pid:-}" ]; then
         kill "$launch_pid" 2>/dev/null || true
@@ -483,7 +489,7 @@ in
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f .agentspace/virtie-fake.json; test -f .agentspace/.virtie/virtie-fake.pid; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
+    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
       echo "virtie-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1
@@ -493,12 +499,14 @@ in
     grep -F 'virtie: starting virtiofsd [workspace]' "$launch_log" >/dev/null
     grep -F 'virtie: starting qemu' "$launch_log" >/dev/null
     grep -F 'virtie: allocated vsock cid 3' "$launch_log" >/dev/null
+    workspace_real="$(${pkgs.coreutils}/bin/realpath "$workspace_dir")"
+    grep -F '"workingDir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtie-fake.json" >/dev/null
     grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
     grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
-    grep -Fx 'overlay.img' "$workspace_dir/state/mkfs-ext4-args" >/dev/null
+    grep -Fx "$workspace_real/overlay.img" "$workspace_dir/state/mkfs-ext4-args" >/dev/null
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
-    test ! -e "$workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+    test ! -e "$workspace_dir/.agentspace/virtie-fake.pid"
 
     command_workspace_dir="$tmpdir/command-workspace"
     command_log="$tmpdir/virtie-command.log"
@@ -514,7 +522,7 @@ in
     grep -F "configured value with spaces" "$command_workspace_dir/state/ssh-remote-command" >/dev/null
     test -f "$command_workspace_dir/state/qemu-stopped"
     test -f "$command_workspace_dir/state/virtiofsd-stopped"
-    test ! -e "$command_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+    test ! -e "$command_workspace_dir/.agentspace/virtie-fake.pid"
 
     pause_workspace_dir="$tmpdir/pause-workspace"
     pause_log="$tmpdir/virtie-pause.log"
@@ -525,7 +533,7 @@ in
     launch_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/.virtie/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
         break
       fi
       sleep 0.1
@@ -541,15 +549,15 @@ in
     ${virtiePackage}/bin/virtie suspend --manifest="$runtime_manifest"
     test -f "$pause_workspace_dir/state/qemu-paused"
     test ! -e "$pause_workspace_dir/state/qmp-second-client"
-    test -f "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
-    test -f "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json"
-    grep -F '"status": "paused"' "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json" >/dev/null
+    test -f "$pause_workspace_dir/.agentspace/virtie-fake.pid"
+    test -f "$pause_workspace_dir/.agentspace/virtie-fake.suspend.json"
+    grep -F '"status": "paused"' "$pause_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
 
     ${virtiePackage}/bin/virtie resume --manifest="$runtime_manifest"
     test -f "$pause_workspace_dir/state/qemu-resumed"
     test ! -e "$pause_workspace_dir/state/qmp-second-client"
-    test -f "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
-    test ! -e "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json"
+    test -f "$pause_workspace_dir/.agentspace/virtie-fake.pid"
+    test ! -e "$pause_workspace_dir/.agentspace/virtie-fake.suspend.json"
 
     touch "$pause_workspace_dir/state/resume-finished"
     if ! wait "$launch_pid"; then
@@ -557,7 +565,75 @@ in
       cat "$pause_log" >&2
       exit 1
     fi
-    test ! -e "$pause_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+    test ! -e "$pause_workspace_dir/.agentspace/virtie-fake.pid"
+
+    sigtstp_workspace_dir="$tmpdir/sigtstp-workspace"
+    sigtstp_log="$tmpdir/virtie-sigtstp.log"
+    mkdir -p "$sigtstp_workspace_dir"
+    cd "$sigtstp_workspace_dir"
+
+    ${pkgs.util-linux}/bin/setsid ${launchScript} sh -c 'while [ ! -f state/resume-finished ]; do sleep 0.1; done' >"$sigtstp_log" 2>&1 &
+    setsid_pid=$!
+
+    for _ in $(seq 1 100); do
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
+        break
+      fi
+      sleep 0.1
+    done
+    launch_pid="$(cat "$sigtstp_workspace_dir/.agentspace/virtie-fake.pid")"
+    launch_pgid="$(awk '/^NSpgid:/ { value=$NF } /^Pgid:/ { value=$2 } END { print value }' "/proc/$launch_pid/status")"
+
+    if [ ! -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ]; then
+      echo "virtie-launch-e2e: qmp socket did not appear for SIGTSTP case" >&2
+      cat "$sigtstp_log" >&2
+      exit 1
+    fi
+
+    kill -TSTP -- "-$launch_pgid"
+    for _ in $(seq 1 100); do
+      if [ -f "$sigtstp_workspace_dir/state/qemu-paused" ] && [ -f "$sigtstp_workspace_dir/.agentspace/virtie-fake.suspend.json" ]; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    test -f "$sigtstp_workspace_dir/state/qemu-paused"
+    test -f "$sigtstp_workspace_dir/.agentspace/virtie-fake.suspend.json"
+    grep -F '"status": "paused"' "$sigtstp_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
+    for _ in $(seq 1 100); do
+      state="$(awk '/^State:/ { print $2 }' "/proc/$launch_pid/status")"
+      if [ "$state" = "T" ] || [ "$state" = "t" ]; then
+        break
+      fi
+      sleep 0.1
+    done
+    state="$(awk '/^State:/ { print $2 }' "/proc/$launch_pid/status")"
+    if [ "$state" != "T" ] && [ "$state" != "t" ]; then
+      echo "virtie-launch-e2e: launch process was not stopped after SIGTSTP; state=$state" >&2
+      cat "$sigtstp_log" >&2
+      exit 1
+    fi
+
+    kill -CONT -- "-$launch_pgid"
+    for _ in $(seq 1 100); do
+      if [ -f "$sigtstp_workspace_dir/state/qemu-resumed" ] && [ ! -e "$sigtstp_workspace_dir/.agentspace/virtie-fake.suspend.json" ]; then
+        break
+      fi
+      sleep 0.1
+    done
+    test -f "$sigtstp_workspace_dir/state/qemu-resumed"
+    test ! -e "$sigtstp_workspace_dir/.agentspace/virtie-fake.suspend.json"
+
+    touch "$sigtstp_workspace_dir/state/resume-finished"
+    if ! wait "$setsid_pid"; then
+      echo "virtie-launch-e2e: SIGTSTP suspend/resume launch exited non-zero" >&2
+      cat "$sigtstp_log" >&2
+      exit 1
+    fi
+    unset launch_pid
+    unset setsid_pid
+    test ! -e "$sigtstp_workspace_dir/.agentspace/virtie-fake.pid"
 
     disk_workspace_dir="$tmpdir/disk-workspace"
     disk_log="$tmpdir/virtie-disk.log"
@@ -569,7 +645,7 @@ in
     launch_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/.virtie/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
         break
       fi
       sleep 0.1
@@ -579,11 +655,11 @@ in
     ${virtiePackage}/bin/virtie suspend --exit --manifest="$disk_manifest"
     test -f "$disk_workspace_dir/state/qemu-paused"
     test -f "$disk_workspace_dir/state/qemu-migrated"
-    test -f "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.vmstate"
-    test -f "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json"
-    test ! -e "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
-    grep -F '"status": "saved"' "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json" >/dev/null
-    grep -F '"cid": 3' "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json" >/dev/null
+    test -f "$disk_workspace_dir/.agentspace/virtie-fake.vmstate"
+    test -f "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json"
+    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.pid"
+    grep -F '"status": "saved"' "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
+    grep -F '"cid": 3' "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
 
     if ! wait "$launch_pid"; then
       echo "virtie-launch-e2e: disk suspend launch exited non-zero" >&2
@@ -591,6 +667,10 @@ in
       exit 1
     fi
     unset launch_pid
+
+    disk_resume_cwd="$tmpdir/disk-resume-cwd"
+    mkdir -p "$disk_resume_cwd"
+    cd "$disk_resume_cwd"
 
     ${virtiePackage}/bin/virtie resume --manifest="$disk_manifest" >"$disk_resume_log" 2>&1 &
     resume_pid=$!
@@ -605,9 +685,9 @@ in
     test -f "$disk_workspace_dir/state/qemu-migrate-incoming"
     test -f "$disk_workspace_dir/state/qemu-resumed"
     grep -Fx '3' "$disk_workspace_dir/state/qemu-vsock-cid" >/dev/null
-    test ! -e "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.vmstate"
-    test ! -e "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.suspend.json"
-    test -f "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.vmstate"
+    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json"
+    test -f "$disk_workspace_dir/.agentspace/virtie-fake.pid"
 
     touch "$disk_workspace_dir/state/ssh-session-finished"
     if ! wait "$resume_pid"; then
@@ -616,12 +696,13 @@ in
       exit 1
     fi
     unset resume_pid
-    test ! -e "$disk_workspace_dir/.agentspace/.virtie/virtie-fake.pid"
+    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.pid"
 
     mkdir -p "$out"
     cp "$launch_log" "$out/virtie.log"
     cp "$command_log" "$out/virtie-command.log"
     cp "$pause_log" "$out/virtie-pause.log"
+    cp "$sigtstp_log" "$out/virtie-sigtstp.log"
     cp "$disk_log" "$out/virtie-disk.log"
     cp "$disk_resume_log" "$out/virtie-disk-resume.log"
   '';

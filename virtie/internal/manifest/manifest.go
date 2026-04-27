@@ -397,7 +397,7 @@ func (m *Manifest) ResolvedPersistenceStateDir() string {
 	if m.Persistence.StateDir != "" {
 		return m.resolvePath(m.Persistence.StateDir)
 	}
-	return filepath.Join(m.ResolvedPersistenceBaseDir(), ".virtie")
+	return m.ResolvedPersistenceBaseDir()
 }
 
 func (m *Manifest) resolveSocketPath(path string) (string, error) {

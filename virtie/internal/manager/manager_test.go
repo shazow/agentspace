@@ -1081,6 +1081,9 @@ func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	if !containsString(spec.Args, "memory-backend-memfd,id=mem,size=1024M,share=on") {
 		t.Fatalf("expected qemu args to include the shared memory backend: %v", spec.Args)
 	}
+	if !spec.ProcessGroup {
+		t.Fatal("expected qemu to run in its own process group")
+	}
 }
 
 func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
@@ -1121,6 +1124,9 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	wantSocket := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "fs.sock")
 	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIE_SOCKET_PATH="+wantSocket) {
 		t.Fatalf("expected virtiofs daemon env to contain resolved socket path %q: %v", wantSocket, got)
+	}
+	if !runner.processGroups["virtiofsd[workspace]"] {
+		t.Fatal("expected virtiofs daemon to run in its own process group")
 	}
 }
 
@@ -1243,6 +1249,7 @@ type fakeRunner struct {
 	qemuArgs           []string
 	qemuEnv            []string
 	virtiofsEnv        map[string][]string
+	processGroups      map[string]bool
 	probes             int
 	cancel             context.CancelFunc
 	cancelDelay        time.Duration
@@ -1255,6 +1262,10 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 	defer r.mu.Unlock()
 
 	r.starts = append(r.starts, spec.Name)
+	if r.processGroups == nil {
+		r.processGroups = make(map[string]bool)
+	}
+	r.processGroups[spec.Name] = spec.ProcessGroup
 
 	switch spec.Name {
 	case "qemu":
