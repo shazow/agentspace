@@ -13,7 +13,6 @@ func TestParserRequiresManifestFlag(t *testing.T) {
 		{"launch"},
 		{"launch", "/tmp/manifest.json"},
 		{"suspend"},
-		{"resume"},
 	}
 
 	for _, args := range tests {
@@ -24,6 +23,45 @@ func TestParserRequiresManifestFlag(t *testing.T) {
 		if !strings.Contains(err.Error(), "manifest") {
 			t.Fatalf("ParseArgs(%v) error %q does not mention manifest", args, err)
 		}
+	}
+}
+
+func TestParserRejectsRemovedResumeCommand(t *testing.T) {
+	_, err := newParser().ParseArgs([]string{"resume", "--manifest=/tmp/manifest.json"})
+	if err == nil {
+		t.Fatal("ParseArgs accepted removed resume command")
+	}
+	if !strings.Contains(err.Error(), "Unknown command") {
+		t.Fatalf("unexpected error for removed resume command: %v", err)
+	}
+}
+
+func TestParserAcceptsLaunchResumeModes(t *testing.T) {
+	for _, mode := range []string{"no", "auto", "force"} {
+		_, err := newParser().ParseArgs([]string{"launch", "--resume=" + mode, "--manifest=/tmp/manifest.json"})
+		if err != nil && strings.Contains(err.Error(), "Invalid value") {
+			t.Fatalf("ParseArgs rejected resume mode %q: %v", mode, err)
+		}
+	}
+}
+
+func TestParserRejectsInvalidLaunchResumeMode(t *testing.T) {
+	_, err := newParser().ParseArgs([]string{"launch", "--resume=maybe", "--manifest=/tmp/manifest.json"})
+	if err == nil {
+		t.Fatal("ParseArgs accepted invalid resume mode")
+	}
+	if !strings.Contains(err.Error(), "Invalid value") {
+		t.Fatalf("unexpected error for invalid resume mode: %v", err)
+	}
+}
+
+func TestParserRejectsSuspendExitFlag(t *testing.T) {
+	_, err := newParser().ParseArgs([]string{"suspend", "--exit", "--manifest=/tmp/manifest.json"})
+	if err == nil {
+		t.Fatal("ParseArgs accepted removed --exit flag")
+	}
+	if !strings.Contains(err.Error(), "unknown flag `exit'") {
+		t.Fatalf("unexpected error for removed --exit flag: %v", err)
 	}
 }
 

@@ -25,6 +25,7 @@ type manifestOption struct {
 
 type launchCommand struct {
 	manifestOption
+	Resume string `long:"resume" value-name:"MODE" choice:"no" choice:"auto" choice:"force" default:"no" description:"Resume mode: no, auto, or force"`
 
 	Args struct {
 		RemoteCommand []string `positional-arg-name:"remote-cmd"`
@@ -37,12 +38,13 @@ func (c *launchCommand) Execute(args []string) error {
 		return err
 	}
 
-	return manager.Launch(context.Background(), manifest, c.Args.RemoteCommand)
+	return manager.LaunchWithOptions(context.Background(), manifest, c.Args.RemoteCommand, manager.LaunchOptions{
+		Resume: manager.ResumeMode(c.Resume),
+	})
 }
 
 type suspendCommand struct {
 	manifestOption
-	Exit bool `long:"exit" description:"Save QEMU state to disk and exit the launch session"`
 }
 
 func (c *suspendCommand) Execute(args []string) error {
@@ -54,23 +56,7 @@ func (c *suspendCommand) Execute(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	return manager.Suspend(ctx, manifest, manager.SuspendOptions{Exit: c.Exit})
-}
-
-type resumeCommand struct {
-	manifestOption
-}
-
-func (c *resumeCommand) Execute(args []string) error {
-	manifest, err := loadManifest(c.Manifest)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	return manager.Resume(ctx, manifest)
+	return manager.Suspend(ctx, manifest)
 }
 
 func loadLaunchManifest(path string) (*manifest.Manifest, error) {
@@ -191,18 +177,8 @@ func newParser() *flags.Parser {
 	if _, err := parser.AddCommand(
 		"suspend",
 		"Suspend a running sandbox session",
-		"Ask the configured launch process to pause QEMU and record advisory suspend state.",
+		"Save QEMU state to disk and exit the launch session.",
 		&suspendCommand{},
-	); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	if _, err := parser.AddCommand(
-		"resume",
-		"Resume a suspended sandbox session",
-		"Ask the configured launch process to continue QEMU and remove advisory suspend state.",
-		&resumeCommand{},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

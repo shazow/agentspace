@@ -4,12 +4,77 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-04-27: launch resume modes replace `virtie resume`
+
+### Who Is Affected
+
+- Direct users of `virtie resume`.
+- Tooling that restores saved virtie sessions.
+
+### What Changed
+
+`virtie resume --manifest=MANIFEST` has been removed. Restores now use the
+shared launch lifecycle:
+
+```console
+virtie launch --resume=force --manifest=MANIFEST
+```
+
+`virtie launch` also accepts `--resume=no` for fresh launch and `--resume=auto`
+to restore when valid saved state exists, otherwise launch fresh. The default is
+`--resume=no`.
+
+### Migration Steps
+
+Replace:
+
+```console
+virtie resume --manifest=MANIFEST
+```
+
+with:
+
+```console
+virtie launch --resume=force --manifest=MANIFEST
+```
+
+## 2026-04-27: saved-state suspend is the only suspend mode
+
+### Who Is Affected
+
+- Direct users of `virtie suspend`.
+- Tooling that relied on live pause/resume state or the suspend exit flag.
+
+### What Changed
+
+`virtie suspend --manifest=MANIFEST` now saves QEMU migration state to disk,
+exits the launch session, and writes saved suspend state. The old live
+pause/resume behavior has been removed.
+
+The external command now sends `SIGTSTP` to the launch process as a caught
+control signal. It is not terminal/job-control suspend, and `SIGCONT` resume is
+not supported.
+
+The suspend exit flag has been removed. Restoring now goes through
+`virtie launch --resume=force --manifest=MANIFEST`; it no longer signals a live
+launch process or clears live paused state.
+
+### Migration Steps
+
+Replace suspend calls that passed the old exit flag with:
+
+```console
+virtie suspend --manifest=MANIFEST
+```
+
+Do not use `virtie launch --resume=force` unless saved suspend state exists.
+
 ## 2026-04-27: persistence state directory and resume workspace
 
 ### Who Is Affected
 
 - Tooling that reads virtie PID, suspend, or VM state files directly.
-- Direct users of `virtie resume` that run it from a different directory than
+- Direct users restoring a session from a different directory than
   the original launch.
 
 ### What Changed
@@ -20,15 +85,16 @@ files such as `<hostName>.pid`, `<hostName>.suspend.json`, and `<hostName>.vmsta
 are written to `.agentspace/` instead of `.agentspace/.virtie/`.
 
 `virtie launch` also rewrites the copied runtime manifest so
-`paths.workingDir` is the absolute launch workspace. `virtie resume` now uses
-that manifest path to restore the original workspace share, even if resume is
+`paths.workingDir` is the absolute launch workspace. `virtie launch --resume`
+uses that manifest path to restore the original workspace share, even if it is
 invoked from another current working directory.
 
 ### Migration Steps
 
 Update tooling to read virtie state files from `<basedir>/` and continue
 passing the copied runtime manifest, for example
-`.agentspace/virtie-<hostName>.json`, to `virtie suspend` and `virtie resume`.
+`.agentspace/virtie-<hostName>.json`, to `virtie suspend` and
+`virtie launch --resume=force`.
 
 ## 2026-04-26: sandbox launch command option
 
@@ -66,7 +132,7 @@ under that base directory. The generated launch wrapper also copies its manifest
 template to `<basedir>/virtie-<hostName>.json` at runtime and launches `virtie`
 with that mutable workspace path.
 
-`virtie suspend --exit --manifest=MANIFEST` saves QEMU migration state under the
+`virtie suspend --manifest=MANIFEST` saves QEMU migration state under the
 manifest persistence state directory, exits the launch session, and leaves
 `virtie resume --manifest=MANIFEST` able to restore the saved VM when no live
 launch PID is valid.
@@ -117,16 +183,12 @@ virtie suspend --manifest=MANIFEST
 virtie resume --manifest=MANIFEST
 ```
 
-Plain `suspend` and live-PID `resume` are keep-alive controls. They pause or
-continue the still-running QEMU process through QMP and write/remove advisory
-state under the persistence state directory. At the time this command was
-introduced, the default location was:
+At the time these commands were introduced, suspend state used the default
+location:
 
 ```text
 <workingDir>/.virtie/<hostName>.suspend.json
 ```
-
-Use `suspend --exit`, described above, for disk-backed migration state.
 
 ### Migration Steps
 

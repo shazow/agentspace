@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,7 +34,19 @@ const (
 )
 
 var sshProbeCommand = []string{"true"}
-var errSuspendExit = errors.New("suspend exit requested")
+var errSavedSuspendExit = errors.New("saved suspend requested")
+
+type ResumeMode string
+
+const (
+	ResumeModeNo    ResumeMode = "no"
+	ResumeModeAuto  ResumeMode = "auto"
+	ResumeModeForce ResumeMode = "force"
+)
+
+type LaunchOptions struct {
+	Resume ResumeMode
+}
 
 type manager struct {
 	locker              locker
@@ -48,7 +61,6 @@ type manager struct {
 	qmpQuitTimeout      time.Duration
 	qmpMigrationTimeout time.Duration
 	signals             <-chan os.Signal
-	selfStop            func() error
 	pidSignaler         pidSignaler
 }
 
@@ -73,8 +85,25 @@ func Launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []st
 	return newManager().launch(ctx, manifest, remoteCommand)
 }
 
+// LaunchWithOptions runs the supported virtie sandbox session with explicit launch options.
+func LaunchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) error {
+	return newManager().launchWithOptions(ctx, manifest, remoteCommand, options)
+}
+
 func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) (err error) {
+	return m.launchWithOptions(ctx, manifest, remoteCommand, LaunchOptions{Resume: ResumeModeNo})
+}
+
+func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) (err error) {
 	if err := manifest.Validate(); err != nil {
+		return err
+	}
+	resumeMode, err := normalizeResumeMode(options.Resume)
+	if err != nil {
+		return err
+	}
+	resumeState, err := resolveLaunchResumeState(manifest, resumeMode)
+	if err != nil {
 		return err
 	}
 
@@ -82,8 +111,8 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	defer cancelLaunch()
 
 	signalCh, stopSignals := m.launchSignalChannel()
+	suspendRequests := make(chan struct{}, 1)
 	signalDone := make(chan struct{})
-	sessionSignals := make(chan os.Signal, 8)
 	go func() {
 		for {
 			select {
@@ -96,9 +125,9 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 				switch sig {
 				case os.Interrupt, syscall.SIGTERM:
 					cancelLaunch()
-				case syscall.SIGTSTP, syscall.SIGCONT:
+				case syscall.SIGTSTP:
 					select {
-					case sessionSignals <- sig:
+					case suspendRequests <- struct{}{}:
 					default:
 					}
 				}
@@ -128,10 +157,12 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	}
 	defer joinDeferredError(&err, lock.Release)
 
-	if err := removeSuspendState(manifest); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+	if resumeState == nil {
+		if err := removeSuspendState(manifest); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
 	}
-	if err := removeSuspendRequest(manifest); err != nil {
+	if err := ensureSavedVMStateAvailable(resumeState); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := writeLaunchPID(manifest, os.Getpid()); err != nil {
@@ -141,12 +172,16 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 		return removeLaunchPID(manifest, os.Getpid())
 	})
 
-	cid, cidLock, err := m.allocateCID(manifest)
+	cid, cidLock, err := m.acquireLaunchCID(manifest, resumeState)
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	defer joinDeferredError(&err, cidLock.Release)
-	m.logger.Printf("allocated vsock cid %d", cid)
+	if resumeState != nil {
+		m.logger.Printf("restoring saved vsock cid %d", cid)
+	} else {
+		m.logger.Printf("allocated vsock cid %d", cid)
+	}
 
 	if err := ensureDirectories(manifest.ResolvedPersistenceDirectories()); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -174,6 +209,9 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	var qmpClient qmpClient
 	var featureTasks managedTaskGroup
 	defer func() {
+		if errors.Is(err, errSavedSuspendExit) {
+			err = nil
+		}
 		featureErr := featureTasks.Stop()
 		stopErr := m.stopAll(started)
 		var disconnectErr error
@@ -199,8 +237,12 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 		return err
 	}
 
-	m.logger.Printf("starting qemu")
-	qemuSpec, err := buildQEMUSpec(manifest, cid)
+	if resumeState != nil {
+		m.logger.Printf("starting qemu for restore")
+	} else {
+		m.logger.Printf("starting qemu")
+	}
+	qemuSpec, err := buildLaunchQEMUSpec(manifest, cid, resumeState != nil)
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -218,9 +260,25 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	qemu.shutdown = func() error {
 		return qmpClient.Quit(m.effectiveQMPQuitTimeout())
 	}
+	if resumeState != nil {
+		m.logger.Printf("restoring vm state")
+		if err := qmpClient.MigrateIncoming(m.effectiveQMPMigrationTimeout(), resumeState.VMStatePath); err != nil {
+			return &stageError{Stage: "restore", Err: err}
+		}
+		if err := m.waitForMigration(launchCtx, qmpClient); err != nil {
+			return &stageError{Stage: "restore", Err: err}
+		}
+		if err := qmpClient.Cont(m.effectiveQMPCommandTimeout()); err != nil {
+			return &stageError{Stage: "restore", Err: err}
+		}
+	}
+	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid)
+	if err := m.handlePendingSuspendRequest(launchCtx, suspendRequests, suspendHandler); err != nil {
+		return err
+	}
 
 	m.logger.Printf("waiting for ssh readiness")
-	if err := m.waitForSSH(launchCtx, manifest, cid, started...); err != nil {
+	if err := m.waitForSSH(launchCtx, suspendRequests, suspendHandler, started...); err != nil {
 		return err
 	}
 
@@ -236,7 +294,97 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	}
 	started = append(started, session)
 
-	return m.waitForSession(launchCtx, session, manifest, qmpSocketPath, qmpClient, cid, sessionSignals, started[:len(started)-1]...)
+	if resumeState != nil {
+		if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
+		}
+		if err := removeSuspendState(manifest); err != nil {
+			return &stageError{Stage: "restore", Err: err}
+		}
+	}
+
+	if err := m.waitForSession(launchCtx, session, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
+		return err
+	}
+	return nil
+}
+
+func normalizeResumeMode(mode ResumeMode) (ResumeMode, error) {
+	switch mode {
+	case "", ResumeModeNo:
+		return ResumeModeNo, nil
+	case ResumeModeAuto, ResumeModeForce:
+		return mode, nil
+	default:
+		return "", &stageError{Stage: "preflight", Err: fmt.Errorf("unsupported resume mode %q", mode)}
+	}
+}
+
+func resolveLaunchResumeState(manifest *manifest.Manifest, mode ResumeMode) (*suspendState, error) {
+	if mode == ResumeModeNo {
+		return nil, nil
+	}
+
+	state, err := readSuspendState(manifest)
+	if err != nil {
+		if os.IsNotExist(err) && mode == ResumeModeAuto {
+			return nil, nil
+		}
+		if os.IsNotExist(err) {
+			return nil, &stageError{Stage: "restore", Err: fmt.Errorf("no saved suspend state found at %q; run virtie suspend first", suspendStatePath(manifest))}
+		}
+		return nil, &stageError{Stage: "restore", Err: err}
+	}
+	if state.Status != "saved" {
+		if mode == ResumeModeAuto {
+			return nil, nil
+		}
+		return nil, &stageError{Stage: "restore", Err: fmt.Errorf("suspend state %q has status %q, not saved; run virtie suspend first", suspendStatePath(manifest), state.Status)}
+	}
+	if state.CID <= 0 {
+		if mode == ResumeModeAuto {
+			return nil, nil
+		}
+		return nil, &stageError{Stage: "restore", Err: fmt.Errorf("saved suspend state %q does not include a valid vsock CID", suspendStatePath(manifest))}
+	}
+	if state.VMStatePath == "" {
+		state.VMStatePath = vmStatePath(manifest)
+	}
+	if _, err := os.Stat(state.VMStatePath); err != nil {
+		if mode == ResumeModeAuto {
+			return nil, nil
+		}
+		return nil, &stageError{Stage: "restore", Err: fmt.Errorf("saved vm state %q is not available: %w", state.VMStatePath, err)}
+	}
+	return &state, nil
+}
+
+func ensureSavedVMStateAvailable(state *suspendState) error {
+	if state == nil {
+		return nil
+	}
+	if _, err := os.Stat(state.VMStatePath); err != nil {
+		return fmt.Errorf("saved vm state %q is not available: %w", state.VMStatePath, err)
+	}
+	return nil
+}
+
+func (m *manager) acquireLaunchCID(manifest *manifest.Manifest, state *suspendState) (int, lock, error) {
+	if state == nil {
+		return m.allocateCID(manifest)
+	}
+	lock, err := m.acquireCID(manifest, state.CID)
+	if err != nil {
+		return 0, nil, err
+	}
+	return state.CID, lock, nil
+}
+
+func buildLaunchQEMUSpec(manifest *manifest.Manifest, cid int, resume bool) (processSpec, error) {
+	if resume {
+		return buildIncomingQEMUSpec(manifest, cid)
+	}
+	return buildQEMUSpec(manifest, cid)
 }
 
 func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
@@ -245,7 +393,7 @@ func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
 	}
 
 	ch := make(chan os.Signal, 8)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGTSTP, syscall.SIGCONT)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGTSTP)
 	return ch, func() {
 		signal.Stop(ch)
 		close(ch)
@@ -466,13 +614,46 @@ func (m *manager) effectiveQMPCommandTimeout() time.Duration {
 	return m.effectiveQMPConnectTimeout()
 }
 
-func (m *manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, cid int, watchers ...*managedProcess) error {
+type launchSuspendHandler struct {
+	manager       *manager
+	manifest      *manifest.Manifest
+	qmpSocketPath string
+	client        qmpClient
+	cid           int
+	once          sync.Once
+	err           error
+}
+
+func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int) *launchSuspendHandler {
+	return &launchSuspendHandler{
+		manager:       manager,
+		manifest:      manifest,
+		qmpSocketPath: qmpSocketPath,
+		client:        client,
+		cid:           cid,
+	}
+}
+
+func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
+	h.once.Do(func() {
+		if err := h.manager.saveSuspendStateConnected(ctx, h.manifest, h.qmpSocketPath, h.client, h.cid); err != nil {
+			h.err = err
+			return
+		}
+		h.err = errSavedSuspendExit
+	})
+	return h.err
+}
+
+func (m *manager) waitForSSH(ctx context.Context, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	loggedPermissionHint := false
 
 	for {
 		select {
+		case <-suspendRequests:
+			return suspendHandler.saveAndExit(ctx)
 		case <-ctx.Done():
 			return &stageError{Stage: "ssh readiness", Err: ctx.Err()}
 		case <-timer.C:
@@ -482,7 +663,7 @@ func (m *manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, c
 			return err
 		}
 
-		spec := buildSSHSpec(manifest, cid, sshProbeCommand, false)
+		spec := buildSSHSpec(suspendHandler.manifest, suspendHandler.cid, sshProbeCommand, false)
 		var stderr bytes.Buffer
 		spec.Stderr = &stderr
 
@@ -491,7 +672,7 @@ func (m *manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, c
 			return &stageError{Stage: "ssh readiness", Err: err}
 		}
 
-		ready, err := m.waitForSSHProbe(ctx, probe, watchers...)
+		ready, err := m.waitForSSHProbe(ctx, probe, suspendRequests, suspendHandler, watchers...)
 		if err != nil {
 			return err
 		}
@@ -507,7 +688,7 @@ func (m *manager) waitForSSH(ctx context.Context, manifest *manifest.Manifest, c
 	}
 }
 
-func (m *manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, watchers ...*managedProcess) (bool, error) {
+func (m *manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) (bool, error) {
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
@@ -515,6 +696,16 @@ func (m *manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, wa
 		select {
 		case err := <-probe.done:
 			return err == nil, nil
+		case <-suspendRequests:
+			abortErr := m.killProcess(probe)
+			saveErr := suspendHandler.saveAndExit(ctx)
+			if saveErr != nil {
+				return false, errors.Join(saveErr, abortErr)
+			}
+			if abortErr != nil {
+				return false, errors.Join(errSavedSuspendExit, abortErr)
+			}
+			return false, errSavedSuspendExit
 		case <-ticker.C:
 			if err := firstUnexpectedExit("ssh readiness", watchers...); err != nil {
 				if abortErr := m.killProcess(probe); abortErr != nil {
@@ -536,7 +727,7 @@ func sshPermissionDenied(stderr string) bool {
 	return strings.Contains(stderr, "Permission denied (publickey")
 }
 
-func (m *manager) waitForSession(ctx context.Context, session *managedProcess, manifest *manifest.Manifest, qmpSocketPath string, qmpClient qmpClient, cid int, signalCh <-chan os.Signal, watchers ...*managedProcess) error {
+func (m *manager) waitForSession(ctx context.Context, session *managedProcess, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) error {
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
@@ -547,19 +738,10 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, m
 				return wrapCommandError("active session", session.name, err)
 			}
 			return nil
+		case <-suspendRequests:
+			return suspendHandler.saveAndExit(ctx)
 		case <-ticker.C:
 			if err := firstUnexpectedExit("active session", watchers...); err != nil {
-				return err
-			}
-		case sig, ok := <-signalCh:
-			if !ok {
-				signalCh = nil
-				continue
-			}
-			if err := m.handleSessionSignal(ctx, sig, manifest, qmpSocketPath, qmpClient, cid, session); err != nil {
-				if errors.Is(err, errSuspendExit) {
-					return nil
-				}
 				return err
 			}
 		case <-ctx.Done():
@@ -568,54 +750,16 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, m
 	}
 }
 
-func (m *manager) handleSessionSignal(ctx context.Context, sig os.Signal, manifest *manifest.Manifest, qmpSocketPath string, qmpClient qmpClient, cid int, session *managedProcess) error {
-	switch sig {
-	case syscall.SIGTSTP:
-		request, requestErr := readSuspendRequest(manifest)
-		if requestErr != nil && !errors.Is(requestErr, os.ErrNotExist) {
-			return &stageError{Stage: "qmp suspend", Err: requestErr}
-		}
-		if requestErr == nil {
-			if err := removeSuspendRequest(manifest); err != nil {
-				return &stageError{Stage: "qmp suspend", Err: err}
-			}
-		}
-		if request.Mode == "exit" {
-			if err := m.suspendExitConnected(ctx, manifest, qmpSocketPath, qmpClient, cid); err != nil {
-				return err
-			}
-			return errSuspendExit
-		}
-		if err := m.suspendConnected(manifest, qmpSocketPath, qmpClient); err != nil {
-			return err
-		}
-		if err := signalProcessIfRunning(session, syscall.SIGTSTP); err != nil {
-			return &stageError{Stage: "active session", Err: err}
-		}
-		if err := m.stopSelf(); err != nil {
-			return &stageError{Stage: "active session", Err: err}
-		}
-		if ctx.Err() != nil {
-			return &stageError{Stage: "active session", Err: ctx.Err()}
-		}
-		if err := m.resumeConnected(manifest, qmpClient); err != nil {
-			return err
-		}
-		if err := signalProcessIfRunning(session, syscall.SIGCONT); err != nil {
-			return &stageError{Stage: "active session", Err: err}
-		}
-	case syscall.SIGCONT:
-		if err := m.resumeConnected(manifest, qmpClient); err != nil {
-			return err
-		}
-		if err := signalProcessIfRunning(session, syscall.SIGCONT); err != nil {
-			return &stageError{Stage: "active session", Err: err}
-		}
+func (m *manager) handlePendingSuspendRequest(ctx context.Context, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler) error {
+	select {
+	case <-suspendRequests:
+		return suspendHandler.saveAndExit(ctx)
+	default:
+		return nil
 	}
-	return nil
 }
 
-func (m *manager) suspendExitConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int) error {
+func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int) error {
 	timeout := m.effectiveQMPCommandTimeout()
 
 	status, err := client.QueryStatus(timeout)
@@ -692,23 +836,6 @@ func (m *manager) waitForMigration(ctx context.Context, client qmpClient) error 
 		case <-ticker.C:
 		}
 	}
-}
-
-func (m *manager) stopSelf() error {
-	if m.selfStop != nil {
-		return m.selfStop()
-	}
-	return syscall.Kill(os.Getpid(), syscall.SIGSTOP)
-}
-
-func signalProcessIfRunning(process *managedProcess, sig os.Signal) error {
-	if process == nil {
-		return nil
-	}
-	if err := process.proc.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("signal %s: %w", process.name, err)
-	}
-	return nil
 }
 
 func (m *manager) stopAll(processes []*managedProcess) error {
