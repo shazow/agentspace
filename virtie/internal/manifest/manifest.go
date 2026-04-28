@@ -29,15 +29,16 @@ const (
 var writeFileModePattern = regexp.MustCompile(`^0[0-7]{3}$`)
 
 type Manifest struct {
-	Identity    Identity    `json:"identity"`
-	Paths       Paths       `json:"paths"`
-	Persistence Persistence `json:"persistence"`
-	SSH         SSH         `json:"ssh"`
-	QEMU        QEMU        `json:"qemu"`
-	Volumes     []Volume    `json:"volumes,omitempty"`
-	VSock       VSock       `json:"vsock"`
-	VirtioFS    VirtioFS    `json:"virtiofs"`
-	WriteFiles  WriteFiles  `json:"writeFiles,omitempty"`
+	Identity      Identity      `json:"identity"`
+	Paths         Paths         `json:"paths"`
+	Persistence   Persistence   `json:"persistence"`
+	SSH           SSH           `json:"ssh"`
+	QEMU          QEMU          `json:"qemu"`
+	Volumes       []Volume      `json:"volumes,omitempty"`
+	VSock         VSock         `json:"vsock"`
+	VirtioFS      VirtioFS      `json:"virtiofs"`
+	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
+	Notifications Notifications `json:"notifications,omitempty"`
 }
 
 type Identity struct {
@@ -193,6 +194,11 @@ type Volume struct {
 type Command struct {
 	Path string   `json:"path"`
 	Args []string `json:"args,omitempty"`
+}
+
+type Notifications struct {
+	Command *Command `json:"command,omitempty"`
+	States  []string `json:"states,omitempty"`
 }
 
 type VirtioFSDaemon struct {
@@ -382,6 +388,9 @@ func (m *Manifest) Validate() error {
 	if err := validateWriteFiles(m.WriteFiles); err != nil {
 		return err
 	}
+	if err := validateNotifications(m.Notifications); err != nil {
+		return err
+	}
 
 	for i, volume := range m.Volumes {
 		if volume.ImagePath == "" {
@@ -392,6 +401,17 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func validateNotifications(notifications Notifications) error {
+	if notifications.Command == nil {
+		return nil
+	}
+	switch {
+	case notifications.Command.Path == "":
+		return fmt.Errorf("manifest.notifications.command.path is required when notifications.command is set")
+	}
 	return nil
 }
 
@@ -604,6 +624,19 @@ func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
 		daemons = append(daemons, resolved)
 	}
 	return daemons, nil
+}
+
+func (m *Manifest) ResolvedNotifications() Notifications {
+	resolved := Notifications{
+		States: append([]string(nil), m.Notifications.States...),
+	}
+	if m.Notifications.Command != nil {
+		command := *m.Notifications.Command
+		command.Path = m.resolvePath(command.Path)
+		command.Args = append([]string(nil), m.Notifications.Command.Args...)
+		resolved.Command = &command
+	}
+	return resolved
 }
 
 func (m *Manifest) ResolvedVolumes() []Volume {

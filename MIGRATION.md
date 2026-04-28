@@ -4,6 +4,61 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-04-28: virtie notification hooks
+
+### Who Is Affected
+
+- Nix consumers that want host-side notifications for runtime events.
+- Consumers that generate or validate virtie manifests directly.
+
+### What Changed
+
+Generated manifests now include a `notifications` object. Notifications are
+disabled by default when no command is configured. The manifest accepts one
+optional command and an optional state allowlist:
+
+```json
+{
+  "notifications": {
+    "command": {
+      "path": "/run/current-system/sw/bin/sh",
+      "args": ["-c", "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\""]
+    },
+    "states": ["runtime:resume", "runtime:suspend", "balloon:resize"]
+  }
+}
+```
+
+`states = []` or an omitted state list means all notification states. Hook
+failures are logged and ignored. Virtie passes command args unchanged.
+
+The hook environment includes `VIRTIE_NOTIFY_STATE`,
+`VIRTIE_NOTIFY_MESSAGE`, and context values as
+`VIRTIE_NOTIFY_CONTEXT_<UPPER_SNAKE_KEY>`.
+
+For Nix users, the equivalent option is:
+
+```nix
+agentspace.sandbox.notifications.command =
+  ''notify-send "virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE"'';
+agentspace.sandbox.notifications.states = [
+  "runtime:resume"
+  "runtime:suspend"
+  "balloon:resize"
+];
+```
+
+### Migration Steps
+
+Nix consumers should replace `agentspace.sandbox.notifications.command.path`
+and `agentspace.sandbox.notifications.command.args` with the shell command
+string in `agentspace.sandbox.notifications.command`. Set it to `""` or omit it
+to keep notifications disabled.
+
+Direct manifest producers should omit `notifications.command` to keep
+notifications disabled, or include both `notifications.command.path` and any
+desired args.
+
 ## 2026-04-27: manifest writeFiles and guest-agent socket
 
 ### Who Is Affected

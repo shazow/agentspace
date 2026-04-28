@@ -93,6 +93,23 @@ in
       description = "Enable the virtio-balloon device and virtie's default runtime balloon controller.";
     };
 
+    notifications = {
+      command = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = ''
+          notify-send "virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE"
+        '';
+        description = "Host-side shell command for virtie runtime notification hooks. Set to an empty string to disable notifications.";
+      };
+
+      states = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = "Optional notification state allowlist. Empty means all states.";
+      };
+    };
+
     sshAuthorizedKeys = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -325,6 +342,18 @@ in
         };
       }) managedVirtioFSShares;
 
+      notificationManifest =
+        { states = cfg.notifications.states; }
+        // lib.optionalAttrs (cfg.notifications.command != "") {
+          command = {
+            path = pkgs.runtimeShell;
+            args = [
+              "-c"
+              cfg.notifications.command
+            ];
+          };
+        };
+
       manifestVolumes = builtins.map (volume: {
         imagePath = volume.image;
         sizeMiB = volume.size;
@@ -354,6 +383,7 @@ in
         volumes = manifestVolumes;
         virtiofs.daemons = virtiofsDaemons;
         writeFiles = cfg.writeFiles;
+        notifications = notificationManifest;
       };
 
       virtieManifestTemplate =
