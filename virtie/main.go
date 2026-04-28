@@ -25,7 +25,7 @@ type manifestOption struct {
 
 type launchCommand struct {
 	manifestOption
-	Resume string `long:"resume" value-name:"MODE" choice:"no" choice:"auto" choice:"force" default:"no" description:"Resume mode: no, auto, or force"`
+	Resume string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
 
 	Args struct {
 		RemoteCommand []string `positional-arg-name:"remote-cmd"`
