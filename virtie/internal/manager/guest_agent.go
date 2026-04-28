@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -239,6 +241,9 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		if err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
+		if err := m.installGuestFileDirectory(ctx, client, file.GuestPath, file.Chown); err != nil {
+			return &stageError{Stage: "guest file write", Err: err}
+		}
 		if err := m.writeGuestFile(client, file.GuestPath, contentBase64); err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
@@ -291,9 +296,47 @@ func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, cont
 }
 
 const (
-	guestChmodPath = "/run/current-system/sw/bin/chmod"
-	guestChownPath = "/run/current-system/sw/bin/chown"
+	guestChmodPath   = "/run/current-system/sw/bin/chmod"
+	guestChownPath   = "/run/current-system/sw/bin/chown"
+	guestInstallPath = "/run/current-system/sw/bin/install"
+	guestTestPath    = "/run/current-system/sw/bin/test"
 )
+
+func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAgentClient, guestPath string, owner *string) error {
+	guestDir := path.Dir(guestPath)
+	exists, err := m.guestDirectoryExists(ctx, client, guestDir)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+
+	args := guestInstallDirectoryArgs(guestDir, owner)
+	return m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, args, guestDir)
+}
+
+func (m *manager) guestDirectoryExists(ctx context.Context, client guestAgentClient, guestDir string) (bool, error) {
+	status, err := m.runGuestFileCommandStatus(ctx, client, "test -d", guestTestPath, []string{"-d", guestDir}, guestDir)
+	if err != nil {
+		return false, err
+	}
+	return status.ExitCode == 0, nil
+}
+
+func guestInstallDirectoryArgs(guestDir string, owner *string) []string {
+	args := []string{"-d"}
+	if owner != nil {
+		user, group, _ := strings.Cut(*owner, ":")
+		if user != "" {
+			args = append(args, "-o", user)
+		}
+		if group != "" {
+			args = append(args, "-g", group)
+		}
+	}
+	return append(args, guestDir)
+}
 
 func (m *manager) chownGuestFile(ctx context.Context, client guestAgentClient, guestPath string, owner string) error {
 	return m.runGuestFileCommand(ctx, client, "chown", guestChownPath, []string{owner, guestPath}, guestPath)
@@ -304,28 +347,36 @@ func (m *manager) chmodGuestFile(ctx context.Context, client guestAgentClient, g
 }
 
 func (m *manager) runGuestFileCommand(ctx context.Context, client guestAgentClient, name string, path string, args []string, guestPath string) error {
+	status, err := m.runGuestFileCommandStatus(ctx, client, name, path, args, guestPath)
+	if err != nil {
+		return err
+	}
+	if status.ExitCode != 0 {
+		return fmt.Errorf("%s %q exited with status %d%s", name, guestPath, status.ExitCode, guestExecOutputSuffix(status))
+	}
+	return nil
+}
+
+func (m *manager) runGuestFileCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, guestPath string) (guestExecStatus, error) {
 	timeout := m.effectiveQMPCommandTimeout()
 	pid, err := client.Exec(timeout, path, args, true)
 	if err != nil {
-		return fmt.Errorf("%s %q: %w", name, guestPath, err)
+		return guestExecStatus{}, fmt.Errorf("%s %q: %w", name, guestPath, err)
 	}
 
 	deadline := time.Now().Add(timeout)
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return fmt.Errorf("%s %q timed out after %s", name, guestPath, timeout)
+			return guestExecStatus{}, fmt.Errorf("%s %q timed out after %s", name, guestPath, timeout)
 		}
 
 		status, err := client.ExecStatus(minDuration(timeout, remaining), pid)
 		if err != nil {
-			return fmt.Errorf("%s %q: %w", name, guestPath, err)
+			return guestExecStatus{}, fmt.Errorf("%s %q: %w", name, guestPath, err)
 		}
 		if status.Exited {
-			if status.ExitCode != 0 {
-				return fmt.Errorf("%s %q exited with status %d%s", name, guestPath, status.ExitCode, guestExecOutputSuffix(status))
-			}
-			return nil
+			return status, nil
 		}
 
 		sleep := minDuration(defaultMigrationPollDelay, time.Until(deadline))
@@ -336,7 +387,7 @@ func (m *manager) runGuestFileCommand(ctx context.Context, client guestAgentClie
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return guestExecStatus{}, ctx.Err()
 		case <-timer.C:
 		}
 	}

@@ -89,9 +89,12 @@ already be base64-encoded. Relative host `path` values resolve against
 
 Each entry may also set `chown` to a guest ownership string such as
 `"agent:users"` and `mode` to a four-digit octal string such as `"0640"`.
-When present, `virtie launch` applies ownership and then mode with the QEMU
-guest agent after the file is written and closed. Chown and chmod failures are
-fatal.
+Before writing a file, `virtie launch` checks whether the destination parent
+directory already exists. Existing parent directories are left unchanged; when
+the parent is missing, `virtie launch` creates it with `install -d`, passing
+user and group parts from `chown` when present. When present, `virtie launch`
+applies ownership and then mode with the QEMU guest agent after the file is
+written and closed. Directory creation, chown, and chmod failures are fatal.
 
 For Nix users, the equivalent option is:
 

@@ -63,6 +63,47 @@ func TestManifestValidate(t *testing.T) {
 	}
 }
 
+func TestGuestInstallDirectoryArgs(t *testing.T) {
+	tests := []struct {
+		name     string
+		chown    *string
+		expected []string
+	}{
+		{
+			name:     "nil chown",
+			expected: []string{"-d", "/etc/virtie"},
+		},
+		{
+			name:     "empty chown",
+			chown:    stringPtr(""),
+			expected: []string{"-d", "/etc/virtie"},
+		},
+		{
+			name:     "user and group",
+			chown:    stringPtr("agent:users"),
+			expected: []string{"-d", "-o", "agent", "-g", "users", "/etc/virtie"},
+		},
+		{
+			name:     "user only",
+			chown:    stringPtr("agent"),
+			expected: []string{"-d", "-o", "agent", "/etc/virtie"},
+		},
+		{
+			name:     "group only",
+			chown:    stringPtr(":users"),
+			expected: []string{"-d", "-g", "users", "/etc/virtie"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := guestInstallDirectoryArgs("/etc/virtie", tt.chown); !reflect.DeepEqual(got, tt.expected) {
+				t.Fatalf("unexpected install args: got %#v want %#v", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 	manifest := &manifest.Manifest{
 		Paths: manifest.Paths{
@@ -313,8 +354,8 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 	inlineChown := "agent:users"
 	inlineMode := "0640"
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode},
-		"/etc/host":   {Path: &hostPath},
+		"/etc/virtie/inline":   {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode},
+		"/var/lib/virtie/host": {Path: &hostPath},
 	}
 
 	var eventMu sync.Mutex
@@ -336,7 +377,17 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 			runner.exitQEMU(nil)
 		},
 	}
-	guestAgent := &fakeGuestAgentClient{record: record}
+	guestAgent := &fakeGuestAgentClient{
+		record: record,
+		execStatuses: []guestExecStatus{
+			{Exited: true, ExitCode: 1},
+			{Exited: true},
+			{Exited: true},
+			{Exited: true},
+			{Exited: true, ExitCode: 1},
+			{Exited: true},
+		},
+	}
 	manager := &manager{
 		locker:            &fileLocker{},
 		runner:            runner,
@@ -355,21 +406,41 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 		t.Fatalf("launch: %v", err)
 	}
 
-	if got, want := guestAgent.writes["/etc/inline"], inlineContent; got != want {
+	if got, want := guestAgent.writes["/etc/virtie/inline"], inlineContent; got != want {
 		t.Fatalf("unexpected inline write content: got %q want %q", got, want)
 	}
-	if got, want := guestAgent.writes["/etc/host"], "ZnJvbSBob3N0"; got != want {
+	if got, want := guestAgent.writes["/var/lib/virtie/host"], "ZnJvbSBob3N0"; got != want {
 		t.Fatalf("unexpected host write content: got %q want %q", got, want)
 	}
 	if got, want := guestAgent.execs, []guestExecCall{
 		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/etc/virtie"},
+			captureOutput: true,
+		},
+		{
+			path:          guestInstallPath,
+			args:          []string{"-d", "-o", "agent", "-g", "users", "/etc/virtie"},
+			captureOutput: true,
+		},
+		{
 			path:          guestChownPath,
-			args:          []string{"agent:users", "/etc/inline"},
+			args:          []string{"agent:users", "/etc/virtie/inline"},
 			captureOutput: true,
 		},
 		{
 			path:          guestChmodPath,
-			args:          []string{"0640", "/etc/inline"},
+			args:          []string{"0640", "/etc/virtie/inline"},
+			captureOutput: true,
+		},
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/var/lib/virtie"},
+			captureOutput: true,
+		},
+		{
+			path:          guestInstallPath,
+			args:          []string{"-d", "/var/lib/virtie"},
 			captureOutput: true,
 		},
 	}; !reflect.DeepEqual(got, want) {
@@ -378,15 +449,84 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 
 	firstSSH := indexString(events, "start:ssh")
 	ping := indexString(events, "guest-ping")
-	closeInline := indexString(events, "guest-close:/etc/inline")
-	chownInline := indexString(events, "guest-chown:/etc/inline:agent:users")
-	chmodInline := indexString(events, "guest-chmod:/etc/inline:0640")
-	closeHost := indexString(events, "guest-close:/etc/host")
-	if firstSSH < 0 || ping < 0 || closeInline < 0 || chownInline < 0 || chmodInline < 0 || closeHost < 0 {
+	testInline := indexString(events, "guest-test-dir:/etc/virtie")
+	installInline := indexString(events, "guest-install-dir:/etc/virtie")
+	openInline := indexString(events, "guest-open:/etc/virtie/inline")
+	closeInline := indexString(events, "guest-close:/etc/virtie/inline")
+	chownInline := indexString(events, "guest-chown:/etc/virtie/inline:agent:users")
+	chmodInline := indexString(events, "guest-chmod:/etc/virtie/inline:0640")
+	testHost := indexString(events, "guest-test-dir:/var/lib/virtie")
+	installHost := indexString(events, "guest-install-dir:/var/lib/virtie")
+	openHost := indexString(events, "guest-open:/var/lib/virtie/host")
+	closeHost := indexString(events, "guest-close:/var/lib/virtie/host")
+	if firstSSH < 0 || ping < 0 || testInline < 0 || installInline < 0 || openInline < 0 || closeInline < 0 || chownInline < 0 || chmodInline < 0 || testHost < 0 || installHost < 0 || openHost < 0 || closeHost < 0 {
 		t.Fatalf("expected guest agent and ssh events, got %v", events)
 	}
-	if !(ping < firstSSH && closeInline < chownInline && chownInline < chmodInline && chmodInline < firstSSH && closeHost < firstSSH) {
+	if !(ping < testInline && testInline < installInline && installInline < openInline && openInline < closeInline && closeInline < chownInline && chownInline < chmodInline && chmodInline < testHost && testHost < installHost && installHost < openHost && openHost < closeHost && closeHost < firstSSH) {
 		t.Fatalf("expected guest writes before ssh readiness, got events %v", events)
+	}
+}
+
+func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	inlineContent := "aW5saW5l"
+	inlineChown := "agent:users"
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/virtie/inline": {Content: &inlineContent, Chown: &inlineChown},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{
+			{Exited: true},
+			{Exited: true},
+		},
+	}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	if got, want := guestAgent.execs, []guestExecCall{
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/etc/virtie"},
+			captureOutput: true,
+		},
+		{
+			path:          guestChownPath,
+			args:          []string{"agent:users", "/etc/virtie/inline"},
+			captureOutput: true,
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected guest execs: got %#v want %#v", got, want)
+	}
+	if got, want := guestAgent.writes["/etc/virtie/inline"], inlineContent; got != want {
+		t.Fatalf("unexpected inline write content: got %q want %q", got, want)
 	}
 }
 
@@ -413,11 +553,8 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 	}
 	guestAgent := &fakeGuestAgentClient{
 		execStatuses: []guestExecStatus{
-			{
-				Exited:   true,
-				ExitCode: 1,
-				ErrData:  "Y2hvd24gZmFpbGVk",
-			},
+			{Exited: true},
+			{Exited: true, ExitCode: 1, ErrData: "Y2hvd24gZmFpbGVk"},
 		},
 	}
 	manager := &manager{
@@ -445,6 +582,11 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 	}
 	if got, want := guestAgent.execs, []guestExecCall{
 		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/etc"},
+			captureOutput: true,
+		},
+		{
 			path:          guestChownPath,
 			args:          []string{"agent:users", "/etc/inline"},
 			captureOutput: true,
@@ -454,6 +596,77 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 	}
 	if len(runner.sshArgs) != 0 {
 		t.Fatalf("expected chown failure before ssh readiness, got ssh starts %v", runner.sshArgs)
+	}
+}
+
+func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	inlineContent := "aW5saW5l"
+	inlineChown := "agent:users"
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/virtie/inline": {Content: &inlineContent, Chown: &inlineChown},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{
+			{Exited: true, ExitCode: 1},
+			{Exited: true, ExitCode: 1, ErrData: "aW5zdGFsbCBmYWlsZWQ="},
+		},
+	}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launch(context.Background(), cfg, nil)
+	if err == nil {
+		t.Fatal("expected launch to fail")
+	}
+	for _, want := range []string{"guest file write", "install -d \"/etc/virtie\" exited with status 1", "install failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+	if got, want := guestAgent.execs, []guestExecCall{
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/etc/virtie"},
+			captureOutput: true,
+		},
+		{
+			path:          guestInstallPath,
+			args:          []string{"-d", "-o", "agent", "-g", "users", "/etc/virtie"},
+			captureOutput: true,
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected guest execs after install failure: got %#v want %#v", got, want)
+	}
+	if len(guestAgent.writes) != 0 {
+		t.Fatalf("expected no guest writes after install failure, got %#v", guestAgent.writes)
+	}
+	if len(runner.sshArgs) != 0 {
+		t.Fatalf("expected install failure before ssh readiness, got ssh starts %v", runner.sshArgs)
 	}
 }
 
@@ -479,6 +692,9 @@ func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
 	}
 	guestAgent := &fakeGuestAgentClient{
 		execStatuses: []guestExecStatus{
+			{
+				Exited: true,
+			},
 			{
 				Exited:   true,
 				ExitCode: 1,
@@ -1981,6 +2197,12 @@ func (c *fakeGuestAgentClient) Exec(timeout time.Duration, path string, args []s
 	}
 	if c.record != nil && path == guestChmodPath && len(args) == 2 {
 		c.record("guest-chmod:" + args[1] + ":" + args[0])
+	}
+	if c.record != nil && path == guestInstallPath && len(args) > 0 {
+		c.record("guest-install-dir:" + args[len(args)-1])
+	}
+	if c.record != nil && path == guestTestPath && len(args) > 0 {
+		c.record("guest-test-dir:" + args[len(args)-1])
 	}
 	if c.execErr != nil {
 		return 0, c.execErr

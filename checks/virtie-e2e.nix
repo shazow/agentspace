@@ -99,6 +99,8 @@ client_count = 0
 qga_handles = {}
 qga_next_handle = 0
 qga_next_pid = 1000
+qga_dirs = {"/", "/etc"}
+qga_exec_statuses = {}
 
 def touch(name):
     with open(os.path.join(state_dir, name), "a", encoding="utf-8"):
@@ -243,11 +245,17 @@ def qga_handle(conn):
                 path = args.get("path", "")
                 argv = args.get("arg", [])
                 capture_output = args.get("capture-output", False)
+                status = {"exited": True, "exitcode": 0}
+                if path == "/run/current-system/sw/bin/test" and len(argv) == 2 and argv[0] == "-d":
+                    status = {"exited": True, "exitcode": 0 if argv[1] in qga_dirs else 1}
+                elif path == "/run/current-system/sw/bin/install" and len(argv) >= 2 and argv[0] == "-d":
+                    qga_dirs.add(argv[-1])
+                qga_exec_statuses[qga_next_pid] = status
                 with open(os.path.join(state_dir, "guest-agent-execs"), "a", encoding="utf-8") as execs:
                     execs.write(f"{path} {' '.join(argv)} capture-output={capture_output}\n")
                 send({"return": {"pid": qga_next_pid}})
             elif command == "guest-exec-status":
-                send({"return": {"exited": True, "exitcode": 0}})
+                send({"return": qga_exec_statuses.get(args.get("pid"), {"exited": True, "exitcode": 0})})
             else:
                 send({"return": {}})
     conn.close()
@@ -502,12 +510,12 @@ PY
         }
       ];
       writeFiles = {
-        "/etc/virtie-inline" = {
+        "/etc/virtie/inline" = {
           chown = "agent:users";
           content = "aW5saW5lLWZyb20tbWFuaWZlc3Q=";
           mode = "0640";
         };
-        "/etc/virtie-host" = {
+        "/var/lib/virtie/host" = {
           path = "host-write-file";
         };
       };
@@ -601,19 +609,23 @@ in
     grep -F 'virtie: starting virtiofsd [workspace]' "$launch_log" >/dev/null
     grep -F 'virtie: starting qemu' "$launch_log" >/dev/null
     grep -F 'virtie: allocated vsock cid 3' "$launch_log" >/dev/null
-    grep -F 'virtie: wrote guest file /etc/virtie-inline' "$launch_log" >/dev/null
-    grep -F 'virtie: wrote guest file /etc/virtie-host' "$launch_log" >/dev/null
+    grep -F 'virtie: wrote guest file /etc/virtie/inline' "$launch_log" >/dev/null
+    grep -F 'virtie: wrote guest file /var/lib/virtie/host' "$launch_log" >/dev/null
     workspace_real="$(${pkgs.coreutils}/bin/realpath "$workspace_dir")"
     grep -F '"workingDir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtie-fake.json" >/dev/null
     grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
     grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
     grep -Fx "$workspace_real/overlay.img" "$workspace_dir/state/mkfs-ext4-args" >/dev/null
-    grep -Fx '/etc/virtie-inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
-    grep -Fx '/etc/virtie-host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
-    grep -Fx '/etc/virtie-inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
-    grep -Fx '/etc/virtie-host' "$workspace_dir/state/guest-agent-closes" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/chown agent:users /etc/virtie-inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtie-inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/etc/virtie/inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
+    grep -Fx '/var/lib/virtie/host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
+    grep -Fx '/etc/virtie/inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
+    grep -Fx '/var/lib/virtie/host' "$workspace_dir/state/guest-agent-closes" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/test -d /etc/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/install -d -o agent -g users /etc/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/chown agent:users /etc/virtie/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtie/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/test -d /var/lib/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/install -d /var/lib/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
     test ! -e "$workspace_dir/.agentspace/virtie-fake.pid"
