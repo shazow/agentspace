@@ -4,6 +4,114 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-04-28: virtie notification hooks
+
+### Who Is Affected
+
+- Nix consumers that want host-side notifications for runtime events.
+- Consumers that generate or validate virtie manifests directly.
+
+### What Changed
+
+Generated manifests now include a `notifications` object. Notifications are
+disabled by default when no command is configured. The manifest accepts one
+optional command and an optional state allowlist:
+
+```json
+{
+  "notifications": {
+    "command": {
+      "path": "/run/current-system/sw/bin/sh",
+      "args": ["-c", "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\""]
+    },
+    "states": ["runtime:resume", "runtime:suspend", "balloon:resize"]
+  }
+}
+```
+
+`states = []` or an omitted state list means all notification states. Hook
+failures are logged and ignored. Virtie passes command args unchanged.
+
+The hook environment includes `VIRTIE_NOTIFY_STATE`,
+`VIRTIE_NOTIFY_MESSAGE`, and context values as
+`VIRTIE_NOTIFY_CONTEXT_<UPPER_SNAKE_KEY>`.
+
+For Nix users, the equivalent option is:
+
+```nix
+agentspace.sandbox.notifications.command =
+  ''notify-send "virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE"'';
+agentspace.sandbox.notifications.states = [
+  "runtime:resume"
+  "runtime:suspend"
+  "balloon:resize"
+];
+```
+
+### Migration Steps
+
+Nix consumers should replace `agentspace.sandbox.notifications.command.path`
+and `agentspace.sandbox.notifications.command.args` with the shell command
+string in `agentspace.sandbox.notifications.command`. Set it to `""` or omit it
+to keep notifications disabled.
+
+Direct manifest producers should omit `notifications.command` to keep
+notifications disabled, or include both `notifications.command.path` and any
+desired args.
+
+## 2026-04-27: manifest writeFiles and guest-agent socket
+
+### Who Is Affected
+
+- Consumers that generate or validate virtie manifests directly.
+- Nix consumers that want boot-time file injection into a fresh guest.
+
+### What Changed
+
+Generated manifests now include `qemu.guestAgent.socketPath`, resolved with the
+same runtime-directory policy as QMP and virtiofs sockets. The sandbox module
+also enables the in-guest QEMU guest agent service.
+
+The manifest accepts an optional `writeFiles` map:
+
+```json
+{
+  "writeFiles": {
+    "/etc/example.conf": { "content": "YmFzZTY0IGJ5dGVz", "chown": "agent:users", "mode": "0640" },
+    "/etc/from-host": { "path": "relative-or-absolute-host-path" }
+  }
+}
+```
+
+Exactly one of `content` or `path` is required for each entry. `content` must
+already be base64-encoded. Relative host `path` values resolve against
+`paths.workingDir`; guest target paths must be absolute.
+
+Each entry may also set `chown` to a guest ownership string such as
+`"agent:users"` and `mode` to a four-digit octal string such as `"0640"`.
+When present, `virtie launch` applies ownership and then mode with the QEMU
+guest agent after the file is written and closed. Chown and chmod failures are
+fatal.
+
+For Nix users, the equivalent option is:
+
+```nix
+agentspace.sandbox.writeFiles."/etc/example.conf".content = "YmFzZTY0IGJ5dGVz";
+agentspace.sandbox.writeFiles."/etc/example.conf".chown = "agent:users";
+agentspace.sandbox.writeFiles."/etc/example.conf".mode = "0640";
+agentspace.sandbox.writeFiles."/etc/from-host".path = "relative-host-path";
+```
+
+`virtie launch` writes these files after QMP readiness and guest-agent ping, and
+before SSH readiness. File injection runs only for fresh launches; restores via
+`virtie launch --resume=auto` or `--resume=force` skip `writeFiles`.
+
+### Migration Steps
+
+No migration is required for consumers that do not set `writeFiles`. Direct
+manifest producers should include `qemu.guestAgent.socketPath` when using
+`writeFiles`.
+
 ## 2026-04-27: launch resume modes replace `virtie resume`
 
 ### Who Is Affected

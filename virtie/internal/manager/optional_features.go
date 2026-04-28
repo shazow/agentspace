@@ -15,6 +15,7 @@ type qemuTransportResolver func(string) (govmmQemu.VirtioTransport, error)
 type optionalFeatureRuntime struct {
 	logger     *log.Logger
 	qmpTimeout time.Duration
+	notifier   notificationSink
 }
 
 type optionalFeature interface {
@@ -83,7 +84,7 @@ func (balloonFeature) StartTask(
 		return nil
 	}
 
-	task := balloon.ControllerTask(runtime.logger, runtime.qmpTimeout, qmpClient, manifest.QEMU.Devices.Balloon)
+	task := balloon.ControllerTask(runtime.logger, runtime.qmpTimeout, qmpClient, manifest.QEMU.Devices.Balloon, runtime.notifier)
 	if task == nil {
 		return nil
 	}

@@ -92,6 +92,9 @@ Acceptance criteria:
   - `virtiofs.daemons[].socketPath`
   - `virtiofs.daemons[].command`
   - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set.
+  - optional `writeFiles`, keyed by absolute guest path, with exactly one of `content` or `path`, optional `chown`, and optional four-digit octal `mode`
+  - optional `notifications.command` with `{ path, args }`
+  - optional `notifications.states` allowlist; empty or omitted means all states
   - optional `vsock.cidRange`, defaulting to `3..65535`
 - Runtime assumptions:
   - Nix has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
@@ -112,6 +115,9 @@ Acceptance criteria:
   - Live pause/resume, terminal job-control suspend, and `SIGCONT` resume are not supported.
   - When `qemu.devices.balloon` is present, `virtie` resolves the balloon QOM path, enables `guest-stats-polling-interval`, reads `guest-stats` plus `query-balloon`, and adjusts the logical guest memory size within configured or synthesized bounds.
   - If the manifest omits `qemu.devices.balloon.controller`, `virtie` defaults to `maxActualMiB = qemu.memory.sizeMiB`, an idle reclaim target of 50% of that max, a grow threshold at 25% available memory, and the existing step, poll, and reclaim-holdoff defaults.
+  - Notification hooks are best-effort and never fail launch, suspend, resume, teardown, or balloon control.
+  - Current notification states are `runtime:suspend` after saved suspend state is written, `runtime:resume` after restore migration and QMP `cont` succeed, and `balloon:resize` after a balloon resize succeeds.
+  - Notification commands receive `VIRTIE_NOTIFY_STATE`, `VIRTIE_NOTIFY_MESSAGE`, and `VIRTIE_NOTIFY_CONTEXT_<UPPER_SNAKE_KEY>` environment variables. Command args are passed unchanged.
   - The old Nix-owned argv-template path has been removed from the active contract.
 - Current verification note: the Go package tests pass, and `checks/default.nix` keeps the launch-contract and fake-tools E2E coverage enabled alongside repo-level hook-compatibility checks.
 

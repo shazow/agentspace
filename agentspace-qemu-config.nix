@@ -167,6 +167,10 @@ in
     socketPath = if microvm.socket != null then microvm.socket else "qmp.sock";
   };
 
+  guestAgent = {
+    socketPath = "qga.sock";
+  };
+
   devices =
     {
       rng = {

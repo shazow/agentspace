@@ -8,10 +8,13 @@
 package manifest
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
+	"sort"
 
 	"github.com/adrg/xdg"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
@@ -23,15 +26,19 @@ const (
 	defaultVolumeFSType  = "ext4"
 )
 
+var writeFileModePattern = regexp.MustCompile(`^0[0-7]{3}$`)
+
 type Manifest struct {
-	Identity    Identity    `json:"identity"`
-	Paths       Paths       `json:"paths"`
-	Persistence Persistence `json:"persistence"`
-	SSH         SSH         `json:"ssh"`
-	QEMU        QEMU        `json:"qemu"`
-	Volumes     []Volume    `json:"volumes,omitempty"`
-	VSock       VSock       `json:"vsock"`
-	VirtioFS    VirtioFS    `json:"virtiofs"`
+	Identity      Identity      `json:"identity"`
+	Paths         Paths         `json:"paths"`
+	Persistence   Persistence   `json:"persistence"`
+	SSH           SSH           `json:"ssh"`
+	QEMU          QEMU          `json:"qemu"`
+	Volumes       []Volume      `json:"volumes,omitempty"`
+	VSock         VSock         `json:"vsock"`
+	VirtioFS      VirtioFS      `json:"virtiofs"`
+	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
+	Notifications Notifications `json:"notifications,omitempty"`
 }
 
 type Identity struct {
@@ -65,19 +72,20 @@ type VSock struct {
 }
 
 type QEMU struct {
-	BinaryPath      string      `json:"binaryPath"`
-	Name            string      `json:"name"`
-	Machine         QEMUMachine `json:"machine"`
-	CPU             QEMUCPU     `json:"cpu"`
-	Memory          QEMUMemory  `json:"memory"`
-	Kernel          QEMUKernel  `json:"kernel"`
-	SMP             QEMUSMP     `json:"smp"`
-	Console         QEMUConsole `json:"console"`
-	Knobs           QEMUKnobs   `json:"knobs"`
-	QMP             QEMUQMP     `json:"qmp"`
-	Devices         QEMUDevices `json:"devices"`
-	MachineID       *string     `json:"machineId,omitempty"`
-	PassthroughArgs []string    `json:"passthroughArgs,omitempty"`
+	BinaryPath      string         `json:"binaryPath"`
+	Name            string         `json:"name"`
+	Machine         QEMUMachine    `json:"machine"`
+	CPU             QEMUCPU        `json:"cpu"`
+	Memory          QEMUMemory     `json:"memory"`
+	Kernel          QEMUKernel     `json:"kernel"`
+	SMP             QEMUSMP        `json:"smp"`
+	Console         QEMUConsole    `json:"console"`
+	Knobs           QEMUKnobs      `json:"knobs"`
+	QMP             QEMUQMP        `json:"qmp"`
+	GuestAgent      QEMUGuestAgent `json:"guestAgent,omitempty"`
+	Devices         QEMUDevices    `json:"devices"`
+	MachineID       *string        `json:"machineId,omitempty"`
+	PassthroughArgs []string       `json:"passthroughArgs,omitempty"`
 }
 
 type QEMUMachine struct {
@@ -121,6 +129,10 @@ type QEMUKnobs struct {
 
 type QEMUQMP struct {
 	SocketPath string `json:"socketPath"`
+}
+
+type QEMUGuestAgent struct {
+	SocketPath string `json:"socketPath,omitempty"`
 }
 
 type QEMUDevices struct {
@@ -184,6 +196,11 @@ type Command struct {
 	Args []string `json:"args,omitempty"`
 }
 
+type Notifications struct {
+	Command *Command `json:"command,omitempty"`
+	States  []string `json:"states,omitempty"`
+}
+
 type VirtioFSDaemon struct {
 	Tag        string  `json:"tag"`
 	SocketPath string  `json:"socketPath"`
@@ -192,6 +209,23 @@ type VirtioFSDaemon struct {
 
 type VirtioFS struct {
 	Daemons []VirtioFSDaemon `json:"daemons"`
+}
+
+type WriteFile struct {
+	Chown   *string `json:"chown,omitempty"`
+	Content *string `json:"content,omitempty"`
+	Mode    *string `json:"mode,omitempty"`
+	Path    *string `json:"path,omitempty"`
+}
+
+type WriteFiles map[string]WriteFile
+
+type ResolvedWriteFile struct {
+	GuestPath string
+	Chown     *string
+	Content   *string
+	Mode      *string
+	HostPath  *string
 }
 
 func Load(r io.Reader) (*Manifest, error) {
@@ -269,6 +303,8 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.smp.cpus must be greater than zero")
 	case m.QEMU.QMP.SocketPath == "":
 		return fmt.Errorf("manifest.qemu.qmp.socketPath is required")
+	case len(m.WriteFiles) > 0 && m.QEMU.GuestAgent.SocketPath == "":
+		return fmt.Errorf("manifest.qemu.guestAgent.socketPath is required when manifest.writeFiles is set")
 	case m.VSock.CIDRange.Start < defaultVSockCIDStart:
 		return fmt.Errorf("manifest.vsock.cidRange.start must be at least %d", defaultVSockCIDStart)
 	case m.VSock.CIDRange.End < m.VSock.CIDRange.Start:
@@ -349,6 +385,13 @@ func (m *Manifest) Validate() error {
 		return err
 	}
 
+	if err := validateWriteFiles(m.WriteFiles); err != nil {
+		return err
+	}
+	if err := validateNotifications(m.Notifications); err != nil {
+		return err
+	}
+
 	for i, volume := range m.Volumes {
 		if volume.ImagePath == "" {
 			return fmt.Errorf("manifest.volumes[%d].imagePath is required", i)
@@ -358,6 +401,47 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func validateNotifications(notifications Notifications) error {
+	if notifications.Command == nil {
+		return nil
+	}
+	switch {
+	case notifications.Command.Path == "":
+		return fmt.Errorf("manifest.notifications.command.path is required when notifications.command is set")
+	}
+	return nil
+}
+
+func validateWriteFiles(files WriteFiles) error {
+	paths := make([]string, 0, len(files))
+	for guestPath := range files {
+		paths = append(paths, guestPath)
+	}
+	sort.Strings(paths)
+
+	for _, guestPath := range paths {
+		entry := files[guestPath]
+		switch {
+		case guestPath == "":
+			return fmt.Errorf("manifest.writeFiles contains an empty guest path")
+		case !filepath.IsAbs(guestPath):
+			return fmt.Errorf("manifest.writeFiles[%q] guest path must be absolute", guestPath)
+		case (entry.Content == nil) == (entry.Path == nil):
+			return fmt.Errorf("manifest.writeFiles[%q] must set exactly one of content or path", guestPath)
+		case entry.Path != nil && *entry.Path == "":
+			return fmt.Errorf("manifest.writeFiles[%q].path must not be empty", guestPath)
+		case entry.Mode != nil && !writeFileModePattern.MatchString(*entry.Mode):
+			return fmt.Errorf("manifest.writeFiles[%q].mode must match ^0[0-7]{3}$", guestPath)
+		}
+		if entry.Content != nil {
+			if _, err := base64.StdEncoding.Strict().DecodeString(*entry.Content); err != nil {
+				return fmt.Errorf("manifest.writeFiles[%q].content must be valid base64: %w", guestPath, err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -460,6 +544,10 @@ func (m *Manifest) ResolvedQMPSocketPath() (string, error) {
 	return m.resolveSocketPath(m.QEMU.QMP.SocketPath)
 }
 
+func (m *Manifest) ResolvedGuestAgentSocketPath() (string, error) {
+	return m.resolveSocketPath(m.QEMU.GuestAgent.SocketPath)
+}
+
 func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved := m.QEMU
 	resolved.BinaryPath = m.resolvePath(resolved.BinaryPath)
@@ -472,6 +560,12 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 		return QEMU{}, err
 	}
 	resolved.QMP.SocketPath = qmpSocketPath
+
+	guestAgentSocketPath, err := m.resolveSocketPath(resolved.GuestAgent.SocketPath)
+	if err != nil {
+		return QEMU{}, err
+	}
+	resolved.GuestAgent.SocketPath = guestAgentSocketPath
 
 	if resolved.MachineID != nil {
 		value := *resolved.MachineID
@@ -532,6 +626,19 @@ func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
 	return daemons, nil
 }
 
+func (m *Manifest) ResolvedNotifications() Notifications {
+	resolved := Notifications{
+		States: append([]string(nil), m.Notifications.States...),
+	}
+	if m.Notifications.Command != nil {
+		command := *m.Notifications.Command
+		command.Path = m.resolvePath(command.Path)
+		command.Args = append([]string(nil), m.Notifications.Command.Args...)
+		resolved.Command = &command
+	}
+	return resolved
+}
+
 func (m *Manifest) ResolvedVolumes() []Volume {
 	volumes := make([]Volume, 0, len(m.Volumes))
 	for _, volume := range m.Volumes {
@@ -541,6 +648,31 @@ func (m *Manifest) ResolvedVolumes() []Volume {
 		volumes = append(volumes, resolved)
 	}
 	return volumes
+}
+
+func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
+	paths := make([]string, 0, len(m.WriteFiles))
+	for guestPath := range m.WriteFiles {
+		paths = append(paths, guestPath)
+	}
+	sort.Strings(paths)
+
+	files := make([]ResolvedWriteFile, 0, len(paths))
+	for _, guestPath := range paths {
+		entry := m.WriteFiles[guestPath]
+		resolved := ResolvedWriteFile{
+			GuestPath: guestPath,
+			Chown:     entry.Chown,
+			Content:   entry.Content,
+			Mode:      entry.Mode,
+		}
+		if entry.Path != nil {
+			hostPath := m.resolvePath(*entry.Path)
+			resolved.HostPath = &hostPath
+		}
+		files = append(files, resolved)
+	}
+	return files
 }
 
 func (m *Manifest) SSHDestination(cid int) string {

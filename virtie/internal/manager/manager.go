@@ -53,6 +53,7 @@ type manager struct {
 	runner              runner
 	socketWaiter        socketWaiter
 	qmpDialer           qmpDialer
+	guestAgentDialer    guestAgentDialer
 	logger              *log.Logger
 	sshRetryDelay       time.Duration
 	shutdownDelay       time.Duration
@@ -62,6 +63,8 @@ type manager struct {
 	qmpMigrationTimeout time.Duration
 	signals             <-chan os.Signal
 	pidSignaler         pidSignaler
+	notificationRunner  notificationRunner
+	notifier            notificationSink
 }
 
 func newManager() *manager {
@@ -70,6 +73,7 @@ func newManager() *manager {
 		runner:              &execRunner{},
 		socketWaiter:        &pollingSocketWaiter{},
 		qmpDialer:           &socketMonitorDialer{},
+		guestAgentDialer:    &socketGuestAgentDialer{},
 		logger:              log.New(os.Stderr, "virtie: ", 0),
 		sshRetryDelay:       defaultSSHRetryDelay,
 		shutdownDelay:       defaultShutdownDelay,
@@ -106,6 +110,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return err
 	}
+	notifier := m.effectiveNotifier(manifest)
 
 	launchCtx, cancelLaunch := context.WithCancel(ctx)
 	defer cancelLaunch()
@@ -146,6 +151,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	qmpSocketPath, err := manifest.ResolvedQMPSocketPath()
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	guestAgentSocketPath, err := manifest.ResolvedGuestAgentSocketPath()
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -192,6 +201,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err := ensureParentDirectories([]string{qmpSocketPath}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	if guestAgentSocketPath != "" {
+		if err := ensureParentDirectories([]string{guestAgentSocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
+	}
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -200,6 +214,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	if err := removeSocketPaths([]string{qmpSocketPath}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
+	}
+	if guestAgentSocketPath != "" {
+		if err := removeSocketPaths([]string{guestAgentSocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
 	}
 	if err := ensureVolumeImages(volumes); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -218,7 +237,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if qmpClient != nil {
 			disconnectErr = qmpClient.Disconnect()
 		}
-		cleanupErr := removeSocketPaths(append([]string{qmpSocketPath}, managedSocketPaths...))
+		cleanupPaths := append([]string{qmpSocketPath}, managedSocketPaths...)
+		if guestAgentSocketPath != "" {
+			cleanupPaths = append(cleanupPaths, guestAgentSocketPath)
+		}
+		cleanupErr := removeSocketPaths(cleanupPaths)
 		if err == nil {
 			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
 		} else if featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {
@@ -271,10 +294,21 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if err := qmpClient.Cont(m.effectiveQMPCommandTimeout()); err != nil {
 			return &stageError{Stage: "restore", Err: err}
 		}
+		notifier.Notify(launchCtx, notifyStateRuntimeResume, "Restored saved VM state", map[string]string{
+			"host_name":     manifest.Identity.HostName,
+			"vm_state_path": resumeState.VMStatePath,
+			"cid":           fmt.Sprintf("%d", cid),
+		})
 	}
-	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid)
+	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid, notifier)
 	if err := m.handlePendingSuspendRequest(launchCtx, suspendRequests, suspendHandler); err != nil {
 		return err
+	}
+
+	if resumeState == nil {
+		if err := m.writeGuestFiles(launchCtx, manifest, qemu); err != nil {
+			return err
+		}
 	}
 
 	m.logger.Printf("waiting for ssh readiness")
@@ -285,6 +319,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
 		logger:     m.logger,
 		qmpTimeout: m.effectiveQMPCommandTimeout(),
+		notifier:   notifier,
 	}, manifest, qmpClient)
 
 	m.logger.Printf("starting ssh session")
@@ -620,23 +655,25 @@ type launchSuspendHandler struct {
 	qmpSocketPath string
 	client        qmpClient
 	cid           int
+	notifier      notificationSink
 	once          sync.Once
 	err           error
 }
 
-func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int) *launchSuspendHandler {
+func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink) *launchSuspendHandler {
 	return &launchSuspendHandler{
 		manager:       manager,
 		manifest:      manifest,
 		qmpSocketPath: qmpSocketPath,
 		client:        client,
 		cid:           cid,
+		notifier:      notifier,
 	}
 }
 
 func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 	h.once.Do(func() {
-		if err := h.manager.saveSuspendStateConnected(ctx, h.manifest, h.qmpSocketPath, h.client, h.cid); err != nil {
+		if err := h.manager.saveSuspendStateConnected(ctx, h.manifest, h.qmpSocketPath, h.client, h.cid, h.notifier); err != nil {
 			h.err = err
 			return
 		}
@@ -759,7 +796,7 @@ func (m *manager) handlePendingSuspendRequest(ctx context.Context, suspendReques
 	}
 }
 
-func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int) error {
+func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink) error {
 	timeout := m.effectiveQMPCommandTimeout()
 
 	status, err := client.QueryStatus(timeout)
@@ -799,6 +836,15 @@ func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manif
 	}); err != nil {
 		return &stageError{Stage: "qmp suspend", Err: err}
 	}
+	if notifier == nil {
+		notifier = noopNotifier{}
+	}
+	notifier.Notify(ctx, notifyStateRuntimeSuspend, "Saved VM suspend state", map[string]string{
+		"host_name":       manifest.Identity.HostName,
+		"qmp_socket_path": qmpSocketPath,
+		"vm_state_path":   statePath,
+		"cid":             fmt.Sprintf("%d", cid),
+	})
 	return nil
 }
 
