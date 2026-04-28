@@ -93,6 +93,28 @@ in
       description = "Enable the virtio-balloon device and virtie's default runtime balloon controller.";
     };
 
+    notifications = {
+      command = {
+        path = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Host-side command path for virtie runtime notification hooks. Set to null to disable notifications.";
+        };
+
+        args = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          description = "Arguments passed unchanged to the virtie notification command.";
+        };
+      };
+
+      states = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = "Optional notification state allowlist. Empty means all states.";
+      };
+    };
+
     sshAuthorizedKeys = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -325,6 +347,15 @@ in
         };
       }) managedVirtioFSShares;
 
+      notificationManifest =
+        { states = cfg.notifications.states; }
+        // lib.optionalAttrs (cfg.notifications.command.path != null) {
+          command = {
+            path = cfg.notifications.command.path;
+            args = cfg.notifications.command.args;
+          };
+        };
+
       manifestVolumes = builtins.map (volume: {
         imagePath = volume.image;
         sizeMiB = volume.size;
@@ -354,6 +385,7 @@ in
         volumes = manifestVolumes;
         virtiofs.daemons = virtiofsDaemons;
         writeFiles = cfg.writeFiles;
+        notifications = notificationManifest;
       };
 
       virtieManifestTemplate =
@@ -362,6 +394,14 @@ in
     in
     lib.mkMerge [
       {
+        assertions = [
+          {
+            assertion =
+              cfg.notifications.command.path != null || cfg.notifications.command.args == [ ];
+            message = "agentspace.sandbox.notifications.command.args requires notifications.command.path.";
+          }
+        ];
+
         agentspace.sandbox.launch = {
           inherit commonInit;
           inherit virtieManifestData;

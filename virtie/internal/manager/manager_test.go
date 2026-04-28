@@ -774,7 +774,7 @@ func TestSaveSuspendStateConnectedStopsMigratesAndWritesSavedState(t *testing.T)
 	manager := &manager{qmpConnectTimeout: time.Millisecond}
 
 	qmpSocketPath := filepath.Join(tmpDir, "qmp.sock")
-	if err := manager.saveSuspendStateConnected(context.Background(), cfg, qmpSocketPath, qmpClient, 7); err != nil {
+	if err := manager.saveSuspendStateConnected(context.Background(), cfg, qmpSocketPath, qmpClient, 7, nil); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 
@@ -842,7 +842,7 @@ func TestLaunchSuspendHandlerSaveAndExitIsIdempotent(t *testing.T) {
 		qmpConnectTimeout:   time.Millisecond,
 		qmpMigrationTimeout: time.Second,
 	}
-	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7)
+	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7, nil)
 
 	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
 		t.Fatalf("first suspend returned %v, want errSavedSuspendExit", err)
@@ -1392,7 +1392,7 @@ func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 	defer cancel()
 
 	errCh := make(chan error, 1)
-	suspendHandler := newLaunchSuspendHandler(manager, manifest, "", nil, 10)
+	suspendHandler := newLaunchSuspendHandler(manager, manifest, "", nil, 10, nil)
 	go func() {
 		errCh <- manager.waitForSSH(ctx, nil, suspendHandler)
 	}()
@@ -1436,7 +1436,7 @@ func TestWaitForSSHLogsPermissionDeniedHint(t *testing.T) {
 
 	defer cancel()
 
-	suspendHandler := newLaunchSuspendHandler(manager, manifest, "", nil, 10)
+	suspendHandler := newLaunchSuspendHandler(manager, manifest, "", nil, 10, nil)
 	if err := manager.waitForSSH(ctx, nil, suspendHandler); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}

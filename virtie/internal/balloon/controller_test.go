@@ -1,6 +1,7 @@
 package balloon
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -236,15 +237,138 @@ func TestControllerResolveQOMPathFallsBackToQOMList(t *testing.T) {
 	}
 }
 
+func TestControllerNotifiesAfterSuccessfulResize(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	now := time.Now()
+	notifications := &fakeNotifier{}
+	session := &fakeSession{
+		queryBalloonInfo: info{ActualBytes: 4 * 1024 * bytesPerMiB},
+		readBalloonStats: stats{
+			Stats: map[string]int64{
+				"stat-available-memory": 64 * bytesPerMiB,
+			},
+			LastUpdate: now,
+		},
+		listQOMProperties: map[string][]objectPropertyInfo{
+			"/machine/peripheral/balloon0": {
+				{Name: "guest-stats", Type: "dict"},
+				{Name: "guest-stats-polling-interval", Type: "int"},
+			},
+		},
+	}
+	controller := &controller{
+		Session:    session,
+		DeviceID:   "balloon0",
+		QMPTimeout: time.Second,
+		Config: ControllerConfig{
+			MinActualMiB:             1024,
+			MaxActualMiB:             8192,
+			GrowBelowAvailableMiB:    128,
+			ReclaimAboveAvailableMiB: 4096,
+			StepMiB:                  2048,
+			PollIntervalSeconds:      1,
+			ReclaimHoldoffSeconds:    1,
+		},
+		Notifier: notifications,
+		Now:      func() time.Time { return now },
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- controller.Run(ctx)
+	}()
+	time.Sleep(1100 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("run controller: %v", err)
+	}
+
+	if got, want := len(session.setBalloonLogicalSizes), 1; got != want {
+		t.Fatalf("expected one resize, got %d", got)
+	}
+	if got, want := len(notifications.calls), 1; got != want {
+		t.Fatalf("expected one notification, got %d", got)
+	}
+	call := notifications.calls[0]
+	if call.state != "balloon:resize" {
+		t.Fatalf("unexpected notification state: got %q", call.state)
+	}
+	if call.message != "Growing guest memory to 6GB" {
+		t.Fatalf("unexpected notification message: got %q", call.message)
+	}
+	if call.values["target_mib"] != "6144" || call.values["delta_mib"] != "2048" {
+		t.Fatalf("unexpected notification values: %#v", call.values)
+	}
+}
+
+func TestControllerDoesNotNotifyWhenResizeIsNotApplied(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	now := time.Now()
+	notifications := &fakeNotifier{}
+	session := &fakeSession{
+		queryBalloonInfo: info{ActualBytes: 4 * 1024 * bytesPerMiB},
+		readBalloonStats: stats{
+			Stats: map[string]int64{
+				"stat-available-memory": 2 * 1024 * bytesPerMiB,
+			},
+			LastUpdate: now,
+		},
+		listQOMProperties: map[string][]objectPropertyInfo{
+			"/machine/peripheral/balloon0": {
+				{Name: "guest-stats", Type: "dict"},
+				{Name: "guest-stats-polling-interval", Type: "int"},
+			},
+		},
+	}
+	controller := &controller{
+		Session:    session,
+		DeviceID:   "balloon0",
+		QMPTimeout: time.Second,
+		Config: ControllerConfig{
+			MinActualMiB:             1024,
+			MaxActualMiB:             8192,
+			GrowBelowAvailableMiB:    128,
+			ReclaimAboveAvailableMiB: 4096,
+			StepMiB:                  2048,
+			PollIntervalSeconds:      1,
+			ReclaimHoldoffSeconds:    1,
+		},
+		Notifier: notifications,
+		Now:      func() time.Time { return now },
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- controller.Run(ctx)
+	}()
+	time.Sleep(1100 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("run controller: %v", err)
+	}
+
+	if got := len(session.setBalloonLogicalSizes); got != 0 {
+		t.Fatalf("expected no resize, got %d", got)
+	}
+	if got := len(notifications.calls); got != 0 {
+		t.Fatalf("expected no notification, got %d", got)
+	}
+}
+
 type fakeSession struct {
-	queryBalloonInfo      info
-	queryBalloonErr       error
-	setBalloonErr         error
-	enableBalloonStatsErr error
-	readBalloonStats      stats
-	readBalloonStatsErr   error
-	listQOMProperties     map[string][]objectPropertyInfo
-	listQOMPropertiesErr  map[string]error
+	queryBalloonInfo       info
+	queryBalloonErr        error
+	setBalloonErr          error
+	setBalloonLogicalSizes []int64
+	enableBalloonStatsErr  error
+	readBalloonStats       stats
+	readBalloonStatsErr    error
+	listQOMProperties      map[string][]objectPropertyInfo
+	listQOMPropertiesErr   map[string]error
 }
 
 func (f *fakeSession) QueryBalloon(timeout time.Duration) (info, error) {
@@ -255,11 +379,30 @@ func (f *fakeSession) QueryBalloon(timeout time.Duration) (info, error) {
 }
 
 func (f *fakeSession) SetBalloonLogicalSize(timeout time.Duration, logicalSizeBytes int64) error {
+	f.setBalloonLogicalSizes = append(f.setBalloonLogicalSizes, logicalSizeBytes)
 	return f.setBalloonErr
 }
 
 func (f *fakeSession) EnableBalloonStatsPolling(timeout time.Duration, qomPath string, pollIntervalSeconds int) error {
 	return f.enableBalloonStatsErr
+}
+
+type notificationCall struct {
+	state   string
+	message string
+	values  map[string]string
+}
+
+type fakeNotifier struct {
+	calls []notificationCall
+}
+
+func (f *fakeNotifier) Notify(ctx context.Context, state string, message string, values map[string]string) {
+	f.calls = append(f.calls, notificationCall{
+		state:   state,
+		message: message,
+		values:  values,
+	})
 }
 
 func (f *fakeSession) ReadBalloonStats(timeout time.Duration, qomPath string) (stats, error) {

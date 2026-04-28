@@ -390,6 +390,106 @@ func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
 	}
 }
 
+func TestManifestNotificationsValidationAndResolution(t *testing.T) {
+	t.Run("disabled by default", func(t *testing.T) {
+		manifest := validManifest()
+		if err := manifest.Validate(); err != nil {
+			t.Fatalf("validate manifest: %v", err)
+		}
+		if manifest.Notifications.Command != nil {
+			t.Fatalf("expected disabled notifications by default, got %#v", manifest.Notifications)
+		}
+	})
+
+	t.Run("accepts command path args and states", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.Notifications = Notifications{
+			Command: &Command{
+				Path: "bin/notify",
+				Args: []string{"--verbose"},
+			},
+			States: []string{"runtime:resume", "balloon:resize"},
+		}
+		if err := manifest.Validate(); err != nil {
+			t.Fatalf("validate manifest: %v", err)
+		}
+
+		resolved := manifest.ResolvedNotifications()
+		if resolved.Command == nil {
+			t.Fatal("expected resolved notification command")
+		}
+		if got, want := resolved.Command.Path, "/tmp/work/bin/notify"; got != want {
+			t.Fatalf("unexpected resolved command path: got %q want %q", got, want)
+		}
+		if got, want := resolved.Command.Args, []string{"--verbose"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("unexpected resolved command args: got %v want %v", got, want)
+		}
+		if got, want := resolved.States, []string{"runtime:resume", "balloon:resize"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("unexpected resolved states: got %v want %v", got, want)
+		}
+	})
+
+	t.Run("rejects args without path", func(t *testing.T) {
+		data := []byte(`{
+			"identity": {"hostName": "agent-sandbox"},
+			"paths": {"workingDir": "/tmp/work", "lockPath": "/tmp/virtie.lock"},
+			"ssh": {"argv": ["/bin/ssh"], "user": "agent"},
+			"qemu": {
+				"binaryPath": "/bin/qemu-system-x86_64",
+				"name": "agent-sandbox",
+				"machine": {"type": "microvm"},
+				"cpu": {"model": "host"},
+				"memory": {"sizeMiB": 1024},
+				"kernel": {"path": "/tmp/vmlinuz", "initrdPath": "/tmp/initrd"},
+				"smp": {"cpus": 2},
+				"qmp": {"socketPath": "qmp.sock"},
+				"devices": {
+					"rng": {"id": "rng0", "transport": "pci"},
+					"virtiofs": [{"id": "fs0", "socketPath": "fs.sock", "tag": "workspace", "transport": "pci"}],
+					"block": [{"id": "vda", "imagePath": "root.img", "transport": "pci"}],
+					"network": [{"id": "net0", "backend": "user", "macAddress": "02:02:00:00:00:01", "transport": "pci"}],
+					"vsock": {"id": "vsock0", "transport": "pci"}
+				}
+			},
+			"virtiofs": {"daemons": [{"tag": "workspace", "socketPath": "fs.sock", "command": {"path": "/tmp/virtiofsd-workspace"}}]},
+			"notifications": {"command": {"args": ["--verbose"]}}
+		}`)
+		_, err := Load(bytes.NewReader(data))
+		if err == nil || !strings.Contains(err.Error(), "manifest.notifications.command.path is required") {
+			t.Fatalf("expected notification command path validation error, got %v", err)
+		}
+	})
+
+	t.Run("preserves through load", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.Notifications = Notifications{
+			Command: &Command{
+				Path: "/bin/notify",
+				Args: []string{"--state"},
+			},
+			States: []string{"runtime:suspend"},
+		}
+		data, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatalf("marshal manifest: %v", err)
+		}
+
+		loaded, err := Load(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("load manifest: %v", err)
+		}
+		if loaded.Notifications.Command == nil {
+			t.Fatal("expected notification command after load")
+		}
+		if got, want := *loaded.Notifications.Command, *manifest.Notifications.Command; !reflect.DeepEqual(got, want) {
+			t.Fatalf("unexpected loaded command: got %#v want %#v", got, want)
+		}
+		if got, want := loaded.Notifications.States, manifest.Notifications.States; !reflect.DeepEqual(got, want) {
+			t.Fatalf("unexpected loaded states: got %#v want %#v", got, want)
+		}
+	})
+}
+
 func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	manifest := validManifest()
 	manifest.VirtioFS.Daemons = nil

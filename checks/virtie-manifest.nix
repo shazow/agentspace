@@ -50,6 +50,26 @@ let
     };
   };
 
+  vmVirtieNotifications = mkSandbox {
+    sshAuthorizedKeys = [ testPublicKey ];
+    sshIdentityFile = ".agentspace-test/id_ed25519";
+    persistence.homeImage = null;
+    notifications = {
+      command = {
+        path = "/run/current-system/sw/bin/sh";
+        args = [
+          "-c"
+          "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\""
+        ];
+      };
+      states = [
+        "runtime:resume"
+        "runtime:suspend"
+        "balloon:resize"
+      ];
+    };
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   enabledBalloonManifest = vmVirtieBalloonEnabled.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
@@ -57,6 +77,8 @@ let
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
   writeFilesManifest = vmVirtieWriteFiles.config.agentspace.sandbox.launch.virtieManifestData;
+  notificationsManifest =
+    vmVirtieNotifications.config.agentspace.sandbox.launch.virtieManifestData;
 
   _ =
     assert manifest.qemu.binaryPath != "";
@@ -69,6 +91,8 @@ let
     assert manifest.qemu.qmp.socketPath == "qmp.sock";
     assert manifest.qemu.guestAgent.socketPath == "qga.sock";
     assert manifest.writeFiles == { };
+    assert manifest.notifications.states == [ ];
+    assert !(manifest.notifications ? command);
     assert manifest.qemu.devices.rng.id == "rng0";
     assert builtins.length manifest.qemu.devices.virtiofs > 0;
     assert builtins.length manifest.qemu.devices.block > 0;
@@ -122,6 +146,19 @@ let
     assert writeFilesManifest.writeFiles."/etc/agentspace-host".mode == null;
     assert writeFilesManifest.writeFiles."/etc/agentspace-host".path == ".agentspace-test/host-file";
     true;
+
+  _notifications =
+    assert notificationsManifest.notifications.command.path == "/run/current-system/sw/bin/sh";
+    assert notificationsManifest.notifications.command.args == [
+      "-c"
+      "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\""
+    ];
+    assert notificationsManifest.notifications.states == [
+      "runtime:resume"
+      "runtime:suspend"
+      "balloon:resize"
+    ];
+    true;
 in
 {
   virtie-manifest-contract =
@@ -139,4 +176,8 @@ in
   virtie-manifest-write-files-contract =
     assert _writeFiles;
     pkgs.runCommand "virtie-manifest-write-files-contract" { } "touch $out";
+
+  virtie-manifest-notifications-contract =
+    assert _notifications;
+    pkgs.runCommand "virtie-manifest-notifications-contract" { } "touch $out";
 }

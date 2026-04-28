@@ -182,7 +182,7 @@ func TestBalloonControllerTaskWithNilLoggerDoesNotPanicOnFailure(t *testing.T) {
 			PollIntervalSeconds:      1,
 			ReclaimHoldoffSeconds:    1,
 		},
-	})
+	}, nil)
 	if task == nil {
 		t.Fatal("expected balloon controller task")
 	}
@@ -215,7 +215,7 @@ func TestBalloonControllerTaskWithNilLoggerDoesNotPanicOnAdjustment(t *testing.T
 			PollIntervalSeconds:      1,
 			ReclaimHoldoffSeconds:    1,
 		},
-	})
+	}, nil)
 	if task == nil {
 		t.Fatal("expected balloon controller task")
 	}

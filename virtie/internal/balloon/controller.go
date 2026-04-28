@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,6 +17,10 @@ var (
 
 type logger interface {
 	Printf(format string, args ...any)
+}
+
+type notifier interface {
+	Notify(ctx context.Context, state string, message string, values map[string]string)
 }
 
 type session interface {
@@ -47,6 +52,7 @@ type controller struct {
 	Config     ControllerConfig
 	QMPTimeout time.Duration
 	Now        func() time.Time
+	Notifier   notifier
 }
 
 type controllerState struct {
@@ -102,10 +108,38 @@ func (c *controller) Run(ctx context.Context) error {
 		if err := c.Session.SetBalloonLogicalSize(c.QMPTimeout, target); err != nil {
 			return err
 		}
+		c.notifyResize(ctx, actual.ActualBytes, target)
 		if c.Logger != nil {
 			c.Logger.Printf("balloon controller set guest memory to %d MiB", target/bytesPerMiB)
 		}
 	}
+}
+
+func (c *controller) notifyResize(ctx context.Context, actualBytes int64, targetBytes int64) {
+	if c.Notifier == nil {
+		return
+	}
+	c.Notifier.Notify(ctx, "balloon:resize", balloonResizeMessage(actualBytes, targetBytes), map[string]string{
+		"device_id":  c.DeviceID,
+		"actual_mib": strconv.FormatInt(actualBytes/bytesPerMiB, 10),
+		"target_mib": strconv.FormatInt(targetBytes/bytesPerMiB, 10),
+		"delta_mib":  strconv.FormatInt((targetBytes-actualBytes)/bytesPerMiB, 10),
+	})
+}
+
+func balloonResizeMessage(actualBytes int64, targetBytes int64) string {
+	if targetBytes < actualBytes {
+		return fmt.Sprintf("Reclaiming %s of memory", formatMemorySize(actualBytes-targetBytes))
+	}
+	return fmt.Sprintf("Growing guest memory to %s", formatMemorySize(targetBytes))
+}
+
+func formatMemorySize(bytes int64) string {
+	mib := bytes / bytesPerMiB
+	if mib%1024 == 0 {
+		return fmt.Sprintf("%dGB", mib/1024)
+	}
+	return fmt.Sprintf("%dMiB", mib)
 }
 
 func availableMemory(stats stats) (int64, bool) {
