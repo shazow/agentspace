@@ -10,7 +10,7 @@ Provide the foreground launch runtime for the supported sandbox session created 
 
 - Load and validate a Nix-generated manifest for the supported sandbox workflow.
 - Allocate and lock a runtime vsock CID for each session.
-- Create missing auto-created volume images, start `virtiofsd`, launch QEMU directly, wait for SSH readiness, and attach the active SSH session.
+- Create missing auto-created volume images, start `virtiofsd`, launch QEMU directly, wait for SSH readiness, and either print out-of-band SSH instructions or attach the active SSH session when requested.
 - Keep a long-lived QMP session open after boot for graceful shutdown and optional runtime balloon control.
 - Support disk-backed suspend/resume by saving QEMU migration state to disk and restoring it later.
 - Tear down SSH, QEMU, and `virtiofsd` in the correct order on exit or signal.
@@ -27,14 +27,14 @@ Out of scope:
 
 Acceptance criteria:
 
-- [x] `virtie launch --manifest=MANIFEST [--resume=no|auto|force] [-- <remote-cmd...>]` is the supported launch command.
+- [x] `virtie launch --manifest=MANIFEST [--ssh] [--resume=no|auto|force] [-- <remote-cmd...>]` is the supported launch command.
 - [x] `virtie suspend --manifest=MANIFEST` saves QEMU migration state to disk, records saved suspend state, and exits the launch session.
 - [x] `virtie launch --resume=force --manifest=MANIFEST` restores only from saved suspend state.
 - [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, QEMU devices, `virtiofs` daemons, and auto-created volumes.
 - [x] QEMU launch is compiled from the typed manifest plus the runtime-selected CID rather than string-substituting a Nix-generated argv template.
 - [x] Launch acquires per-sandbox and per-CID locks before starting guest processes.
-- [x] Launch waits for `virtiofs` socket readiness, then QMP readiness, then retries SSH probes before starting the interactive session.
-- [x] Teardown stops the foreground SSH session first, then requests QMP `quit`, then falls back to signal-based QEMU shutdown, then stops `virtiofsd`.
+- [x] Launch waits for `virtiofs` socket readiness, then QMP readiness, then retries SSH probes before printing SSH instructions or starting the interactive session.
+- [x] Teardown stops the foreground SSH session when present, then requests QMP `quit`, then falls back to signal-based QEMU shutdown, then stops `virtiofsd`.
 - [x] Repo-level Nix checks exercise the generated wrapper and E2E launch path by default.
 
 ## Progress
@@ -109,6 +109,7 @@ Acceptance criteria:
   - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.
   - QMP is used for monitor readiness, graceful shutdown, disk-backed suspend/resume, and optional runtime balloon control, not for guest readiness.
   - `virtie launch --resume=no` is the default fresh launch mode.
+  - `virtie launch --ssh` attaches SSH; without `--ssh`, launch prints the SSH command and waits for VM exit or suspend.
   - `virtie launch --resume=auto` restores saved state when valid state is present and otherwise launches fresh.
   - `virtie launch --resume=force` requires saved suspend state and errors if it is absent or invalid.
   - `virtie suspend` validates the launch PID and sends `SIGTSTP` as an internal control signal; `virtie launch` catches it, saves migration state through the existing QMP session, then exits.
@@ -133,9 +134,12 @@ flowchart TD
   H --> I[Start QEMU]
   I --> J[Wait for QMP socket and connect monitor]
   J --> K[Probe SSH until guest is ready]
-  K --> L[Attach interactive SSH session]
-  L --> M[Session exits or signal received]
-  M --> N[Stop SSH then request QMP quit]
-  N --> O[Fallback to TERM or kill if needed]
-  O --> P[Stop virtiofsd and clean sockets]
+  K --> L{--ssh?}
+  L -->|yes| M[Attach interactive SSH session]
+  L -->|no| N[Print SSH command and wait for VM]
+  M --> O[Session exits or signal received]
+  N --> O
+  O --> P[Stop SSH if present, then request QMP quit]
+  P --> Q[Fallback to TERM or kill if needed]
+  Q --> R[Stop virtiofsd and clean sockets]
 ```

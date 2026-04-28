@@ -183,7 +183,7 @@ func TestLaunchResumeNotifiesAfterMigrationAndContinue(t *testing.T) {
 		notifier:            notifier,
 	}
 
-	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce}); err != nil {
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce, SSH: true}); err != nil {
 		t.Fatalf("launch resume: %v", err)
 	}
 

@@ -3,9 +3,10 @@
 `virtie` is the host-side launcher for the supported `agentspace` sandbox path.
 
 It reads a Nix-generated manifest, starts the required host processes, launches
-QEMU, waits for guest SSH readiness, and attaches the active session. It also
-handles teardown, QMP-based shutdown, disk-backed suspend/resume, and runtime
-vsock CID allocation.
+QEMU, waits for guest SSH readiness, and either prints an out-of-band SSH
+command or attaches an active session with `--ssh`. It also handles teardown,
+QMP-based shutdown, disk-backed suspend/resume, and runtime vsock CID
+allocation.
 
 This is currently a small internal component, not a general-purpose VM runner.
 The supported shape today is the built-in `virtiofs + ssh + qemu` flow used by
@@ -16,7 +17,7 @@ the main flake.
 The supported CLI is:
 
 ```console
-virtie launch --manifest=MANIFEST [--resume=no|auto|force] [-- <remote-cmd...>]
+virtie launch --manifest=MANIFEST [--ssh] [--resume=no|auto|force] [-- <remote-cmd...>]
 virtie suspend --manifest=MANIFEST
 ```
 
@@ -27,8 +28,8 @@ hand. See the root flake for packaging and launch integration.
 
 - Loads and validates the manifest for the supported sandbox launch path.
 - Allocates a runtime vsock CID for each session.
-- Starts `virtiofsd`, launches QEMU, waits for SSH readiness, and attaches the
-  active session.
+- Starts `virtiofsd`, launches QEMU, waits for SSH readiness, and either
+  prints the SSH command or attaches the active session with `--ssh`.
 - Uses QMP for readiness and graceful shutdown.
 - Records the active launch PID under the manifest persistence state directory.
   `virtie suspend` validates that PID and sends `SIGTSTP` as a caught control

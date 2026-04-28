@@ -2,10 +2,11 @@
 //
 // It takes a validated launch manifest, prepares runtime directories and
 // volume images, starts the supporting host processes, waits for QMP and SSH
-// readiness, and then hands control to the interactive SSH session. Teardown
-// also lives here: optional feature tasks stop first, then the active session
-// and helper daemons are shut down, and QEMU is asked to exit through QMP
-// before any forced process cleanup is used.
+// readiness, and then either hands control to the interactive SSH session or
+// keeps the VM lifecycle in the foreground for out-of-band SSH. Teardown also
+// lives here: optional feature tasks stop first, then any active session and
+// helper daemons are shut down, and QEMU is asked to exit through QMP before
+// any forced process cleanup is used.
 package manager
 
 import (
@@ -46,6 +47,7 @@ const (
 
 type LaunchOptions struct {
 	Resume ResumeMode
+	SSH    bool
 }
 
 type manager struct {
@@ -95,7 +97,7 @@ func LaunchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteC
 }
 
 func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) (err error) {
-	return m.launchWithOptions(ctx, manifest, remoteCommand, LaunchOptions{Resume: ResumeModeNo})
+	return m.launchWithOptions(ctx, manifest, remoteCommand, LaunchOptions{Resume: ResumeModeNo, SSH: true})
 }
 
 func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) (err error) {
@@ -322,12 +324,28 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		notifier:   notifier,
 	}, manifest, qmpClient)
 
-	m.logger.Printf("starting ssh session")
-	session, err := m.startManagedProcess(buildSSHSpec(manifest, cid, remoteCommand, true))
-	if err != nil {
-		return &stageError{Stage: "active session", Err: err}
+	if options.SSH {
+		m.logger.Printf("starting ssh session")
+		session, err := m.startManagedProcess(buildSSHSpec(manifest, cid, remoteCommand, true))
+		if err != nil {
+			return &stageError{Stage: "active session", Err: err}
+		}
+		started = append(started, session)
+
+		if resumeState != nil {
+			if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
+			}
+			if err := removeSuspendState(manifest); err != nil {
+				return &stageError{Stage: "restore", Err: err}
+			}
+		}
+
+		if err := m.waitForSession(launchCtx, session, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
+			return err
+		}
+		return nil
 	}
-	started = append(started, session)
 
 	if resumeState != nil {
 		if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -338,7 +356,8 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 	}
 
-	if err := m.waitForSession(launchCtx, session, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
+	m.logger.Printf("ssh ready; connect with: %s", buildSSHCommandHint(manifest, cid))
+	if err := m.waitForVM(launchCtx, qemu, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
 		return err
 	}
 	return nil
@@ -787,6 +806,29 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, s
 	}
 }
 
+func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) error {
+	ticker := time.NewTicker(defaultSocketPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case err := <-qemu.done:
+			if err != nil {
+				return wrapCommandError("vm session", qemu.name, err)
+			}
+			return nil
+		case <-suspendRequests:
+			return suspendHandler.saveAndExit(ctx)
+		case <-ticker.C:
+			if err := firstUnexpectedExit("vm session", watchers...); err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			return &stageError{Stage: "vm session", Err: ctx.Err()}
+		}
+	}
+}
+
 func (m *manager) handlePendingSuspendRequest(ctx context.Context, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler) error {
 	select {
 	case <-suspendRequests:
@@ -1037,6 +1079,12 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, 
 		Stdout: stdout,
 		Stderr: stderr,
 	}
+}
+
+func buildSSHCommandHint(manifest *manifest.Manifest, cid int) string {
+	args := append([]string(nil), manifest.SSH.Argv...)
+	args = append(args, manifest.SSHDestination(cid))
+	return shellQuoteArgs(args)
 }
 
 func encodeRemoteCommand(args []string) string {

@@ -26,6 +26,7 @@ type manifestOption struct {
 type launchCommand struct {
 	manifestOption
 	Resume string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
+	SSH    bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
 
 	Args struct {
 		RemoteCommand []string `positional-arg-name:"remote-cmd"`
@@ -33,6 +34,10 @@ type launchCommand struct {
 }
 
 func (c *launchCommand) Execute(args []string) error {
+	if len(c.Args.RemoteCommand) > 0 && !c.SSH {
+		return fmt.Errorf("remote command arguments require --ssh")
+	}
+
 	manifest, err := loadLaunchManifest(c.Manifest)
 	if err != nil {
 		return err
@@ -40,6 +45,7 @@ func (c *launchCommand) Execute(args []string) error {
 
 	return manager.LaunchWithOptions(context.Background(), manifest, c.Args.RemoteCommand, manager.LaunchOptions{
 		Resume: manager.ResumeMode(c.Resume),
+		SSH:    c.SSH,
 	})
 }
 
@@ -167,7 +173,7 @@ func newParser() *flags.Parser {
 	if _, err := parser.AddCommand(
 		"launch",
 		"Launch a virtiofs + ssh sandbox session",
-		"Start the configured virtiofsd daemons, launch QEMU directly, then attach over ssh.",
+		"Start the configured virtiofsd daemons, launch QEMU directly, then optionally attach over ssh.",
 		&launchCommand{},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)

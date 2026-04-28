@@ -26,8 +26,8 @@
         ];
 
         # Point the launcher at the matching private key on the host.
-        sshIdentityFile = "./id_ed25519";
-        sshAuthorizedKeys = [
+        ssh.identityFile = "./id_ed25519";
+        ssh.authorizedKeys = [
           # Matches the example-local keypair in this directory.
           "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHKb94TYnrM5gcFsQIL9FE6qxjjZSmehVOGCnfv+E8r/ agentspace-example"
         ];

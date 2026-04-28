@@ -9,299 +9,299 @@ let
     name = "virtie-fake-tools";
     paths = [
       (pkgs.writeShellScriptBin "qemu-system-x86_64" ''
-        set -euo pipefail
+                set -euo pipefail
 
-        mkdir -p "$PWD/state"
-        qmp_socket=""
-        qga_socket=""
-        incoming=""
+                mkdir -p "$PWD/state"
+                qmp_socket=""
+                qga_socket=""
+                incoming=""
 
-        while [ "$#" -gt 0 ]; do
-          case "$1" in
-            -qmp)
-              shift
-              qmp_socket="$1"
-              ;;
-            -chardev)
-              shift
-              chardev_spec="$1"
-              case "$chardev_spec" in
-                socket,*id=qga0*|socket,*id=qga0)
-                  IFS=',' read -r -a chardev_parts <<< "$chardev_spec"
-                  for chardev_part in "''${chardev_parts[@]}"; do
-                    case "$chardev_part" in
-                      path=*) qga_socket="''${chardev_part#path=}" ;;
-                    esac
-                  done
-                  ;;
-              esac
-              ;;
-            -incoming)
-              shift
-              incoming="$1"
-              ;;
-            *guest-cid=*)
-              cid="''${1##*guest-cid=}"
-              printf '%s\n' "$cid" > "$PWD/state/qemu-vsock-cid"
-              ;;
-          esac
-          shift || true
-        done
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    -qmp)
+                      shift
+                      qmp_socket="$1"
+                      ;;
+                    -chardev)
+                      shift
+                      chardev_spec="$1"
+                      case "$chardev_spec" in
+                        socket,*id=qga0*|socket,*id=qga0)
+                          IFS=',' read -r -a chardev_parts <<< "$chardev_spec"
+                          for chardev_part in "''${chardev_parts[@]}"; do
+                            case "$chardev_part" in
+                              path=*) qga_socket="''${chardev_part#path=}" ;;
+                            esac
+                          done
+                          ;;
+                      esac
+                      ;;
+                    -incoming)
+                      shift
+                      incoming="$1"
+                      ;;
+                    *guest-cid=*)
+                      cid="''${1##*guest-cid=}"
+                      printf '%s\n' "$cid" > "$PWD/state/qemu-vsock-cid"
+                      ;;
+                  esac
+                  shift || true
+                done
 
-        case "$qmp_socket" in
-          unix:*,server,nowait)
-            qmp_socket="''${qmp_socket#unix:}"
-            qmp_socket="''${qmp_socket%,server,nowait}"
-            ;;
-          "")
-            echo "fake qemu: missing -qmp unix socket" >&2
-            exit 1
-            ;;
-          *)
-            echo "fake qemu: unsupported qmp socket spec: $qmp_socket" >&2
-            exit 1
-            ;;
-        esac
+                case "$qmp_socket" in
+                  unix:*,server,nowait)
+                    qmp_socket="''${qmp_socket#unix:}"
+                    qmp_socket="''${qmp_socket%,server,nowait}"
+                    ;;
+                  "")
+                    echo "fake qemu: missing -qmp unix socket" >&2
+                    exit 1
+                    ;;
+                  *)
+                    echo "fake qemu: unsupported qmp socket spec: $qmp_socket" >&2
+                    exit 1
+                    ;;
+                esac
 
-        touch "$PWD/state/qemu-started"
-        if [ "$incoming" = "defer" ]; then
-          touch "$PWD/state/qemu-incoming-defer"
-        fi
+                touch "$PWD/state/qemu-started"
+                if [ "$incoming" = "defer" ]; then
+                  touch "$PWD/state/qemu-incoming-defer"
+                fi
 
-        export QMP_SOCKET="$qmp_socket"
-        export QGA_SOCKET="$qga_socket"
-        export QEMU_PARENT_PID="$$"
-        ${pkgs.python3}/bin/python - <<'PY' &
-import json
-import os
-import signal
-import socket
-import threading
+                export QMP_SOCKET="$qmp_socket"
+                export QGA_SOCKET="$qga_socket"
+                export QEMU_PARENT_PID="$$"
+                ${pkgs.python3}/bin/python - <<'PY' &
+        import json
+        import os
+        import signal
+        import socket
+        import threading
 
-socket_path = os.environ["QMP_SOCKET"]
-qga_socket_path = os.environ.get("QGA_SOCKET", "")
-parent_pid = int(os.environ["QEMU_PARENT_PID"])
-state_dir = os.path.join(os.getcwd(), "state")
+        socket_path = os.environ["QMP_SOCKET"]
+        qga_socket_path = os.environ.get("QGA_SOCKET", "")
+        parent_pid = int(os.environ["QEMU_PARENT_PID"])
+        state_dir = os.path.join(os.getcwd(), "state")
 
-os.makedirs(os.path.dirname(socket_path) or ".", exist_ok=True)
-try:
-    os.unlink(socket_path)
-except FileNotFoundError:
-    pass
+        os.makedirs(os.path.dirname(socket_path) or ".", exist_ok=True)
+        try:
+            os.unlink(socket_path)
+        except FileNotFoundError:
+            pass
 
-server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-server.bind(socket_path)
-server.listen(16)
-status = "running"
-migration_status = "none"
-status_lock = threading.Lock()
-client_count = 0
-qga_handles = {}
-qga_next_handle = 0
-qga_next_pid = 1000
-qga_dirs = {"/", "/etc"}
-qga_exec_statuses = {}
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(socket_path)
+        server.listen(16)
+        status = "running"
+        migration_status = "none"
+        status_lock = threading.Lock()
+        client_count = 0
+        qga_handles = {}
+        qga_next_handle = 0
+        qga_next_pid = 1000
+        qga_dirs = {"/", "/etc"}
+        qga_exec_statuses = {}
 
-def touch(name):
-    with open(os.path.join(state_dir, name), "a", encoding="utf-8"):
-        pass
+        def touch(name):
+            with open(os.path.join(state_dir, name), "a", encoding="utf-8"):
+                pass
 
-def handle(conn):
-    global status
-    global migration_status
-    def send(message):
-        conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
+        def handle(conn):
+            global status
+            global migration_status
+            def send(message):
+                conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
 
-    send(
-        {
-            "QMP": {
-                "version": {
-                    "qemu": {"major": 8, "minor": 2, "micro": 0},
-                    "package": "",
-                },
-                "capabilities": [],
-            }
-        }
-    )
-
-    decoder = json.JSONDecoder()
-    buffer = ""
-    while True:
-        chunk = conn.recv(4096)
-        if not chunk:
-            break
-        buffer += chunk.decode("utf-8")
-        while True:
-            stripped = buffer.lstrip()
-            if not stripped:
-                buffer = ""
-                break
-            try:
-                message, consumed = decoder.raw_decode(stripped)
-            except json.JSONDecodeError:
-                break
-            buffer = stripped[consumed:]
-            command = message.get("execute")
-            if command == "query-status":
-                with status_lock:
-                    current_status = status
-                send(
-                    {
-                        "return": {
-                            "running": current_status == "running",
-                            "singlestep": False,
-                            "status": current_status,
-                        }
+            send(
+                {
+                    "QMP": {
+                        "version": {
+                            "qemu": {"major": 8, "minor": 2, "micro": 0},
+                            "package": "",
+                        },
+                        "capabilities": [],
                     }
-                )
-            elif command == "stop":
-                with status_lock:
-                    status = "paused"
-                touch("qemu-paused")
-                send({"return": {}})
-            elif command == "cont":
-                with status_lock:
-                    status = "running"
-                touch("qemu-resumed")
-                send({"return": {}})
-            elif command == "migrate":
-                uri = message.get("arguments", {}).get("uri", "")
-                if uri.startswith("file:"):
-                    with open(uri.removeprefix("file:"), "w", encoding="utf-8") as state_file:
-                        state_file.write("fake migration state\n")
-                with status_lock:
-                    migration_status = "completed"
-                touch("qemu-migrated")
-                send({"return": {}})
-            elif command == "migrate-incoming":
-                uri = message.get("arguments", {}).get("uri", "")
-                if uri.startswith("file:") and not os.path.exists(uri.removeprefix("file:")):
-                    send({"error": {"class": "GenericError", "desc": "missing migration file"}})
-                    continue
-                with status_lock:
-                    migration_status = "completed"
-                touch("qemu-migrate-incoming")
-                send({"return": {}})
-            elif command == "query-migrate":
-                with status_lock:
-                    current_migration_status = migration_status
-                send({"return": {"status": current_migration_status}})
-            elif command == "quit":
-                send({"return": {}})
-                os.kill(parent_pid, signal.SIGTERM)
+                }
+            )
+
+            decoder = json.JSONDecoder()
+            buffer = ""
+            while True:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                buffer += chunk.decode("utf-8")
+                while True:
+                    stripped = buffer.lstrip()
+                    if not stripped:
+                        buffer = ""
+                        break
+                    try:
+                        message, consumed = decoder.raw_decode(stripped)
+                    except json.JSONDecodeError:
+                        break
+                    buffer = stripped[consumed:]
+                    command = message.get("execute")
+                    if command == "query-status":
+                        with status_lock:
+                            current_status = status
+                        send(
+                            {
+                                "return": {
+                                    "running": current_status == "running",
+                                    "singlestep": False,
+                                    "status": current_status,
+                                }
+                            }
+                        )
+                    elif command == "stop":
+                        with status_lock:
+                            status = "paused"
+                        touch("qemu-paused")
+                        send({"return": {}})
+                    elif command == "cont":
+                        with status_lock:
+                            status = "running"
+                        touch("qemu-resumed")
+                        send({"return": {}})
+                    elif command == "migrate":
+                        uri = message.get("arguments", {}).get("uri", "")
+                        if uri.startswith("file:"):
+                            with open(uri.removeprefix("file:"), "w", encoding="utf-8") as state_file:
+                                state_file.write("fake migration state\n")
+                        with status_lock:
+                            migration_status = "completed"
+                        touch("qemu-migrated")
+                        send({"return": {}})
+                    elif command == "migrate-incoming":
+                        uri = message.get("arguments", {}).get("uri", "")
+                        if uri.startswith("file:") and not os.path.exists(uri.removeprefix("file:")):
+                            send({"error": {"class": "GenericError", "desc": "missing migration file"}})
+                            continue
+                        with status_lock:
+                            migration_status = "completed"
+                        touch("qemu-migrate-incoming")
+                        send({"return": {}})
+                    elif command == "query-migrate":
+                        with status_lock:
+                            current_migration_status = migration_status
+                        send({"return": {"status": current_migration_status}})
+                    elif command == "quit":
+                        send({"return": {}})
+                        os.kill(parent_pid, signal.SIGTERM)
+                        return
+                    else:
+                        send({"return": {}})
+            conn.close()
+
+        def qga_handle(conn):
+            global qga_next_handle
+            global qga_next_pid
+            decoder = json.JSONDecoder()
+            buffer = ""
+
+            def send(message):
+                conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
+
+            while True:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                buffer += chunk.decode("utf-8")
+                while True:
+                    stripped = buffer.lstrip()
+                    if not stripped:
+                        buffer = ""
+                        break
+                    try:
+                        message, consumed = decoder.raw_decode(stripped)
+                    except json.JSONDecodeError:
+                        break
+                    buffer = stripped[consumed:]
+                    command = message.get("execute")
+                    args = message.get("arguments", {})
+                    if command == "guest-ping":
+                        touch("guest-agent-ping")
+                        send({"return": {}})
+                    elif command == "guest-file-open":
+                        qga_next_handle += 1
+                        qga_handles[qga_next_handle] = args.get("path", "")
+                        send({"return": qga_next_handle})
+                    elif command == "guest-file-write":
+                        handle = args.get("handle")
+                        path = qga_handles.get(handle, "")
+                        payload = args.get("buf-b64", "")
+                        with open(os.path.join(state_dir, "guest-agent-writes"), "a", encoding="utf-8") as writes:
+                            writes.write(f"{path} {payload}\n")
+                        send({"return": {"count": len(payload), "eof": False}})
+                    elif command == "guest-file-close":
+                        handle = args.get("handle")
+                        path = qga_handles.pop(handle, "")
+                        with open(os.path.join(state_dir, "guest-agent-closes"), "a", encoding="utf-8") as closes:
+                            closes.write(f"{path}\n")
+                        send({"return": {}})
+                    elif command == "guest-exec":
+                        qga_next_pid += 1
+                        path = args.get("path", "")
+                        argv = args.get("arg", [])
+                        capture_output = args.get("capture-output", False)
+                        status = {"exited": True, "exitcode": 0}
+                        if path == "/run/current-system/sw/bin/test" and len(argv) == 2 and argv[0] == "-d":
+                            status = {"exited": True, "exitcode": 0 if argv[1] in qga_dirs else 1}
+                        elif path == "/run/current-system/sw/bin/install" and len(argv) >= 2 and argv[0] == "-d":
+                            qga_dirs.add(argv[-1])
+                        qga_exec_statuses[qga_next_pid] = status
+                        with open(os.path.join(state_dir, "guest-agent-execs"), "a", encoding="utf-8") as execs:
+                            execs.write(f"{path} {' '.join(argv)} capture-output={capture_output}\n")
+                        send({"return": {"pid": qga_next_pid}})
+                    elif command == "guest-exec-status":
+                        send({"return": qga_exec_statuses.get(args.get("pid"), {"exited": True, "exitcode": 0})})
+                    else:
+                        send({"return": {}})
+            conn.close()
+
+        def qga_serve():
+            if not qga_socket_path:
                 return
-            else:
-                send({"return": {}})
-    conn.close()
-
-def qga_handle(conn):
-    global qga_next_handle
-    global qga_next_pid
-    decoder = json.JSONDecoder()
-    buffer = ""
-
-    def send(message):
-        conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
-
-    while True:
-        chunk = conn.recv(4096)
-        if not chunk:
-            break
-        buffer += chunk.decode("utf-8")
-        while True:
-            stripped = buffer.lstrip()
-            if not stripped:
-                buffer = ""
-                break
+            os.makedirs(os.path.dirname(qga_socket_path) or ".", exist_ok=True)
             try:
-                message, consumed = decoder.raw_decode(stripped)
-            except json.JSONDecodeError:
-                break
-            buffer = stripped[consumed:]
-            command = message.get("execute")
-            args = message.get("arguments", {})
-            if command == "guest-ping":
-                touch("guest-agent-ping")
-                send({"return": {}})
-            elif command == "guest-file-open":
-                qga_next_handle += 1
-                qga_handles[qga_next_handle] = args.get("path", "")
-                send({"return": qga_next_handle})
-            elif command == "guest-file-write":
-                handle = args.get("handle")
-                path = qga_handles.get(handle, "")
-                payload = args.get("buf-b64", "")
-                with open(os.path.join(state_dir, "guest-agent-writes"), "a", encoding="utf-8") as writes:
-                    writes.write(f"{path} {payload}\n")
-                send({"return": {"count": len(payload), "eof": False}})
-            elif command == "guest-file-close":
-                handle = args.get("handle")
-                path = qga_handles.pop(handle, "")
-                with open(os.path.join(state_dir, "guest-agent-closes"), "a", encoding="utf-8") as closes:
-                    closes.write(f"{path}\n")
-                send({"return": {}})
-            elif command == "guest-exec":
-                qga_next_pid += 1
-                path = args.get("path", "")
-                argv = args.get("arg", [])
-                capture_output = args.get("capture-output", False)
-                status = {"exited": True, "exitcode": 0}
-                if path == "/run/current-system/sw/bin/test" and len(argv) == 2 and argv[0] == "-d":
-                    status = {"exited": True, "exitcode": 0 if argv[1] in qga_dirs else 1}
-                elif path == "/run/current-system/sw/bin/install" and len(argv) >= 2 and argv[0] == "-d":
-                    qga_dirs.add(argv[-1])
-                qga_exec_statuses[qga_next_pid] = status
-                with open(os.path.join(state_dir, "guest-agent-execs"), "a", encoding="utf-8") as execs:
-                    execs.write(f"{path} {' '.join(argv)} capture-output={capture_output}\n")
-                send({"return": {"pid": qga_next_pid}})
-            elif command == "guest-exec-status":
-                send({"return": qga_exec_statuses.get(args.get("pid"), {"exited": True, "exitcode": 0})})
-            else:
-                send({"return": {}})
-    conn.close()
+                os.unlink(qga_socket_path)
+            except FileNotFoundError:
+                pass
+            qga_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            qga_server.bind(qga_socket_path)
+            qga_server.listen(16)
+            while True:
+                conn, _ = qga_server.accept()
+                threading.Thread(target=qga_handle, args=(conn,), daemon=True).start()
 
-def qga_serve():
-    if not qga_socket_path:
-        return
-    os.makedirs(os.path.dirname(qga_socket_path) or ".", exist_ok=True)
-    try:
-        os.unlink(qga_socket_path)
-    except FileNotFoundError:
-        pass
-    qga_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    qga_server.bind(qga_socket_path)
-    qga_server.listen(16)
-    while True:
-        conn, _ = qga_server.accept()
-        threading.Thread(target=qga_handle, args=(conn,), daemon=True).start()
+        threading.Thread(target=qga_serve, daemon=True).start()
 
-threading.Thread(target=qga_serve, daemon=True).start()
+        while True:
+            conn, _ = server.accept()
+            with status_lock:
+                client_count += 1
+                current_client_count = client_count
+            if current_client_count > 1:
+                touch("qmp-second-client")
+                conn.close()
+                continue
+            threading.Thread(target=handle, args=(conn,), daemon=True).start()
+        PY
+                qmp_pid=$!
 
-while True:
-    conn, _ = server.accept()
-    with status_lock:
-        client_count += 1
-        current_client_count = client_count
-    if current_client_count > 1:
-        touch("qmp-second-client")
-        conn.close()
-        continue
-    threading.Thread(target=handle, args=(conn,), daemon=True).start()
-PY
-        qmp_pid=$!
+                cleanup() {
+                  trap - EXIT INT TERM
+                  kill "$qmp_pid" 2>/dev/null || true
+                  wait "$qmp_pid" 2>/dev/null || true
+                  rm -f "$qmp_socket" "$qga_socket"
+                  touch "$PWD/state/qemu-stopped"
+                  exit 0
+                }
+                trap cleanup EXIT INT TERM
 
-        cleanup() {
-          trap - EXIT INT TERM
-          kill "$qmp_pid" 2>/dev/null || true
-          wait "$qmp_pid" 2>/dev/null || true
-          rm -f "$qmp_socket" "$qga_socket"
-          touch "$PWD/state/qemu-stopped"
-          exit 0
-        }
-        trap cleanup EXIT INT TERM
-
-        wait "$qmp_pid" || true
-        cleanup
+                wait "$qmp_pid" || true
+                cleanup
       '')
       (pkgs.writeShellScriptBin "virtiofsd-workspace" ''
         set -euo pipefail
@@ -524,7 +524,10 @@ PY
 
   launchScript = mkLaunch {
     config = {
-      agentspace.sandbox.command = "";
+      agentspace.sandbox.ssh = {
+        autoconnect = true;
+        command = "";
+      };
       agentspace.sandbox.launch = {
         commonInit = ''
           cd "$REPO_DIR"
@@ -537,9 +540,28 @@ PY
 
   commandLaunchScript = mkLaunch {
     config = {
-      agentspace.sandbox.command = ''
-        sh -c 'printf "%s\n" "configured value with spaces" > state/configured-command'
-      '';
+      agentspace.sandbox.ssh = {
+        autoconnect = true;
+        command = ''
+          sh -c 'printf "%s\n" "configured value with spaces" > state/configured-command'
+        '';
+      };
+      agentspace.sandbox.launch = {
+        commonInit = ''
+          cd "$REPO_DIR"
+        '';
+        virtieManifest = ".agentspace/virtie-fake.json";
+        virtieManifestTemplate = manifest;
+      };
+    };
+  };
+
+  noSSHLaunchScript = mkLaunch {
+    config = {
+      agentspace.sandbox.ssh = {
+        autoconnect = false;
+        command = "";
+      };
       agentspace.sandbox.launch = {
         commonInit = ''
           cd "$REPO_DIR"
@@ -647,6 +669,38 @@ in
     test -f "$command_workspace_dir/state/virtiofsd-stopped"
     test ! -e "$command_workspace_dir/.agentspace/virtie-fake.pid"
 
+    no_ssh_workspace_dir="$tmpdir/no-ssh-workspace"
+    no_ssh_log="$tmpdir/virtie-no-ssh.log"
+    mkdir -p "$no_ssh_workspace_dir"
+    cd "$no_ssh_workspace_dir"
+    printf '%s' 'host payload' > host-write-file
+
+    ${noSSHLaunchScript} >"$no_ssh_log" 2>&1 &
+    launch_pid=$!
+
+    for _ in $(seq 1 100); do
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'ssh ready; connect with:' "$no_ssh_log" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    grep -F 'ssh ready; connect with:' "$no_ssh_log" >/dev/null
+    grep -F 'agent@vsock/3' "$no_ssh_log" >/dev/null
+    test ! -f "$no_ssh_workspace_dir/state/ssh-session-started"
+    no_ssh_manifest="$no_ssh_workspace_dir/.agentspace/virtie-fake.json"
+    ${virtiePackage}/bin/virtie suspend --manifest="$no_ssh_manifest"
+    test -f "$no_ssh_workspace_dir/state/qemu-paused"
+    test -f "$no_ssh_workspace_dir/state/qemu-migrated"
+    test ! -e "$no_ssh_workspace_dir/.agentspace/virtie-fake.pid"
+
+    if ! wait "$launch_pid"; then
+      echo "virtie-launch-e2e: no-ssh launch exited non-zero" >&2
+      cat "$no_ssh_log" >&2
+      exit 1
+    fi
+    unset launch_pid
+
     disk_workspace_dir="$tmpdir/disk-workspace"
     disk_log="$tmpdir/virtie-disk.log"
     disk_resume_log="$tmpdir/virtie-disk-resume.log"
@@ -686,7 +740,7 @@ in
     mkdir -p "$disk_resume_cwd"
     cd "$disk_resume_cwd"
 
-    ${virtiePackage}/bin/virtie launch --resume=force --manifest="$disk_manifest" >"$disk_resume_log" 2>&1 &
+    ${virtiePackage}/bin/virtie launch --ssh --resume=force --manifest="$disk_manifest" >"$disk_resume_log" 2>&1 &
     resume_pid=$!
     for _ in $(seq 1 100); do
       if [ -f "$disk_workspace_dir/state/qemu-migrate-incoming" ] && [ -f "$disk_workspace_dir/state/qemu-resumed" ] && [ -f "$disk_workspace_dir/state/ssh-session-started" ]; then
@@ -715,6 +769,7 @@ in
     mkdir -p "$out"
     cp "$launch_log" "$out/virtie.log"
     cp "$command_log" "$out/virtie-command.log"
+    cp "$no_ssh_log" "$out/virtie-no-ssh.log"
     cp "$disk_log" "$out/virtie-disk.log"
     cp "$disk_resume_log" "$out/virtie-disk-resume.log"
   '';
