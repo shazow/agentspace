@@ -97,6 +97,9 @@ in
       command = lib.mkOption {
         type = lib.types.str;
         default = "";
+        example = ''
+          notify-send "virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE"
+        '';
         description = "Host-side shell command for virtie runtime notification hooks. Set to an empty string to disable notifications.";
       };
 
