@@ -5,6 +5,7 @@
 }:
 let
   testPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBIqXkHFLTDd7n09425txXfdOgJDUb7CpMAdCPVRS94z agentspace-virtie-test";
+  notificationCommand = "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\"";
 
   vmVirtie = mkSandbox {
     sshAuthorizedKeys = [ testPublicKey ];
@@ -55,13 +56,7 @@ let
     sshIdentityFile = ".agentspace-test/id_ed25519";
     persistence.homeImage = null;
     notifications = {
-      command = {
-        path = "/run/current-system/sw/bin/sh";
-        args = [
-          "-c"
-          "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\""
-        ];
-      };
+      command = notificationCommand;
       states = [
         "runtime:resume"
         "runtime:suspend"
@@ -148,10 +143,10 @@ let
     true;
 
   _notifications =
-    assert notificationsManifest.notifications.command.path == "/run/current-system/sw/bin/sh";
+    assert notificationsManifest.notifications.command.path == pkgs.runtimeShell;
     assert notificationsManifest.notifications.command.args == [
       "-c"
-      "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\""
+      notificationCommand
     ];
     assert notificationsManifest.notifications.states == [
       "runtime:resume"

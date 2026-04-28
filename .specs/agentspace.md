@@ -56,7 +56,7 @@ Acceptance criteria:
   - Nix still owns guest evaluation and image production through `microvm.nix`.
   - Nix resolves machine, CPU, memory, kernel, block, network, `virtiofs`, and QMP settings into the manifest.
   - Nix exposes only `agentspace.sandbox.balloon` for enabling or disabling the virtio-balloon device.
-  - Nix exposes `agentspace.sandbox.notifications` for an optional host-side notification command and state allowlist.
+  - Nix exposes `agentspace.sandbox.notifications` for an optional host-side shell notification command and state allowlist.
   - When enabled, the generated manifest includes the balloon device but leaves controller defaults to `virtie`.
   - The generated manifest sets `paths.runtimeDir = ""`, so relative socket paths resolve under the per-user XDG runtime directory by default.
   - `virtie` owns final argv compilation, the long-lived QMP lifecycle, optional runtime balloon control, process launch, and teardown ordering.
@@ -69,7 +69,7 @@ Acceptance criteria:
   - `persistence.*`
   - `user`, `hostName`, `swapSize`
   - optional `balloon`
-  - optional `notifications.command.path`, `notifications.command.args`, and `notifications.states`
+  - optional `notifications.command` shell string and `notifications.states`
 
 ```mermaid
 flowchart TD

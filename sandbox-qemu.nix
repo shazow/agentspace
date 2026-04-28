@@ -94,18 +94,10 @@ in
     };
 
     notifications = {
-      command = {
-        path = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
-          default = null;
-          description = "Host-side command path for virtie runtime notification hooks. Set to null to disable notifications.";
-        };
-
-        args = lib.mkOption {
-          type = lib.types.listOf lib.types.str;
-          default = [ ];
-          description = "Arguments passed unchanged to the virtie notification command.";
-        };
+      command = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Host-side shell command for virtie runtime notification hooks. Set to an empty string to disable notifications.";
       };
 
       states = lib.mkOption {
@@ -349,10 +341,13 @@ in
 
       notificationManifest =
         { states = cfg.notifications.states; }
-        // lib.optionalAttrs (cfg.notifications.command.path != null) {
+        // lib.optionalAttrs (cfg.notifications.command != "") {
           command = {
-            path = cfg.notifications.command.path;
-            args = cfg.notifications.command.args;
+            path = pkgs.runtimeShell;
+            args = [
+              "-c"
+              cfg.notifications.command
+            ];
           };
         };
 
@@ -394,14 +389,6 @@ in
     in
     lib.mkMerge [
       {
-        assertions = [
-          {
-            assertion =
-              cfg.notifications.command.path != null || cfg.notifications.command.args == [ ];
-            message = "agentspace.sandbox.notifications.command.args requires notifications.command.path.";
-          }
-        ];
-
         agentspace.sandbox.launch = {
           inherit commonInit;
           inherit virtieManifestData;

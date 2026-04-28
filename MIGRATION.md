@@ -30,8 +30,7 @@ optional command and an optional state allowlist:
 ```
 
 `states = []` or an omitted state list means all notification states. Hook
-failures are logged and ignored. Virtie passes command args unchanged; use a
-shell command if you need environment-variable expansion.
+failures are logged and ignored. Virtie passes command args unchanged.
 
 The hook environment includes `VIRTIE_NOTIFY_STATE`,
 `VIRTIE_NOTIFY_MESSAGE`, and context values as
@@ -40,11 +39,8 @@ The hook environment includes `VIRTIE_NOTIFY_STATE`,
 For Nix users, the equivalent option is:
 
 ```nix
-agentspace.sandbox.notifications.command.path = "/run/current-system/sw/bin/sh";
-agentspace.sandbox.notifications.command.args = [
-  "-c"
-  "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\""
-];
+agentspace.sandbox.notifications.command =
+  ''notify-send "virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE"'';
 agentspace.sandbox.notifications.states = [
   "runtime:resume"
   "runtime:suspend"
@@ -54,8 +50,12 @@ agentspace.sandbox.notifications.states = [
 
 ### Migration Steps
 
-No migration is required unless you validate generated manifests with a strict
-schema. Direct manifest producers should omit `notifications.command` to keep
+Nix consumers should replace `agentspace.sandbox.notifications.command.path`
+and `agentspace.sandbox.notifications.command.args` with the shell command
+string in `agentspace.sandbox.notifications.command`. Set it to `""` or omit it
+to keep notifications disabled.
+
+Direct manifest producers should omit `notifications.command` to keep
 notifications disabled, or include both `notifications.command.path` and any
 desired args.
 
