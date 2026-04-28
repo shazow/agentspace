@@ -4,6 +4,64 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-04-28: SSH autoconnect is explicit
+
+### Who Is Affected
+
+- Direct users of `virtie launch` that expect it to attach an SSH session.
+- Consumers configuring `agentspace.sandbox.command`,
+  `agentspace.sandbox.sshAuthorizedKeys`, or
+  `agentspace.sandbox.sshIdentityFile`.
+- Tooling that inspects generated launch wrapper command lines.
+
+### What Changed
+
+`virtie launch` no longer attaches SSH by default. Use `virtie launch --ssh`
+to attach the configured SSH session or run a remote command. Without `--ssh`,
+launch starts the VM, prints an out-of-band SSH command after readiness, and
+blocks until the VM exits or is suspended.
+
+The Nix option `agentspace.sandbox.command` moved to
+`agentspace.sandbox.ssh.command`, and `agentspace.sandbox.sshAuthorizedKeys`
+moved to `agentspace.sandbox.ssh.authorizedKeys`. The Nix option
+`agentspace.sandbox.sshIdentityFile` moved to
+`agentspace.sandbox.ssh.identityFile`. The generated launch wrapper now uses
+`agentspace.sandbox.ssh.autoconnect`, defaulting to `true`, to preserve the
+existing wrapper behavior.
+
+### Migration Steps
+
+Update direct `virtie launch` calls that should attach SSH:
+
+```diff
+- virtie launch --manifest="$manifest"
++ virtie launch --ssh --manifest="$manifest"
+```
+
+Update sandbox command configuration:
+
+```diff
+- agentspace.sandbox.command = "bash -lc pwd";
++ agentspace.sandbox.ssh.command = "bash -lc pwd";
+```
+
+Set `agentspace.sandbox.ssh.autoconnect = false` when the generated wrapper
+should start the VM and leave SSH connection out of band.
+
+Update sandbox authorized key configuration:
+
+```diff
+- agentspace.sandbox.sshAuthorizedKeys = keys;
++ agentspace.sandbox.ssh.authorizedKeys = keys;
+```
+
+Update sandbox identity file configuration:
+
+```diff
+- agentspace.sandbox.sshIdentityFile = "./id_ed25519";
++ agentspace.sandbox.ssh.identityFile = "./id_ed25519";
+```
+
 ## 2026-04-28: virtie notification hooks
 
 ### Who Is Affected

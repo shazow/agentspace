@@ -15,11 +15,7 @@ let
   persistenceBaseDir = cfg.persistence.basedir;
   persistenceStateDir = persistenceBaseDir;
   resolvePersistencePath =
-    path:
-    if path == null || lib.hasPrefix "/" path then
-      path
-    else
-      "${persistenceBaseDir}/${path}";
+    path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
 in
@@ -43,10 +39,30 @@ in
       description = "Hostname for the guest VM.";
     };
 
-    command = lib.mkOption {
-      type = lib.types.str;
-      default = "";
-      description = "Default remote shell command passed to the sandbox SSH session.";
+    ssh = {
+      authorizedKeys = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = "Setup ssh access with these authorized keys.";
+      };
+
+      command = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Default remote shell command passed to the sandbox SSH session.";
+      };
+
+      identityFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Optional SSH identity file passed to host-side launch/connect helpers.";
+      };
+
+      autoconnect = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Whether the generated launch wrapper should attach an SSH session automatically.";
+      };
     };
 
     persistence = {
@@ -108,18 +124,6 @@ in
         default = [ ];
         description = "Optional notification state allowlist. Empty means all states.";
       };
-    };
-
-    sshAuthorizedKeys = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = "Setup ssh access with these authorized keys.";
-    };
-
-    sshIdentityFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = "Optional SSH identity file passed to host-side launch/connect helpers.";
     };
 
     writeFiles = lib.mkOption {
@@ -255,9 +259,9 @@ in
         "-o"
         "GlobalKnownHostsFile=/dev/null"
       ]
-      ++ lib.optionals (cfg.sshIdentityFile != null) [
+      ++ lib.optionals (cfg.ssh.identityFile != null) [
         "-i"
-        cfg.sshIdentityFile
+        cfg.ssh.identityFile
       ];
       virtiofsShares = builtins.filter (share: share.proto == "virtiofs") config.microvm.shares;
       baseQemuConfig = import ./agentspace-qemu-config.nix {
@@ -342,17 +346,18 @@ in
         };
       }) managedVirtioFSShares;
 
-      notificationManifest =
-        { states = cfg.notifications.states; }
-        // lib.optionalAttrs (cfg.notifications.command != "") {
-          command = {
-            path = pkgs.runtimeShell;
-            args = [
-              "-c"
-              cfg.notifications.command
-            ];
-          };
+      notificationManifest = {
+        states = cfg.notifications.states;
+      }
+      // lib.optionalAttrs (cfg.notifications.command != "") {
+        command = {
+          path = pkgs.runtimeShell;
+          args = [
+            "-c"
+            cfg.notifications.command
+          ];
         };
+      };
 
       manifestVolumes = builtins.map (volume: {
         imagePath = volume.image;
@@ -386,8 +391,9 @@ in
         notifications = notificationManifest;
       };
 
-      virtieManifestTemplate =
-        pkgs.writeText "virtie-${cfg.hostName}.json" (builtins.toJSON virtieManifestData);
+      virtieManifestTemplate = pkgs.writeText "virtie-${cfg.hostName}.json" (
+        builtins.toJSON virtieManifestData
+      );
       virtieManifest = "${persistenceBaseDir}/virtie-${cfg.hostName}.json";
     in
     lib.mkMerge [
@@ -431,7 +437,7 @@ in
           createHome = true;
           home = "/home/${cfg.user}";
           extraGroups = [ "wheel" ];
-          openssh.authorizedKeys.keys = cfg.sshAuthorizedKeys;
+          openssh.authorizedKeys.keys = cfg.ssh.authorizedKeys;
         };
 
         home-manager = {

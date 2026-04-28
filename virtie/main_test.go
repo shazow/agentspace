@@ -45,6 +45,23 @@ func TestParserAcceptsLaunchResumeModes(t *testing.T) {
 	}
 }
 
+func TestParserAcceptsLaunchSSHFlag(t *testing.T) {
+	_, err := newParser().ParseArgs([]string{"launch", "--ssh", "--manifest=/tmp/manifest.json"})
+	if err != nil && strings.Contains(err.Error(), "unknown flag `ssh'") {
+		t.Fatalf("ParseArgs rejected --ssh: %v", err)
+	}
+}
+
+func TestParserRejectsRemoteCommandWithoutSSH(t *testing.T) {
+	_, err := newParser().ParseArgs([]string{"launch", "--manifest=/tmp/manifest.json", "--", "echo", "hi"})
+	if err == nil {
+		t.Fatal("ParseArgs accepted remote command without --ssh")
+	}
+	if !strings.Contains(err.Error(), "remote command arguments require --ssh") {
+		t.Fatalf("unexpected error for remote command without --ssh: %v", err)
+	}
+}
+
 func TestParserRejectsInvalidLaunchResumeMode(t *testing.T) {
 	_, err := newParser().ParseArgs([]string{"launch", "--resume=maybe", "--manifest=/tmp/manifest.json"})
 	if err == nil {

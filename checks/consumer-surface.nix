@@ -8,9 +8,9 @@ let
   consumerPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGUQ2FsZrmb4kVgX9X6N1Llqfu6N7o8gBC4M0coYv0Ab agentspace-consumer-test";
 
   vmConsumer = mkSandbox {
-    sshAuthorizedKeys = [ consumerPublicKey ];
-    sshIdentityFile = "./id_ed25519";
-    command = "bash -lc pwd";
+    ssh.authorizedKeys = [ consumerPublicKey ];
+    ssh.identityFile = "./id_ed25519";
+    ssh.command = "bash -lc pwd";
     persistence = {
       homeImage = "/var/lib/agentspace/home.img";
       storeOverlay = "/var/lib/agentspace/nix-store-overlay.img";
@@ -44,8 +44,9 @@ let
   launchScript = mkLaunch vmConsumer;
 
   _ =
-    assert sandboxCfg.sshIdentityFile == "./id_ed25519";
-    assert sandboxCfg.command == "bash -lc pwd";
+    assert sandboxCfg.ssh.identityFile == "./id_ed25519";
+    assert sandboxCfg.ssh.command == "bash -lc pwd";
+    assert sandboxCfg.ssh.autoconnect == true;
     assert sandboxCfg.persistence.homeImage == "/var/lib/agentspace/home.img";
     assert sandboxCfg.persistence.storeOverlay == "/var/lib/agentspace/nix-store-overlay.img";
     assert vmConsumer.config.microvm.vcpu == 16;
@@ -63,11 +64,13 @@ let
     true;
 in
 {
-  sandbox-consumer-surface = assert _; pkgs.runCommand "sandbox-consumer-surface" { } ''
-    grep -F 'virtie launch --manifest=' ${launchScript}
-    grep -F ${pkgs.lib.escapeShellArg manifestPath} ${launchScript}
-    grep -F "bash -lc pwd" ${launchScript}
+  sandbox-consumer-surface =
+    assert _;
+    pkgs.runCommand "sandbox-consumer-surface" { } ''
+      grep -F 'virtie launch --ssh --manifest=' ${launchScript}
+      grep -F ${pkgs.lib.escapeShellArg manifestPath} ${launchScript}
+      grep -F "bash -lc pwd" ${launchScript}
 
-    touch $out
-  '';
+      touch $out
+    '';
 }

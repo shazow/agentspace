@@ -8,36 +8,36 @@ let
   notificationCommand = "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\"";
 
   vmVirtie = mkSandbox {
-    sshAuthorizedKeys = [ testPublicKey ];
-    sshIdentityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
     persistence.homeImage = null;
   };
 
   vmVirtieBalloonEnabled = mkSandbox {
-    sshAuthorizedKeys = [ testPublicKey ];
-    sshIdentityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
     persistence.homeImage = null;
     balloon = true;
   };
 
   vmVirtieBalloonDisabled = mkSandbox {
-    sshAuthorizedKeys = [ testPublicKey ];
-    sshIdentityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
     persistence.homeImage = null;
     balloon = false;
   };
 
   vmVirtieExternalStoreSocket = mkSandbox {
-    sshAuthorizedKeys = [ testPublicKey ];
-    sshIdentityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
     persistence.homeImage = null;
     mountWorkspace = false;
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
   vmVirtieWriteFiles = mkSandbox {
-    sshAuthorizedKeys = [ testPublicKey ];
-    sshIdentityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
     persistence.homeImage = null;
     writeFiles = {
       "/etc/agentspace-inline" = {
@@ -52,8 +52,8 @@ let
   };
 
   vmVirtieNotifications = mkSandbox {
-    sshAuthorizedKeys = [ testPublicKey ];
-    sshIdentityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
     persistence.homeImage = null;
     notifications = {
       command = notificationCommand;
@@ -72,8 +72,7 @@ let
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
   writeFilesManifest = vmVirtieWriteFiles.config.agentspace.sandbox.launch.virtieManifestData;
-  notificationsManifest =
-    vmVirtieNotifications.config.agentspace.sandbox.launch.virtieManifestData;
+  notificationsManifest = vmVirtieNotifications.config.agentspace.sandbox.launch.virtieManifestData;
 
   _ =
     assert manifest.qemu.binaryPath != "";
@@ -97,7 +96,9 @@ let
     assert manifest.ssh.user == "agent";
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.argv;
     assert builtins.length manifest.volumes > 0;
-    assert builtins.any (volume: volume.imagePath == ".agentspace/nix-store-overlay.img") manifest.volumes;
+    assert builtins.any (
+      volume: volume.imagePath == ".agentspace/nix-store-overlay.img"
+    ) manifest.volumes;
     assert builtins.length manifest.virtiofs.daemons > 0;
     assert builtins.all (
       daemon: daemon.socketPath != "" && daemon.command.path != ""
@@ -144,15 +145,17 @@ let
 
   _notifications =
     assert notificationsManifest.notifications.command.path == pkgs.runtimeShell;
-    assert notificationsManifest.notifications.command.args == [
-      "-c"
-      notificationCommand
-    ];
-    assert notificationsManifest.notifications.states == [
-      "runtime:resume"
-      "runtime:suspend"
-      "balloon:resize"
-    ];
+    assert
+      notificationsManifest.notifications.command.args == [
+        "-c"
+        notificationCommand
+      ];
+    assert
+      notificationsManifest.notifications.states == [
+        "runtime:resume"
+        "runtime:suspend"
+        "balloon:resize"
+      ];
     true;
 in
 {

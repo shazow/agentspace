@@ -337,6 +337,67 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &fakeRunner{}
+	qmpClient := &fakeQMPClient{}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            log.New(&logOutput, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	exitReadyQEMU := make(chan struct{})
+	go func() {
+		defer close(exitReadyQEMU)
+		for {
+			runner.mu.Lock()
+			probes := len(runner.sshArgs)
+			runner.mu.Unlock()
+			if probes >= 3 {
+				runner.exitQEMU(nil)
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo}); err != nil {
+		t.Fatalf("launch without ssh: %v", err)
+	}
+	<-exitReadyQEMU
+
+	wantStarts := []string{"virtiofsd[workspace]", "qemu", "ssh", "ssh", "ssh"}
+	if !reflect.DeepEqual(runner.starts, wantStarts) {
+		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
+	}
+	if got := len(runner.sshArgs); got != 3 {
+		t.Fatalf("expected only ssh readiness probes, got %d ssh starts", got)
+	}
+	if strings.Contains(logOutput.String(), "starting ssh session") {
+		t.Fatalf("unexpected interactive ssh session log: %q", logOutput.String())
+	}
+	if !strings.Contains(logOutput.String(), "ssh ready; connect with: /bin/ssh agent@vsock/3") {
+		t.Fatalf("expected out-of-band ssh hint, got %q", logOutput.String())
+	}
+	if qmpClient.quitCalls != 0 {
+		t.Fatalf("expected natural qemu exit without qmp quit, got %d calls", qmpClient.quitCalls)
+	}
+}
+
 func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -781,7 +842,7 @@ func TestManagerLaunchSkipsGuestFilesOnResume(t *testing.T) {
 		qmpMigrationTimeout: time.Millisecond,
 	}
 
-	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce}); err != nil {
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce, SSH: true}); err != nil {
 		t.Fatalf("resume launch: %v", err)
 	}
 	if guestDialer.attempts != 0 {
@@ -1249,7 +1310,7 @@ func TestManagerLaunchResumeForceMissingSavedStateReportsRestoreError(t *testing
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 
-	err := (&manager{}).launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce})
+	err := (&manager{}).launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce, SSH: true})
 	if err == nil {
 		t.Fatal("expected missing saved state error")
 	}
@@ -1268,7 +1329,7 @@ func TestManagerLaunchResumeForceNonSavedStateReportsRestoreError(t *testing.T) 
 		t.Fatalf("write initial suspend state: %v", err)
 	}
 
-	err := (&manager{}).launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce})
+	err := (&manager{}).launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce, SSH: true})
 	if err == nil {
 		t.Fatal("expected non-saved state error")
 	}
@@ -1301,7 +1362,7 @@ func TestManagerLaunchResumeAutoFreshLaunchesWithoutSavedState(t *testing.T) {
 		qmpQuitTimeout:    time.Millisecond,
 	}
 
-	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeAuto}); err != nil {
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeAuto, SSH: true}); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
 	if containsString(runner.qemuArgs, "-incoming") {
@@ -1353,7 +1414,7 @@ func TestManagerLaunchResumeForceRestoresAndRemovesSavedState(t *testing.T) {
 		qmpMigrationTimeout: time.Second,
 	}
 
-	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce}); err != nil {
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce, SSH: true}); err != nil {
 		t.Fatalf("launch resume: %v", err)
 	}
 	if !containsString(runner.qemuArgs, "-incoming") || !containsString(runner.qemuArgs, "defer") {
@@ -1422,7 +1483,7 @@ func TestManagerLaunchResumeForceSavesSuspendDuringRestoredSession(t *testing.T)
 		signals:             signalCh,
 	}
 
-	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce}); err != nil {
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce, SSH: true}); err != nil {
 		t.Fatalf("launch resume: %v", err)
 	}
 	if qmpClient.migrateIncomingCalls != 1 || qmpClient.contCalls != 1 || qmpClient.migrateCalls != 1 {
@@ -1486,7 +1547,7 @@ func TestManagerLaunchResumeCancellationDuringSSHReadinessIsNotSuspend(t *testin
 		qmpMigrationTimeout: time.Second,
 	}
 
-	err := manager.launchWithOptions(ctx, cfg, nil, LaunchOptions{Resume: ResumeModeForce})
+	err := manager.launchWithOptions(ctx, cfg, nil, LaunchOptions{Resume: ResumeModeForce, SSH: true})
 	if err == nil {
 		t.Fatal("expected resume cancellation error")
 	}
@@ -1539,7 +1600,7 @@ func TestManagerLaunchResumeForcePreservesStateWhenSessionStartFails(t *testing.
 		qmpMigrationTimeout: time.Second,
 	}
 
-	err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce})
+	err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce, SSH: true})
 	if err == nil {
 		t.Fatal("expected resume saved to fail")
 	}
