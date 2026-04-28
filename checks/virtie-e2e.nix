@@ -503,6 +503,7 @@ PY
       ];
       writeFiles = {
         "/etc/virtie-inline" = {
+          chown = "agent:users";
           content = "aW5saW5lLWZyb20tbWFuaWZlc3Q=";
           mode = "0640";
         };
@@ -611,6 +612,7 @@ in
     grep -Fx '/etc/virtie-host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
     grep -Fx '/etc/virtie-inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
     grep -Fx '/etc/virtie-host' "$workspace_dir/state/guest-agent-closes" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/chown agent:users /etc/virtie-inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtie-inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"

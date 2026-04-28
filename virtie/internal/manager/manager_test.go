@@ -310,9 +310,10 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 		t.Fatalf("write host fixture: %v", err)
 	}
 	inlineContent := "aW5saW5l"
+	inlineChown := "agent:users"
 	inlineMode := "0640"
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Content: &inlineContent, Mode: &inlineMode},
+		"/etc/inline": {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode},
 		"/etc/host":   {Path: &hostPath},
 	}
 
@@ -362,6 +363,11 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 	}
 	if got, want := guestAgent.execs, []guestExecCall{
 		{
+			path:          guestChownPath,
+			args:          []string{"agent:users", "/etc/inline"},
+			captureOutput: true,
+		},
+		{
 			path:          guestChmodPath,
 			args:          []string{"0640", "/etc/inline"},
 			captureOutput: true,
@@ -373,13 +379,81 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 	firstSSH := indexString(events, "start:ssh")
 	ping := indexString(events, "guest-ping")
 	closeInline := indexString(events, "guest-close:/etc/inline")
+	chownInline := indexString(events, "guest-chown:/etc/inline:agent:users")
 	chmodInline := indexString(events, "guest-chmod:/etc/inline:0640")
 	closeHost := indexString(events, "guest-close:/etc/host")
-	if firstSSH < 0 || ping < 0 || closeInline < 0 || chmodInline < 0 || closeHost < 0 {
+	if firstSSH < 0 || ping < 0 || closeInline < 0 || chownInline < 0 || chmodInline < 0 || closeHost < 0 {
 		t.Fatalf("expected guest agent and ssh events, got %v", events)
 	}
-	if !(ping < firstSSH && closeInline < chmodInline && chmodInline < firstSSH && closeHost < firstSSH) {
+	if !(ping < firstSSH && closeInline < chownInline && chownInline < chmodInline && chmodInline < firstSSH && closeHost < firstSSH) {
 		t.Fatalf("expected guest writes before ssh readiness, got events %v", events)
+	}
+}
+
+func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	inlineContent := "aW5saW5l"
+	inlineChown := "agent:users"
+	inlineMode := "0600"
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/inline": {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{
+			{
+				Exited:   true,
+				ExitCode: 1,
+				ErrData:  "Y2hvd24gZmFpbGVk",
+			},
+		},
+	}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launch(context.Background(), cfg, nil)
+	if err == nil {
+		t.Fatal("expected launch to fail")
+	}
+	for _, want := range []string{"guest file write", "chown \"/etc/inline\" exited with status 1", "chown failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+	if got, want := guestAgent.execs, []guestExecCall{
+		{
+			path:          guestChownPath,
+			args:          []string{"agent:users", "/etc/inline"},
+			captureOutput: true,
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected guest execs after chown failure: got %#v want %#v", got, want)
+	}
+	if len(runner.sshArgs) != 0 {
+		t.Fatalf("expected chown failure before ssh readiness, got ssh starts %v", runner.sshArgs)
 	}
 }
 
@@ -1902,6 +1976,9 @@ func (c *fakeGuestAgentClient) Exec(timeout time.Duration, path string, args []s
 	pid := len(c.execs)
 	c.mu.Unlock()
 
+	if c.record != nil && path == guestChownPath && len(args) == 2 {
+		c.record("guest-chown:" + args[1] + ":" + args[0])
+	}
 	if c.record != nil && path == guestChmodPath && len(args) == 2 {
 		c.record("guest-chmod:" + args[1] + ":" + args[0])
 	}

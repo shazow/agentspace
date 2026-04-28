@@ -242,6 +242,11 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		if err := m.writeGuestFile(client, file.GuestPath, contentBase64); err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
+		if file.Chown != nil {
+			if err := m.chownGuestFile(ctx, client, file.GuestPath, *file.Chown); err != nil {
+				return &stageError{Stage: "guest file write", Err: err}
+			}
+		}
 		if file.Mode != nil {
 			if err := m.chmodGuestFile(ctx, client, file.GuestPath, *file.Mode); err != nil {
 				return &stageError{Stage: "guest file write", Err: err}
@@ -285,29 +290,40 @@ func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, cont
 	return closeErr
 }
 
-const guestChmodPath = "/run/current-system/sw/bin/chmod"
+const (
+	guestChmodPath = "/run/current-system/sw/bin/chmod"
+	guestChownPath = "/run/current-system/sw/bin/chown"
+)
+
+func (m *manager) chownGuestFile(ctx context.Context, client guestAgentClient, guestPath string, owner string) error {
+	return m.runGuestFileCommand(ctx, client, "chown", guestChownPath, []string{owner, guestPath}, guestPath)
+}
 
 func (m *manager) chmodGuestFile(ctx context.Context, client guestAgentClient, guestPath string, mode string) error {
+	return m.runGuestFileCommand(ctx, client, "chmod", guestChmodPath, []string{mode, guestPath}, guestPath)
+}
+
+func (m *manager) runGuestFileCommand(ctx context.Context, client guestAgentClient, name string, path string, args []string, guestPath string) error {
 	timeout := m.effectiveQMPCommandTimeout()
-	pid, err := client.Exec(timeout, guestChmodPath, []string{mode, guestPath}, true)
+	pid, err := client.Exec(timeout, path, args, true)
 	if err != nil {
-		return fmt.Errorf("chmod %q: %w", guestPath, err)
+		return fmt.Errorf("%s %q: %w", name, guestPath, err)
 	}
 
 	deadline := time.Now().Add(timeout)
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return fmt.Errorf("chmod %q timed out after %s", guestPath, timeout)
+			return fmt.Errorf("%s %q timed out after %s", name, guestPath, timeout)
 		}
 
 		status, err := client.ExecStatus(minDuration(timeout, remaining), pid)
 		if err != nil {
-			return fmt.Errorf("chmod %q: %w", guestPath, err)
+			return fmt.Errorf("%s %q: %w", name, guestPath, err)
 		}
 		if status.Exited {
 			if status.ExitCode != 0 {
-				return fmt.Errorf("chmod %q exited with status %d%s", guestPath, status.ExitCode, guestExecOutputSuffix(status))
+				return fmt.Errorf("%s %q exited with status %d%s", name, guestPath, status.ExitCode, guestExecOutputSuffix(status))
 			}
 			return nil
 		}

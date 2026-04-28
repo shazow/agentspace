@@ -40,6 +40,7 @@ let
     persistence.homeImage = null;
     writeFiles = {
       "/etc/agentspace-inline" = {
+        chown = "agent:users";
         content = "aGVsbG8=";
         mode = "0640";
       };
@@ -112,9 +113,11 @@ let
 
   _writeFiles =
     assert writeFilesManifest.qemu.guestAgent.socketPath == "qga.sock";
+    assert writeFilesManifest.writeFiles."/etc/agentspace-inline".chown == "agent:users";
     assert writeFilesManifest.writeFiles."/etc/agentspace-inline".content == "aGVsbG8=";
     assert writeFilesManifest.writeFiles."/etc/agentspace-inline".mode == "0640";
     assert writeFilesManifest.writeFiles."/etc/agentspace-inline".path == null;
+    assert writeFilesManifest.writeFiles."/etc/agentspace-host".chown == null;
     assert writeFilesManifest.writeFiles."/etc/agentspace-host".content == null;
     assert writeFilesManifest.writeFiles."/etc/agentspace-host".mode == null;
     assert writeFilesManifest.writeFiles."/etc/agentspace-host".path == ".agentspace-test/host-file";

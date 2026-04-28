@@ -117,6 +117,12 @@ in
                 description = "Base64-encoded content to write into the guest file.";
               };
 
+              chown = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Optional user:group ownership value applied after writing the guest file.";
+              };
+
               path = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;

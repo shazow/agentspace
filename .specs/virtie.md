@@ -92,7 +92,7 @@ Acceptance criteria:
   - `virtiofs.daemons[].socketPath`
   - `virtiofs.daemons[].command`
   - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set.
-  - optional `writeFiles`, keyed by absolute guest path, with exactly one of `content` or `path` and optional four-digit octal `mode`
+  - optional `writeFiles`, keyed by absolute guest path, with exactly one of `content` or `path`, optional `chown`, and optional four-digit octal `mode`
   - optional `vsock.cidRange`, defaulting to `3..65535`
 - Runtime assumptions:
   - Nix has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.

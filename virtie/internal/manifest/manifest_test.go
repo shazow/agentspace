@@ -231,6 +231,16 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			},
 		},
 		{
+			name: "allows arbitrary chown",
+			configure: func(manifest *Manifest) {
+				chown := ""
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Content: &validContent, Chown: &chown},
+				}
+			},
+		},
+		{
 			name: "valid host path",
 			configure: func(manifest *Manifest) {
 				hostPath := "agent.conf"
@@ -359,19 +369,20 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
 	manifest := validManifest()
 	content := "aGVsbG8="
+	chown := "agent:users"
 	mode := "0640"
 	relativeHostPath := "files/agent.conf"
 	absoluteHostPath := "/tmp/host.conf"
 	manifest.WriteFiles = WriteFiles{
 		"/etc/a.conf": {Path: &relativeHostPath},
-		"/etc/b.conf": {Content: &content, Mode: &mode},
+		"/etc/b.conf": {Content: &content, Chown: &chown, Mode: &mode},
 		"/etc/c.conf": {Path: &absoluteHostPath},
 	}
 
 	got := manifest.ResolvedWriteFiles()
 	want := []ResolvedWriteFile{
 		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf")},
-		{GuestPath: "/etc/b.conf", Content: &content, Mode: &mode},
+		{GuestPath: "/etc/b.conf", Chown: &chown, Content: &content, Mode: &mode},
 		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath},
 	}
 	if !reflect.DeepEqual(got, want) {

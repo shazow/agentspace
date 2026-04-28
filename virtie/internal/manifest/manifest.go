@@ -206,6 +206,7 @@ type VirtioFS struct {
 }
 
 type WriteFile struct {
+	Chown   *string `json:"chown,omitempty"`
 	Content *string `json:"content,omitempty"`
 	Mode    *string `json:"mode,omitempty"`
 	Path    *string `json:"path,omitempty"`
@@ -215,6 +216,7 @@ type WriteFiles map[string]WriteFile
 
 type ResolvedWriteFile struct {
 	GuestPath string
+	Chown     *string
 	Content   *string
 	Mode      *string
 	HostPath  *string
@@ -627,6 +629,7 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 		entry := m.WriteFiles[guestPath]
 		resolved := ResolvedWriteFile{
 			GuestPath: guestPath,
+			Chown:     entry.Chown,
 			Content:   entry.Content,
 			Mode:      entry.Mode,
 		}
