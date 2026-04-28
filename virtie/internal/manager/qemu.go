@@ -10,27 +10,36 @@ import (
 )
 
 func buildQEMUSpec(manifest *manifest.Manifest, cid int) (processSpec, error) {
+	return buildQEMUSpecWithIncoming(manifest, cid, false)
+}
+
+func buildIncomingQEMUSpec(manifest *manifest.Manifest, cid int) (processSpec, error) {
+	return buildQEMUSpecWithIncoming(manifest, cid, true)
+}
+
+func buildQEMUSpecWithIncoming(manifest *manifest.Manifest, cid int, incoming bool) (processSpec, error) {
 	qemu, err := manifest.ResolvedQEMU()
 	if err != nil {
 		return processSpec{}, err
 	}
 
-	args, err := buildQEMUArgs(qemu, cid)
+	args, err := buildQEMUArgs(qemu, cid, incoming)
 	if err != nil {
 		return processSpec{}, err
 	}
 
 	return processSpec{
-		Name:   "qemu",
-		Path:   qemu.BinaryPath,
-		Args:   args,
-		Dir:    manifest.Paths.WorkingDir,
-		Stdout: os.Stderr,
-		Stderr: os.Stderr,
+		Name:         "qemu",
+		Path:         qemu.BinaryPath,
+		Args:         args,
+		Dir:          manifest.Paths.WorkingDir,
+		ProcessGroup: true,
+		Stdout:       os.Stderr,
+		Stderr:       os.Stderr,
 	}, nil
 }
 
-func buildQEMUArgs(qemu manifest.QEMU, cid int) ([]string, error) {
+func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error) {
 	config := &govmmQemu.Config{
 		Machine: govmmQemu.Machine{
 			Type: qemu.Machine.Type,
@@ -103,6 +112,18 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int) ([]string, error) {
 	}
 
 	args = append(args, "-qmp", fmt.Sprintf("unix:%s,server,nowait", qemu.QMP.SocketPath))
+
+	if qemu.GuestAgent.SocketPath != "" {
+		serialDriver, err := guestAgentSerialDriver(qemu.Devices.VSOCK.Transport)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args,
+			"-chardev", fmt.Sprintf("socket,path=%s,server=on,wait=off,id=qga0", qemu.GuestAgent.SocketPath),
+			"-device", fmt.Sprintf("%s,id=qga0-serial", serialDriver),
+			"-device", "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
+		)
+	}
 
 	switch qemu.Memory.Backend {
 	case "", "default":
@@ -206,9 +227,26 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int) ([]string, error) {
 		Transport: vsockTransport,
 	}.QemuParams(config)...)
 
+	if incoming {
+		args = append(args, "-incoming", "defer")
+	}
+
 	args = append(args, qemu.PassthroughArgs...)
 
 	return args, nil
+}
+
+func guestAgentSerialDriver(transport string) (string, error) {
+	switch transport {
+	case "pci":
+		return "virtio-serial-pci", nil
+	case "mmio":
+		return "virtio-serial-device", nil
+	case "ccw":
+		return "virtio-serial-ccw", nil
+	default:
+		return "", fmt.Errorf("unsupported qemu transport %q", transport)
+	}
 }
 
 func resolveQEMUTransport(value string) (govmmQemu.VirtioTransport, error) {

@@ -43,7 +43,7 @@ func AppendQEMUArgs(
 	return append(args, "-device", strings.Join(deviceParams, ",")), nil
 }
 
-func ControllerTask(stdLogger *log.Logger, qmpTimeout time.Duration, session MonitorSession, device *Device) func(context.Context) error {
+func ControllerTask(stdLogger *log.Logger, qmpTimeout time.Duration, session MonitorSession, device *Device, notificationSink notifier) func(context.Context) error {
 	if device == nil || device.Controller == nil || session == nil {
 		return nil
 	}
@@ -59,6 +59,7 @@ func ControllerTask(stdLogger *log.Logger, qmpTimeout time.Duration, session Mon
 		DeviceID:   device.ID,
 		Config:     *device.Controller,
 		QMPTimeout: qmpTimeout,
+		Notifier:   notificationSink,
 	}
 
 	return func(ctx context.Context) error {

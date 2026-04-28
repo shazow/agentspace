@@ -12,6 +12,16 @@ let
       "pci"
     else
       "mmio";
+  persistenceBaseDir = cfg.persistence.basedir;
+  persistenceStateDir = persistenceBaseDir;
+  resolvePersistencePath =
+    path:
+    if path == null || lib.hasPrefix "/" path then
+      path
+    else
+      "${persistenceBaseDir}/${path}";
+  resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
+  resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
 in
 {
   imports = [
@@ -33,7 +43,19 @@ in
       description = "Hostname for the guest VM.";
     };
 
+    command = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Default remote shell command passed to the sandbox SSH session.";
+    };
+
     persistence = {
+      basedir = lib.mkOption {
+        type = lib.types.str;
+        default = ".agentspace";
+        description = "Base directory for generated sandbox persistence paths.";
+      };
+
       homeImage = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = "home.img";
@@ -71,6 +93,23 @@ in
       description = "Enable the virtio-balloon device and virtie's default runtime balloon controller.";
     };
 
+    notifications = {
+      command = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = ''
+          notify-send "virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE"
+        '';
+        description = "Host-side shell command for virtie runtime notification hooks. Set to an empty string to disable notifications.";
+      };
+
+      states = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = "Optional notification state allowlist. Empty means all states.";
+      };
+    };
+
     sshAuthorizedKeys = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -81,6 +120,43 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = "Optional SSH identity file passed to host-side launch/connect helpers.";
+    };
+
+    writeFiles = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule (
+          { ... }:
+          {
+            options = {
+              content = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Base64-encoded content to write into the guest file.";
+              };
+
+              chown = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Optional user:group ownership value applied after writing the guest file.";
+              };
+
+              path = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Host path whose bytes are base64-encoded and written into the guest file.";
+              };
+
+              mode = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Optional four-digit octal permission mode applied after writing the guest file.";
+              };
+            };
+          }
+        )
+      );
+      default = { };
+      description = "Files to write into the guest during fresh VM launch, keyed by absolute guest path.";
     };
 
     workspaceMountPoint = lib.mkOption {
@@ -126,6 +202,12 @@ in
       };
 
       virtieManifest = lib.mkOption {
+        type = lib.types.str;
+        readOnly = true;
+        internal = true;
+      };
+
+      virtieManifestTemplate = lib.mkOption {
         type = lib.types.path;
         readOnly = true;
         internal = true;
@@ -260,6 +342,18 @@ in
         };
       }) managedVirtioFSShares;
 
+      notificationManifest =
+        { states = cfg.notifications.states; }
+        // lib.optionalAttrs (cfg.notifications.command != "") {
+          command = {
+            path = pkgs.runtimeShell;
+            args = [
+              "-c"
+              cfg.notifications.command
+            ];
+          };
+        };
+
       manifestVolumes = builtins.map (volume: {
         imagePath = volume.image;
         sizeMiB = volume.size;
@@ -276,7 +370,11 @@ in
           lockPath = "/tmp/agentspace-${cfg.hostName}.lock";
           runtimeDir = "";
         };
-        persistence.directories = initDirs;
+        persistence = {
+          directories = initDirs;
+          baseDir = persistenceBaseDir;
+          stateDir = persistenceStateDir;
+        };
         ssh = {
           argv = sshBaseArgv;
           user = cfg.user;
@@ -284,9 +382,13 @@ in
         qemu = qemuConfig;
         volumes = manifestVolumes;
         virtiofs.daemons = virtiofsDaemons;
+        writeFiles = cfg.writeFiles;
+        notifications = notificationManifest;
       };
 
-      virtieManifest = pkgs.writeText "virtie-${cfg.hostName}.json" (builtins.toJSON virtieManifestData);
+      virtieManifestTemplate =
+        pkgs.writeText "virtie-${cfg.hostName}.json" (builtins.toJSON virtieManifestData);
+      virtieManifest = "${persistenceBaseDir}/virtie-${cfg.hostName}.json";
     in
     lib.mkMerge [
       {
@@ -294,6 +396,7 @@ in
           inherit commonInit;
           inherit virtieManifestData;
           inherit virtieManifest;
+          inherit virtieManifestTemplate;
         };
 
         networking.hostName = cfg.hostName;
@@ -354,6 +457,7 @@ in
             PermitRootLogin = "no";
           };
         };
+        services.qemuGuest.enable = true;
 
         security.sudo.wheelNeedsPassword = false;
         swapDevices = lib.optionals (cfg.swapSize > 0) [
@@ -430,14 +534,14 @@ in
 
           volumes = [
             {
-              image = cfg.persistence.storeOverlay;
+              image = resolvedStoreOverlay;
               mountPoint = "/nix/.rw-store";
               size = 2 * 4096;
             }
           ]
           ++ lib.optionals (cfg.persistence.homeImage != null) [
             {
-              image = cfg.persistence.homeImage;
+              image = resolvedHomeImage;
               mountPoint = "/home/${cfg.user}";
               fsType = "ext4";
               size = cfg.persistence.homeSize;

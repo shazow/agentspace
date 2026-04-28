@@ -12,11 +12,13 @@ Provide the foreground launch runtime for the supported sandbox session created 
 - Allocate and lock a runtime vsock CID for each session.
 - Create missing auto-created volume images, start `virtiofsd`, launch QEMU directly, wait for SSH readiness, and attach the active SSH session.
 - Keep a long-lived QMP session open after boot for graceful shutdown and optional runtime balloon control.
+- Support disk-backed suspend/resume by saving QEMU migration state to disk and restoring it later.
 - Tear down SSH, QEMU, and `virtiofsd` in the correct order on exit or signal.
 - Surface stage-specific failures clearly enough to debug preflight, startup, readiness, session, and teardown problems.
 
 Out of scope:
 
+- full hibernation restore from RAM and device state
 - reconnect support
 - alternate guest attach or share workflows beyond the supported SSH + `virtiofs` path
 - `systemd --user`, `journalctl`, or machined integration
@@ -25,7 +27,9 @@ Out of scope:
 
 Acceptance criteria:
 
-- [x] `virtie launch <manifest> [-- <remote-cmd...>]` is the supported user-facing command.
+- [x] `virtie launch --manifest=MANIFEST [--resume=no|auto|force] [-- <remote-cmd...>]` is the supported launch command.
+- [x] `virtie suspend --manifest=MANIFEST` saves QEMU migration state to disk, records saved suspend state, and exits the launch session.
+- [x] `virtie launch --resume=force --manifest=MANIFEST` restores only from saved suspend state.
 - [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, QEMU devices, `virtiofs` daemons, and auto-created volumes.
 - [x] QEMU launch is compiled from the typed manifest plus the runtime-selected CID rather than string-substituting a Nix-generated argv template.
 - [x] Launch acquires per-sandbox and per-CID locks before starting guest processes.
@@ -47,9 +51,13 @@ Acceptance criteria:
 - [x] Add runtime-dir-based socket resolution for relative QMP and `virtiofs` sockets, using XDG defaults when requested by the manifest.
 - [x] Allow the Nix store `virtiofs` share to target a provided host socket while `virtie` only starts and removes sockets listed under `virtiofs.daemons`.
 - [x] Implement stage-aware errors and foreground SSH exit-code propagation.
+- [x] Add explicit launch signal handling for interrupt/terminate teardown.
+- [x] Add disk-backed suspend/resume commands and saved suspend state records under `paths.workingDir/.virtie`.
+- [x] Route suspend through a caught `SIGTSTP` control signal so the launch process saves state through its owned QMP session, then exits.
+- [x] Replace the separate `virtie resume` command with `virtie launch --resume=no|auto|force` so fresh and restored sessions share one lifecycle.
 - [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH retry behavior, and launch/teardown ordering with Go tests.
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
-- [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface.
+- [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface, including saved suspend/resume coverage.
 
 ## Appendix
 
@@ -84,6 +92,9 @@ Acceptance criteria:
   - `virtiofs.daemons[].socketPath`
   - `virtiofs.daemons[].command`
   - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set.
+  - optional `writeFiles`, keyed by absolute guest path, with exactly one of `content` or `path`, optional `chown`, and optional four-digit octal `mode`
+  - optional `notifications.command` with `{ path, args }`
+  - optional `notifications.states` allowlist; empty or omitted means all states
   - optional `vsock.cidRange`, defaulting to `3..65535`
 - Runtime assumptions:
   - Nix has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
@@ -93,17 +104,26 @@ Acceptance criteria:
   - If `paths.runtimeDir` is omitted, relative socket paths still resolve from `paths.workingDir`.
   - If `paths.runtimeDir` is the empty string, `virtie` resolves relative socket paths under the per-user XDG runtime location at `agentspace/<hostName>/...`.
   - `virtie` injects `VIRTIE_SOCKET_PATH` for each `virtiofsd` daemon process so launch scripts can consume the resolved socket path.
+  - `virtie launch` records its PID at `<workingDir>/.virtie/<hostName>.pid` after acquiring the sandbox lock and removes that file during teardown.
 - Implementation notes:
   - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.
-  - QMP is used for monitor readiness, graceful shutdown, and optional runtime balloon control, not for guest readiness.
+  - QMP is used for monitor readiness, graceful shutdown, disk-backed suspend/resume, and optional runtime balloon control, not for guest readiness.
+  - `virtie launch --resume=no` is the default fresh launch mode.
+  - `virtie launch --resume=auto` restores saved state when valid state is present and otherwise launches fresh.
+  - `virtie launch --resume=force` requires saved suspend state and errors if it is absent or invalid.
+  - `virtie suspend` validates the launch PID and sends `SIGTSTP` as an internal control signal; `virtie launch` catches it, saves migration state through the existing QMP session, then exits.
+  - Live pause/resume, terminal job-control suspend, and `SIGCONT` resume are not supported.
   - When `qemu.devices.balloon` is present, `virtie` resolves the balloon QOM path, enables `guest-stats-polling-interval`, reads `guest-stats` plus `query-balloon`, and adjusts the logical guest memory size within configured or synthesized bounds.
   - If the manifest omits `qemu.devices.balloon.controller`, `virtie` defaults to `maxActualMiB = qemu.memory.sizeMiB`, an idle reclaim target of 50% of that max, a grow threshold at 25% available memory, and the existing step, poll, and reclaim-holdoff defaults.
+  - Notification hooks are best-effort and never fail launch, suspend, resume, teardown, or balloon control.
+  - Current notification states are `runtime:suspend` after saved suspend state is written, `runtime:resume` after restore migration and QMP `cont` succeed, and `balloon:resize` after a balloon resize succeeds.
+  - Notification commands receive `VIRTIE_NOTIFY_STATE`, `VIRTIE_NOTIFY_MESSAGE`, and `VIRTIE_NOTIFY_CONTEXT_<UPPER_SNAKE_KEY>` environment variables. Command args are passed unchanged.
   - The old Nix-owned argv-template path has been removed from the active contract.
 - Current verification note: the Go package tests pass, and `checks/default.nix` keeps the launch-contract and fake-tools E2E coverage enabled alongside repo-level hook-compatibility checks.
 
 ```mermaid
 flowchart TD
-  A[virtie launch manifest] --> B[Load and validate manifest]
+  A[virtie launch --manifest=MANIFEST] --> B[Load and validate manifest]
   B --> C[Acquire sandbox lock]
   C --> D[Allocate and lock free vsock CID]
   D --> E[Create required directories and auto-created volumes]

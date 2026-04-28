@@ -30,12 +30,13 @@ type socketWaiter interface {
 }
 
 type processSpec struct {
-	Name   string
-	Path   string
-	Args   []string
-	Dir    string
-	Env    []string
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
+	Name         string
+	Path         string
+	Args         []string
+	Dir          string
+	Env          []string
+	ProcessGroup bool
+	Stdin        io.Reader
+	Stdout       io.Writer
+	Stderr       io.Writer
 }

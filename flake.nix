@@ -77,6 +77,7 @@
         let
           vmConfig = nixosConfig.config;
           launchCfg = vmConfig.agentspace.sandbox.launch;
+          remoteCommand = vmConfig.agentspace.sandbox.command or "";
           script = pkgs.writeShellScriptBin "launch-agent" ''
             set -euo pipefail
 
@@ -84,7 +85,16 @@
 
             ${launchCfg.commonInit}
 
-            exec ${virtiePackage}/bin/virtie launch ${launchCfg.virtieManifest} -- "$@"
+            MANIFEST_PATH=${lib.escapeShellArg launchCfg.virtieManifest}
+            ${pkgs.coreutils}/bin/mkdir -p "$(${pkgs.coreutils}/bin/dirname "$MANIFEST_PATH")"
+            ${pkgs.coreutils}/bin/rm -f "$MANIFEST_PATH"
+            ${pkgs.coreutils}/bin/install -m 0644 ${lib.escapeShellArg launchCfg.virtieManifestTemplate} "$MANIFEST_PATH"
+
+            if [ "$#" -eq 0 ] && [ -n ${lib.escapeShellArg remoteCommand} ]; then
+              exec ${virtiePackage}/bin/virtie launch --manifest="$MANIFEST_PATH" -- ${lib.escapeShellArg remoteCommand}
+            fi
+
+            exec ${virtiePackage}/bin/virtie launch --manifest="$MANIFEST_PATH" -- "$@"
           '';
         in
         "${script}/bin/launch-agent";
@@ -105,7 +115,7 @@
       };
 
       checks.${system} = import ./checks {
-        inherit mkLaunch mkSandbox pkgs;
+        inherit mkLaunch mkSandbox pkgs virtiePackage;
       };
 
       apps.${system} = {

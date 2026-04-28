@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -102,9 +104,7 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 		"-o",
 		"StrictHostKeyChecking=no",
 		"agent@vsock/10",
-		"bash",
-		"-lc",
-		"echo hi",
+		"bash -lc 'echo hi'",
 	}
 	if !reflect.DeepEqual(session.Args, wantSessionArgs) {
 		t.Fatalf("unexpected ssh session args: got %v want %v", session.Args, wantSessionArgs)
@@ -112,6 +112,28 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 
 	if session.Stdin != os.Stdin || session.Stdout != os.Stdout || session.Stderr != os.Stderr {
 		t.Fatalf("expected interactive ssh session to inherit stdio")
+	}
+}
+
+func TestBuildSSHSpecShellQuotesRemoteCommand(t *testing.T) {
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{WorkingDir: "/tmp/work"},
+		SSH: manifest.SSH{
+			Argv: []string{"/bin/ssh"},
+			User: "agent",
+		},
+	}
+
+	session := buildSSHSpec(manifest, 10, []string{"printf", "%s\n", "it's $HOME", ""}, true)
+	want := "printf '%s\n' 'it'\"'\"'s $HOME' ''"
+	if got := session.Args[len(session.Args)-1]; got != want {
+		t.Fatalf("unexpected quoted remote command: got %q want %q", got, want)
+	}
+
+	configuredCommand := buildSSHSpec(manifest, 10, []string{"tmux new-session -A -s codex \"npx @openai/codex --yolo\""}, true)
+	wantConfigured := "tmux new-session -A -s codex \"npx @openai/codex --yolo\""
+	if got := configuredCommand.Args[len(configuredCommand.Args)-1]; got != wantConfigured {
+		t.Fatalf("unexpected configured remote command: got %q want %q", got, wantConfigured)
 	}
 }
 
@@ -149,6 +171,9 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	cfg.QEMU.Devices.VirtioFS = []manifest.QEMUVirtioFSShare{
 		{ID: "fs0", SocketPath: "sock-a", Tag: "ro-store", Transport: "pci"},
 		{ID: "fs1", SocketPath: "sock-b", Tag: "workspace", Transport: "pci"},
+	}
+	if err := writeSuspendState(cfg, filepath.Join(tmpDir, "old-qmp.sock"), "paused"); err != nil {
+		t.Fatalf("write stale suspend state: %v", err)
 	}
 
 	volumeImage := filepath.Join(tmpDir, "overlay.img")
@@ -266,6 +291,423 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	} else if got, want := strings.TrimSpace(string(data)), volumeImage; got != want {
 		t.Fatalf("unexpected mkfs args: got %q want %q", got, want)
 	}
+	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
+		t.Fatalf("expected launch to clear stale suspend state, stat err: %v", err)
+	}
+}
+
+func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	hostPath := "host-file"
+	hostBytes := []byte("from host")
+	if err := os.WriteFile(filepath.Join(tmpDir, hostPath), hostBytes, 0o644); err != nil {
+		t.Fatalf("write host fixture: %v", err)
+	}
+	inlineContent := "aW5saW5l"
+	inlineChown := "agent:users"
+	inlineMode := "0640"
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/inline": {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode},
+		"/etc/host":   {Path: &hostPath},
+	}
+
+	var eventMu sync.Mutex
+	var events []string
+	record := func(event string) {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		events = append(events, event)
+	}
+
+	runner := &fakeRunner{
+		finishInteractiveSSH: true,
+		onStart: func(spec processSpec) {
+			record("start:" + spec.Name)
+		},
+	}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{record: record}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	if got, want := guestAgent.writes["/etc/inline"], inlineContent; got != want {
+		t.Fatalf("unexpected inline write content: got %q want %q", got, want)
+	}
+	if got, want := guestAgent.writes["/etc/host"], "ZnJvbSBob3N0"; got != want {
+		t.Fatalf("unexpected host write content: got %q want %q", got, want)
+	}
+	if got, want := guestAgent.execs, []guestExecCall{
+		{
+			path:          guestChownPath,
+			args:          []string{"agent:users", "/etc/inline"},
+			captureOutput: true,
+		},
+		{
+			path:          guestChmodPath,
+			args:          []string{"0640", "/etc/inline"},
+			captureOutput: true,
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected guest execs: got %#v want %#v", got, want)
+	}
+
+	firstSSH := indexString(events, "start:ssh")
+	ping := indexString(events, "guest-ping")
+	closeInline := indexString(events, "guest-close:/etc/inline")
+	chownInline := indexString(events, "guest-chown:/etc/inline:agent:users")
+	chmodInline := indexString(events, "guest-chmod:/etc/inline:0640")
+	closeHost := indexString(events, "guest-close:/etc/host")
+	if firstSSH < 0 || ping < 0 || closeInline < 0 || chownInline < 0 || chmodInline < 0 || closeHost < 0 {
+		t.Fatalf("expected guest agent and ssh events, got %v", events)
+	}
+	if !(ping < firstSSH && closeInline < chownInline && chownInline < chmodInline && chmodInline < firstSSH && closeHost < firstSSH) {
+		t.Fatalf("expected guest writes before ssh readiness, got events %v", events)
+	}
+}
+
+func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	inlineContent := "aW5saW5l"
+	inlineChown := "agent:users"
+	inlineMode := "0600"
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/inline": {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{
+			{
+				Exited:   true,
+				ExitCode: 1,
+				ErrData:  "Y2hvd24gZmFpbGVk",
+			},
+		},
+	}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launch(context.Background(), cfg, nil)
+	if err == nil {
+		t.Fatal("expected launch to fail")
+	}
+	for _, want := range []string{"guest file write", "chown \"/etc/inline\" exited with status 1", "chown failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+	if got, want := guestAgent.execs, []guestExecCall{
+		{
+			path:          guestChownPath,
+			args:          []string{"agent:users", "/etc/inline"},
+			captureOutput: true,
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected guest execs after chown failure: got %#v want %#v", got, want)
+	}
+	if len(runner.sshArgs) != 0 {
+		t.Fatalf("expected chown failure before ssh readiness, got ssh starts %v", runner.sshArgs)
+	}
+}
+
+func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	inlineContent := "aW5saW5l"
+	inlineMode := "0600"
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/inline": {Content: &inlineContent, Mode: &inlineMode},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{
+			{
+				Exited:   true,
+				ExitCode: 1,
+				ErrData:  "Y2htb2QgZmFpbGVk",
+			},
+		},
+	}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launch(context.Background(), cfg, nil)
+	if err == nil {
+		t.Fatal("expected launch to fail")
+	}
+	for _, want := range []string{"guest file write", "chmod \"/etc/inline\" exited with status 1", "chmod failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+	if len(runner.sshArgs) != 0 {
+		t.Fatalf("expected chmod failure before ssh readiness, got ssh starts %v", runner.sshArgs)
+	}
+}
+
+func TestManagerLaunchSkipsGuestFilesOnResume(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+	inlineContent := "aW5saW5l"
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/inline": {Content: &inlineContent},
+	}
+
+	vmStatePath := filepath.Join(tmpDir, ".agentspace", "agent-sandbox.vmstate")
+	if err := os.MkdirAll(filepath.Dir(vmStatePath), 0o755); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	if err := os.WriteFile(vmStatePath, []byte("state"), 0o644); err != nil {
+		t.Fatalf("write vm state: %v", err)
+	}
+	if err := writeSuspendStateData(cfg, suspendState{
+		HostName:      cfg.Identity.HostName,
+		QMPSocketPath: filepath.Join(tmpDir, "old-qmp.sock"),
+		VMStatePath:   vmStatePath,
+		CID:           3,
+		Status:        "saved",
+	}); err != nil {
+		t.Fatalf("write suspend state: %v", err)
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestDialer := &fakeGuestAgentDialer{client: &fakeGuestAgentClient{}}
+	manager := &manager{
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:    guestDialer,
+		logger:              log.New(io.Discard, "", 0),
+		sshRetryDelay:       0,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpRetryDelay:       0,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Millisecond,
+	}
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce}); err != nil {
+		t.Fatalf("resume launch: %v", err)
+	}
+	if guestDialer.attempts != 0 {
+		t.Fatalf("expected resume launch to skip guest agent writes, got %d dial attempts", guestDialer.attempts)
+	}
+	if qmpClient.migrateIncomingCalls != 1 || qmpClient.contCalls != 1 {
+		t.Fatalf("expected resume path to restore and continue, migrate=%d cont=%d", qmpClient.migrateIncomingCalls, qmpClient.contCalls)
+	}
+}
+
+func TestManagerWriteGuestFileClosesAfterWriteFailure(t *testing.T) {
+	client := &fakeGuestAgentClient{writeErr: errors.New("write failed")}
+	manager := &manager{qmpConnectTimeout: time.Millisecond}
+
+	err := manager.writeGuestFile(client, "/etc/fail", "ZmFpbA==")
+	if err == nil || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("expected write failure, got %v", err)
+	}
+	if len(client.closes) != 1 || client.closes[0] != "/etc/fail" {
+		t.Fatalf("expected close after write failure, got closes %v", client.closes)
+	}
+}
+
+func TestManagerLaunchSavesQueuedSuspendDuringSSHReadiness(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	signalCh := make(chan os.Signal, 8)
+	runner := &fakeRunner{
+		onStart: func(spec processSpec) {
+			if spec.Name == "ssh" && containsString(spec.Args, "true") {
+				signalCh <- syscall.SIGTSTP
+			}
+		},
+	}
+	qmpClient := &fakeQMPClient{
+		status: "running",
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		logger:              log.New(io.Discard, "", 0),
+		sshRetryDelay:       time.Hour,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpRetryDelay:       0,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+		signals:             signalCh,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	state, err := readSuspendState(cfg)
+	if err != nil {
+		t.Fatalf("read suspend state: %v", err)
+	}
+	if state.Status != "saved" || state.CID != 3 || state.VMStatePath != vmStatePath(cfg) {
+		t.Fatalf("unexpected suspend state: %+v", state)
+	}
+	if qmpClient.migrateCalls != 1 {
+		t.Fatalf("expected one migration over launch-owned qmp, got %d", qmpClient.migrateCalls)
+	}
+	if len(runner.sshArgs) != 1 {
+		t.Fatalf("expected suspend during first ssh readiness probe, got %d ssh starts", len(runner.sshArgs))
+	}
+	for _, signal := range runner.processSignals {
+		if signal.sig == syscall.SIGTSTP || signal.sig == syscall.SIGSTOP || signal.sig == syscall.SIGCONT {
+			t.Fatalf("unexpected job-control signal forwarded to %s: %v", signal.name, signal.sig)
+		}
+	}
+}
+
+func TestManagerLaunchHandlesDuplicateSuspendDuringActiveSessionWithoutForwardingJobControl(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	signalCh := make(chan os.Signal, 8)
+	runner := &fakeRunner{
+		onStart: func(spec processSpec) {
+			if spec.Name == "ssh" && !containsString(spec.Args, "true") {
+				signalCh <- syscall.SIGTSTP
+				signalCh <- syscall.SIGTSTP
+			}
+		},
+	}
+	qmpClient := &fakeQMPClient{
+		status: "running",
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		logger:              log.New(io.Discard, "", 0),
+		sshRetryDelay:       0,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpRetryDelay:       0,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+		signals:             signalCh,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	state, err := readSuspendState(cfg)
+	if err != nil {
+		t.Fatalf("read suspend state: %v", err)
+	}
+	if state.Status != "saved" || state.CID != 3 {
+		t.Fatalf("unexpected suspend state: %+v", state)
+	}
+	if qmpClient.migrateCalls != 1 {
+		t.Fatalf("expected one migration over launch-owned qmp, got %d", qmpClient.migrateCalls)
+	}
+	if len(runner.sshArgs) != 4 {
+		t.Fatalf("expected active session after three probes, got %d ssh starts", len(runner.sshArgs))
+	}
+	for _, signal := range runner.processSignals {
+		if signal.sig == syscall.SIGTSTP || signal.sig == syscall.SIGSTOP || signal.sig == syscall.SIGCONT {
+			t.Fatalf("unexpected job-control signal forwarded to %s: %v", signal.name, signal.sig)
+		}
+	}
 }
 
 func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing.T) {
@@ -323,6 +765,611 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 	}
 }
 
+func TestSaveSuspendStateConnectedStopsMigratesAndWritesSavedState(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+
+	qmpClient := &fakeQMPClient{status: "running"}
+	manager := &manager{qmpConnectTimeout: time.Millisecond}
+
+	qmpSocketPath := filepath.Join(tmpDir, "qmp.sock")
+	if err := manager.saveSuspendStateConnected(context.Background(), cfg, qmpSocketPath, qmpClient, 7, nil); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+
+	qmpClient.mu.Lock()
+	queryStatusCalls := qmpClient.queryStatusCalls
+	stopCalls := qmpClient.stopCalls
+	migrateCalls := qmpClient.migrateCalls
+	queryMigrateCalls := qmpClient.queryMigrateCalls
+	migratePath := qmpClient.migratePath
+	status := qmpClient.status
+	qmpClient.mu.Unlock()
+
+	if queryStatusCalls != 1 {
+		t.Fatalf("expected query-status once, got %d", queryStatusCalls)
+	}
+	if stopCalls != 1 {
+		t.Fatalf("expected stop once, got %d", stopCalls)
+	}
+	if migrateCalls != 1 {
+		t.Fatalf("expected migrate once, got %d", migrateCalls)
+	}
+	if queryMigrateCalls == 0 {
+		t.Fatal("expected query-migrate polling")
+	}
+	if migratePath != vmStatePath(cfg) {
+		t.Fatalf("unexpected migrate path: got %q want %q", migratePath, vmStatePath(cfg))
+	}
+	if status != "paused" {
+		t.Fatalf("expected paused status, got %q", status)
+	}
+
+	statePath := suspendStatePath(cfg)
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read suspend state: %v", err)
+	}
+	var state suspendState
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("decode suspend state: %v", err)
+	}
+	if state.HostName != cfg.Identity.HostName {
+		t.Fatalf("unexpected state host: got %q want %q", state.HostName, cfg.Identity.HostName)
+	}
+	if state.QMPSocketPath != qmpSocketPath {
+		t.Fatalf("unexpected state qmp socket: got %q", state.QMPSocketPath)
+	}
+	if state.VMStatePath != vmStatePath(cfg) {
+		t.Fatalf("unexpected vm state path: got %q", state.VMStatePath)
+	}
+	if state.CID != 7 {
+		t.Fatalf("unexpected state cid: got %d", state.CID)
+	}
+	if state.Status != "saved" {
+		t.Fatalf("unexpected state status: got %q", state.Status)
+	}
+}
+
+func TestLaunchSuspendHandlerSaveAndExitIsIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+
+	qmpClient := &fakeQMPClient{status: "running"}
+	manager := &manager{
+		qmpConnectTimeout:   time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+	}
+	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7, nil)
+
+	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
+		t.Fatalf("first suspend returned %v, want errSavedSuspendExit", err)
+	}
+	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
+		t.Fatalf("second suspend returned %v, want errSavedSuspendExit", err)
+	}
+
+	qmpClient.mu.Lock()
+	queryStatusCalls := qmpClient.queryStatusCalls
+	stopCalls := qmpClient.stopCalls
+	migrateCalls := qmpClient.migrateCalls
+	qmpClient.mu.Unlock()
+
+	if queryStatusCalls != 1 {
+		t.Fatalf("expected query-status once, got %d", queryStatusCalls)
+	}
+	if stopCalls != 1 {
+		t.Fatalf("expected stop once, got %d", stopCalls)
+	}
+	if migrateCalls != 1 {
+		t.Fatalf("expected migrate once, got %d", migrateCalls)
+	}
+}
+
+func TestManagerSuspendSignalsLaunchAndWaitsForSavedStateAndExit(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	releaseLock := acquireTestLaunchLock(t, cfg, 12345)
+	defer releaseLock()
+
+	dialer := &fakeQMPDialer{client: &fakeQMPClient{status: "running"}}
+	signaler := &fakePIDSignaler{
+		onSignal: func(pid int, sig os.Signal) error {
+			if pid != 12345 {
+				t.Fatalf("unexpected pid: got %d want 12345", pid)
+			}
+			if sig != syscall.SIGTSTP {
+				t.Fatalf("unexpected signal: got %v want %v", sig, syscall.SIGTSTP)
+			}
+			if err := writeSuspendStateData(cfg, suspendState{
+				QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
+				VMStatePath:   vmStatePath(cfg),
+				CID:           3,
+				Status:        "saved",
+			}); err != nil {
+				return err
+			}
+			return removeLaunchPID(cfg, 12345)
+		},
+	}
+	manager := &manager{
+		qmpDialer:           dialer,
+		qmpConnectTimeout:   100 * time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+		pidSignaler:         signaler,
+	}
+
+	if err := manager.suspend(context.Background(), cfg); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+
+	if dialer.attempts != 0 {
+		t.Fatalf("expected no external qmp dial attempts, got %d", dialer.attempts)
+	}
+	if !reflect.DeepEqual(signaler.signals, []pidSignal{{pid: 12345, sig: syscall.SIGTSTP}}) {
+		t.Fatalf("unexpected signals: got %v", signaler.signals)
+	}
+	state, err := readSuspendState(cfg)
+	if err != nil {
+		t.Fatalf("read suspend state: %v", err)
+	}
+	if state.Status != "saved" || state.CID != 3 || state.VMStatePath == "" {
+		t.Fatalf("unexpected saved state: %+v", state)
+	}
+}
+
+func TestManagerSuspendSignalsActiveLaunchWhenSavedStateAlreadyExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeSuspendStateData(cfg, suspendState{
+		QMPSocketPath: filepath.Join(tmpDir, "old-qmp.sock"),
+		VMStatePath:   vmStatePath(cfg),
+		CID:           3,
+		Status:        "saved",
+	}); err != nil {
+		t.Fatalf("write saved suspend state: %v", err)
+	}
+	if err := writeLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	releaseLock := acquireTestLaunchLock(t, cfg, 12345)
+	defer releaseLock()
+
+	signaler := &fakePIDSignaler{
+		onSignal: func(pid int, sig os.Signal) error {
+			if pid != 12345 {
+				t.Fatalf("unexpected pid: got %d want 12345", pid)
+			}
+			if sig != syscall.SIGTSTP {
+				t.Fatalf("unexpected signal: got %v want %v", sig, syscall.SIGTSTP)
+			}
+			return removeLaunchPID(cfg, 12345)
+		},
+	}
+	manager := &manager{
+		qmpMigrationTimeout: time.Second,
+		pidSignaler:         signaler,
+	}
+
+	if err := manager.suspend(context.Background(), cfg); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+
+	if !reflect.DeepEqual(signaler.signals, []pidSignal{{pid: 12345, sig: syscall.SIGTSTP}}) {
+		t.Fatalf("unexpected signals: got %v", signaler.signals)
+	}
+}
+
+func TestManagerSuspendPreservesExistingSavedStateWithoutSignal(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeSuspendStateData(cfg, suspendState{
+		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
+		VMStatePath:   vmStatePath(cfg),
+		CID:           3,
+		Status:        "saved",
+	}); err != nil {
+		t.Fatalf("write saved suspend state: %v", err)
+	}
+
+	signaler := &fakePIDSignaler{}
+	manager := &manager{
+		qmpDialer:   &fakeQMPDialer{},
+		pidSignaler: signaler,
+	}
+
+	if err := manager.suspend(context.Background(), cfg); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+
+	if len(signaler.signals) != 0 {
+		t.Fatalf("expected no signal for repeated suspend, got %v", signaler.signals)
+	}
+}
+
+func TestEffectiveSuspendSignalTimeoutIncludesMigrationAndTeardown(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.VirtioFS.Daemons = append(cfg.VirtioFS.Daemons, manifest.VirtioFSDaemon{
+		Tag:        "cache",
+		SocketPath: "cache.sock",
+		Command: manifest.Command{
+			Path: "/tmp/virtiofsd-cache",
+		},
+	})
+
+	manager := &manager{
+		shutdownDelay:       4 * time.Second,
+		qmpQuitTimeout:      3 * time.Second,
+		qmpMigrationTimeout: 2 * time.Second,
+	}
+
+	got := manager.effectiveSuspendSignalTimeout(cfg)
+	want := defaultLaunchSignalTimeout + 2*time.Second + 3*time.Second + 4*4*time.Second
+	if got != want {
+		t.Fatalf("unexpected suspend signal timeout: got %s want %s", got, want)
+	}
+}
+
+func TestManagerSuspendMissingPIDReportsLaunchError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+
+	err := (&manager{pidSignaler: &fakePIDSignaler{}}).suspend(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected missing pid error")
+	}
+	if !strings.Contains(err.Error(), "launch pid file") || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("unexpected missing pid error: %v", err)
+	}
+}
+
+func TestManagerLaunchResumeForceMissingSavedStateReportsRestoreError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+
+	err := (&manager{}).launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce})
+	if err == nil {
+		t.Fatal("expected missing saved state error")
+	}
+	if !strings.Contains(err.Error(), "no saved suspend state") {
+		t.Fatalf("unexpected missing saved state error: %v", err)
+	}
+}
+
+func TestManagerLaunchResumeForceNonSavedStateReportsRestoreError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeSuspendStateData(cfg, suspendState{
+		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
+		Status:        "paused",
+	}); err != nil {
+		t.Fatalf("write initial suspend state: %v", err)
+	}
+
+	err := (&manager{}).launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce})
+	if err == nil {
+		t.Fatal("expected non-saved state error")
+	}
+	if !strings.Contains(err.Error(), "not saved") {
+		t.Fatalf("unexpected non-saved state error: %v", err)
+	}
+}
+
+func TestManagerLaunchResumeAutoFreshLaunchesWithoutSavedState(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeAuto}); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if containsString(runner.qemuArgs, "-incoming") {
+		t.Fatalf("expected fresh qemu launch without incoming migration: %v", runner.qemuArgs)
+	}
+	if qmpClient.migrateIncomingCalls != 0 || qmpClient.contCalls != 0 {
+		t.Fatalf("unexpected restore qmp calls: migrate-incoming=%d cont=%d", qmpClient.migrateIncomingCalls, qmpClient.contCalls)
+	}
+}
+
+func TestManagerLaunchResumeForceRestoresAndRemovesSavedState(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Volumes[0].AutoCreate = false
+	statePath := vmStatePath(cfg)
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	if err := os.WriteFile(statePath, []byte("saved state"), 0o644); err != nil {
+		t.Fatalf("write vm state: %v", err)
+	}
+	if err := writeSuspendStateData(cfg, suspendState{
+		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
+		VMStatePath:   statePath,
+		CID:           3,
+		Status:        "saved",
+	}); err != nil {
+		t.Fatalf("write suspend state: %v", err)
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		status: "paused",
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		logger:              log.New(io.Discard, "", 0),
+		sshRetryDelay:       0,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+	}
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce}); err != nil {
+		t.Fatalf("launch resume: %v", err)
+	}
+	if !containsString(runner.qemuArgs, "-incoming") || !containsString(runner.qemuArgs, "defer") {
+		t.Fatalf("expected incoming qemu launch: %v", runner.qemuArgs)
+	}
+	if qmpClient.migrateIncomingCalls != 1 || qmpClient.contCalls != 1 {
+		t.Fatalf("unexpected restore qmp calls: migrate-incoming=%d cont=%d", qmpClient.migrateIncomingCalls, qmpClient.contCalls)
+	}
+	if qmpClient.migrateIncomingPath != statePath {
+		t.Fatalf("unexpected migrate-incoming path: got %q want %q", qmpClient.migrateIncomingPath, statePath)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("expected vm state removal, stat err: %v", err)
+	}
+	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
+		t.Fatalf("expected suspend state removal, stat err: %v", err)
+	}
+}
+
+func TestManagerLaunchResumeForceSavesSuspendDuringRestoredSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Volumes[0].AutoCreate = false
+	statePath := vmStatePath(cfg)
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	if err := os.WriteFile(statePath, []byte("saved state"), 0o644); err != nil {
+		t.Fatalf("write vm state: %v", err)
+	}
+	if err := writeSuspendStateData(cfg, suspendState{
+		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
+		VMStatePath:   statePath,
+		CID:           3,
+		Status:        "saved",
+	}); err != nil {
+		t.Fatalf("write suspend state: %v", err)
+	}
+
+	signalCh := make(chan os.Signal, 8)
+	runner := &fakeRunner{
+		onStart: func(spec processSpec) {
+			if spec.Name == "ssh" && !containsString(spec.Args, "true") {
+				signalCh <- syscall.SIGTSTP
+			}
+		},
+	}
+	qmpClient := &fakeQMPClient{
+		status: "paused",
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		logger:              log.New(io.Discard, "", 0),
+		sshRetryDelay:       0,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+		signals:             signalCh,
+	}
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce}); err != nil {
+		t.Fatalf("launch resume: %v", err)
+	}
+	if qmpClient.migrateIncomingCalls != 1 || qmpClient.contCalls != 1 || qmpClient.migrateCalls != 1 {
+		t.Fatalf("unexpected qmp calls: migrate-incoming=%d cont=%d migrate=%d", qmpClient.migrateIncomingCalls, qmpClient.contCalls, qmpClient.migrateCalls)
+	}
+	readState, err := readSuspendState(cfg)
+	if err != nil {
+		t.Fatalf("read new suspend state: %v", err)
+	}
+	if readState.Status != "saved" || readState.CID != 3 {
+		t.Fatalf("unexpected new suspend state: %+v", readState)
+	}
+}
+
+func TestManagerLaunchResumeCancellationDuringSSHReadinessIsNotSuspend(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Volumes[0].AutoCreate = false
+	statePath := vmStatePath(cfg)
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	if err := os.WriteFile(statePath, []byte("saved state"), 0o644); err != nil {
+		t.Fatalf("write vm state: %v", err)
+	}
+	if err := writeSuspendStateData(cfg, suspendState{
+		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
+		VMStatePath:   statePath,
+		CID:           3,
+		Status:        "saved",
+	}); err != nil {
+		t.Fatalf("write suspend state: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runner := &fakeRunner{
+		blockSSHProbes: true,
+		onStart: func(spec processSpec) {
+			if spec.Name == "ssh" && containsString(spec.Args, "true") {
+				cancel()
+			}
+		},
+	}
+	qmpClient := &fakeQMPClient{
+		status: "paused",
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		logger:              log.New(io.Discard, "", 0),
+		sshRetryDelay:       0,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+	}
+
+	err := manager.launchWithOptions(ctx, cfg, nil, LaunchOptions{Resume: ResumeModeForce})
+	if err == nil {
+		t.Fatal("expected resume cancellation error")
+	}
+	if errors.Is(err, errSavedSuspendExit) {
+		t.Fatalf("cancellation was misreported as suspend: %v", err)
+	}
+	if qmpClient.migrateCalls != 0 {
+		t.Fatalf("unexpected new suspend migration, got %d", qmpClient.migrateCalls)
+	}
+}
+
+func TestManagerLaunchResumeForcePreservesStateWhenSessionStartFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Volumes[0].AutoCreate = false
+	statePath := vmStatePath(cfg)
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	if err := os.WriteFile(statePath, []byte("saved state"), 0o644); err != nil {
+		t.Fatalf("write vm state: %v", err)
+	}
+	if err := writeSuspendStateData(cfg, suspendState{
+		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
+		VMStatePath:   statePath,
+		CID:           3,
+		Status:        "saved",
+	}); err != nil {
+		t.Fatalf("write suspend state: %v", err)
+	}
+
+	runner := &fakeRunner{failInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		status: "paused",
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		logger:              log.New(io.Discard, "", 0),
+		sshRetryDelay:       0,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+	}
+
+	err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce})
+	if err == nil {
+		t.Fatal("expected resume saved to fail")
+	}
+	if !strings.Contains(err.Error(), "session start failed") {
+		t.Fatalf("unexpected resume error: %v", err)
+	}
+	if _, err := os.Stat(statePath); err != nil {
+		t.Fatalf("expected saved vm state to remain: %v", err)
+	}
+	readState, err := readSuspendState(cfg)
+	if err != nil {
+		t.Fatalf("expected suspend state to remain: %v", err)
+	}
+	if readState.Status != "saved" || readState.CID != 3 {
+		t.Fatalf("unexpected preserved suspend state: %+v", readState)
+	}
+}
+
+func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	if err := writeSuspendStateData(cfg, suspendState{
+		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
+		VMStatePath:   vmStatePath(cfg),
+		CID:           3,
+		Status:        "saved",
+	}); err != nil {
+		t.Fatalf("write saved suspend state: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	session := &managedProcess{
+		name: "ssh",
+		done: make(chan error, 1),
+	}
+
+	err := (&manager{}).waitForSession(ctx, session, nil, nil)
+	if err == nil {
+		t.Fatal("expected active session cancellation error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("unexpected wait for session error: %v", err)
+	}
+}
+
 func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 	runner := &blockingSSHRunner{started: make(chan *blockingSSHProcess, 1)}
 	manager := &manager{
@@ -345,8 +1392,9 @@ func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
 	defer cancel()
 
 	errCh := make(chan error, 1)
+	suspendHandler := newLaunchSuspendHandler(manager, manifest, "", nil, 10, nil)
 	go func() {
-		errCh <- manager.waitForSSH(ctx, manifest, 10)
+		errCh <- manager.waitForSSH(ctx, nil, suspendHandler)
 	}()
 
 	probe := <-runner.started
@@ -388,7 +1436,8 @@ func TestWaitForSSHLogsPermissionDeniedHint(t *testing.T) {
 
 	defer cancel()
 
-	if err := manager.waitForSSH(ctx, manifest, 10); !errors.Is(err, context.Canceled) {
+	suspendHandler := newLaunchSuspendHandler(manager, manifest, "", nil, 10, nil)
+	if err := manager.waitForSSH(ctx, nil, suspendHandler); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
@@ -472,8 +1521,34 @@ func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	if !containsString(spec.Args, "unix:/tmp/work/qmp.sock,server,nowait") {
 		t.Fatalf("expected qemu args to include the qmp socket: %v", spec.Args)
 	}
+	if containsString(spec.Args, "qga0") {
+		t.Fatalf("expected qemu args to omit guest agent device when socket is unset: %v", spec.Args)
+	}
 	if !containsString(spec.Args, "memory-backend-memfd,id=mem,size=1024M,share=on") {
 		t.Fatalf("expected qemu args to include the shared memory backend: %v", spec.Args)
+	}
+	if !spec.ProcessGroup {
+		t.Fatal("expected qemu to run in its own process group")
+	}
+}
+
+func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
+	manifest := validManifest("/tmp/work")
+	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+
+	spec, err := buildQEMUSpec(manifest, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	if !containsString(spec.Args, "socket,path=/tmp/work/qga.sock,server=on,wait=off,id=qga0") {
+		t.Fatalf("expected qemu args to include guest agent chardev: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "virtio-serial-pci,id=qga0-serial") {
+		t.Fatalf("expected qemu args to include guest agent serial device: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0") {
+		t.Fatalf("expected qemu args to include guest agent port: %v", spec.Args)
 	}
 }
 
@@ -483,6 +1558,7 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 
 	manifest := validManifest("/tmp/work")
 	manifest.Paths.RuntimeDir = stringPtr("")
+	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 
 	spec, err := buildQEMUSpec(manifest, 42)
 	if err != nil {
@@ -492,6 +1568,10 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	wantQMP := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "qmp.sock")
 	if !containsString(spec.Args, "unix:"+wantQMP+",server,nowait") {
 		t.Fatalf("expected qemu args to include runtime qmp socket %q: %v", wantQMP, spec.Args)
+	}
+	wantQGA := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "qga.sock")
+	if !containsString(spec.Args, "socket,path="+wantQGA+",server=on,wait=off,id=qga0") {
+		t.Fatalf("expected qemu args to include runtime guest agent socket %q: %v", wantQGA, spec.Args)
 	}
 }
 
@@ -515,6 +1595,9 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	wantSocket := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "fs.sock")
 	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIE_SOCKET_PATH="+wantSocket) {
 		t.Fatalf("expected virtiofs daemon env to contain resolved socket path %q: %v", wantSocket, got)
+	}
+	if !runner.processGroups["virtiofsd[workspace]"] {
+		t.Fatal("expected virtiofs daemon to run in its own process group")
 	}
 }
 
@@ -630,17 +1713,23 @@ func validManifestWithBalloon(workingDir string) *manifest.Manifest {
 }
 
 type fakeRunner struct {
-	mu          sync.Mutex
-	starts      []string
-	signals     []string
-	sshArgs     [][]string
-	qemuArgs    []string
-	qemuEnv     []string
-	virtiofsEnv map[string][]string
-	probes      int
-	cancel      context.CancelFunc
-	cancelDelay time.Duration
-	qemu        *fakeProcess
+	mu                   sync.Mutex
+	starts               []string
+	signals              []string
+	processSignals       []processSignal
+	sshArgs              [][]string
+	qemuArgs             []string
+	qemuEnv              []string
+	virtiofsEnv          map[string][]string
+	processGroups        map[string]bool
+	probes               int
+	cancel               context.CancelFunc
+	cancelDelay          time.Duration
+	failInteractiveSSH   bool
+	finishInteractiveSSH bool
+	blockSSHProbes       bool
+	qemu                 *fakeProcess
+	onStart              func(processSpec)
 }
 
 func (r *fakeRunner) Start(spec processSpec) (process, error) {
@@ -648,6 +1737,13 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 	defer r.mu.Unlock()
 
 	r.starts = append(r.starts, spec.Name)
+	if r.onStart != nil {
+		r.onStart(spec)
+	}
+	if r.processGroups == nil {
+		r.processGroups = make(map[string]bool)
+	}
+	r.processGroups[spec.Name] = spec.ProcessGroup
 
 	switch spec.Name {
 	case "qemu":
@@ -659,6 +1755,9 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 	case "ssh":
 		r.sshArgs = append(r.sshArgs, append([]string(nil), spec.Args...))
 		r.probes++
+		if r.blockSSHProbes && containsString(spec.Args, "true") {
+			return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
+		}
 		if r.probes < 3 {
 			return &fakeProcess{
 				name:   spec.Name,
@@ -673,13 +1772,25 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 				done:   closedErrorChannel(nil),
 			}, nil
 		}
+		if r.failInteractiveSSH {
+			return nil, errors.New("session start failed")
+		}
+		if r.finishInteractiveSSH {
+			return &fakeProcess{
+				name:   spec.Name,
+				runner: r,
+				done:   closedErrorChannel(nil),
+			}, nil
+		}
 
 		process := &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}
 		go func() {
 			if r.cancelDelay > 0 {
 				time.Sleep(r.cancelDelay)
 			}
-			r.cancel()
+			if r.cancel != nil {
+				r.cancel()
+			}
 		}()
 		return process, nil
 	default:
@@ -722,6 +1833,7 @@ func (p *fakeProcess) Wait() error {
 func (p *fakeProcess) Signal(sig os.Signal) error {
 	p.runner.mu.Lock()
 	p.runner.signals = append(p.runner.signals, p.name)
+	p.runner.processSignals = append(p.runner.processSignals, processSignal{name: p.name, sig: sig})
 	p.runner.mu.Unlock()
 	p.complete(nil)
 	return nil
@@ -767,10 +1879,225 @@ func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout tim
 	return d.client, nil
 }
 
+type fakeGuestAgentDialer struct {
+	client   guestAgentClient
+	attempts int
+}
+
+func (d *fakeGuestAgentDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (guestAgentClient, error) {
+	d.attempts++
+	return d.client, nil
+}
+
+type fakeGuestAgentClient struct {
+	mu              sync.Mutex
+	nextHandle      int
+	handles         map[int]string
+	writes          map[string]string
+	closes          []string
+	execs           []guestExecCall
+	execStatuses    []guestExecStatus
+	execStatusCalls int
+	writeErr        error
+	closeErr        error
+	execErr         error
+	execStatusErr   error
+	pingErr         error
+	openErr         error
+	disconnects     int
+	record          func(string)
+}
+
+type guestExecCall struct {
+	path          string
+	args          []string
+	captureOutput bool
+}
+
+func (c *fakeGuestAgentClient) Ping(timeout time.Duration) error {
+	if c.record != nil {
+		c.record("guest-ping")
+	}
+	return c.pingErr
+}
+
+func (c *fakeGuestAgentClient) OpenFile(timeout time.Duration, path string) (int, error) {
+	if c.record != nil {
+		c.record("guest-open:" + path)
+	}
+	if c.openErr != nil {
+		return 0, c.openErr
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.handles == nil {
+		c.handles = make(map[int]string)
+	}
+	c.nextHandle++
+	c.handles[c.nextHandle] = path
+	return c.nextHandle, nil
+}
+
+func (c *fakeGuestAgentClient) WriteFile(timeout time.Duration, handle int, contentBase64 string) error {
+	c.mu.Lock()
+	path := c.handles[handle]
+	if c.writes == nil {
+		c.writes = make(map[string]string)
+	}
+	c.writes[path] = contentBase64
+	c.mu.Unlock()
+
+	if c.record != nil {
+		c.record("guest-write:" + path)
+	}
+	return c.writeErr
+}
+
+func (c *fakeGuestAgentClient) CloseFile(timeout time.Duration, handle int) error {
+	c.mu.Lock()
+	path := c.handles[handle]
+	c.closes = append(c.closes, path)
+	c.mu.Unlock()
+
+	if c.record != nil {
+		c.record("guest-close:" + path)
+	}
+	return c.closeErr
+}
+
+func (c *fakeGuestAgentClient) Exec(timeout time.Duration, path string, args []string, captureOutput bool) (int, error) {
+	c.mu.Lock()
+	c.execs = append(c.execs, guestExecCall{
+		path:          path,
+		args:          append([]string(nil), args...),
+		captureOutput: captureOutput,
+	})
+	pid := len(c.execs)
+	c.mu.Unlock()
+
+	if c.record != nil && path == guestChownPath && len(args) == 2 {
+		c.record("guest-chown:" + args[1] + ":" + args[0])
+	}
+	if c.record != nil && path == guestChmodPath && len(args) == 2 {
+		c.record("guest-chmod:" + args[1] + ":" + args[0])
+	}
+	if c.execErr != nil {
+		return 0, c.execErr
+	}
+	return pid, nil
+}
+
+func (c *fakeGuestAgentClient) ExecStatus(timeout time.Duration, pid int) (guestExecStatus, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.execStatusCalls++
+	if c.execStatusErr != nil {
+		return guestExecStatus{}, c.execStatusErr
+	}
+	if len(c.execStatuses) == 0 {
+		return guestExecStatus{Exited: true}, nil
+	}
+	index := c.execStatusCalls - 1
+	if index >= len(c.execStatuses) {
+		index = len(c.execStatuses) - 1
+	}
+	return c.execStatuses[index], nil
+}
+
+func (c *fakeGuestAgentClient) Disconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.disconnects++
+	return nil
+}
+
+type pidSignal struct {
+	pid int
+	sig os.Signal
+}
+
+type processSignal struct {
+	name string
+	sig  os.Signal
+}
+
+type fakePIDSignaler struct {
+	existsErr error
+	signalErr error
+	signals   []pidSignal
+	onSignal  func(pid int, sig os.Signal) error
+}
+
+func (s *fakePIDSignaler) Exists(pid int) error {
+	return s.existsErr
+}
+
+func (s *fakePIDSignaler) Signal(pid int, sig os.Signal) error {
+	s.signals = append(s.signals, pidSignal{pid: pid, sig: sig})
+	if s.onSignal != nil {
+		return s.onSignal(pid, sig)
+	}
+	return s.signalErr
+}
+
+func acquireTestLaunchLock(t *testing.T, manifest *manifest.Manifest, pid int) func() {
+	t.Helper()
+
+	path := manifest.ResolvedLockPath()
+	return acquireTestLockFile(t, path, pid)
+}
+
+func acquireTestCIDLock(t *testing.T, manifest *manifest.Manifest, cid int, pid int) func() {
+	t.Helper()
+
+	path := manifest.ResolvedVSockLockPath(cid)
+	return acquireTestLockFile(t, path, pid)
+}
+
+func acquireTestLockFile(t *testing.T, path string, pid int) func() {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create lock directory: %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("open lock: %v", err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		t.Fatalf("flock lock: %v", err)
+	}
+	if _, err := file.WriteString(fmt.Sprintf("%d\n", pid)); err != nil {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		file.Close()
+		t.Fatalf("write lock pid: %v", err)
+	}
+
+	return func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	}
+}
+
 type fakeQMPClient struct {
 	mu                       sync.Mutex
 	quitCalls                int
+	stopCalls                int
+	contCalls                int
+	migrateCalls             int
+	migrateIncomingCalls     int
+	queryMigrateCalls        int
+	queryStatusCalls         int
+	disconnectCalls          int
+	status                   string
+	migrationStatus          string
+	migratePath              string
+	migrateIncomingPath      string
 	onQuit                   func()
+	onStop                   func()
+	onCont                   func()
 	onEnableBalloonStats     func()
 	listQOMProperties        map[string][]fakeQOMProperty
 	listQOMPropertiesErr     map[string]error
@@ -798,6 +2125,69 @@ func (c *fakeQMPClient) Quit(timeout time.Duration) error {
 	return nil
 }
 
+func (c *fakeQMPClient) Stop(timeout time.Duration) error {
+	c.mu.Lock()
+	c.stopCalls++
+	c.status = "paused"
+	onStop := c.onStop
+	c.mu.Unlock()
+	if onStop != nil {
+		onStop()
+	}
+	return nil
+}
+
+func (c *fakeQMPClient) Cont(timeout time.Duration) error {
+	c.mu.Lock()
+	c.contCalls++
+	c.status = "running"
+	onCont := c.onCont
+	c.mu.Unlock()
+	if onCont != nil {
+		onCont()
+	}
+	return nil
+}
+
+func (c *fakeQMPClient) QueryStatus(timeout time.Duration) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.queryStatusCalls++
+	if c.status == "" {
+		c.status = "running"
+	}
+	return c.status, nil
+}
+
+func (c *fakeQMPClient) MigrateToFile(timeout time.Duration, path string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.migrateCalls++
+	c.migratePath = path
+	c.migrationStatus = "completed"
+	return nil
+}
+
+func (c *fakeQMPClient) MigrateIncoming(timeout time.Duration, path string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.migrateIncomingCalls++
+	c.migrateIncomingPath = path
+	c.migrationStatus = "completed"
+	return nil
+}
+
+func (c *fakeQMPClient) QueryMigrate(timeout time.Duration) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.queryMigrateCalls++
+	if c.migrationStatus == "" {
+		c.migrationStatus = "completed"
+	}
+	return c.migrationStatus, nil
+}
+
 func (c *fakeQMPClient) readCompletionTime() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -811,6 +2201,9 @@ func (c *fakeQMPClient) quitCount() int {
 }
 
 func (c *fakeQMPClient) Disconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.disconnectCalls++
 	return nil
 }
 
@@ -871,6 +2264,28 @@ func (c *fakeQMPClient) handleQMP(message map[string]any) (map[string]any, error
 	args, _ := message["arguments"].(map[string]any)
 
 	switch command {
+	case "query-status":
+		status, err := c.QueryStatus(time.Second)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"return": map[string]any{
+				"running":    status == "running",
+				"singlestep": false,
+				"status":     status,
+			},
+		}, nil
+	case "stop":
+		if err := c.Stop(time.Second); err != nil {
+			return nil, err
+		}
+		return map[string]any{"return": map[string]any{}}, nil
+	case "cont":
+		if err := c.Cont(time.Second); err != nil {
+			return nil, err
+		}
+		return map[string]any{"return": map[string]any{}}, nil
 	case "quit":
 		c.mu.Lock()
 		c.quitCalls++
@@ -880,6 +2295,28 @@ func (c *fakeQMPClient) handleQMP(message map[string]any) (map[string]any, error
 			onQuit()
 		}
 		return map[string]any{"return": map[string]any{}}, nil
+	case "migrate":
+		uri, _ := args["uri"].(string)
+		c.mu.Lock()
+		c.migrateCalls++
+		c.migratePath = strings.TrimPrefix(uri, "file:")
+		c.migrationStatus = "completed"
+		c.mu.Unlock()
+		return map[string]any{"return": map[string]any{}}, nil
+	case "migrate-incoming":
+		uri, _ := args["uri"].(string)
+		c.mu.Lock()
+		c.migrateIncomingCalls++
+		c.migrateIncomingPath = strings.TrimPrefix(uri, "file:")
+		c.migrationStatus = "completed"
+		c.mu.Unlock()
+		return map[string]any{"return": map[string]any{}}, nil
+	case "query-migrate":
+		status, err := c.QueryMigrate(time.Second)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"return": map[string]any{"status": status}}, nil
 	case "query-balloon":
 		c.mu.Lock()
 		actualBytes := c.queryBalloonActualBytes
@@ -1086,6 +2523,15 @@ func containsString(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func indexString(values []string, needle string) int {
+	for i, value := range values {
+		if value == needle {
+			return i
+		}
+	}
+	return -1
 }
 
 func stringPtr(value string) *string {
