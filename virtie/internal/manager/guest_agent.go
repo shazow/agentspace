@@ -19,6 +19,8 @@ type guestAgentClient interface {
 	OpenFile(timeout time.Duration, path string) (int, error)
 	WriteFile(timeout time.Duration, handle int, contentBase64 string) error
 	CloseFile(timeout time.Duration, handle int) error
+	Exec(timeout time.Duration, path string, args []string, captureOutput bool) (int, error)
+	ExecStatus(timeout time.Duration, pid int) (guestExecStatus, error)
 	Disconnect() error
 }
 
@@ -32,6 +34,13 @@ type socketGuestAgentClient struct {
 	conn    net.Conn
 	decoder *json.Decoder
 	mu      sync.Mutex
+}
+
+type guestExecStatus struct {
+	Exited   bool
+	ExitCode int
+	OutData  string
+	ErrData  string
 }
 
 func (d *socketGuestAgentDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (guestAgentClient, error) {
@@ -100,6 +109,56 @@ func (c *socketGuestAgentClient) CloseFile(timeout time.Duration, handle int) er
 		return fmt.Errorf("guest agent close handle %d: %w", handle, err)
 	}
 	return nil
+}
+
+func (c *socketGuestAgentClient) Exec(timeout time.Duration, path string, args []string, captureOutput bool) (int, error) {
+	response, err := c.run(timeout, "guest-exec", map[string]any{
+		"path":           path,
+		"arg":            args,
+		"capture-output": captureOutput,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("guest agent exec %q: %w", path, err)
+	}
+
+	var result struct {
+		PID int `json:"pid"`
+	}
+	if err := json.Unmarshal(response, &result); err != nil {
+		return 0, fmt.Errorf("guest agent exec %q returned invalid pid: %w", path, err)
+	}
+	if result.PID <= 0 {
+		return 0, fmt.Errorf("guest agent exec %q returned invalid pid %d", path, result.PID)
+	}
+	return result.PID, nil
+}
+
+func (c *socketGuestAgentClient) ExecStatus(timeout time.Duration, pid int) (guestExecStatus, error) {
+	response, err := c.run(timeout, "guest-exec-status", map[string]any{
+		"pid": pid,
+	})
+	if err != nil {
+		return guestExecStatus{}, fmt.Errorf("guest agent exec-status pid %d: %w", pid, err)
+	}
+
+	var result struct {
+		Exited   bool   `json:"exited"`
+		ExitCode *int   `json:"exitcode,omitempty"`
+		OutData  string `json:"out-data,omitempty"`
+		ErrData  string `json:"err-data,omitempty"`
+	}
+	if err := json.Unmarshal(response, &result); err != nil {
+		return guestExecStatus{}, fmt.Errorf("guest agent exec-status pid %d returned invalid status: %w", pid, err)
+	}
+	status := guestExecStatus{
+		Exited:  result.Exited,
+		OutData: result.OutData,
+		ErrData: result.ErrData,
+	}
+	if result.ExitCode != nil {
+		status.ExitCode = *result.ExitCode
+	}
+	return status, nil
 }
 
 func (c *socketGuestAgentClient) Disconnect() error {
@@ -183,6 +242,11 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		if err := m.writeGuestFile(client, file.GuestPath, contentBase64); err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
+		if file.Mode != nil {
+			if err := m.chmodGuestFile(ctx, client, file.GuestPath, *file.Mode); err != nil {
+				return &stageError{Stage: "guest file write", Err: err}
+			}
+		}
 		m.logger.Printf("wrote guest file %s", file.GuestPath)
 	}
 	return nil
@@ -219,6 +283,80 @@ func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, cont
 		return writeErr
 	}
 	return closeErr
+}
+
+const guestChmodPath = "/run/current-system/sw/bin/chmod"
+
+func (m *manager) chmodGuestFile(ctx context.Context, client guestAgentClient, guestPath string, mode string) error {
+	timeout := m.effectiveQMPCommandTimeout()
+	pid, err := client.Exec(timeout, guestChmodPath, []string{mode, guestPath}, true)
+	if err != nil {
+		return fmt.Errorf("chmod %q: %w", guestPath, err)
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("chmod %q timed out after %s", guestPath, timeout)
+		}
+
+		status, err := client.ExecStatus(minDuration(timeout, remaining), pid)
+		if err != nil {
+			return fmt.Errorf("chmod %q: %w", guestPath, err)
+		}
+		if status.Exited {
+			if status.ExitCode != 0 {
+				return fmt.Errorf("chmod %q exited with status %d%s", guestPath, status.ExitCode, guestExecOutputSuffix(status))
+			}
+			return nil
+		}
+
+		sleep := minDuration(defaultMigrationPollDelay, time.Until(deadline))
+		if sleep <= 0 {
+			continue
+		}
+		timer := time.NewTimer(sleep)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func guestExecOutputSuffix(status guestExecStatus) string {
+	stdout := decodeGuestExecData(status.OutData)
+	stderr := decodeGuestExecData(status.ErrData)
+	switch {
+	case stdout != "" && stderr != "":
+		return fmt.Sprintf(": stdout=%q stderr=%q", stdout, stderr)
+	case stdout != "":
+		return fmt.Sprintf(": stdout=%q", stdout)
+	case stderr != "":
+		return fmt.Sprintf(": stderr=%q", stderr)
+	default:
+		return ""
+	}
+}
+
+func decodeGuestExecData(data string) string {
+	if data == "" {
+		return ""
+	}
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return data
+	}
+	return string(decoded)
+}
+
+func minDuration(a time.Duration, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watchers ...*managedProcess) (guestAgentClient, error) {

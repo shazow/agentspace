@@ -205,6 +205,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 
 func TestManifestWriteFilesValidation(t *testing.T) {
 	validContent := "aGVsbG8="
+	validMode := "0640"
 
 	tests := []struct {
 		name      string
@@ -217,6 +218,15 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
 					"/etc/agent.conf": {Content: &validContent},
+				}
+			},
+		},
+		{
+			name: "valid mode",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Content: &validContent, Mode: &validMode},
 				}
 			},
 		},
@@ -281,6 +291,50 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			},
 			wantError: "content must be valid base64",
 		},
+		{
+			name: "rejects mode without leading zero",
+			configure: func(manifest *Manifest) {
+				mode := "640"
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Content: &validContent, Mode: &mode},
+				}
+			},
+			wantError: "mode must match",
+		},
+		{
+			name: "rejects invalid octal mode",
+			configure: func(manifest *Manifest) {
+				mode := "0888"
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Content: &validContent, Mode: &mode},
+				}
+			},
+			wantError: "mode must match",
+		},
+		{
+			name: "rejects symbolic mode",
+			configure: func(manifest *Manifest) {
+				mode := "u=rw"
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Content: &validContent, Mode: &mode},
+				}
+			},
+			wantError: "mode must match",
+		},
+		{
+			name: "rejects empty mode",
+			configure: func(manifest *Manifest) {
+				mode := ""
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Content: &validContent, Mode: &mode},
+				}
+			},
+			wantError: "mode must match",
+		},
 	}
 
 	for _, tt := range tests {
@@ -305,18 +359,19 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
 	manifest := validManifest()
 	content := "aGVsbG8="
+	mode := "0640"
 	relativeHostPath := "files/agent.conf"
 	absoluteHostPath := "/tmp/host.conf"
 	manifest.WriteFiles = WriteFiles{
 		"/etc/a.conf": {Path: &relativeHostPath},
-		"/etc/b.conf": {Content: &content},
+		"/etc/b.conf": {Content: &content, Mode: &mode},
 		"/etc/c.conf": {Path: &absoluteHostPath},
 	}
 
 	got := manifest.ResolvedWriteFiles()
 	want := []ResolvedWriteFile{
 		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf")},
-		{GuestPath: "/etc/b.conf", Content: &content},
+		{GuestPath: "/etc/b.conf", Content: &content, Mode: &mode},
 		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath},
 	}
 	if !reflect.DeepEqual(got, want) {

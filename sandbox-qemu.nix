@@ -122,6 +122,12 @@ in
                 default = null;
                 description = "Host path whose bytes are base64-encoded and written into the guest file.";
               };
+
+              mode = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Optional four-digit octal permission mode applied after writing the guest file.";
+              };
             };
           }
         )

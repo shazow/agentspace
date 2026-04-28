@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"sort"
 
 	"github.com/adrg/xdg"
@@ -24,6 +25,8 @@ const (
 	defaultVSockCIDEnd   = 65535
 	defaultVolumeFSType  = "ext4"
 )
+
+var writeFileModePattern = regexp.MustCompile(`^0[0-7]{3}$`)
 
 type Manifest struct {
 	Identity    Identity    `json:"identity"`
@@ -204,6 +207,7 @@ type VirtioFS struct {
 
 type WriteFile struct {
 	Content *string `json:"content,omitempty"`
+	Mode    *string `json:"mode,omitempty"`
 	Path    *string `json:"path,omitempty"`
 }
 
@@ -212,6 +216,7 @@ type WriteFiles map[string]WriteFile
 type ResolvedWriteFile struct {
 	GuestPath string
 	Content   *string
+	Mode      *string
 	HostPath  *string
 }
 
@@ -406,6 +411,8 @@ func validateWriteFiles(files WriteFiles) error {
 			return fmt.Errorf("manifest.writeFiles[%q] must set exactly one of content or path", guestPath)
 		case entry.Path != nil && *entry.Path == "":
 			return fmt.Errorf("manifest.writeFiles[%q].path must not be empty", guestPath)
+		case entry.Mode != nil && !writeFileModePattern.MatchString(*entry.Mode):
+			return fmt.Errorf("manifest.writeFiles[%q].mode must match ^0[0-7]{3}$", guestPath)
 		}
 		if entry.Content != nil {
 			if _, err := base64.StdEncoding.Strict().DecodeString(*entry.Content); err != nil {
@@ -621,6 +628,7 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 		resolved := ResolvedWriteFile{
 			GuestPath: guestPath,
 			Content:   entry.Content,
+			Mode:      entry.Mode,
 		}
 		if entry.Path != nil {
 			hostPath := m.resolvePath(*entry.Path)

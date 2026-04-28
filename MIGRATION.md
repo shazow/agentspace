@@ -22,7 +22,7 @@ The manifest accepts an optional `writeFiles` map:
 ```json
 {
   "writeFiles": {
-    "/etc/example.conf": { "content": "YmFzZTY0IGJ5dGVz" },
+    "/etc/example.conf": { "content": "YmFzZTY0IGJ5dGVz", "mode": "0640" },
     "/etc/from-host": { "path": "relative-or-absolute-host-path" }
   }
 }
@@ -32,10 +32,15 @@ Exactly one of `content` or `path` is required for each entry. `content` must
 already be base64-encoded. Relative host `path` values resolve against
 `paths.workingDir`; guest target paths must be absolute.
 
+Each entry may also set `mode` to a four-digit octal string such as `"0640"`.
+When present, `virtie launch` applies the mode with the QEMU guest agent after
+the file is written and closed. Chmod failures are fatal.
+
 For Nix users, the equivalent option is:
 
 ```nix
 agentspace.sandbox.writeFiles."/etc/example.conf".content = "YmFzZTY0IGJ5dGVz";
+agentspace.sandbox.writeFiles."/etc/example.conf".mode = "0640";
 agentspace.sandbox.writeFiles."/etc/from-host".path = "relative-host-path";
 ```
 

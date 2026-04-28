@@ -310,8 +310,9 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 		t.Fatalf("write host fixture: %v", err)
 	}
 	inlineContent := "aW5saW5l"
+	inlineMode := "0640"
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Content: &inlineContent},
+		"/etc/inline": {Content: &inlineContent, Mode: &inlineMode},
 		"/etc/host":   {Path: &hostPath},
 	}
 
@@ -345,7 +346,7 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
-		qmpConnectTimeout: time.Millisecond,
+		qmpConnectTimeout: 100 * time.Millisecond,
 		qmpQuitTimeout:    time.Millisecond,
 	}
 
@@ -359,15 +360,83 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 	if got, want := guestAgent.writes["/etc/host"], "ZnJvbSBob3N0"; got != want {
 		t.Fatalf("unexpected host write content: got %q want %q", got, want)
 	}
+	if got, want := guestAgent.execs, []guestExecCall{
+		{
+			path:          guestChmodPath,
+			args:          []string{"0640", "/etc/inline"},
+			captureOutput: true,
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected guest execs: got %#v want %#v", got, want)
+	}
 
 	firstSSH := indexString(events, "start:ssh")
 	ping := indexString(events, "guest-ping")
+	closeInline := indexString(events, "guest-close:/etc/inline")
+	chmodInline := indexString(events, "guest-chmod:/etc/inline:0640")
 	closeHost := indexString(events, "guest-close:/etc/host")
-	if firstSSH < 0 || ping < 0 || closeHost < 0 {
+	if firstSSH < 0 || ping < 0 || closeInline < 0 || chmodInline < 0 || closeHost < 0 {
 		t.Fatalf("expected guest agent and ssh events, got %v", events)
 	}
-	if !(ping < firstSSH && closeHost < firstSSH) {
+	if !(ping < firstSSH && closeInline < chmodInline && chmodInline < firstSSH && closeHost < firstSSH) {
 		t.Fatalf("expected guest writes before ssh readiness, got events %v", events)
+	}
+}
+
+func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	inlineContent := "aW5saW5l"
+	inlineMode := "0600"
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/inline": {Content: &inlineContent, Mode: &inlineMode},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{
+			{
+				Exited:   true,
+				ExitCode: 1,
+				ErrData:  "Y2htb2QgZmFpbGVk",
+			},
+		},
+	}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launch(context.Background(), cfg, nil)
+	if err == nil {
+		t.Fatal("expected launch to fail")
+	}
+	for _, want := range []string{"guest file write", "chmod \"/etc/inline\" exited with status 1", "chmod failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+	if len(runner.sshArgs) != 0 {
+		t.Fatalf("expected chmod failure before ssh readiness, got ssh starts %v", runner.sshArgs)
 	}
 }
 
@@ -1747,17 +1816,28 @@ func (d *fakeGuestAgentDialer) Dial(ctx context.Context, socketPath string, time
 }
 
 type fakeGuestAgentClient struct {
-	mu          sync.Mutex
-	nextHandle  int
-	handles     map[int]string
-	writes      map[string]string
-	closes      []string
-	writeErr    error
-	closeErr    error
-	pingErr     error
-	openErr     error
-	disconnects int
-	record      func(string)
+	mu              sync.Mutex
+	nextHandle      int
+	handles         map[int]string
+	writes          map[string]string
+	closes          []string
+	execs           []guestExecCall
+	execStatuses    []guestExecStatus
+	execStatusCalls int
+	writeErr        error
+	closeErr        error
+	execErr         error
+	execStatusErr   error
+	pingErr         error
+	openErr         error
+	disconnects     int
+	record          func(string)
+}
+
+type guestExecCall struct {
+	path          string
+	args          []string
+	captureOutput bool
 }
 
 func (c *fakeGuestAgentClient) Ping(timeout time.Duration) error {
@@ -1810,6 +1890,42 @@ func (c *fakeGuestAgentClient) CloseFile(timeout time.Duration, handle int) erro
 		c.record("guest-close:" + path)
 	}
 	return c.closeErr
+}
+
+func (c *fakeGuestAgentClient) Exec(timeout time.Duration, path string, args []string, captureOutput bool) (int, error) {
+	c.mu.Lock()
+	c.execs = append(c.execs, guestExecCall{
+		path:          path,
+		args:          append([]string(nil), args...),
+		captureOutput: captureOutput,
+	})
+	pid := len(c.execs)
+	c.mu.Unlock()
+
+	if c.record != nil && path == guestChmodPath && len(args) == 2 {
+		c.record("guest-chmod:" + args[1] + ":" + args[0])
+	}
+	if c.execErr != nil {
+		return 0, c.execErr
+	}
+	return pid, nil
+}
+
+func (c *fakeGuestAgentClient) ExecStatus(timeout time.Duration, pid int) (guestExecStatus, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.execStatusCalls++
+	if c.execStatusErr != nil {
+		return guestExecStatus{}, c.execStatusErr
+	}
+	if len(c.execStatuses) == 0 {
+		return guestExecStatus{Exited: true}, nil
+	}
+	index := c.execStatusCalls - 1
+	if index >= len(c.execStatuses) {
+		index = len(c.execStatuses) - 1
+	}
+	return c.execStatuses[index], nil
 }
 
 func (c *fakeGuestAgentClient) Disconnect() error {

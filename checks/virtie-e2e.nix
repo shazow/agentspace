@@ -98,6 +98,7 @@ status_lock = threading.Lock()
 client_count = 0
 qga_handles = {}
 qga_next_handle = 0
+qga_next_pid = 1000
 
 def touch(name):
     with open(os.path.join(state_dir, name), "a", encoding="utf-8"):
@@ -193,6 +194,7 @@ def handle(conn):
 
 def qga_handle(conn):
     global qga_next_handle
+    global qga_next_pid
     decoder = json.JSONDecoder()
     buffer = ""
 
@@ -236,6 +238,16 @@ def qga_handle(conn):
                 with open(os.path.join(state_dir, "guest-agent-closes"), "a", encoding="utf-8") as closes:
                     closes.write(f"{path}\n")
                 send({"return": {}})
+            elif command == "guest-exec":
+                qga_next_pid += 1
+                path = args.get("path", "")
+                argv = args.get("arg", [])
+                capture_output = args.get("capture-output", False)
+                with open(os.path.join(state_dir, "guest-agent-execs"), "a", encoding="utf-8") as execs:
+                    execs.write(f"{path} {' '.join(argv)} capture-output={capture_output}\n")
+                send({"return": {"pid": qga_next_pid}})
+            elif command == "guest-exec-status":
+                send({"return": {"exited": True, "exitcode": 0}})
             else:
                 send({"return": {}})
     conn.close()
@@ -492,6 +504,7 @@ PY
       writeFiles = {
         "/etc/virtie-inline" = {
           content = "aW5saW5lLWZyb20tbWFuaWZlc3Q=";
+          mode = "0640";
         };
         "/etc/virtie-host" = {
           path = "host-write-file";
@@ -598,6 +611,7 @@ in
     grep -Fx '/etc/virtie-host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
     grep -Fx '/etc/virtie-inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
     grep -Fx '/etc/virtie-host' "$workspace_dir/state/guest-agent-closes" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtie-inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
     test ! -e "$workspace_dir/.agentspace/virtie-fake.pid"
