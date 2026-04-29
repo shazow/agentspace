@@ -15,10 +15,10 @@ import (
 )
 
 type fakeOptionalFeature struct {
-	appendMarker       string
-	runner             *fakeRunner
-	startedAfterProbes int
-	stoppedAt          time.Time
+	appendMarker           string
+	runner                 *fakeRunner
+	startedAfterSSHSession int
+	stoppedAt              time.Time
 }
 
 func TestBuildQEMUSpecAppendsOptionalFeatureArgs(t *testing.T) {
@@ -34,7 +34,7 @@ func TestBuildQEMUSpecAppendsOptionalFeatureArgs(t *testing.T) {
 	}
 }
 
-func TestManagerLaunchStartsOptionalFeatureAfterSSHReadinessAndStopsItBeforeQuit(t *testing.T) {
+func TestManagerLaunchStartsOptionalFeatureBeforeSSHSessionAndStopsItBeforeQuit(t *testing.T) {
 	tmpDir := t.TempDir()
 	manifest := validManifest(tmpDir)
 	manifest.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
@@ -86,8 +86,8 @@ func TestManagerLaunchStartsOptionalFeatureAfterSSHReadinessAndStopsItBeforeQuit
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
-	if got, want := feature.startedAfterProbes, 3; got != want {
-		t.Fatalf("expected optional feature to start after ssh readiness, got probe count %d want %d", got, want)
+	if got, want := feature.startedAfterSSHSession, 0; got != want {
+		t.Fatalf("expected optional feature to start before autoconnect ssh session, got session count %d want %d", got, want)
 	}
 	if feature.stoppedAt.IsZero() {
 		t.Fatal("expected optional feature to stop during teardown")
@@ -112,7 +112,7 @@ func (f *fakeOptionalFeature) AppendQEMUArgs(
 func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, qmpClient qmpClient) *managedTask {
 	if f.runner != nil {
 		f.runner.mu.Lock()
-		f.startedAfterProbes = f.runner.probes
+		f.startedAfterSSHSession = f.runner.interactiveStarts
 		f.runner.mu.Unlock()
 	}
 	return startManagedTask(ctx, func(taskCtx context.Context) error {

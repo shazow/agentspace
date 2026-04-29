@@ -339,7 +339,6 @@ let
     set -euo pipefail
 
     mkdir -p "$PWD/state"
-    attempt_file="$PWD/state/ssh-probe-attempt"
     destination_file="$PWD/state/ssh-destination"
     remote_command=()
     destination_seen=0
@@ -374,19 +373,6 @@ let
       esac
     done
 
-    if [ "''${#remote_command[@]}" -eq 1 ] && [ "''${remote_command[0]}" = "true" ]; then
-      attempts=0
-      if [ -f "$attempt_file" ]; then
-        attempts=$(cat "$attempt_file")
-      fi
-      attempts=$((attempts + 1))
-      printf '%s\n' "$attempts" > "$attempt_file"
-      if [ "$attempts" -lt 3 ]; then
-        exit 255
-      fi
-      exit 0
-    fi
-
     if [ "''${#remote_command[@]}" -eq 0 ]; then
       touch "$PWD/state/ssh-session-started"
       while [ ! -f "$PWD/state/ssh-session-finished" ]; do
@@ -398,6 +384,44 @@ let
     command_string="''${remote_command[*]}"
     printf '%s\n' "$command_string" > "$PWD/state/ssh-remote-command"
     exec ${pkgs.runtimeShell} -c "$command_string"
+  '';
+
+  fakeAuthFailureSSH = pkgs.writeShellScript "virtie-fake-auth-failure-ssh" ''
+    set -euo pipefail
+
+    mkdir -p "$PWD/state"
+    first_arg_file="$PWD/state/ssh-auth-failure-first-last-arg"
+    if [ ! -f "$first_arg_file" ]; then
+      printf '%s\n' "''${!#}" > "$first_arg_file"
+    fi
+
+    if [ "''${!#}" = "true" ]; then
+      attempt_file="$PWD/state/ssh-auth-failure-attempt"
+      attempts=0
+      if [ -f "$attempt_file" ]; then
+        attempts=$(cat "$attempt_file")
+      fi
+      attempts=$((attempts + 1))
+      printf '%s\n' "$attempts" > "$attempt_file"
+      printf '%s\n' "agent@vsock/3: Permission denied (publickey)." >&2
+      exit 255
+    fi
+
+    touch "$PWD/state/ssh-session-started"
+    while [ ! -f "$PWD/state/ssh-session-finished" ]; do
+      sleep 0.1
+    done
+  '';
+
+  passphraseProtectedPrivateKey = pkgs.writeText "virtie-passphrase-test-key" ''
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABC6P5muIj
+    Mitcjuj0yqzfEvAAAAGAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIELNH7oZlQETmedW
+    3DvYdyKEl4PJMo3MQECij+LtlPQFAAAAsLwMe02lLm69/c0loxzXskvyYVoggmV8cUdNFV
+    VuOYy9JookOpg//cwY8/Jf7cHhumn9JiJ6mXJpF77a3qt8DkuNbmGGk5sk6xn6ANwM5koK
+    v1Vi5NJ7CYNuifl0X08NZiCWcddMpkCvwbiMv9ZRHLLpNUlAqQzep9e7sakLRwvflIKChq
+    eg34FS3urV8j0+zZ4WI3AukBEM80P2WVdc6+l7jBE8aQGEv4mLD+b6Q5IE
+    -----END OPENSSH PRIVATE KEY-----
   '';
 
   manifest = pkgs.writeText "virtie-fake-manifest.json" (
@@ -679,13 +703,13 @@ in
     launch_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'ssh ready; connect with:' "$no_ssh_log" >/dev/null 2>&1; then
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with:' "$no_ssh_log" >/dev/null 2>&1; then
         break
       fi
       sleep 0.1
     done
 
-    grep -F 'ssh ready; connect with:' "$no_ssh_log" >/dev/null
+    grep -F 'connect with:' "$no_ssh_log" >/dev/null
     grep -F 'agent@vsock/3' "$no_ssh_log" >/dev/null
     test ! -f "$no_ssh_workspace_dir/state/ssh-session-started"
     no_ssh_manifest="$no_ssh_workspace_dir/.agentspace/virtie-fake.json"
@@ -753,8 +777,6 @@ in
     test -f "$disk_workspace_dir/state/qemu-migrate-incoming"
     test -f "$disk_workspace_dir/state/qemu-resumed"
     grep -Fx '3' "$disk_workspace_dir/state/qemu-vsock-cid" >/dev/null
-    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.vmstate"
-    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json"
     test -f "$disk_workspace_dir/.agentspace/virtie-fake.pid"
 
     touch "$disk_workspace_dir/state/ssh-session-finished"
@@ -765,6 +787,8 @@ in
     fi
     unset resume_pid
     test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.pid"
+    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.vmstate"
+    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json"
 
     mkdir -p "$out"
     cp "$launch_log" "$out/virtie.log"
@@ -772,5 +796,144 @@ in
     cp "$no_ssh_log" "$out/virtie-no-ssh.log"
     cp "$disk_log" "$out/virtie-disk.log"
     cp "$disk_resume_log" "$out/virtie-disk-resume.log"
+  '';
+
+  virtie-ssh-auth-failure-e2e = pkgs.runCommand "virtie-ssh-auth-failure-e2e" { } ''
+    set -euo pipefail
+
+    tmpdir="$(mktemp -d)"
+    workspace_dir="$tmpdir/workspace"
+    auth_manifest="$tmpdir/virtie-auth-failure-manifest.json"
+    auth_log="$tmpdir/virtie-auth-failure.log"
+    failed=0
+    trap 'echo "virtie-ssh-auth-failure-e2e: command failed at line $LINENO" >&2' ERR
+
+    cleanup() {
+      status=$?
+      if [ "$status" -ne 0 ] && [ "$failed" -eq 0 ]; then
+        failed=1
+        echo "virtie-ssh-auth-failure-e2e: failed with status $status" >&2
+        if [ -f "$auth_log" ]; then
+          echo "== $auth_log ==" >&2
+          cat "$auth_log" >&2
+        fi
+      if [ -f "$auth_manifest" ]; then
+          echo "== $auth_manifest ==" >&2
+          cat "$auth_manifest" >&2
+        fi
+      fi
+      if [ -n "''${auth_pid:-}" ]; then
+        touch "$workspace_dir/state/ssh-session-finished" 2>/dev/null || true
+        kill "$auth_pid" 2>/dev/null || true
+        wait "$auth_pid" 2>/dev/null || true
+      fi
+      if [ -n "''${no_ssh_pid:-}" ]; then
+        kill "$no_ssh_pid" 2>/dev/null || true
+        wait "$no_ssh_pid" 2>/dev/null || true
+      fi
+      rm -rf "$tmpdir"
+    }
+    trap cleanup EXIT INT TERM
+
+    mkdir -p "$workspace_dir/.agentspace-test"
+    cd "$workspace_dir"
+    printf '%s' 'host payload' > host-write-file
+    install -m 0600 ${passphraseProtectedPrivateKey} .agentspace-test/id_ed25519
+    if ${pkgs.openssh}/bin/ssh-keygen -y -P "" -f .agentspace-test/id_ed25519 >/dev/null 2>&1; then
+      echo "virtie-ssh-auth-failure-e2e: test key is not passphrase protected" >&2
+      exit 1
+    fi
+
+    ${pkgs.jq}/bin/jq \
+      --arg ssh ${pkgs.lib.escapeShellArg fakeAuthFailureSSH} \
+      '.ssh.argv = [$ssh, "-i", ".agentspace-test/id_ed25519"]' \
+      ${manifest} > "$auth_manifest"
+
+    export PATH=${fakeTools}/bin:$PATH
+    export XDG_RUNTIME_DIR="$tmpdir/run"
+    mkdir -p "$XDG_RUNTIME_DIR"
+
+    ${pkgs.coreutils}/bin/timeout 20s ${virtiePackage}/bin/virtie launch --ssh --manifest="$auth_manifest" >"$auth_log" 2>&1 &
+    auth_pid=$!
+
+    for _ in $(seq 1 100); do
+      if [ -f "$workspace_dir/state/ssh-session-started" ]; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    test -f "$workspace_dir/state/ssh-session-started"
+    touch "$workspace_dir/state/ssh-session-finished"
+
+    set +e
+    wait "$auth_pid"
+    status=$?
+    set -e
+    if [ "$status" -ne 0 ]; then
+      if [ "$status" -eq 124 ]; then
+        echo "virtie-ssh-auth-failure-e2e: launch timed out, likely stuck retrying ssh" >&2
+      else
+        echo "virtie-ssh-auth-failure-e2e: launch exited non-zero" >&2
+      fi
+      exit 1
+    fi
+
+    grep -F 'virtie: starting ssh session' "$auth_log" >/dev/null
+    if grep -F 'virtie: waiting for ssh readiness' "$auth_log" >/dev/null; then
+      echo "virtie-ssh-auth-failure-e2e: autoconnect unexpectedly ran ssh readiness" >&2
+      exit 1
+    fi
+    if [ "$(cat "$workspace_dir/state/ssh-auth-failure-first-last-arg")" = "true" ]; then
+      echo "virtie-ssh-auth-failure-e2e: first autoconnect ssh was readiness probe" >&2
+      exit 1
+    fi
+    test ! -e "$workspace_dir/state/ssh-auth-failure-attempt"
+    test -f "$workspace_dir/state/qemu-stopped"
+    test -f "$workspace_dir/state/virtiofsd-stopped"
+    test ! -e "$workspace_dir/.agentspace/virtie-fake.pid"
+    unset auth_pid
+
+    no_ssh_workspace_dir="$tmpdir/no-ssh-workspace"
+    no_ssh_manifest="$tmpdir/virtie-auth-failure-no-ssh-manifest.json"
+    no_ssh_log="$tmpdir/virtie-auth-failure-no-ssh.log"
+    mkdir -p "$no_ssh_workspace_dir"
+    cd "$no_ssh_workspace_dir"
+    printf '%s' 'host payload' > host-write-file
+
+    ${pkgs.jq}/bin/jq \
+      --arg ssh ${pkgs.lib.escapeShellArg fakeAuthFailureSSH} \
+      '.ssh.argv = [$ssh]' \
+      ${manifest} > "$no_ssh_manifest"
+
+    ${virtiePackage}/bin/virtie launch --manifest="$no_ssh_manifest" >"$no_ssh_log" 2>&1 &
+    no_ssh_pid=$!
+
+    for _ in $(seq 1 100); do
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with:' "$no_ssh_log" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    grep -F 'connect with:' "$no_ssh_log" >/dev/null
+    if grep -F 'ssh readiness' "$no_ssh_log" >/dev/null || grep -F 'ssh-add' "$no_ssh_log" >/dev/null; then
+      echo "virtie-ssh-auth-failure-e2e: no-ssh launch unexpectedly checked ssh readiness" >&2
+      exit 1
+    fi
+    test ! -e "$no_ssh_workspace_dir/state/ssh-auth-failure-attempt"
+    ${virtiePackage}/bin/virtie suspend --manifest="$no_ssh_manifest"
+    test -f "$no_ssh_workspace_dir/state/qemu-stopped"
+    test -f "$no_ssh_workspace_dir/state/virtiofsd-stopped"
+    test ! -e "$no_ssh_workspace_dir/.agentspace/virtie-fake.pid"
+    if ! wait "$no_ssh_pid"; then
+      echo "virtie-ssh-auth-failure-e2e: no-ssh launch exited non-zero" >&2
+      exit 1
+    fi
+    unset no_ssh_pid
+
+    mkdir -p "$out"
+    cp "$auth_log" "$out/virtie-auth-failure.log"
+    cp "$no_ssh_log" "$out/virtie-auth-failure-no-ssh.log"
   '';
 }
