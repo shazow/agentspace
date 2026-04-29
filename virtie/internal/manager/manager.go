@@ -101,6 +101,7 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 }
 
 func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) (err error) {
+	stats := newLaunchStats(time.Now())
 	if err := manifest.Validate(); err != nil {
 		return err
 	}
@@ -249,6 +250,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		} else if featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {
 			err = errors.Join(err, featureErr, stopErr, disconnectErr, cleanupErr)
 		}
+		stats.MarkCompleted(time.Now())
+		if m.logger != nil {
+			m.logger.Printf("stats: %s", stats.String())
+		}
 	}()
 
 	virtiofsd, err := m.startVirtioFSDaemons(manifest)
@@ -267,6 +272,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	} else {
 		m.logger.Printf("starting qemu")
 	}
+	stats.MarkBootStarted(time.Now())
 	qemuSpec, err := buildLaunchQEMUSpec(manifest, cid, resumeState != nil)
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -326,6 +332,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 
 	if options.SSH {
 		m.logger.Printf("starting ssh session")
+		stats.MarkSSHStarted(time.Now())
 		session, err := m.startManagedProcess(buildSSHSpec(manifest, cid, remoteCommand, true))
 		if err != nil {
 			return &stageError{Stage: "active session", Err: err}

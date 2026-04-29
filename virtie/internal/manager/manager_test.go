@@ -252,12 +252,13 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		},
 	}
 
+	var logOutput bytes.Buffer
 	manager := &manager{
 		locker:            &fileLocker{},
 		runner:            runner,
 		socketWaiter:      waiter,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            log.New(io.Discard, "", 0),
+		logger:            log.New(&logOutput, "", 0),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -335,6 +336,14 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
 		t.Fatalf("expected launch to clear stale suspend state, stat err: %v", err)
 	}
+	assertLaunchStatsLog(t, logOutput.String(), []string{
+		"started_to_boot=",
+		"boot_to_ssh=",
+		"ssh_to_completed=",
+		"total=",
+	}, []string{
+		"boot_to_completed=",
+	})
 }
 
 func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
@@ -393,6 +402,14 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	if !strings.Contains(logOutput.String(), "ssh ready; connect with: /bin/ssh agent@vsock/3") {
 		t.Fatalf("expected out-of-band ssh hint, got %q", logOutput.String())
 	}
+	assertLaunchStatsLog(t, logOutput.String(), []string{
+		"started_to_boot=",
+		"boot_to_completed=",
+		"total=",
+	}, []string{
+		"boot_to_ssh=",
+		"ssh_to_completed=",
+	})
 	if qmpClient.quitCalls != 0 {
 		t.Fatalf("expected natural qemu exit without qmp quit, got %d calls", qmpClient.quitCalls)
 	}
@@ -1875,6 +1892,24 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	}
 	if !runner.processGroups["virtiofsd[workspace]"] {
 		t.Fatal("expected virtiofs daemon to run in its own process group")
+	}
+}
+
+func assertLaunchStatsLog(t *testing.T, logs string, want []string, unwanted []string) {
+	t.Helper()
+
+	if !strings.Contains(logs, "stats: ") {
+		t.Fatalf("expected launch stats log, got %q", logs)
+	}
+	for _, field := range want {
+		if !strings.Contains(logs, field) {
+			t.Fatalf("expected launch stats field %q in logs %q", field, logs)
+		}
+	}
+	for _, field := range unwanted {
+		if strings.Contains(logs, field) {
+			t.Fatalf("unexpected launch stats field %q in logs %q", field, logs)
+		}
 	}
 }
 

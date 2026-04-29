@@ -55,6 +55,7 @@ Acceptance criteria:
 - [x] Add disk-backed suspend/resume commands and saved suspend state records under `paths.workingDir/.virtie`.
 - [x] Route suspend through a caught `SIGTSTP` control signal so the launch process saves state through its owned QMP session, then exits.
 - [x] Replace the separate `virtie resume` command with `virtie launch --resume=no|auto|force` so fresh and restored sessions share one lifecycle.
+- [x] Print launch lifecycle stats after shutdown, including start-to-boot, boot-to-SSH-session when attached, shutdown completion, and total duration.
 - [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH retry behavior, and launch/teardown ordering with Go tests.
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
 - [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface, including saved suspend/resume coverage.
@@ -114,6 +115,7 @@ Acceptance criteria:
   - `virtie launch --resume=force` requires saved suspend state and errors if it is absent or invalid.
   - `virtie suspend` validates the launch PID and sends `SIGTSTP` as an internal control signal; `virtie launch` catches it, saves migration state through the existing QMP session, then exits.
   - Live pause/resume, terminal job-control suspend, and `SIGCONT` resume are not supported.
+  - `virtie launch` logs final shutdown stats to stderr after teardown and cleanup complete; non-SSH launches omit the SSH-session interval.
   - When `qemu.devices.balloon` is present, `virtie` resolves the balloon QOM path, enables `guest-stats-polling-interval`, reads `guest-stats` plus `query-balloon`, and adjusts the logical guest memory size within configured or synthesized bounds.
   - If the manifest omits `qemu.devices.balloon.controller`, `virtie` defaults to `maxActualMiB = qemu.memory.sizeMiB`, an idle reclaim target of 50% of that max, a grow threshold at 25% available memory, and the existing step, poll, and reclaim-holdoff defaults.
   - Notification hooks are best-effort and never fail launch, suspend, resume, teardown, or balloon control.
