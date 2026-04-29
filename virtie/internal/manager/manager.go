@@ -1,9 +1,9 @@
 // Package manager runs the host-side sandbox launcher lifecycle.
 //
 // It takes a validated launch manifest, prepares runtime directories and
-// volume images, starts the supporting host processes, waits for QMP and SSH
-// readiness, and then either hands control to the interactive SSH session or
-// keeps the VM lifecycle in the foreground for out-of-band SSH. Teardown also
+// volume images, starts the supporting host processes, waits for QMP readiness,
+// and then either hands control to the interactive SSH session or keeps the VM
+// lifecycle in the foreground for out-of-band SSH. Teardown also
 // lives here: optional feature tasks stop first, then any active session and
 // helper daemons are shut down, and QEMU is asked to exit through QMP before
 // any forced process cleanup is used.
@@ -32,9 +32,9 @@ const (
 	defaultSSHRetryDelay      = 1 * time.Second
 	defaultShutdownDelay      = 15 * time.Second
 	defaultMigrationPollDelay = 100 * time.Millisecond
+	sshFailureOutputLimit     = 64 * 1024
 )
 
-var sshProbeCommand = []string{"true"}
 var errSavedSuspendExit = errors.New("saved suspend requested")
 
 type ResumeMode string
@@ -313,11 +313,6 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 	}
 
-	m.logger.Printf("waiting for ssh readiness")
-	if err := m.waitForSSH(launchCtx, suspendRequests, suspendHandler, started...); err != nil {
-		return err
-	}
-
 	featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
 		logger:     m.logger,
 		qmpTimeout: m.effectiveQMPCommandTimeout(),
@@ -325,26 +320,43 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}, manifest, qmpClient)
 
 	if options.SSH {
-		m.logger.Printf("starting ssh session")
-		session, err := m.startManagedProcess(buildSSHSpec(manifest, cid, remoteCommand, true))
-		if err != nil {
-			return &stageError{Stage: "active session", Err: err}
-		}
-		started = append(started, session)
+		for {
+			m.logger.Printf("starting ssh session")
+			spec := buildSSHSpec(manifest, cid, remoteCommand)
+			var stderr cappedBuffer
+			stderr.limit = sshFailureOutputLimit
+			spec.Stderr = io.MultiWriter(os.Stderr, &stderr)
 
-		if resumeState != nil {
-			if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
+			session, err := m.startManagedProcess(spec)
+			if err != nil {
+				return &stageError{Stage: "active session", Err: err}
 			}
-			if err := removeSuspendState(manifest); err != nil {
-				return &stageError{Stage: "restore", Err: err}
-			}
-		}
+			started = append(started, session)
 
-		if err := m.waitForSession(launchCtx, session, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
-			return err
+			if err := m.waitForSession(launchCtx, session, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
+				if sshTransientStartupFailure(err, stderr.String()) {
+					started = started[:len(started)-1]
+					select {
+					case <-time.After(m.sshRetryDelay):
+						continue
+					case <-suspendRequests:
+						return suspendHandler.saveAndExit(launchCtx)
+					case <-launchCtx.Done():
+						return &stageError{Stage: "active session", Err: launchCtx.Err()}
+					}
+				}
+				return err
+			}
+			if resumeState != nil {
+				if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
+				}
+				if err := removeSuspendState(manifest); err != nil {
+					return &stageError{Stage: "restore", Err: err}
+				}
+			}
+			return nil
 		}
-		return nil
 	}
 
 	if resumeState != nil {
@@ -356,7 +368,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 	}
 
-	m.logger.Printf("ssh ready; connect with: %s", buildSSHCommandHint(manifest, cid))
+	m.logger.Printf("connect with: %s", buildSSHCommandHint(manifest, cid))
 	if err := m.waitForVM(launchCtx, qemu, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
 		return err
 	}
@@ -701,86 +713,43 @@ func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 	return h.err
 }
 
-func (m *manager) waitForSSH(ctx context.Context, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) error {
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	loggedPermissionHint := false
-
-	for {
-		select {
-		case <-suspendRequests:
-			return suspendHandler.saveAndExit(ctx)
-		case <-ctx.Done():
-			return &stageError{Stage: "ssh readiness", Err: ctx.Err()}
-		case <-timer.C:
-		}
-
-		if err := firstUnexpectedExit("ssh readiness", watchers...); err != nil {
-			return err
-		}
-
-		spec := buildSSHSpec(suspendHandler.manifest, suspendHandler.cid, sshProbeCommand, false)
-		var stderr bytes.Buffer
-		spec.Stderr = &stderr
-
-		probe, err := m.startManagedProcess(spec)
-		if err != nil {
-			return &stageError{Stage: "ssh readiness", Err: err}
-		}
-
-		ready, err := m.waitForSSHProbe(ctx, probe, suspendRequests, suspendHandler, watchers...)
-		if err != nil {
-			return err
-		}
-		if ready {
-			return nil
-		}
-		if !loggedPermissionHint && sshPermissionDenied(stderr.String()) {
-			m.logger.Printf("ssh readiness failed with Permission denied (publickey); ensure SSH keys are unlocked in ssh-agent with ssh-add")
-			loggedPermissionHint = true
-		}
-
-		timer.Reset(m.sshRetryDelay)
-	}
+type cappedBuffer struct {
+	bytes.Buffer
+	limit int
 }
 
-func (m *manager) waitForSSHProbe(ctx context.Context, probe *managedProcess, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) (bool, error) {
-	ticker := time.NewTicker(defaultSocketPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case err := <-probe.done:
-			return err == nil, nil
-		case <-suspendRequests:
-			abortErr := m.killProcess(probe)
-			saveErr := suspendHandler.saveAndExit(ctx)
-			if saveErr != nil {
-				return false, errors.Join(saveErr, abortErr)
-			}
-			if abortErr != nil {
-				return false, errors.Join(errSavedSuspendExit, abortErr)
-			}
-			return false, errSavedSuspendExit
-		case <-ticker.C:
-			if err := firstUnexpectedExit("ssh readiness", watchers...); err != nil {
-				if abortErr := m.killProcess(probe); abortErr != nil {
-					return false, errors.Join(err, abortErr)
-				}
-				return false, err
-			}
-		case <-ctx.Done():
-			stageErr := &stageError{Stage: "ssh readiness", Err: ctx.Err()}
-			if abortErr := m.killProcess(probe); abortErr != nil {
-				return false, errors.Join(stageErr, abortErr)
-			}
-			return false, stageErr
-		}
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if b.limit <= b.Len() {
+		return n, nil
 	}
+	remaining := b.limit - b.Len()
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	_, _ = b.Buffer.Write(p)
+	return n, nil
 }
 
-func sshPermissionDenied(stderr string) bool {
-	return strings.Contains(stderr, "Permission denied (publickey")
+func sshTransientStartupFailure(err error, stderr string) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error() + "\n" + stderr)
+	transientMessages := []string{
+		"connection refused",
+		"connection timed out",
+		"no route to host",
+		"network is unreachable",
+		"connection reset",
+		"connection closed",
+	}
+	for _, transient := range transientMessages {
+		if strings.Contains(message, transient) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *manager) waitForSession(ctx context.Context, session *managedProcess, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) error {
@@ -1039,32 +1008,12 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 	return nil
 }
 
-func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, interactive bool) processSpec {
+func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) processSpec {
 	argv := append([]string(nil), manifest.SSH.Argv...)
 	path := argv[0]
 	args := append([]string(nil), argv[1:]...)
-	sshModeArgs := []string{}
-	stdin := io.Reader(nil)
-	stdout := io.Writer(io.Discard)
-	stderr := io.Writer(io.Discard)
 
-	if !interactive {
-		sshModeArgs = append(
-			sshModeArgs,
-			"-o", "BatchMode=yes",
-			"-o", "ConnectTimeout=1",
-		)
-	} else {
-		sshModeArgs = append(sshModeArgs, "-tt")
-		stdin = os.Stdin
-		stdout = os.Stdout
-		stderr = os.Stderr
-	}
-
-	args = append(sshModeArgs, args...)
-	if !interactive {
-		args = append(args, "-o", "LogLevel=ERROR")
-	}
+	args = append([]string{"-tt"}, args...)
 	args = append(args, manifest.SSHDestination(cid))
 	if len(remoteCommand) > 0 {
 		args = append(args, encodeRemoteCommand(remoteCommand))
@@ -1075,9 +1024,9 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string, 
 		Path:   path,
 		Args:   args,
 		Dir:    manifest.Paths.WorkingDir,
-		Stdin:  stdin,
-		Stdout: stdout,
-		Stderr: stderr,
+		Stdin:  os.Stdin,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
 	}
 }
 

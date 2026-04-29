@@ -27,7 +27,7 @@ func TestBuildQEMUSpecAppendsBalloonFeatureArgs(t *testing.T) {
 	}
 }
 
-func TestManagerLaunchStartsBalloonControllerAfterSSHReadinessAndStopsItBeforeQuit(t *testing.T) {
+func TestManagerLaunchStartsBalloonControllerAndStopsItBeforeQuit(t *testing.T) {
 	tmpDir := t.TempDir()
 	manifest := validManifestWithBalloon(tmpDir)
 	manifest.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
@@ -44,17 +44,11 @@ func TestManagerLaunchStartsBalloonControllerAfterSSHReadinessAndStopsItBeforeQu
 		cancelDelay: 2 * time.Second,
 	}
 
-	var enableProbes int
 	var quitAt time.Time
 	qmpClient := (&fakeQMPClient{
 		onQuit: func() {
 			quitAt = time.Now()
 			runner.exitQEMU(nil)
-		},
-		onEnableBalloonStats: func() {
-			runner.mu.Lock()
-			enableProbes = runner.probes
-			runner.mu.Unlock()
 		},
 		readBalloonStats: map[string]int64{
 			"stat-available-memory": 900 * testMiB,
@@ -95,9 +89,6 @@ func TestManagerLaunchStartsBalloonControllerAfterSSHReadinessAndStopsItBeforeQu
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	if enableProbes < 3 {
-		t.Fatalf("expected balloon controller to start only after ssh readiness succeeded, got probe count %d", enableProbes)
-	}
 	if got, want := qmpClient.quitCount(), 1; got != want {
 		t.Fatalf("expected qmp quit to be called once, got %d", got)
 	}
@@ -158,7 +149,7 @@ func TestManagerLaunchDoesNotAbortOnBalloonControllerFailure(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	if got, want := len(runner.sshArgs), 4; got != want {
+	if got, want := len(runner.sshArgs), 1; got != want {
 		t.Fatalf("expected ssh session to start despite balloon controller failure, got %d ssh starts", got)
 	}
 	if got, want := qmpClient.quitCount(), 1; got != want {

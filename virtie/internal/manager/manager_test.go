@@ -104,7 +104,7 @@ func TestGuestInstallDirectoryArgs(t *testing.T) {
 	}
 }
 
-func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
+func TestBuildSSHSpecBuildsInteractiveSession(t *testing.T) {
 	manifest := &manifest.Manifest{
 		Paths: manifest.Paths{
 			WorkingDir: "/tmp/work",
@@ -120,26 +120,8 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 		},
 	}
 
-	probe := buildSSHSpec(manifest, 10, []string{"true"}, false)
-	wantProbeArgs := []string{
-		"-o",
-		"BatchMode=yes",
-		"-o",
-		"ConnectTimeout=1",
-		"-q",
-		"-o",
-		"StrictHostKeyChecking=no",
-		"-o",
-		"LogLevel=ERROR",
-		"agent@vsock/10",
-		"true",
-	}
-	if !reflect.DeepEqual(probe.Args, wantProbeArgs) {
-		t.Fatalf("unexpected ssh probe args: got %v want %v", probe.Args, wantProbeArgs)
-	}
-
-	session := buildSSHSpec(manifest, 10, []string{"bash", "-lc", "echo hi"}, true)
-	wantSessionArgs := []string{
+	session := buildSSHSpec(manifest, 10, []string{"bash", "-lc", "echo hi"})
+	wantArgs := []string{
 		"-tt",
 		"-q",
 		"-o",
@@ -147,8 +129,8 @@ func TestBuildSSHSpecPrependsModeSpecificOptions(t *testing.T) {
 		"agent@vsock/10",
 		"bash -lc 'echo hi'",
 	}
-	if !reflect.DeepEqual(session.Args, wantSessionArgs) {
-		t.Fatalf("unexpected ssh session args: got %v want %v", session.Args, wantSessionArgs)
+	if !reflect.DeepEqual(session.Args, wantArgs) {
+		t.Fatalf("unexpected ssh session args: got %v want %v", session.Args, wantArgs)
 	}
 
 	if session.Stdin != os.Stdin || session.Stdout != os.Stdout || session.Stderr != os.Stderr {
@@ -165,13 +147,13 @@ func TestBuildSSHSpecShellQuotesRemoteCommand(t *testing.T) {
 		},
 	}
 
-	session := buildSSHSpec(manifest, 10, []string{"printf", "%s\n", "it's $HOME", ""}, true)
+	session := buildSSHSpec(manifest, 10, []string{"printf", "%s\n", "it's $HOME", ""})
 	want := "printf '%s\n' 'it'\"'\"'s $HOME' ''"
 	if got := session.Args[len(session.Args)-1]; got != want {
 		t.Fatalf("unexpected quoted remote command: got %q want %q", got, want)
 	}
 
-	configuredCommand := buildSSHSpec(manifest, 10, []string{"tmux new-session -A -s codex \"npx @openai/codex --yolo\""}, true)
+	configuredCommand := buildSSHSpec(manifest, 10, []string{"tmux new-session -A -s codex \"npx @openai/codex --yolo\""})
 	wantConfigured := "tmux new-session -A -s codex \"npx @openai/codex --yolo\""
 	if got := configuredCommand.Args[len(configuredCommand.Args)-1]; got != wantConfigured {
 		t.Fatalf("unexpected configured remote command: got %q want %q", got, wantConfigured)
@@ -270,7 +252,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	wantStarts := []string{"virtiofsd[ro-store]", "virtiofsd[workspace]", "qemu", "ssh", "ssh", "ssh", "ssh"}
+	wantStarts := []string{"virtiofsd[ro-store]", "virtiofsd[workspace]", "qemu", "ssh"}
 	if !reflect.DeepEqual(runner.starts, wantStarts) {
 		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
 	}
@@ -298,12 +280,15 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("unexpected qemu env: got %v want no extra env", got)
 	}
 
-	if got := len(runner.sshArgs); got != 4 {
-		t.Fatalf("unexpected ssh attempts: got %d want 4", got)
+	if got := len(runner.sshArgs); got != 1 {
+		t.Fatalf("unexpected ssh attempts: got %d want 1", got)
 	}
 	for i, args := range runner.sshArgs {
 		if !containsString(args, "agent@vsock/3") {
 			t.Fatalf("ssh attempt %d missing runtime destination: %v", i, args)
+		}
+		if containsString(args, "true") {
+			t.Fatalf("autoconnect attempt %d unexpectedly used readiness probe: %v", i, args)
 		}
 	}
 
@@ -363,16 +348,8 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	exitReadyQEMU := make(chan struct{})
 	go func() {
 		defer close(exitReadyQEMU)
-		for {
-			runner.mu.Lock()
-			probes := len(runner.sshArgs)
-			runner.mu.Unlock()
-			if probes >= 3 {
-				runner.exitQEMU(nil)
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
+		time.Sleep(10 * time.Millisecond)
+		runner.exitQEMU(nil)
 	}()
 
 	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo}); err != nil {
@@ -380,17 +357,17 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 	<-exitReadyQEMU
 
-	wantStarts := []string{"virtiofsd[workspace]", "qemu", "ssh", "ssh", "ssh"}
+	wantStarts := []string{"virtiofsd[workspace]", "qemu"}
 	if !reflect.DeepEqual(runner.starts, wantStarts) {
 		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
 	}
-	if got := len(runner.sshArgs); got != 3 {
-		t.Fatalf("expected only ssh readiness probes, got %d ssh starts", got)
+	if got := len(runner.sshArgs); got != 0 {
+		t.Fatalf("expected no ssh starts, got %d", got)
 	}
 	if strings.Contains(logOutput.String(), "starting ssh session") {
 		t.Fatalf("unexpected interactive ssh session log: %q", logOutput.String())
 	}
-	if !strings.Contains(logOutput.String(), "ssh ready; connect with: /bin/ssh agent@vsock/3") {
+	if !strings.Contains(logOutput.String(), "connect with: /bin/ssh agent@vsock/3") {
 		t.Fatalf("expected out-of-band ssh hint, got %q", logOutput.String())
 	}
 	if qmpClient.quitCalls != 0 {
@@ -398,7 +375,50 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 }
 
-func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
+func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &fakeRunner{
+		transientSSHFailures:      2,
+		finishInteractiveSSH:      true,
+		finishInteractiveSSHDelay: 2 * defaultSocketPollInterval,
+	}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            log.New(io.Discard, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true}); err != nil {
+		t.Fatalf("launch with ssh: %v", err)
+	}
+	if got, want := len(runner.sshArgs), 3; got != want {
+		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
+	}
+	for i, args := range runner.sshArgs {
+		if containsString(args, "true") {
+			t.Fatalf("autoconnect retry %d unexpectedly used readiness probe: %v", i, args)
+		}
+	}
+}
+
+func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
@@ -524,7 +544,7 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHReadiness(t *testing.T) {
 		t.Fatalf("expected guest agent and ssh events, got %v", events)
 	}
 	if !(ping < testInline && testInline < installInline && installInline < openInline && openInline < closeInline && closeInline < chownInline && chownInline < chmodInline && chmodInline < testHost && testHost < installHost && installHost < openHost && openHost < closeHost && closeHost < firstSSH) {
-		t.Fatalf("expected guest writes before ssh readiness, got events %v", events)
+		t.Fatalf("expected guest writes before ssh session, got events %v", events)
 	}
 }
 
@@ -656,7 +676,7 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 		t.Fatalf("unexpected guest execs after chown failure: got %#v want %#v", got, want)
 	}
 	if len(runner.sshArgs) != 0 {
-		t.Fatalf("expected chown failure before ssh readiness, got ssh starts %v", runner.sshArgs)
+		t.Fatalf("expected chown failure before ssh starts, got ssh starts %v", runner.sshArgs)
 	}
 }
 
@@ -727,7 +747,7 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 		t.Fatalf("expected no guest writes after install failure, got %#v", guestAgent.writes)
 	}
 	if len(runner.sshArgs) != 0 {
-		t.Fatalf("expected install failure before ssh readiness, got ssh starts %v", runner.sshArgs)
+		t.Fatalf("expected install failure before ssh starts, got ssh starts %v", runner.sshArgs)
 	}
 }
 
@@ -787,7 +807,7 @@ func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
 		}
 	}
 	if len(runner.sshArgs) != 0 {
-		t.Fatalf("expected chmod failure before ssh readiness, got ssh starts %v", runner.sshArgs)
+		t.Fatalf("expected chmod failure before ssh starts, got ssh starts %v", runner.sshArgs)
 	}
 }
 
@@ -866,7 +886,7 @@ func TestManagerWriteGuestFileClosesAfterWriteFailure(t *testing.T) {
 	}
 }
 
-func TestManagerLaunchSavesQueuedSuspendDuringSSHReadiness(t *testing.T) {
+func TestManagerLaunchWithoutSSHSavesQueuedSuspend(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
@@ -876,7 +896,7 @@ func TestManagerLaunchSavesQueuedSuspendDuringSSHReadiness(t *testing.T) {
 	signalCh := make(chan os.Signal, 8)
 	runner := &fakeRunner{
 		onStart: func(spec processSpec) {
-			if spec.Name == "ssh" && containsString(spec.Args, "true") {
+			if spec.Name == "qemu" {
 				signalCh <- syscall.SIGTSTP
 			}
 		},
@@ -902,7 +922,7 @@ func TestManagerLaunchSavesQueuedSuspendDuringSSHReadiness(t *testing.T) {
 		signals:             signalCh,
 	}
 
-	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: false}); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
 
@@ -916,8 +936,8 @@ func TestManagerLaunchSavesQueuedSuspendDuringSSHReadiness(t *testing.T) {
 	if qmpClient.migrateCalls != 1 {
 		t.Fatalf("expected one migration over launch-owned qmp, got %d", qmpClient.migrateCalls)
 	}
-	if len(runner.sshArgs) != 1 {
-		t.Fatalf("expected suspend during first ssh readiness probe, got %d ssh starts", len(runner.sshArgs))
+	if len(runner.sshArgs) != 0 {
+		t.Fatalf("expected no ssh starts, got %d", len(runner.sshArgs))
 	}
 	for _, signal := range runner.processSignals {
 		if signal.sig == syscall.SIGTSTP || signal.sig == syscall.SIGSTOP || signal.sig == syscall.SIGCONT {
@@ -977,8 +997,8 @@ func TestManagerLaunchHandlesDuplicateSuspendDuringActiveSessionWithoutForwardin
 	if qmpClient.migrateCalls != 1 {
 		t.Fatalf("expected one migration over launch-owned qmp, got %d", qmpClient.migrateCalls)
 	}
-	if len(runner.sshArgs) != 4 {
-		t.Fatalf("expected active session after three probes, got %d ssh starts", len(runner.sshArgs))
+	if len(runner.sshArgs) != 1 {
+		t.Fatalf("expected one active ssh session, got %d ssh starts", len(runner.sshArgs))
 	}
 	for _, signal := range runner.processSignals {
 		if signal.sig == syscall.SIGTSTP || signal.sig == syscall.SIGSTOP || signal.sig == syscall.SIGCONT {
@@ -1498,7 +1518,7 @@ func TestManagerLaunchResumeForceSavesSuspendDuringRestoredSession(t *testing.T)
 	}
 }
 
-func TestManagerLaunchResumeCancellationDuringSSHReadinessIsNotSuspend(t *testing.T) {
+func TestManagerLaunchResumeCancellationDuringActiveSessionIsNotSuspend(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
@@ -1521,9 +1541,8 @@ func TestManagerLaunchResumeCancellationDuringSSHReadinessIsNotSuspend(t *testin
 
 	ctx, cancel := context.WithCancel(context.Background())
 	runner := &fakeRunner{
-		blockSSHProbes: true,
 		onStart: func(spec processSpec) {
-			if spec.Name == "ssh" && containsString(spec.Args, "true") {
+			if spec.Name == "ssh" && !containsString(spec.Args, "true") {
 				cancel()
 			}
 		},
@@ -1644,103 +1663,6 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("unexpected wait for session error: %v", err)
-	}
-}
-
-func TestWaitForSSHAbortsInFlightProbeOnCancellation(t *testing.T) {
-	runner := &blockingSSHRunner{started: make(chan *blockingSSHProcess, 1)}
-	manager := &manager{
-		runner:        runner,
-		logger:        log.New(io.Discard, "", 0),
-		sshRetryDelay: time.Second,
-	}
-
-	manifest := &manifest.Manifest{
-		Paths: manifest.Paths{
-			WorkingDir: t.TempDir(),
-		},
-		SSH: manifest.SSH{
-			Argv: []string{"/bin/ssh"},
-			User: "agent",
-		},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	suspendHandler := newLaunchSuspendHandler(manager, manifest, "", nil, 10, nil)
-	go func() {
-		errCh <- manager.waitForSSH(ctx, nil, suspendHandler)
-	}()
-
-	probe := <-runner.started
-	cancel()
-
-	select {
-	case err := <-errCh:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("expected context cancellation, got %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("waitForSSH did not return after cancellation")
-	}
-
-	if got, want := probe.killCalls(), 1; got != want {
-		t.Fatalf("unexpected probe kills: got %d want %d", got, want)
-	}
-}
-
-func TestWaitForSSHLogsPermissionDeniedHint(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	runner := &permissionDeniedThenCancelSSHRunner{cancel: cancel}
-	var logOutput bytes.Buffer
-	manager := &manager{
-		runner:        runner,
-		logger:        log.New(&logOutput, "", 0),
-		sshRetryDelay: 0,
-	}
-
-	manifest := &manifest.Manifest{
-		Paths: manifest.Paths{
-			WorkingDir: t.TempDir(),
-		},
-		SSH: manifest.SSH{
-			Argv: []string{"/bin/ssh"},
-			User: "agent",
-		},
-	}
-
-	defer cancel()
-
-	suspendHandler := newLaunchSuspendHandler(manager, manifest, "", nil, 10, nil)
-	if err := manager.waitForSSH(ctx, nil, suspendHandler); !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context cancellation, got %v", err)
-	}
-
-	logs := logOutput.String()
-	if !strings.Contains(logs, "Permission denied (publickey)") {
-		t.Fatalf("expected permission denied hint in logs, got %q", logs)
-	}
-	if !strings.Contains(logs, "ssh-add") {
-		t.Fatalf("expected ssh-add hint in logs, got %q", logs)
-	}
-}
-
-func TestSSHPermissionDeniedMatchesPublicKeyAuthFailures(t *testing.T) {
-	tests := []struct {
-		stderr string
-		want   bool
-	}{
-		{stderr: "agent@vsock/10: Permission denied (publickey).\n", want: true},
-		{stderr: "ssh: connect to host vsock/10 port 22: Connection refused\n", want: false},
-		{stderr: "Connection timed out during banner exchange\n", want: false},
-	}
-
-	for _, tt := range tests {
-		if got := sshPermissionDenied(tt.stderr); got != tt.want {
-			t.Fatalf("sshPermissionDenied(%q) = %v, want %v", tt.stderr, got, tt.want)
-		}
 	}
 }
 
@@ -1990,23 +1912,24 @@ func validManifestWithBalloon(workingDir string) *manifest.Manifest {
 }
 
 type fakeRunner struct {
-	mu                   sync.Mutex
-	starts               []string
-	signals              []string
-	processSignals       []processSignal
-	sshArgs              [][]string
-	qemuArgs             []string
-	qemuEnv              []string
-	virtiofsEnv          map[string][]string
-	processGroups        map[string]bool
-	probes               int
-	cancel               context.CancelFunc
-	cancelDelay          time.Duration
-	failInteractiveSSH   bool
-	finishInteractiveSSH bool
-	blockSSHProbes       bool
-	qemu                 *fakeProcess
-	onStart              func(processSpec)
+	mu                        sync.Mutex
+	starts                    []string
+	signals                   []string
+	processSignals            []processSignal
+	sshArgs                   [][]string
+	qemuArgs                  []string
+	qemuEnv                   []string
+	virtiofsEnv               map[string][]string
+	processGroups             map[string]bool
+	interactiveStarts         int
+	cancel                    context.CancelFunc
+	cancelDelay               time.Duration
+	failInteractiveSSH        bool
+	finishInteractiveSSH      bool
+	finishInteractiveSSHDelay time.Duration
+	transientSSHFailures      int
+	qemu                      *fakeProcess
+	onStart                   func(processSpec)
 }
 
 func (r *fakeRunner) Start(spec processSpec) (process, error) {
@@ -2031,33 +1954,33 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		return process, nil
 	case "ssh":
 		r.sshArgs = append(r.sshArgs, append([]string(nil), spec.Args...))
-		r.probes++
-		if r.blockSSHProbes && containsString(spec.Args, "true") {
-			return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
-		}
-		if r.probes < 3 {
+		r.interactiveStarts++
+		if r.interactiveStarts <= r.transientSSHFailures {
+			if spec.Stderr != nil {
+				_, _ = io.WriteString(spec.Stderr, "ssh: connect to host vsock/3 port 22: Connection refused\n")
+			}
 			return &fakeProcess{
 				name:   spec.Name,
 				runner: r,
-				done:   closedErrorChannel(errors.New("ssh not ready")),
-			}, nil
-		}
-		if r.probes == 3 {
-			return &fakeProcess{
-				name:   spec.Name,
-				runner: r,
-				done:   closedErrorChannel(nil),
+				done:   closedErrorChannel(errors.New("exit status 255")),
 			}, nil
 		}
 		if r.failInteractiveSSH {
 			return nil, errors.New("session start failed")
 		}
 		if r.finishInteractiveSSH {
-			return &fakeProcess{
+			process := &fakeProcess{
 				name:   spec.Name,
 				runner: r,
-				done:   closedErrorChannel(nil),
-			}, nil
+				done:   make(chan error, 1),
+			}
+			go func() {
+				if r.finishInteractiveSSHDelay > 0 {
+					time.Sleep(r.finishInteractiveSSHDelay)
+				}
+				process.complete(nil)
+			}()
+			return process, nil
 		}
 
 		process := &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}
@@ -2711,92 +2634,6 @@ func closedErrorChannel(err error) chan error {
 	ch <- err
 	close(ch)
 	return ch
-}
-
-type blockingSSHRunner struct {
-	started chan *blockingSSHProcess
-}
-
-func (r *blockingSSHRunner) Start(spec processSpec) (process, error) {
-	if spec.Name != "ssh" {
-		return nil, errors.New("unexpected process")
-	}
-
-	process := &blockingSSHProcess{done: make(chan error, 1)}
-	r.started <- process
-	return process, nil
-}
-
-type blockingSSHProcess struct {
-	mu        sync.Mutex
-	done      chan error
-	killCount int
-}
-
-func (p *blockingSSHProcess) Wait() error {
-	err, ok := <-p.done
-	if !ok {
-		return nil
-	}
-	return err
-}
-
-func (p *blockingSSHProcess) Signal(sig os.Signal) error {
-	return p.Kill()
-}
-
-func (p *blockingSSHProcess) Kill() error {
-	p.mu.Lock()
-	p.killCount++
-	p.mu.Unlock()
-
-	select {
-	case p.done <- nil:
-	default:
-	}
-	close(p.done)
-	return nil
-}
-
-func (p *blockingSSHProcess) PID() int {
-	return 1
-}
-
-func (p *blockingSSHProcess) killCalls() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.killCount
-}
-
-type permissionDeniedThenCancelSSHRunner struct {
-	mu         sync.Mutex
-	startCount int
-	cancel     context.CancelFunc
-}
-
-func (r *permissionDeniedThenCancelSSHRunner) Start(spec processSpec) (process, error) {
-	if spec.Name != "ssh" {
-		return nil, errors.New("unexpected process")
-	}
-
-	r.mu.Lock()
-	r.startCount++
-	startCount := r.startCount
-	r.mu.Unlock()
-
-	if startCount == 1 {
-		if spec.Stderr != nil {
-			_, _ = io.WriteString(spec.Stderr, "agent@vsock/10: Permission denied (publickey).\n")
-		}
-		return &fakeProcess{
-			name: spec.Name,
-			done: closedErrorChannel(errors.New("exit status 255")),
-		}, nil
-	}
-
-	process := &blockingSSHProcess{done: make(chan error, 1)}
-	r.cancel()
-	return process, nil
 }
 
 func containsString(values []string, needle string) bool {
