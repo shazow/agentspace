@@ -501,7 +501,7 @@ func TestManagerLaunchPrintsGuestInfoOnSIGUSR1(t *testing.T) {
 	guestAgent := &fakeGuestAgentClient{
 		execStatuses: []guestExecStatus{{
 			Exited:  true,
-			OutData: "ICBQSUQgIFBQSUQgU1RBVCBDT01NIEFSR1MKICAgMSAgICAgMCBTcyAgIGluaXQgaW5pdAo=",
+			OutData: "cm9vdCB6c2gKYWdlbnQgdmlydGllIGxhdW5jaCAtLXNzaApyb290IGluaXQK",
 		}},
 		record: func(event string) {
 			if event == "guest-ps" {
@@ -537,12 +537,15 @@ func TestManagerLaunchPrintsGuestInfoOnSIGUSR1(t *testing.T) {
 		t.Fatalf("unexpected guest exec count: got %d want %d", got, want)
 	}
 	exec := guestAgent.execs[0]
-	if exec.path != guestPSPath || !reflect.DeepEqual(exec.args, []string{"-eo", "pid,ppid,stat,comm,args"}) || !exec.captureOutput {
+	if exec.path != guestPSPath || !reflect.DeepEqual(exec.args, []string{"-eo", "user=,comm="}) || !exec.captureOutput {
 		t.Fatalf("unexpected ps exec: %#v", exec)
 	}
 	logs := logOutput.String()
-	if !strings.Contains(logs, "guest info\n") || !strings.Contains(logs, "PID  PPID STAT COMM ARGS") || !strings.Contains(logs, "init init") {
+	if !strings.Contains(logs, "guest info\nUSER COMMAND\nagent virtie\nroot init\nroot zsh\n") {
 		t.Fatalf("expected guest process list in logs, got %q", logs)
+	}
+	if strings.Contains(logs, "--ssh") {
+		t.Fatalf("expected guest process list to omit command arguments, got %q", logs)
 	}
 }
 
