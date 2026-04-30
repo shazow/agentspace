@@ -10,8 +10,5 @@ let
   };
 in
 import ./virtie-manifest.nix args
-// import ./virtie-launch.nix args
 // import ./virtie-e2e.nix args
-// import ./extra-modules.nix args
-// import ./home-manager.nix args
-// import ./consumer-surface.nix args
+// import ./consumer-workflow.nix args

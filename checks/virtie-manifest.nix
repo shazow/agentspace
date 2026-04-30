@@ -13,11 +13,29 @@ let
     persistence.homeImage = null;
   };
 
-  vmVirtieBalloonEnabled = mkSandbox {
+  vmVirtieFeatureRich = mkSandbox {
     ssh.authorizedKeys = [ testPublicKey ];
     ssh.identityFile = ".agentspace-test/id_ed25519";
     persistence.homeImage = null;
     balloon = true;
+    writeFiles = {
+      "/etc/agentspace-inline" = {
+        chown = "agent:users";
+        content = "aGVsbG8=";
+        mode = "0640";
+      };
+      "/etc/agentspace-host" = {
+        path = ".agentspace-test/host-file";
+      };
+    };
+    notifications = {
+      command = notificationCommand;
+      states = [
+        "runtime:resume"
+        "runtime:suspend"
+        "balloon:resize"
+      ];
+    };
   };
 
   vmVirtieBalloonDisabled = mkSandbox {
@@ -35,44 +53,12 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
-  vmVirtieWriteFiles = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
-    persistence.homeImage = null;
-    writeFiles = {
-      "/etc/agentspace-inline" = {
-        chown = "agent:users";
-        content = "aGVsbG8=";
-        mode = "0640";
-      };
-      "/etc/agentspace-host" = {
-        path = ".agentspace-test/host-file";
-      };
-    };
-  };
-
-  vmVirtieNotifications = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
-    persistence.homeImage = null;
-    notifications = {
-      command = notificationCommand;
-      states = [
-        "runtime:resume"
-        "runtime:suspend"
-        "balloon:resize"
-      ];
-    };
-  };
-
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
-  enabledBalloonManifest = vmVirtieBalloonEnabled.config.agentspace.sandbox.launch.virtieManifestData;
+  featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
-  writeFilesManifest = vmVirtieWriteFiles.config.agentspace.sandbox.launch.virtieManifestData;
-  notificationsManifest = vmVirtieNotifications.config.agentspace.sandbox.launch.virtieManifestData;
 
   _ =
     assert manifest.qemu.binaryPath != "";
@@ -113,9 +99,9 @@ let
     true;
 
   _balloon =
-    assert enabledBalloonManifest.qemu.devices ? balloon;
-    assert enabledBalloonManifest.qemu.devices.balloon.id == "balloon0";
-    assert !(enabledBalloonManifest.qemu.devices.balloon ? controller);
+    assert featureRichManifest.qemu.devices ? balloon;
+    assert featureRichManifest.qemu.devices.balloon.id == "balloon0";
+    assert !(featureRichManifest.qemu.devices.balloon ? controller);
     assert !(disabledBalloonManifest.qemu.devices ? balloon);
     true;
 
@@ -132,26 +118,26 @@ let
     true;
 
   _writeFiles =
-    assert writeFilesManifest.qemu.guestAgent.socketPath == "qga.sock";
-    assert writeFilesManifest.writeFiles."/etc/agentspace-inline".chown == "agent:users";
-    assert writeFilesManifest.writeFiles."/etc/agentspace-inline".content == "aGVsbG8=";
-    assert writeFilesManifest.writeFiles."/etc/agentspace-inline".mode == "0640";
-    assert writeFilesManifest.writeFiles."/etc/agentspace-inline".path == null;
-    assert writeFilesManifest.writeFiles."/etc/agentspace-host".chown == null;
-    assert writeFilesManifest.writeFiles."/etc/agentspace-host".content == null;
-    assert writeFilesManifest.writeFiles."/etc/agentspace-host".mode == null;
-    assert writeFilesManifest.writeFiles."/etc/agentspace-host".path == ".agentspace-test/host-file";
+    assert featureRichManifest.qemu.guestAgent.socketPath == "qga.sock";
+    assert featureRichManifest.writeFiles."/etc/agentspace-inline".chown == "agent:users";
+    assert featureRichManifest.writeFiles."/etc/agentspace-inline".content == "aGVsbG8=";
+    assert featureRichManifest.writeFiles."/etc/agentspace-inline".mode == "0640";
+    assert featureRichManifest.writeFiles."/etc/agentspace-inline".path == null;
+    assert featureRichManifest.writeFiles."/etc/agentspace-host".chown == null;
+    assert featureRichManifest.writeFiles."/etc/agentspace-host".content == null;
+    assert featureRichManifest.writeFiles."/etc/agentspace-host".mode == null;
+    assert featureRichManifest.writeFiles."/etc/agentspace-host".path == ".agentspace-test/host-file";
     true;
 
   _notifications =
-    assert notificationsManifest.notifications.command.path == pkgs.runtimeShell;
+    assert featureRichManifest.notifications.command.path == pkgs.runtimeShell;
     assert
-      notificationsManifest.notifications.command.args == [
+      featureRichManifest.notifications.command.args == [
         "-c"
         notificationCommand
       ];
     assert
-      notificationsManifest.notifications.states == [
+      featureRichManifest.notifications.states == [
         "runtime:resume"
         "runtime:suspend"
         "balloon:resize"

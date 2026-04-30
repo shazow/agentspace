@@ -8,77 +8,97 @@ import (
 	"testing"
 )
 
-func TestParserRequiresManifestFlag(t *testing.T) {
-	tests := [][]string{
-		{"launch"},
-		{"launch", "/tmp/manifest.json"},
-		{"suspend"},
+func TestParserRejectsInvalidCommandLines(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "launch missing manifest",
+			args:    []string{"launch"},
+			wantErr: "manifest",
+		},
+		{
+			name:    "launch positional manifest",
+			args:    []string{"launch", "/tmp/manifest.json"},
+			wantErr: "manifest",
+		},
+		{
+			name:    "suspend missing manifest",
+			args:    []string{"suspend"},
+			wantErr: "manifest",
+		},
+		{
+			name:    "removed resume command",
+			args:    []string{"resume", "--manifest=/tmp/manifest.json"},
+			wantErr: "Unknown command",
+		},
+		{
+			name:    "remote command without ssh",
+			args:    []string{"launch", "--manifest=/tmp/manifest.json", "--", "echo", "hi"},
+			wantErr: "remote command arguments require --ssh",
+		},
+		{
+			name:    "invalid launch resume mode",
+			args:    []string{"launch", "--resume=maybe", "--manifest=/tmp/manifest.json"},
+			wantErr: "Invalid value",
+		},
+		{
+			name:    "removed suspend exit flag",
+			args:    []string{"suspend", "--exit", "--manifest=/tmp/manifest.json"},
+			wantErr: "unknown flag `exit'",
+		},
 	}
 
-	for _, args := range tests {
-		_, err := newParser().ParseArgs(args)
-		if err == nil {
-			t.Fatalf("ParseArgs(%v) succeeded, expected missing manifest error", args)
-		}
-		if !strings.Contains(err.Error(), "manifest") {
-			t.Fatalf("ParseArgs(%v) error %q does not mention manifest", args, err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := newParser().ParseArgs(tt.args)
+			if err == nil {
+				t.Fatalf("ParseArgs(%v) succeeded, expected error containing %q", tt.args, tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("ParseArgs(%v) error %q does not contain %q", tt.args, err, tt.wantErr)
+			}
+		})
 	}
 }
 
-func TestParserRejectsRemovedResumeCommand(t *testing.T) {
-	_, err := newParser().ParseArgs([]string{"resume", "--manifest=/tmp/manifest.json"})
-	if err == nil {
-		t.Fatal("ParseArgs accepted removed resume command")
+func TestParserAcceptsLaunchFlags(t *testing.T) {
+	tests := []struct {
+		name           string
+		args           []string
+		unwantedErrMsg string
+	}{
+		{
+			name:           "resume no",
+			args:           []string{"launch", "--resume=no", "--manifest=/tmp/manifest.json"},
+			unwantedErrMsg: "Invalid value",
+		},
+		{
+			name:           "resume auto",
+			args:           []string{"launch", "--resume=auto", "--manifest=/tmp/manifest.json"},
+			unwantedErrMsg: "Invalid value",
+		},
+		{
+			name:           "resume force",
+			args:           []string{"launch", "--resume=force", "--manifest=/tmp/manifest.json"},
+			unwantedErrMsg: "Invalid value",
+		},
+		{
+			name:           "ssh",
+			args:           []string{"launch", "--ssh", "--manifest=/tmp/manifest.json"},
+			unwantedErrMsg: "unknown flag `ssh'",
+		},
 	}
-	if !strings.Contains(err.Error(), "Unknown command") {
-		t.Fatalf("unexpected error for removed resume command: %v", err)
-	}
-}
 
-func TestParserAcceptsLaunchResumeModes(t *testing.T) {
-	for _, mode := range []string{"no", "auto", "force"} {
-		_, err := newParser().ParseArgs([]string{"launch", "--resume=" + mode, "--manifest=/tmp/manifest.json"})
-		if err != nil && strings.Contains(err.Error(), "Invalid value") {
-			t.Fatalf("ParseArgs rejected resume mode %q: %v", mode, err)
-		}
-	}
-}
-
-func TestParserAcceptsLaunchSSHFlag(t *testing.T) {
-	_, err := newParser().ParseArgs([]string{"launch", "--ssh", "--manifest=/tmp/manifest.json"})
-	if err != nil && strings.Contains(err.Error(), "unknown flag `ssh'") {
-		t.Fatalf("ParseArgs rejected --ssh: %v", err)
-	}
-}
-
-func TestParserRejectsRemoteCommandWithoutSSH(t *testing.T) {
-	_, err := newParser().ParseArgs([]string{"launch", "--manifest=/tmp/manifest.json", "--", "echo", "hi"})
-	if err == nil {
-		t.Fatal("ParseArgs accepted remote command without --ssh")
-	}
-	if !strings.Contains(err.Error(), "remote command arguments require --ssh") {
-		t.Fatalf("unexpected error for remote command without --ssh: %v", err)
-	}
-}
-
-func TestParserRejectsInvalidLaunchResumeMode(t *testing.T) {
-	_, err := newParser().ParseArgs([]string{"launch", "--resume=maybe", "--manifest=/tmp/manifest.json"})
-	if err == nil {
-		t.Fatal("ParseArgs accepted invalid resume mode")
-	}
-	if !strings.Contains(err.Error(), "Invalid value") {
-		t.Fatalf("unexpected error for invalid resume mode: %v", err)
-	}
-}
-
-func TestParserRejectsSuspendExitFlag(t *testing.T) {
-	_, err := newParser().ParseArgs([]string{"suspend", "--exit", "--manifest=/tmp/manifest.json"})
-	if err == nil {
-		t.Fatal("ParseArgs accepted removed --exit flag")
-	}
-	if !strings.Contains(err.Error(), "unknown flag `exit'") {
-		t.Fatalf("unexpected error for removed --exit flag: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := newParser().ParseArgs(tt.args)
+			if err != nil && strings.Contains(err.Error(), tt.unwantedErrMsg) {
+				t.Fatalf("ParseArgs(%v) rejected supported flag: %v", tt.args, err)
+			}
+		})
 	}
 }
 
