@@ -30,9 +30,7 @@ let
         { pkgs, ... }:
         {
           home.packages = [
-            pkgs.go
-            pkgs.just
-            pkgs.nodejs
+            pkgs.hello
           ];
           home.sessionVariables.AGENTSPACE_HM = "1";
           programs.git.enable = true;
@@ -84,9 +82,7 @@ let
     assert homeCfg.home.sessionVariables.AGENTSPACE_HM == "1";
     assert homeCfg.programs.home-manager.enable;
     assert homeCfg.programs.git.enable;
-    assert builtins.elem pkgs.go homeCfg.home.packages;
-    assert builtins.elem pkgs.just homeCfg.home.packages;
-    assert builtins.elem pkgs.nodejs homeCfg.home.packages;
+    assert builtins.elem pkgs.hello homeCfg.home.packages;
     assert builtins.elem "./id_ed25519" manifest.ssh.argv;
     assert builtins.any (volume: volume.imagePath == "/var/lib/agentspace/home.img") manifest.volumes;
     assert builtins.any (
