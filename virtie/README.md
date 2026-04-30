@@ -17,7 +17,7 @@ the main flake.
 The supported CLI is:
 
 ```console
-virtie launch --manifest=MANIFEST [--ssh] [--resume=no|auto|force] [-- <remote-cmd...>]
+virtie launch --manifest=MANIFEST [--ssh] [--resume=no|auto|force] [-v|-vv] [-- <remote-cmd...>]
 virtie suspend --manifest=MANIFEST
 ```
 

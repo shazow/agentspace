@@ -447,6 +447,41 @@ func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
 	}
 }
 
+func TestSSHRetryOutputSuppressesTransientFailureOutput(t *testing.T) {
+	var output bytes.Buffer
+	stderr := newSSHRetryOutput(&output, false)
+	stderr.revealDelay = time.Hour
+
+	_, _ = stderr.Write([]byte("Failed to connect to vsock:3:22: Connection timed out\n"))
+	if !strings.Contains(stderr.String(), "Connection timed out") {
+		t.Fatalf("expected retry output to be captured, got %q", stderr.String())
+	}
+
+	stderr.Suppress()
+	stderr.Flush()
+	if output.String() != "" {
+		t.Fatalf("expected retry output to stay hidden, got %q", output.String())
+	}
+}
+
+func TestSSHRetryOutputShowsVerboseAndFlushedOutput(t *testing.T) {
+	var verboseOutput bytes.Buffer
+	verboseStderr := newSSHRetryOutput(&verboseOutput, true)
+	_, _ = verboseStderr.Write([]byte("verbose ssh failure\n"))
+	if got, want := verboseOutput.String(), "verbose ssh failure\n"; got != want {
+		t.Fatalf("unexpected verbose output: got %q want %q", got, want)
+	}
+
+	var flushedOutput bytes.Buffer
+	flushedStderr := newSSHRetryOutput(&flushedOutput, false)
+	flushedStderr.revealDelay = time.Hour
+	_, _ = flushedStderr.Write([]byte("non-transient ssh failure\n"))
+	flushedStderr.Flush()
+	if got, want := flushedOutput.String(), "non-transient ssh failure\n"; got != want {
+		t.Fatalf("unexpected flushed output: got %q want %q", got, want)
+	}
+}
+
 func TestManagerLaunchPrintsGuestInfoOnSIGUSR1(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)

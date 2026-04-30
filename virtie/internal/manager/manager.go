@@ -33,6 +33,7 @@ const (
 	defaultShutdownDelay      = 15 * time.Second
 	defaultMigrationPollDelay = 100 * time.Millisecond
 	sshFailureOutputLimit     = 64 * 1024
+	sshRetryOutputRevealDelay = 250 * time.Millisecond
 )
 
 var errSavedSuspendExit = errors.New("saved suspend requested")
@@ -46,8 +47,9 @@ const (
 )
 
 type LaunchOptions struct {
-	Resume ResumeMode
-	SSH    bool
+	Resume    ResumeMode
+	SSH       bool
+	Verbosity int
 }
 
 type manager struct {
@@ -336,9 +338,8 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		for {
 			stats.MarkSSHStarted(time.Now())
 			spec := buildSSHSpec(manifest, cid, remoteCommand)
-			var stderr cappedBuffer
-			stderr.limit = sshFailureOutputLimit
-			spec.Stderr = io.MultiWriter(os.Stderr, &stderr)
+			stderr := newSSHRetryOutput(os.Stderr, options.Verbosity > 0)
+			spec.Stderr = stderr
 
 			session, err := m.startManagedProcess(spec)
 			if err != nil {
@@ -347,8 +348,13 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			started = append(started, session)
 
 			if err := m.waitForSession(launchCtx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
-				if sshTransientStartupFailure(err, stderr.String()) {
-					sshRetryLog.Log(err, stderr.String())
+				output := stderr.String()
+				if sshTransientStartupFailure(err, output) {
+					stderr.Suppress()
+					sshRetryLog.Log(err, output)
+					if options.Verbosity > 1 {
+						m.logger.Printf("ssh retry failed: %v", err)
+					}
 					started = started[:len(started)-1]
 					select {
 					case <-time.After(m.sshRetryDelay):
@@ -362,8 +368,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 						return &stageError{Stage: "active session", Err: launchCtx.Err()}
 					}
 				}
+				stderr.Flush()
 				return err
 			}
+			stderr.Flush()
 			if resumeState != nil {
 				if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 					return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
@@ -746,6 +754,100 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	}
 	_, _ = b.Buffer.Write(p)
 	return n, nil
+}
+
+type sshRetryOutput struct {
+	mu          sync.Mutex
+	output      io.Writer
+	verbose     bool
+	captured    cappedBuffer
+	pending     cappedBuffer
+	timer       *time.Timer
+	revealed    bool
+	suppressed  bool
+	revealDelay time.Duration
+}
+
+func newSSHRetryOutput(output io.Writer, verbose bool) *sshRetryOutput {
+	return &sshRetryOutput{
+		output:      output,
+		verbose:     verbose,
+		captured:    cappedBuffer{limit: sshFailureOutputLimit},
+		pending:     cappedBuffer{limit: sshFailureOutputLimit},
+		revealDelay: sshRetryOutputRevealDelay,
+	}
+}
+
+func (o *sshRetryOutput) Write(p []byte) (int, error) {
+	if o == nil {
+		return len(p), nil
+	}
+
+	o.mu.Lock()
+	_, _ = o.captured.Write(p)
+	if o.verbose || o.revealed {
+		output := o.output
+		o.mu.Unlock()
+		if output != nil {
+			_, _ = output.Write(p)
+		}
+		return len(p), nil
+	}
+	if !o.suppressed {
+		_, _ = o.pending.Write(p)
+		if o.timer == nil {
+			o.timer = time.AfterFunc(o.revealDelay, o.Flush)
+		}
+	}
+	o.mu.Unlock()
+	return len(p), nil
+}
+
+func (o *sshRetryOutput) String() string {
+	if o == nil {
+		return ""
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.captured.String()
+}
+
+func (o *sshRetryOutput) Suppress() {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.timer != nil {
+		o.timer.Stop()
+		o.timer = nil
+	}
+	o.pending.Reset()
+	o.suppressed = true
+}
+
+func (o *sshRetryOutput) Flush() {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	if o.suppressed && !o.verbose {
+		o.mu.Unlock()
+		return
+	}
+	if o.timer != nil {
+		o.timer.Stop()
+		o.timer = nil
+	}
+	o.revealed = true
+	output := o.output
+	pending := append([]byte(nil), o.pending.Bytes()...)
+	o.pending.Reset()
+	o.mu.Unlock()
+
+	if output != nil && len(pending) > 0 {
+		_, _ = output.Write(pending)
+	}
 }
 
 func sshTransientStartupFailure(err error, stderr string) bool {

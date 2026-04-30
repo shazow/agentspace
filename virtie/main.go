@@ -25,8 +25,9 @@ type manifestOption struct {
 
 type launchCommand struct {
 	manifestOption
-	Resume string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
-	SSH    bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
+	Resume  string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
+	SSH     bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
+	Verbose []bool `short:"v" long:"verbose" description:"Show verbose logging."`
 
 	Args struct {
 		RemoteCommand []string `positional-arg-name:"remote-cmd"`
@@ -44,8 +45,9 @@ func (c *launchCommand) Execute(args []string) error {
 	}
 
 	return manager.LaunchWithOptions(context.Background(), manifest, c.Args.RemoteCommand, manager.LaunchOptions{
-		Resume: manager.ResumeMode(c.Resume),
-		SSH:    c.SSH,
+		Resume:    manager.ResumeMode(c.Resume),
+		SSH:       c.SSH,
+		Verbosity: len(c.Verbose),
 	})
 }
 
