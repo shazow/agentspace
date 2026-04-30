@@ -9,6 +9,7 @@ Host-side process manager for the supported agentspace sandbox launch path.
 Provide the foreground launch runtime for the supported sandbox session created by Nix.
 
 - Load and validate a Nix-generated manifest for the supported sandbox workflow.
+- Load and validate a hand-written or externally generated manifest for a non-Nix workflow when guest artifacts are supplied by the caller.
 - Allocate and lock a runtime vsock CID for each session.
 - Create missing auto-created volume images, start `virtiofsd`, launch QEMU directly, wait for SSH readiness, and either print out-of-band SSH instructions or attach the active SSH session when requested.
 - Keep a long-lived QMP session open after boot for graceful shutdown and optional runtime balloon control.
@@ -20,7 +21,8 @@ Out of scope:
 
 - full hibernation restore from RAM and device state
 - reconnect support
-- alternate guest attach or share workflows beyond the supported SSH + `virtiofs` path
+- alternate guest attach workflows beyond SSH over vsock
+- downloading, building, or provisioning standalone guest images such as Alpine
 - `systemd --user`, `journalctl`, or machined integration
 - bridge, tap, macvtap, graphics, or passthrough workflows
 - full `microvm-run` parity
@@ -31,6 +33,7 @@ Acceptance criteria:
 - [x] `virtie suspend --manifest=MANIFEST` saves QEMU migration state to disk, records saved suspend state, and exits the launch session.
 - [x] `virtie launch --resume=force --manifest=MANIFEST` restores only from saved suspend state.
 - [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, QEMU devices, `virtiofs` daemons, and auto-created volumes.
+- [x] Manifest validation allows standalone manifests with no `virtiofs` shares or daemons when the VM uses caller-supplied kernel, initrd, and block images.
 - [x] QEMU launch is compiled from the typed manifest plus the runtime-selected CID rather than string-substituting a Nix-generated argv template.
 - [x] Launch acquires per-sandbox and per-CID locks before starting guest processes.
 - [x] Launch waits for `virtiofs` socket readiness, then QMP readiness, then retries SSH probes before printing SSH instructions or starting the interactive session.
@@ -50,6 +53,7 @@ Acceptance criteria:
 - [x] Implement per-sandbox and per-CID lock files for concurrent session safety.
 - [x] Add runtime-dir-based socket resolution for relative QMP and `virtiofs` sockets, using XDG defaults when requested by the manifest.
 - [x] Allow the Nix store `virtiofs` share to target a provided host socket while `virtie` only starts and removes sockets listed under `virtiofs.daemons`.
+- [x] Allow direct non-Nix manifests to omit `virtiofs` entirely while still using block, user networking, QMP, and dynamically allocated vsock.
 - [x] Implement stage-aware errors and foreground SSH exit-code propagation.
 - [x] Add explicit launch signal handling for interrupt/terminate teardown.
 - [x] Add disk-backed suspend/resume commands and saved suspend state records under `paths.workingDir/.virtie`.
@@ -83,7 +87,7 @@ Acceptance criteria:
   - `qemu.devices.rng`
   - `qemu.devices.balloon`
   - optional `qemu.devices.balloon.controller`
-  - `qemu.devices.virtiofs[]`
+  - optional `qemu.devices.virtiofs[]`
   - `qemu.devices.block[]`
   - `qemu.devices.network[]`
   - `qemu.devices.vsock`
@@ -92,13 +96,14 @@ Acceptance criteria:
   - `volumes[].imagePath`, `sizeMiB`, `fsType`, `autoCreate`, optional `label`, `mkfsExtraArgs`
   - `virtiofs.daemons[].socketPath`
   - `virtiofs.daemons[].command`
-  - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set.
+  - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set, and standalone manifests may set no `virtiofs` shares or daemons.
   - optional `writeFiles`, keyed by absolute guest path, with exactly one of `content` or `path`, optional `chown`, and optional four-digit octal `mode`
   - optional `notifications.command` with `{ path, args }`
   - optional `notifications.states` allowlist; empty or omitted means all states
   - optional `vsock.cidRange`, defaulting to `3..65535`
 - Runtime assumptions:
   - Nix has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
+  - For non-Nix manifests, the caller has already produced compatible QEMU, kernel, initrd, and block image inputs and configured guest SSH over vsock.
   - `ssh` and the required `mkfs.<fsType>` tools are available on the host.
   - The guest SSH service is reachable over the runtime-selected vsock CID.
 - Runtime socket policy:
@@ -122,6 +127,11 @@ Acceptance criteria:
   - Current notification states are `runtime:suspend` after saved suspend state is written, `runtime:resume` after restore migration and QMP `cont` succeed, and `balloon:resize` after a balloon resize succeeds.
   - Notification commands receive `VIRTIE_NOTIFY_STATE`, `VIRTIE_NOTIFY_MESSAGE`, and `VIRTIE_NOTIFY_CONTEXT_<UPPER_SNAKE_KEY>` environment variables. Command args are passed unchanged.
   - The old Nix-owned argv-template path has been removed from the active contract.
+- Standalone manifest notes:
+  - `virtie` does not fetch, build, or mutate guest OS artifacts beyond optional host-side volume auto-creation.
+  - A minimal Alpine-style workflow should provide existing kernel, initrd, and rootfs paths in the manifest and ensure the guest SSH server listens on vsock.
+  - `scripts/launch-alpine-virtie.sh` is a simple live-boot helper that downloads Alpine netboot `virt` artifacts, writes a standalone manifest, and launches without configuring guest SSH.
+  - macOS support for standalone manifests depends on host QEMU and vsock availability; Linux remains the primary supported host target.
 - Current verification note: the Go package tests pass, and `checks/default.nix` keeps the launch-contract and fake-tools E2E coverage enabled alongside repo-level hook-compatibility checks.
 
 ```mermaid

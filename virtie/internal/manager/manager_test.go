@@ -392,6 +392,58 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchWithoutVirtioFSSkipsVirtioFSReadiness(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.Devices.VirtioFS = nil
+	cfg.VirtioFS.Daemons = nil
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &fakeRunner{}
+	qmpClient := &fakeQMPClient{}
+	waiter := &fakeSocketWaiter{callback: func(paths []string) error { return nil }}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      waiter,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            log.New(&logOutput, "", 0),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	exitReadyQEMU := make(chan struct{})
+	go func() {
+		defer close(exitReadyQEMU)
+		time.Sleep(10 * time.Millisecond)
+		runner.exitQEMU(nil)
+	}()
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo}); err != nil {
+		t.Fatalf("launch without virtiofs: %v", err)
+	}
+	<-exitReadyQEMU
+
+	if got, want := runner.starts, []string{"qemu"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected start order: got %v want %v", got, want)
+	}
+	if got, want := waiter.calls, 1; got != want {
+		t.Fatalf("unexpected socket waiter calls: got %d want %d", got, want)
+	}
+	if got, want := waiter.paths, [][]string{{filepath.Join(tmpDir, "qmp.sock")}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected socket waiter paths: got %v want %v", got, want)
+	}
+	if strings.Contains(logOutput.String(), "waiting for virtiofs sockets") {
+		t.Fatalf("unexpected virtiofs readiness log: %q", logOutput.String())
+	}
+}
+
 func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -1745,6 +1797,27 @@ func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	}
 	if !spec.ProcessGroup {
 		t.Fatal("expected qemu to run in its own process group")
+	}
+}
+
+func TestBuildQEMUSpecOmitsVirtioFSWhenNoSharesConfigured(t *testing.T) {
+	manifest := validManifest("/tmp/work")
+	manifest.QEMU.Devices.VirtioFS = nil
+	manifest.VirtioFS.Daemons = nil
+
+	spec, err := buildQEMUSpec(manifest, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	if containsString(spec.Args, "vhost-user-fs") {
+		t.Fatalf("expected qemu args to omit virtiofs devices: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "virtio-blk-pci,drive=vda") {
+		t.Fatalf("expected qemu args to retain block device: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "guest-cid=42") {
+		t.Fatalf("expected qemu args to retain vsock device: %v", spec.Args)
 	}
 }
 

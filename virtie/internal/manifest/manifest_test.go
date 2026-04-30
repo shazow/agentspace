@@ -516,6 +516,50 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	}
 }
 
+func TestManifestAllowsNoVirtioFS(t *testing.T) {
+	manifest := validManifest()
+	manifest.VirtioFS.Daemons = nil
+	manifest.QEMU.Devices.VirtioFS = nil
+
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+
+	managedSocketPaths, err := manifest.ResolvedSocketPaths()
+	if err != nil {
+		t.Fatalf("resolve managed socket paths: %v", err)
+	}
+	if len(managedSocketPaths) != 0 {
+		t.Fatalf("unexpected managed socket paths: got %v want none", managedSocketPaths)
+	}
+
+	virtioFSSocketPaths, err := manifest.ResolvedVirtioFSSocketPaths()
+	if err != nil {
+		t.Fatalf("resolve virtiofs socket paths: %v", err)
+	}
+	if len(virtioFSSocketPaths) != 0 {
+		t.Fatalf("unexpected virtiofs socket paths: got %v want none", virtioFSSocketPaths)
+	}
+
+	qemu, err := manifest.ResolvedQEMU()
+	if err != nil {
+		t.Fatalf("resolve qemu: %v", err)
+	}
+	if len(qemu.Devices.VirtioFS) != 0 {
+		t.Fatalf("unexpected qemu virtiofs shares: got %v want none", qemu.Devices.VirtioFS)
+	}
+}
+
+func TestManifestRejectsVirtioFSDaemonWithoutShare(t *testing.T) {
+	manifest := validManifest()
+	manifest.QEMU.Devices.VirtioFS = nil
+
+	err := manifest.Validate()
+	if err == nil || !strings.Contains(err.Error(), "manifest.virtiofs.daemons[0].tag must match a qemu virtiofs share") {
+		t.Fatalf("expected unmatched virtiofs daemon validation error, got %v", err)
+	}
+}
+
 func stringPtr(value string) *string {
 	return &value
 }
