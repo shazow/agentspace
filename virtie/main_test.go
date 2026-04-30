@@ -90,6 +90,21 @@ func TestParserAcceptsLaunchFlags(t *testing.T) {
 			args:           []string{"launch", "--ssh", "--manifest=/tmp/manifest.json"},
 			unwantedErrMsg: "unknown flag `ssh'",
 		},
+		{
+			name:           "verbose short",
+			args:           []string{"launch", "-v", "--manifest=/tmp/manifest.json"},
+			unwantedErrMsg: "unknown flag `v'",
+		},
+		{
+			name:           "debug short",
+			args:           []string{"launch", "-vv", "--manifest=/tmp/manifest.json"},
+			unwantedErrMsg: "unknown flag `v'",
+		},
+		{
+			name:           "verbose long",
+			args:           []string{"launch", "--verbose", "--manifest=/tmp/manifest.json"},
+			unwantedErrMsg: "unknown flag `verbose'",
+		},
 	}
 
 	for _, tt := range tests {

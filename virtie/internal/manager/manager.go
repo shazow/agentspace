@@ -33,6 +33,7 @@ const (
 	defaultShutdownDelay      = 15 * time.Second
 	defaultMigrationPollDelay = 100 * time.Millisecond
 	sshFailureOutputLimit     = 64 * 1024
+	sshRetryOutputRevealDelay = 250 * time.Millisecond
 )
 
 var errSavedSuspendExit = errors.New("saved suspend requested")
@@ -46,8 +47,9 @@ const (
 )
 
 type LaunchOptions struct {
-	Resume ResumeMode
-	SSH    bool
+	Resume    ResumeMode
+	SSH       bool
+	Verbosity int
 }
 
 type manager struct {
@@ -120,6 +122,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 
 	signalCh, stopSignals := m.launchSignalChannel()
 	suspendRequests := make(chan struct{}, 1)
+	infoRequests := make(chan struct{}, 1)
 	signalDone := make(chan struct{})
 	go func() {
 		for {
@@ -136,6 +139,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 				case syscall.SIGTSTP:
 					select {
 					case suspendRequests <- struct{}{}:
+					default:
+					}
+				case syscall.SIGUSR1:
+					select {
+					case infoRequests <- struct{}{}:
 					default:
 					}
 				}
@@ -326,13 +334,12 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}, manifest, qmpClient)
 
 	if options.SSH {
+		sshRetryLog := newSSHRetryLogger(m.logger)
 		for {
-			m.logger.Printf("starting ssh session")
 			stats.MarkSSHStarted(time.Now())
 			spec := buildSSHSpec(manifest, cid, remoteCommand)
-			var stderr cappedBuffer
-			stderr.limit = sshFailureOutputLimit
-			spec.Stderr = io.MultiWriter(os.Stderr, &stderr)
+			stderr := newSSHRetryOutput(os.Stderr, options.Verbosity > 0)
+			spec.Stderr = stderr
 
 			session, err := m.startManagedProcess(spec)
 			if err != nil {
@@ -340,20 +347,31 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			}
 			started = append(started, session)
 
-			if err := m.waitForSession(launchCtx, session, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
-				if sshTransientStartupFailure(err, stderr.String()) {
+			if err := m.waitForSession(launchCtx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
+				output := stderr.String()
+				if sshTransientStartupFailure(err, output) {
+					stderr.Suppress()
+					sshRetryLog.Log(err, output)
+					if options.Verbosity > 1 {
+						m.logger.Printf("ssh retry failed: %v", err)
+					}
 					started = started[:len(started)-1]
 					select {
 					case <-time.After(m.sshRetryDelay):
 						continue
 					case <-suspendRequests:
 						return suspendHandler.saveAndExit(launchCtx)
+					case <-infoRequests:
+						m.printGuestInfo(launchCtx, guestAgentSocketPath, started...)
+						continue
 					case <-launchCtx.Done():
 						return &stageError{Stage: "active session", Err: launchCtx.Err()}
 					}
 				}
+				stderr.Flush()
 				return err
 			}
+			stderr.Flush()
 			if resumeState != nil {
 				if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 					return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
@@ -376,7 +394,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 
 	m.logger.Printf("connect with: %s", buildSSHCommandHint(manifest, cid))
-	if err := m.waitForVM(launchCtx, qemu, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
+	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
 		return err
 	}
 	return nil
@@ -466,7 +484,7 @@ func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
 	}
 
 	ch := make(chan os.Signal, 8)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGTSTP)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGTSTP, syscall.SIGUSR1)
 	return ch, func() {
 		signal.Stop(ch)
 		close(ch)
@@ -738,6 +756,100 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+type sshRetryOutput struct {
+	mu          sync.Mutex
+	output      io.Writer
+	verbose     bool
+	captured    cappedBuffer
+	pending     cappedBuffer
+	timer       *time.Timer
+	revealed    bool
+	suppressed  bool
+	revealDelay time.Duration
+}
+
+func newSSHRetryOutput(output io.Writer, verbose bool) *sshRetryOutput {
+	return &sshRetryOutput{
+		output:      output,
+		verbose:     verbose,
+		captured:    cappedBuffer{limit: sshFailureOutputLimit},
+		pending:     cappedBuffer{limit: sshFailureOutputLimit},
+		revealDelay: sshRetryOutputRevealDelay,
+	}
+}
+
+func (o *sshRetryOutput) Write(p []byte) (int, error) {
+	if o == nil {
+		return len(p), nil
+	}
+
+	o.mu.Lock()
+	_, _ = o.captured.Write(p)
+	if o.verbose || o.revealed {
+		output := o.output
+		o.mu.Unlock()
+		if output != nil {
+			_, _ = output.Write(p)
+		}
+		return len(p), nil
+	}
+	if !o.suppressed {
+		_, _ = o.pending.Write(p)
+		if o.timer == nil {
+			o.timer = time.AfterFunc(o.revealDelay, o.Flush)
+		}
+	}
+	o.mu.Unlock()
+	return len(p), nil
+}
+
+func (o *sshRetryOutput) String() string {
+	if o == nil {
+		return ""
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.captured.String()
+}
+
+func (o *sshRetryOutput) Suppress() {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.timer != nil {
+		o.timer.Stop()
+		o.timer = nil
+	}
+	o.pending.Reset()
+	o.suppressed = true
+}
+
+func (o *sshRetryOutput) Flush() {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	if o.suppressed && !o.verbose {
+		o.mu.Unlock()
+		return
+	}
+	if o.timer != nil {
+		o.timer.Stop()
+		o.timer = nil
+	}
+	o.revealed = true
+	output := o.output
+	pending := append([]byte(nil), o.pending.Bytes()...)
+	o.pending.Reset()
+	o.mu.Unlock()
+
+	if output != nil && len(pending) > 0 {
+		_, _ = output.Write(pending)
+	}
+}
+
 func sshTransientStartupFailure(err error, stderr string) bool {
 	if err == nil {
 		return false
@@ -759,7 +871,74 @@ func sshTransientStartupFailure(err error, stderr string) bool {
 	return false
 }
 
-func (m *manager) waitForSession(ctx context.Context, session *managedProcess, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) error {
+type sshRetryPhase int
+
+const (
+	sshRetryPhaseNone sshRetryPhase = iota
+	sshRetryPhaseWaiting
+	sshRetryPhaseConnecting
+)
+
+type sshRetryLogger struct {
+	logger *log.Logger
+	seen   map[sshRetryPhase]bool
+}
+
+func newSSHRetryLogger(logger *log.Logger) *sshRetryLogger {
+	return &sshRetryLogger{
+		logger: logger,
+		seen:   make(map[sshRetryPhase]bool),
+	}
+}
+
+func (l *sshRetryLogger) Log(err error, stderr string) {
+	if l == nil || l.logger == nil {
+		return
+	}
+	phase := sshRetryPhaseForFailure(err, stderr)
+	if phase == sshRetryPhaseNone || l.seen[phase] {
+		return
+	}
+	l.seen[phase] = true
+	switch phase {
+	case sshRetryPhaseWaiting:
+		l.logger.Printf("waiting for ssh connection...")
+	case sshRetryPhaseConnecting:
+		l.logger.Printf("connecting ssh...")
+	}
+}
+
+func sshRetryPhaseForFailure(err error, stderr string) sshRetryPhase {
+	message := strings.ToLower("")
+	if err != nil {
+		message = strings.ToLower(err.Error() + "\n" + stderr)
+	} else {
+		message = strings.ToLower(stderr)
+	}
+	connectingMessages := []string{
+		"connection reset",
+		"connection closed",
+	}
+	for _, transient := range connectingMessages {
+		if strings.Contains(message, transient) {
+			return sshRetryPhaseConnecting
+		}
+	}
+	waitingMessages := []string{
+		"connection refused",
+		"connection timed out",
+		"no route to host",
+		"network is unreachable",
+	}
+	for _, transient := range waitingMessages {
+		if strings.Contains(message, transient) {
+			return sshRetryPhaseWaiting
+		}
+	}
+	return sshRetryPhaseNone
+}
+
+func (m *manager) waitForSession(ctx context.Context, session *managedProcess, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
@@ -772,6 +951,8 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, s
 			return nil
 		case <-suspendRequests:
 			return suspendHandler.saveAndExit(ctx)
+		case <-infoRequests:
+			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
 		case <-ticker.C:
 			if err := firstUnexpectedExit("active session", watchers...); err != nil {
 				return err
@@ -782,7 +963,7 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, s
 	}
 }
 
-func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) error {
+func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
@@ -795,6 +976,8 @@ func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRe
 			return nil
 		case <-suspendRequests:
 			return suspendHandler.saveAndExit(ctx)
+		case <-infoRequests:
+			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
 		case <-ticker.C:
 			if err := firstUnexpectedExit("vm session", watchers...); err != nil {
 				return err
