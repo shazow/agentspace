@@ -401,6 +401,7 @@ func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
 
 	runner := &fakeRunner{
 		transientSSHFailures:      2,
+		transientSSHOutputs:       []string{"Failed to connect to vsock:3:22: Connection timed out\n", "Failed to connect to vsock:3:22: Connection reset by peer\n"},
 		finishInteractiveSSH:      true,
 		finishInteractiveSSHDelay: 2 * defaultSocketPollInterval,
 	}
@@ -409,12 +410,13 @@ func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
 			runner.exitQEMU(nil)
 		},
 	}
+	var logOutput bytes.Buffer
 	manager := &manager{
 		locker:            &fileLocker{},
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            log.New(io.Discard, "", 0),
+		logger:            log.New(&logOutput, "", 0),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -432,6 +434,126 @@ func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
 		if containsString(args, "true") {
 			t.Fatalf("autoconnect retry %d unexpectedly used readiness probe: %v", i, args)
 		}
+	}
+	logs := logOutput.String()
+	if got := strings.Count(logs, "waiting for ssh connection..."); got != 1 {
+		t.Fatalf("expected one waiting ssh log, got %d in %q", got, logs)
+	}
+	if got := strings.Count(logs, "connecting ssh..."); got != 1 {
+		t.Fatalf("expected one connecting ssh log, got %d in %q", got, logs)
+	}
+	if strings.Contains(logs, "starting ssh session") {
+		t.Fatalf("unexpected per-attempt ssh start log: %q", logs)
+	}
+}
+
+func TestManagerLaunchPrintsGuestInfoOnSIGUSR1(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	signalCh := make(chan os.Signal, 8)
+	var logOutput bytes.Buffer
+	runner := &fakeRunner{}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{{
+			Exited:  true,
+			OutData: "ICBQSUQgIFBQSUQgU1RBVCBDT01NIEFSR1MKICAgMSAgICAgMCBTcyAgIGluaXQgaW5pdAo=",
+		}},
+		record: func(event string) {
+			if event == "guest-ps" {
+				go runner.exitQEMU(nil)
+			}
+		},
+	}
+	manager := &manager{
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:    &fakeGuestAgentDialer{client: guestAgent},
+		logger:              log.New(&logOutput, "", 0),
+		sshRetryDelay:       time.Hour,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpRetryDelay:       0,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+		signals:             signalCh,
+	}
+
+	go func() {
+		signalCh <- syscall.SIGUSR1
+	}()
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: false}); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	if got, want := len(guestAgent.execs), 1; got != want {
+		t.Fatalf("unexpected guest exec count: got %d want %d", got, want)
+	}
+	exec := guestAgent.execs[0]
+	if exec.path != guestPSPath || !reflect.DeepEqual(exec.args, []string{"-eo", "pid,ppid,stat,comm,args"}) || !exec.captureOutput {
+		t.Fatalf("unexpected ps exec: %#v", exec)
+	}
+	logs := logOutput.String()
+	if !strings.Contains(logs, "guest info\n") || !strings.Contains(logs, "PID  PPID STAT COMM ARGS") || !strings.Contains(logs, "init init") {
+		t.Fatalf("expected guest process list in logs, got %q", logs)
+	}
+}
+
+func TestManagerLaunchLogsGuestInfoFailureOnSIGUSR1(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	signalCh := make(chan os.Signal, 8)
+	var logOutput bytes.Buffer
+	runner := &fakeRunner{}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:    &fakeGuestAgentDialer{client: &fakeGuestAgentClient{execErr: errors.New("exec failed")}},
+		logger:              log.New(&logOutput, "", 0),
+		sshRetryDelay:       time.Hour,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpRetryDelay:       0,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+		signals:             signalCh,
+	}
+
+	go func() {
+		signalCh <- syscall.SIGUSR1
+		time.Sleep(2 * defaultSocketPollInterval)
+		runner.exitQEMU(nil)
+	}()
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: false}); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if logs := logOutput.String(); !strings.Contains(logs, "guest info failed:") || !strings.Contains(logs, "exec failed") {
+		t.Fatalf("expected guest info failure log, got %q", logs)
 	}
 }
 
@@ -1674,7 +1796,7 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 		done: make(chan error, 1),
 	}
 
-	err := (&manager{}).waitForSession(ctx, session, nil, nil)
+	err := (&manager{}).waitForSession(ctx, session, make(chan struct{}), make(chan struct{}), nil, "")
 	if err == nil {
 		t.Fatal("expected active session cancellation error")
 	}
@@ -1963,6 +2085,7 @@ type fakeRunner struct {
 	finishInteractiveSSH      bool
 	finishInteractiveSSHDelay time.Duration
 	transientSSHFailures      int
+	transientSSHOutputs       []string
 	qemu                      *fakeProcess
 	onStart                   func(processSpec)
 }
@@ -1992,7 +2115,11 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		r.interactiveStarts++
 		if r.interactiveStarts <= r.transientSSHFailures {
 			if spec.Stderr != nil {
-				_, _ = io.WriteString(spec.Stderr, "ssh: connect to host vsock/3 port 22: Connection refused\n")
+				output := "ssh: connect to host vsock/3 port 22: Connection refused\n"
+				if index := r.interactiveStarts - 1; index < len(r.transientSSHOutputs) {
+					output = r.transientSSHOutputs[index]
+				}
+				_, _ = io.WriteString(spec.Stderr, output)
 			}
 			return &fakeProcess{
 				name:   spec.Name,
@@ -2222,6 +2349,9 @@ func (c *fakeGuestAgentClient) Exec(timeout time.Duration, path string, args []s
 	}
 	if c.record != nil && path == guestTestPath && len(args) > 0 {
 		c.record("guest-test-dir:" + args[len(args)-1])
+	}
+	if c.record != nil && path == guestPSPath {
+		c.record("guest-ps")
 	}
 	if c.execErr != nil {
 		return 0, c.execErr

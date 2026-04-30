@@ -56,6 +56,8 @@ Acceptance criteria:
 - [x] Route suspend through a caught `SIGTSTP` control signal so the launch process saves state through its owned QMP session, then exits.
 - [x] Replace the separate `virtie resume` command with `virtie launch --resume=no|auto|force` so fresh and restored sessions share one lifecycle.
 - [x] Print launch lifecycle stats after shutdown, including start-to-boot, boot-to-SSH-session when attached, shutdown completion, and total duration.
+- [x] Print guest process diagnostics on `SIGUSR1` by collecting process-list output through QGA `guest-exec`.
+- [x] Collapse noisy SSH autoconnect retry logs into one-time phase messages for waiting versus connecting failures.
 - [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH retry behavior, and launch/teardown ordering with Go tests.
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
 - [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface, including saved suspend/resume coverage.
@@ -116,6 +118,8 @@ Acceptance criteria:
   - `virtie suspend` validates the launch PID and sends `SIGTSTP` as an internal control signal; `virtie launch` catches it, saves migration state through the existing QMP session, then exits.
   - Live pause/resume, terminal job-control suspend, and `SIGCONT` resume are not supported.
   - `virtie launch` logs final shutdown stats to stderr after teardown and cleanup complete; non-SSH launches omit the SSH-session interval.
+  - `SIGUSR1` asks a running launch process to collect guest info through the configured QGA socket. The current info payload is raw `ps -eo pid,ppid,stat,comm,args` output; collection failures are logged and do not affect the VM lifecycle.
+  - Attached SSH retries log `waiting for ssh connection...` or `connecting ssh...` once per phase instead of printing every failed attempt.
   - When `qemu.devices.balloon` is present, `virtie` resolves the balloon QOM path, enables `guest-stats-polling-interval`, reads `guest-stats` plus `query-balloon`, and adjusts the logical guest memory size within configured or synthesized bounds.
   - If the manifest omits `qemu.devices.balloon.controller`, `virtie` defaults to `maxActualMiB = qemu.memory.sizeMiB`, an idle reclaim target of 50% of that max, a grow threshold at 25% available memory, and the existing step, poll, and reclaim-holdoff defaults.
   - Notification hooks are best-effort and never fail launch, suspend, resume, teardown, or balloon control.

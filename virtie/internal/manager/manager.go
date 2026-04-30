@@ -120,6 +120,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 
 	signalCh, stopSignals := m.launchSignalChannel()
 	suspendRequests := make(chan struct{}, 1)
+	infoRequests := make(chan struct{}, 1)
 	signalDone := make(chan struct{})
 	go func() {
 		for {
@@ -136,6 +137,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 				case syscall.SIGTSTP:
 					select {
 					case suspendRequests <- struct{}{}:
+					default:
+					}
+				case syscall.SIGUSR1:
+					select {
+					case infoRequests <- struct{}{}:
 					default:
 					}
 				}
@@ -326,8 +332,8 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}, manifest, qmpClient)
 
 	if options.SSH {
+		sshRetryLog := newSSHRetryLogger(m.logger)
 		for {
-			m.logger.Printf("starting ssh session")
 			stats.MarkSSHStarted(time.Now())
 			spec := buildSSHSpec(manifest, cid, remoteCommand)
 			var stderr cappedBuffer
@@ -340,14 +346,18 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			}
 			started = append(started, session)
 
-			if err := m.waitForSession(launchCtx, session, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
+			if err := m.waitForSession(launchCtx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
 				if sshTransientStartupFailure(err, stderr.String()) {
+					sshRetryLog.Log(err, stderr.String())
 					started = started[:len(started)-1]
 					select {
 					case <-time.After(m.sshRetryDelay):
 						continue
 					case <-suspendRequests:
 						return suspendHandler.saveAndExit(launchCtx)
+					case <-infoRequests:
+						m.printGuestInfo(launchCtx, guestAgentSocketPath, started...)
+						continue
 					case <-launchCtx.Done():
 						return &stageError{Stage: "active session", Err: launchCtx.Err()}
 					}
@@ -376,7 +386,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 
 	m.logger.Printf("connect with: %s", buildSSHCommandHint(manifest, cid))
-	if err := m.waitForVM(launchCtx, qemu, suspendRequests, suspendHandler, started[:len(started)-1]...); err != nil {
+	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
 		return err
 	}
 	return nil
@@ -466,7 +476,7 @@ func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
 	}
 
 	ch := make(chan os.Signal, 8)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGTSTP)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGTSTP, syscall.SIGUSR1)
 	return ch, func() {
 		signal.Stop(ch)
 		close(ch)
@@ -759,7 +769,74 @@ func sshTransientStartupFailure(err error, stderr string) bool {
 	return false
 }
 
-func (m *manager) waitForSession(ctx context.Context, session *managedProcess, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) error {
+type sshRetryPhase int
+
+const (
+	sshRetryPhaseNone sshRetryPhase = iota
+	sshRetryPhaseWaiting
+	sshRetryPhaseConnecting
+)
+
+type sshRetryLogger struct {
+	logger *log.Logger
+	seen   map[sshRetryPhase]bool
+}
+
+func newSSHRetryLogger(logger *log.Logger) *sshRetryLogger {
+	return &sshRetryLogger{
+		logger: logger,
+		seen:   make(map[sshRetryPhase]bool),
+	}
+}
+
+func (l *sshRetryLogger) Log(err error, stderr string) {
+	if l == nil || l.logger == nil {
+		return
+	}
+	phase := sshRetryPhaseForFailure(err, stderr)
+	if phase == sshRetryPhaseNone || l.seen[phase] {
+		return
+	}
+	l.seen[phase] = true
+	switch phase {
+	case sshRetryPhaseWaiting:
+		l.logger.Printf("waiting for ssh connection...")
+	case sshRetryPhaseConnecting:
+		l.logger.Printf("connecting ssh...")
+	}
+}
+
+func sshRetryPhaseForFailure(err error, stderr string) sshRetryPhase {
+	message := strings.ToLower("")
+	if err != nil {
+		message = strings.ToLower(err.Error() + "\n" + stderr)
+	} else {
+		message = strings.ToLower(stderr)
+	}
+	connectingMessages := []string{
+		"connection reset",
+		"connection closed",
+	}
+	for _, transient := range connectingMessages {
+		if strings.Contains(message, transient) {
+			return sshRetryPhaseConnecting
+		}
+	}
+	waitingMessages := []string{
+		"connection refused",
+		"connection timed out",
+		"no route to host",
+		"network is unreachable",
+	}
+	for _, transient := range waitingMessages {
+		if strings.Contains(message, transient) {
+			return sshRetryPhaseWaiting
+		}
+	}
+	return sshRetryPhaseNone
+}
+
+func (m *manager) waitForSession(ctx context.Context, session *managedProcess, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
@@ -772,6 +849,8 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, s
 			return nil
 		case <-suspendRequests:
 			return suspendHandler.saveAndExit(ctx)
+		case <-infoRequests:
+			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
 		case <-ticker.C:
 			if err := firstUnexpectedExit("active session", watchers...); err != nil {
 				return err
@@ -782,7 +861,7 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, s
 	}
 }
 
-func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler, watchers ...*managedProcess) error {
+func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
@@ -795,6 +874,8 @@ func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRe
 			return nil
 		case <-suspendRequests:
 			return suspendHandler.saveAndExit(ctx)
+		case <-infoRequests:
+			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
 		case <-ticker.C:
 			if err := firstUnexpectedExit("vm session", watchers...); err != nil {
 				return err

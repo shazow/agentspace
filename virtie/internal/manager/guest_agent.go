@@ -299,6 +299,7 @@ const (
 	guestChmodPath   = "/run/current-system/sw/bin/chmod"
 	guestChownPath   = "/run/current-system/sw/bin/chown"
 	guestInstallPath = "/run/current-system/sw/bin/install"
+	guestPSPath      = "/run/current-system/sw/bin/ps"
 	guestTestPath    = "/run/current-system/sw/bin/test"
 )
 
@@ -358,22 +359,26 @@ func (m *manager) runGuestFileCommand(ctx context.Context, client guestAgentClie
 }
 
 func (m *manager) runGuestFileCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, guestPath string) (guestExecStatus, error) {
+	return m.runGuestCommandStatus(ctx, client, name, path, args, guestPath)
+}
+
+func (m *manager) runGuestCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, subject string) (guestExecStatus, error) {
 	timeout := m.effectiveQMPCommandTimeout()
 	pid, err := client.Exec(timeout, path, args, true)
 	if err != nil {
-		return guestExecStatus{}, fmt.Errorf("%s %q: %w", name, guestPath, err)
+		return guestExecStatus{}, fmt.Errorf("%s %q: %w", name, subject, err)
 	}
 
 	deadline := time.Now().Add(timeout)
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return guestExecStatus{}, fmt.Errorf("%s %q timed out after %s", name, guestPath, timeout)
+			return guestExecStatus{}, fmt.Errorf("%s %q timed out after %s", name, subject, timeout)
 		}
 
 		status, err := client.ExecStatus(minDuration(timeout, remaining), pid)
 		if err != nil {
-			return guestExecStatus{}, fmt.Errorf("%s %q: %w", name, guestPath, err)
+			return guestExecStatus{}, fmt.Errorf("%s %q: %w", name, subject, err)
 		}
 		if status.Exited {
 			return status, nil

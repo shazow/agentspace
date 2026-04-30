@@ -72,6 +72,7 @@ let
                 export QGA_SOCKET="$qga_socket"
                 export QEMU_PARENT_PID="$$"
                 ${pkgs.python3}/bin/python - <<'PY' &
+        import base64
         import json
         import os
         import signal
@@ -250,6 +251,9 @@ let
                             status = {"exited": True, "exitcode": 0 if argv[1] in qga_dirs else 1}
                         elif path == "/run/current-system/sw/bin/install" and len(argv) >= 2 and argv[0] == "-d":
                             qga_dirs.add(argv[-1])
+                        elif path == "/run/current-system/sw/bin/ps":
+                            output = "  PID  PPID STAT COMM ARGS\n    1     0 Ss   init init\n"
+                            status = {"exited": True, "exitcode": 0, "out-data": base64.b64encode(output.encode()).decode()}
                         qga_exec_statuses[qga_next_pid] = status
                         with open(os.path.join(state_dir, "guest-agent-execs"), "a", encoding="utf-8") as execs:
                             execs.write(f"{path} {' '.join(argv)} capture-output={capture_output}\n")
@@ -879,7 +883,11 @@ in
       exit 1
     fi
 
-    grep -F 'virtie: starting ssh session' "$auth_log" >/dev/null
+    grep -F 'virtie: stats:' "$auth_log" >/dev/null
+    if grep -F 'virtie: waiting for ssh connection...' "$auth_log" >/dev/null || grep -F 'virtie: connecting ssh...' "$auth_log" >/dev/null; then
+      echo "virtie-ssh-auth-failure-e2e: autoconnect unexpectedly logged retry phases" >&2
+      exit 1
+    fi
     if grep -F 'virtie: waiting for ssh readiness' "$auth_log" >/dev/null; then
       echo "virtie-ssh-auth-failure-e2e: autoconnect unexpectedly ran ssh readiness" >&2
       exit 1
