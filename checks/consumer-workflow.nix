@@ -94,7 +94,7 @@ in
   sandbox-consumer-workflow =
     assert consumerWorkflow;
     pkgs.runCommand "sandbox-consumer-workflow" { } ''
-      grep -F 'virtie launch --ssh --manifest=' ${launchScript}
+      grep -F 'virtie launch -v --ssh --manifest=' ${launchScript}
       grep -F ${pkgs.lib.escapeShellArg manifestPath} ${launchScript}
       grep -F ${pkgs.lib.escapeShellArg manifestTemplate} ${launchScript}
       grep -F 'mkdir -p "$(' ${launchScript}
@@ -102,7 +102,7 @@ in
       grep -F 'install -m 0644 ${pkgs.lib.escapeShellArg manifestTemplate} "$MANIFEST_PATH"' ${launchScript}
       test ${pkgs.lib.escapeShellArg manifestPath} = '.agentspace/virtie-agent-sandbox.json'
       grep -F "bash -lc pwd" ${launchScript}
-      grep -F 'launch --ssh --manifest="$MANIFEST_PATH" -- "$@"' ${launchScript}
+      grep -F 'launch -v --ssh --manifest="$MANIFEST_PATH" -- "$@"' ${launchScript}
       if grep -F 'systemd-run' ${launchScript} >/dev/null; then
         echo "sandbox-consumer-workflow: unexpected legacy systemd-run in virtie wrapper" >&2
         exit 1

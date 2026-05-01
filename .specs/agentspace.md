@@ -23,7 +23,7 @@ Out of scope:
 
 Acceptance criteria:
 
-- [x] `mkLaunch` execs `virtie launch --ssh --manifest=MANIFEST -- "$@"` for autoconnecting SSH sessions and `virtie launch --manifest=MANIFEST` when SSH autoconnect is disabled.
+- [x] `mkLaunch` execs `virtie launch -v --ssh --manifest=MANIFEST -- "$@"` for autoconnecting SSH sessions and `virtie launch -v --manifest=MANIFEST` when SSH autoconnect is disabled.
 - [x] `mkSandbox` keeps the supported customization hooks required by downstream consumers, especially `extraModules`, `homeModules`, SSH credentials, workspace settings, and persistence settings.
 - [x] The manifest emitted from `sandbox-qemu.nix` carries the current `virtie` inputs: working dir, lock path, ssh argv/user, typed QEMU settings, volumes, and `virtiofs` daemon commands.
 - [x] Unsupported launch configurations fail through explicit assertions rather than hidden fallback behavior.
@@ -51,7 +51,7 @@ Acceptance criteria:
 ## Appendix
 
 - Current supported selection rule: built-in SSH attach, built-in `virtiofs` shares, QEMU hypervisor, dynamic vsock allocation, and user-mode networking.
-- Current launcher shape: set `REPO_DIR`, run the default prelaunch shell, then exec `virtie launch` with `--ssh` when `agentspace.sandbox.ssh.autoconnect` is true or wrapper args are supplied.
+- Current launcher shape: set `REPO_DIR`, run the default prelaunch shell, then exec `virtie launch -v` with `--ssh` when `agentspace.sandbox.ssh.autoconnect` is true or wrapper args are supplied.
 - Current Nix-to-virtie contract:
   - Nix still owns guest evaluation and image production through `microvm.nix`.
   - Nix resolves machine, CPU, memory, kernel, block, network, `virtiofs`, and QMP settings into the manifest.

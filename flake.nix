@@ -99,23 +99,23 @@
             ${pkgs.coreutils}/bin/install -m 0644 ${lib.escapeShellArg launchCfg.virtieManifestTemplate} "$MANIFEST_PATH"
 
             if [ "$#" -eq 0 ] && [ -n ${lib.escapeShellArg remoteCommand} ]; then
-              exec ${virtiePackage}/bin/virtie launch --ssh --manifest="$MANIFEST_PATH" -- ${lib.escapeShellArg remoteCommand}
+              exec ${virtiePackage}/bin/virtie launch -v --ssh --manifest="$MANIFEST_PATH" -- ${lib.escapeShellArg remoteCommand}
             fi
 
             if [ "$#" -eq 0 ]; then
               ${
                 if sshAutoconnect then
                   ''
-                    exec ${virtiePackage}/bin/virtie launch --ssh --manifest="$MANIFEST_PATH"
+                    exec ${virtiePackage}/bin/virtie launch -v --ssh --manifest="$MANIFEST_PATH"
                   ''
                 else
                   ''
-                    exec ${virtiePackage}/bin/virtie launch --manifest="$MANIFEST_PATH"
+                    exec ${virtiePackage}/bin/virtie launch -v --manifest="$MANIFEST_PATH"
                   ''
               }
             fi
 
-            exec ${virtiePackage}/bin/virtie launch --ssh --manifest="$MANIFEST_PATH" -- "$@"
+            exec ${virtiePackage}/bin/virtie launch -v --ssh --manifest="$MANIFEST_PATH" -- "$@"
           '';
         in
         "${script}/bin/launch-agent";
