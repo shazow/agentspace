@@ -4,7 +4,7 @@
 // and validation rules that keep the runtime assumptions consistent. The
 // package also resolves working-directory and runtime-directory paths into the
 // concrete host-side paths that the manager uses for sockets, lock files,
-// volumes, QEMU binaries, and virtiofs daemons.
+// volumes, QEMU binaries, and optional virtiofs daemons.
 package manifest
 
 import (
@@ -313,8 +313,6 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.devices.rng.id is required")
 	case !validQEMUTransport(m.QEMU.Devices.RNG.Transport):
 		return fmt.Errorf("manifest.qemu.devices.rng.transport must be one of pci, mmio, or ccw")
-	case len(m.QEMU.Devices.VirtioFS) == 0:
-		return fmt.Errorf("manifest.qemu.devices.virtiofs must contain at least one share")
 	case len(m.QEMU.Devices.Block) == 0:
 		return fmt.Errorf("manifest.qemu.devices.block must contain at least one device")
 	case len(m.QEMU.Devices.Network) == 0:
