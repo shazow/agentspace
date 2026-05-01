@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -240,7 +240,8 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		runner:            runner,
 		socketWaiter:      waiter,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            log.New(&logOutput, "", 0),
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -346,7 +347,8 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            log.New(&logOutput, "", 0),
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -416,7 +418,8 @@ func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            log.New(&logOutput, "", 0),
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -436,10 +439,10 @@ func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
 		}
 	}
 	logs := logOutput.String()
-	if got := strings.Count(logs, "waiting for ssh connection..."); got != 1 {
+	if got := strings.Count(logs, "waiting for ssh connection"); got != 1 {
 		t.Fatalf("expected one waiting ssh log, got %d in %q", got, logs)
 	}
-	if got := strings.Count(logs, "connecting ssh..."); got != 1 {
+	if got := strings.Count(logs, "connecting ssh"); got != 1 {
 		t.Fatalf("expected one connecting ssh log, got %d in %q", got, logs)
 	}
 	if strings.Contains(logs, "starting ssh session") {
@@ -515,7 +518,8 @@ func TestManagerLaunchPrintsGuestInfoOnSIGUSR1(t *testing.T) {
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:    &fakeGuestAgentDialer{client: guestAgent},
-		logger:              log.New(&logOutput, "", 0),
+		logger:              slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:           &logOutput,
 		sshRetryDelay:       time.Hour,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpRetryDelay:       0,
@@ -541,7 +545,7 @@ func TestManagerLaunchPrintsGuestInfoOnSIGUSR1(t *testing.T) {
 		t.Fatalf("unexpected ps exec: %#v", exec)
 	}
 	logs := logOutput.String()
-	if !strings.Contains(logs, "guest info\nUSER COMMAND\nagent virtie\nroot init\nroot zsh\n") {
+	if !strings.Contains(logs, "guest info") || !strings.Contains(logs, "USER COMMAND\nagent virtie\nroot init\nroot zsh\n") {
 		t.Fatalf("expected guest process list in logs, got %q", logs)
 	}
 	if strings.Contains(logs, "--ssh") {
@@ -571,7 +575,8 @@ func TestManagerLaunchLogsGuestInfoFailureOnSIGUSR1(t *testing.T) {
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:    &fakeGuestAgentDialer{client: &fakeGuestAgentClient{execErr: errors.New("exec failed")}},
-		logger:              log.New(&logOutput, "", 0),
+		logger:              slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:           &logOutput,
 		sshRetryDelay:       time.Hour,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpRetryDelay:       0,
@@ -590,7 +595,7 @@ func TestManagerLaunchLogsGuestInfoFailureOnSIGUSR1(t *testing.T) {
 	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: false}); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	if logs := logOutput.String(); !strings.Contains(logs, "guest info failed:") || !strings.Contains(logs, "exec failed") {
+	if logs := logOutput.String(); !strings.Contains(logs, "guest info failed") || !strings.Contains(logs, "exec failed") {
 		t.Fatalf("expected guest info failure log, got %q", logs)
 	}
 }
@@ -652,7 +657,7 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
-		logger:            log.New(io.Discard, "", 0),
+		logger:            slog.New(slog.DiscardHandler),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -752,12 +757,12 @@ func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.
 		},
 	}
 	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
 		locker:            &fileLocker{},
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
-		logger:            log.New(io.Discard, "", 0),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -816,12 +821,12 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 		},
 	}
 	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
 		locker:            &fileLocker{},
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
-		logger:            log.New(io.Discard, "", 0),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -884,12 +889,12 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 		},
 	}
 	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
 		locker:            &fileLocker{},
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
-		logger:            log.New(io.Discard, "", 0),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -961,12 +966,12 @@ func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
 		},
 	}
 	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
 		locker:            &fileLocker{},
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
-		logger:            log.New(io.Discard, "", 0),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -1025,12 +1030,12 @@ func TestManagerLaunchSkipsGuestFilesOnResume(t *testing.T) {
 	}
 	guestDialer := &fakeGuestAgentDialer{client: &fakeGuestAgentClient{}}
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		locker:              &fileLocker{},
 		runner:              runner,
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:    guestDialer,
-		logger:              log.New(io.Discard, "", 0),
 		sshRetryDelay:       0,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpRetryDelay:       0,
@@ -1085,11 +1090,11 @@ func TestManagerLaunchWithoutSSHSavesQueuedSuspend(t *testing.T) {
 		},
 	}
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		locker:              &fileLocker{},
 		runner:              runner,
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
-		logger:              log.New(io.Discard, "", 0),
 		sshRetryDelay:       time.Hour,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpRetryDelay:       0,
@@ -1146,11 +1151,11 @@ func TestManagerLaunchHandlesDuplicateSuspendDuringActiveSessionWithoutForwardin
 		},
 	}
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		locker:              &fileLocker{},
 		runner:              runner,
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
-		logger:              log.New(io.Discard, "", 0),
 		sshRetryDelay:       0,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpRetryDelay:       0,
@@ -1212,11 +1217,11 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 		},
 	}
 	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
 		locker:            &fileLocker{},
 		runner:            runner,
 		socketWaiter:      waiter,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            log.New(io.Discard, "", 0),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpConnectTimeout: time.Millisecond,
@@ -1313,6 +1318,7 @@ func TestLaunchSuspendHandlerSaveAndExitIsIdempotent(t *testing.T) {
 
 	qmpClient := &fakeQMPClient{status: "running"}
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		qmpConnectTimeout:   time.Millisecond,
 		qmpMigrationTimeout: time.Second,
 	}
@@ -1372,6 +1378,7 @@ func TestManagerSuspendSignalsLaunchAndWaitsForSavedStateAndExit(t *testing.T) {
 		},
 	}
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		qmpDialer:           dialer,
 		qmpConnectTimeout:   100 * time.Millisecond,
 		qmpMigrationTimeout: time.Second,
@@ -1426,6 +1433,7 @@ func TestManagerSuspendSignalsActiveLaunchWhenSavedStateAlreadyExists(t *testing
 		},
 	}
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		qmpMigrationTimeout: time.Second,
 		pidSignaler:         signaler,
 	}
@@ -1453,6 +1461,7 @@ func TestManagerSuspendPreservesExistingSavedStateWithoutSignal(t *testing.T) {
 
 	signaler := &fakePIDSignaler{}
 	manager := &manager{
+		logger:      slog.New(slog.DiscardHandler),
 		qmpDialer:   &fakeQMPDialer{},
 		pidSignaler: signaler,
 	}
@@ -1478,6 +1487,7 @@ func TestEffectiveSuspendSignalTimeoutIncludesMigrationAndTeardown(t *testing.T)
 	})
 
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		shutdownDelay:       4 * time.Second,
 		qmpQuitTimeout:      3 * time.Second,
 		qmpMigrationTimeout: 2 * time.Second,
@@ -1548,11 +1558,11 @@ func TestManagerLaunchResumeAutoFreshLaunchesWithoutSavedState(t *testing.T) {
 		},
 	}
 	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
 		locker:            &fileLocker{},
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            log.New(io.Discard, "", 0),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpConnectTimeout: time.Millisecond,
@@ -1599,11 +1609,11 @@ func TestManagerLaunchResumeForceRestoresAndRemovesSavedState(t *testing.T) {
 		},
 	}
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		locker:              &fileLocker{},
 		runner:              runner,
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
-		logger:              log.New(io.Discard, "", 0),
 		sshRetryDelay:       0,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpConnectTimeout:   time.Millisecond,
@@ -1667,11 +1677,11 @@ func TestManagerLaunchResumeForceSavesSuspendDuringRestoredSession(t *testing.T)
 		},
 	}
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		locker:              &fileLocker{},
 		runner:              runner,
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
-		logger:              log.New(io.Discard, "", 0),
 		sshRetryDelay:       0,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpConnectTimeout:   time.Millisecond,
@@ -1731,11 +1741,11 @@ func TestManagerLaunchResumeCancellationDuringActiveSessionIsNotSuspend(t *testi
 		},
 	}
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		locker:              &fileLocker{},
 		runner:              runner,
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
-		logger:              log.New(io.Discard, "", 0),
 		sshRetryDelay:       0,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpConnectTimeout:   time.Millisecond,
@@ -1784,11 +1794,11 @@ func TestManagerLaunchResumeForcePreservesStateWhenSessionStartFails(t *testing.
 		},
 	}
 	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
 		locker:              &fileLocker{},
 		runner:              runner,
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
-		logger:              log.New(io.Discard, "", 0),
 		sshRetryDelay:       0,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpConnectTimeout:   time.Millisecond,
@@ -1960,8 +1970,8 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 
 	runner := &fakeRunner{}
 	manager := &manager{
+		logger: slog.New(slog.DiscardHandler),
 		runner: runner,
-		logger: log.New(io.Discard, "", 0),
 	}
 
 	if _, err := manager.startVirtioFSDaemons(manifest); err != nil {

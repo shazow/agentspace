@@ -3,8 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
-	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,7 +75,7 @@ func TestManagerLaunchStartsBalloonControllerAndStopsItBeforeQuit(t *testing.T) 
 		runner:            runner,
 		socketWaiter:      waiter,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            log.New(io.Discard, "", 0),
+		logger:            slog.New(slog.DiscardHandler),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -136,7 +135,7 @@ func TestManagerLaunchDoesNotAbortOnBalloonControllerFailure(t *testing.T) {
 		runner:            runner,
 		socketWaiter:      waiter,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            log.New(io.Discard, "", 0),
+		logger:            slog.New(slog.DiscardHandler),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -161,7 +160,7 @@ func TestBalloonControllerTaskWithNilLoggerDoesNotPanicOnFailure(t *testing.T) {
 	qmpClient := (&fakeQMPClient{
 		enableBalloonStatsErr: errors.New("guest stats unavailable"),
 	}).withDefaultBalloonPath("/machine/peripheral/balloon0")
-	task := balloonpkg.ControllerTask(nil, time.Second, qmpClient, &balloonpkg.Device{
+	task := balloonpkg.ControllerTask(time.Second, qmpClient, &balloonpkg.Device{
 		ID:        "balloon0",
 		Transport: "pci",
 		Controller: &balloonpkg.ControllerConfig{
@@ -194,7 +193,7 @@ func TestBalloonControllerTaskWithNilLoggerDoesNotPanicOnAdjustment(t *testing.T
 		readBalloonStatsUpdated: time.Now(),
 		queryBalloonActualBytes: 512 * testMiB,
 	}).withDefaultBalloonPath("/machine/peripheral/balloon0")
-	task := balloonpkg.ControllerTask(nil, time.Second, qmpClient, &balloonpkg.Device{
+	task := balloonpkg.ControllerTask(time.Second, qmpClient, &balloonpkg.Device{
 		ID:        "balloon0",
 		Transport: "pci",
 		Controller: &balloonpkg.ControllerConfig{

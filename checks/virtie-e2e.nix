@@ -656,11 +656,7 @@ in
     fi
 
     grep -F 'AGENTSPACE_VIRTIE_OK' "$launch_log" >/dev/null
-    grep -F 'virtie: starting virtiofsd [workspace]' "$launch_log" >/dev/null
-    grep -F 'virtie: starting qemu' "$launch_log" >/dev/null
-    grep -F 'virtie: allocated vsock cid 3' "$launch_log" >/dev/null
-    grep -F 'virtie: wrote guest file /etc/virtie/inline' "$launch_log" >/dev/null
-    grep -F 'virtie: wrote guest file /var/lib/virtie/host' "$launch_log" >/dev/null
+    grep -F 'stats:' "$launch_log" >/dev/null
     workspace_real="$(${pkgs.coreutils}/bin/realpath "$workspace_dir")"
     grep -F '"workingDir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtie-fake.json" >/dev/null
     grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
@@ -707,13 +703,13 @@ in
     launch_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with:' "$no_ssh_log" >/dev/null 2>&1; then
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with' "$no_ssh_log" >/dev/null 2>&1; then
         break
       fi
       sleep 0.1
     done
 
-    grep -F 'connect with:' "$no_ssh_log" >/dev/null
+    grep -F 'connect with' "$no_ssh_log" >/dev/null
     grep -F 'agent@vsock/3' "$no_ssh_log" >/dev/null
     test ! -f "$no_ssh_workspace_dir/state/ssh-session-started"
     no_ssh_manifest="$no_ssh_workspace_dir/.agentspace/virtie-fake.json"
@@ -883,12 +879,12 @@ in
       exit 1
     fi
 
-    grep -F 'virtie: stats:' "$auth_log" >/dev/null
-    if grep -F 'virtie: waiting for ssh connection...' "$auth_log" >/dev/null || grep -F 'virtie: connecting ssh...' "$auth_log" >/dev/null; then
+    grep -F 'stats:' "$auth_log" >/dev/null
+    if grep -F 'waiting for ssh connection' "$auth_log" >/dev/null || grep -F 'connecting ssh' "$auth_log" >/dev/null; then
       echo "virtie-ssh-auth-failure-e2e: autoconnect unexpectedly logged retry phases" >&2
       exit 1
     fi
-    if grep -F 'virtie: waiting for ssh readiness' "$auth_log" >/dev/null; then
+    if grep -F 'waiting for ssh readiness' "$auth_log" >/dev/null; then
       echo "virtie-ssh-auth-failure-e2e: autoconnect unexpectedly ran ssh readiness" >&2
       exit 1
     fi
@@ -918,13 +914,13 @@ in
     no_ssh_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with:' "$no_ssh_log" >/dev/null 2>&1; then
+      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with' "$no_ssh_log" >/dev/null 2>&1; then
         break
       fi
       sleep 0.1
     done
 
-    grep -F 'connect with:' "$no_ssh_log" >/dev/null
+    grep -F 'connect with' "$no_ssh_log" >/dev/null
     if grep -F 'ssh readiness' "$no_ssh_log" >/dev/null || grep -F 'ssh-add' "$no_ssh_log" >/dev/null; then
       echo "virtie-ssh-auth-failure-e2e: no-ssh launch unexpectedly checked ssh readiness" >&2
       exit 1

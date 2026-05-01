@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -14,10 +15,6 @@ var (
 	errGuestStatsStale       = errors.New("balloon guest stats stale")
 	errQOMPathNotFound       = errors.New("balloon qom path not found")
 )
-
-type logger interface {
-	Printf(format string, args ...any)
-}
 
 type notifier interface {
 	Notify(ctx context.Context, state string, message string, values map[string]string)
@@ -47,7 +44,7 @@ type objectPropertyInfo struct {
 
 type controller struct {
 	Session    session
-	Logger     logger
+	Logger     *slog.Logger
 	DeviceID   string
 	Config     ControllerConfig
 	QMPTimeout time.Duration
@@ -109,9 +106,7 @@ func (c *controller) Run(ctx context.Context) error {
 			return err
 		}
 		c.notifyResize(ctx, actual.ActualBytes, target)
-		if c.Logger != nil {
-			c.Logger.Printf("balloon controller set guest memory to %d MiB", target/bytesPerMiB)
-		}
+		c.Logger.Info("balloon controller set guest memory", "target_mib", target/bytesPerMiB)
 	}
 }
 

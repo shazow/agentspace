@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -43,19 +42,14 @@ func AppendQEMUArgs(
 	return append(args, "-device", strings.Join(deviceParams, ",")), nil
 }
 
-func ControllerTask(stdLogger *log.Logger, qmpTimeout time.Duration, session MonitorSession, device *Device, notificationSink notifier) func(context.Context) error {
+func ControllerTask(qmpTimeout time.Duration, session MonitorSession, device *Device, notificationSink notifier) func(context.Context) error {
 	if device == nil || device.Controller == nil || session == nil {
 		return nil
 	}
 
-	var controllerLogger logger
-	if stdLogger != nil {
-		controllerLogger = stdLogger
-	}
-
 	controller := &controller{
 		Session:    sessionFromMonitor(session),
-		Logger:     controllerLogger,
+		Logger:     logger,
 		DeviceID:   device.ID,
 		Config:     *device.Controller,
 		QMPTimeout: qmpTimeout,
@@ -64,8 +58,8 @@ func ControllerTask(stdLogger *log.Logger, qmpTimeout time.Duration, session Mon
 
 	return func(ctx context.Context) error {
 		err := controller.Run(ctx)
-		if err != nil && !errors.Is(err, context.Canceled) && controllerLogger != nil {
-			controllerLogger.Printf("balloon controller disabled: %v", err)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			controller.Logger.Info("balloon controller disabled", "err", err)
 		}
 		return nil
 	}

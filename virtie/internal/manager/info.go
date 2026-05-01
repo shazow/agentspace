@@ -49,14 +49,14 @@ func (m *manager) collectGuestInfo(ctx context.Context, socketPath string, watch
 func (m *manager) printGuestInfo(ctx context.Context, socketPath string, watchers ...*managedProcess) {
 	info, err := m.collectGuestInfo(ctx, socketPath, watchers...)
 	if err != nil {
-		m.logger.Printf("guest info failed: %v", err)
+		m.logger.Info("guest info failed", "err", err)
 		return
 	}
 
-	m.logger.Printf("guest info")
+	m.logger.Info("guest info")
 	processList := strings.TrimRight(info.ProcessList, "\n")
 	if processList != "" {
-		fmt.Fprintln(m.logger.Writer(), processList)
+		fmt.Fprintln(m.outputWriter(), processList)
 	}
 }
 

@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 
 	"github.com/jessevdk/go-flags"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/manager"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -42,6 +44,17 @@ func (c *launchCommand) Execute(args []string) error {
 	manifest, err := loadLaunchManifest(c.Manifest)
 	if err != nil {
 		return err
+	}
+
+	baseLogger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	discardLogger := slog.New(slog.DiscardHandler)
+	manager.SetLogger(discardLogger)
+	balloon.SetLogger(discardLogger)
+	if len(c.Verbose) > 0 {
+		manager.SetLogger(baseLogger.With("package", "manager"))
+	}
+	if len(c.Verbose) > 1 {
+		balloon.SetLogger(baseLogger.With("package", "balloon"))
 	}
 
 	return manager.LaunchWithOptions(context.Background(), manifest, c.Args.RemoteCommand, manager.LaunchOptions{

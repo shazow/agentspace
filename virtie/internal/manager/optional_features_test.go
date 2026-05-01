@@ -3,8 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
-	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,11 +69,11 @@ func TestManagerLaunchStartsOptionalFeatureBeforeSSHSessionAndStopsItBeforeQuit(
 	}
 
 	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
 		locker:            &fileLocker{},
 		runner:            runner,
 		socketWaiter:      waiter,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            log.New(io.Discard, "", 0),
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,

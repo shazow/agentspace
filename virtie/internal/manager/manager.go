@@ -15,7 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -58,7 +58,8 @@ type manager struct {
 	socketWaiter        socketWaiter
 	qmpDialer           qmpDialer
 	guestAgentDialer    guestAgentDialer
-	logger              *log.Logger
+	logger              *slog.Logger
+	logWriter           io.Writer
 	sshRetryDelay       time.Duration
 	shutdownDelay       time.Duration
 	qmpRetryDelay       time.Duration
@@ -72,13 +73,15 @@ type manager struct {
 }
 
 func newManager() *manager {
+	logWriter := io.Writer(os.Stderr)
 	return &manager{
 		locker:              &fileLocker{},
 		runner:              &execRunner{},
 		socketWaiter:        &pollingSocketWaiter{},
 		qmpDialer:           &socketMonitorDialer{},
 		guestAgentDialer:    &socketGuestAgentDialer{},
-		logger:              log.New(os.Stderr, "virtie: ", 0),
+		logger:              logger,
+		logWriter:           logWriter,
 		sshRetryDelay:       defaultSSHRetryDelay,
 		shutdownDelay:       defaultShutdownDelay,
 		qmpRetryDelay:       defaultQMPRetryDelay,
@@ -198,9 +201,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	defer joinDeferredError(&err, cidLock.Release)
 	if resumeState != nil {
-		m.logger.Printf("restoring saved vsock cid %d", cid)
+		m.logger.Info("restoring saved vsock cid", "cid", cid)
 	} else {
-		m.logger.Printf("allocated vsock cid %d", cid)
+		m.logger.Info("allocated vsock cid", "cid", cid)
 	}
 
 	if err := ensureDirectories(manifest.ResolvedPersistenceDirectories()); err != nil {
@@ -259,9 +262,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			err = errors.Join(err, featureErr, stopErr, disconnectErr, cleanupErr)
 		}
 		stats.MarkCompleted(time.Now())
-		if m.logger != nil {
-			m.logger.Printf("stats: %s", stats.String())
-		}
+		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 	}()
 
 	virtiofsd, err := m.startVirtioFSDaemons(manifest)
@@ -270,15 +271,15 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	started = append(started, virtiofsd...)
 
-	m.logger.Printf("waiting for virtiofs sockets")
+	m.logger.Info("waiting for virtiofs sockets")
 	if err := m.waitForSockets(launchCtx, virtioFSSocketPaths, started...); err != nil {
 		return err
 	}
 
 	if resumeState != nil {
-		m.logger.Printf("starting qemu for restore")
+		m.logger.Info("starting qemu for restore")
 	} else {
-		m.logger.Printf("starting qemu")
+		m.logger.Info("starting qemu")
 	}
 	stats.MarkBootStarted(time.Now())
 	qemuSpec, err := buildLaunchQEMUSpec(manifest, cid, resumeState != nil)
@@ -291,7 +292,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	started = append(started, qemu)
 
-	m.logger.Printf("waiting for qmp readiness")
+	m.logger.Info("waiting for qmp readiness")
 	qmpClient, err = m.waitForQMP(launchCtx, qmpSocketPath, qemu)
 	if err != nil {
 		return err
@@ -300,7 +301,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return qmpClient.Quit(m.effectiveQMPQuitTimeout())
 	}
 	if resumeState != nil {
-		m.logger.Printf("restoring vm state")
+		m.logger.Info("restoring vm state", "path", resumeState.VMStatePath)
 		if err := qmpClient.MigrateIncoming(m.effectiveQMPMigrationTimeout(), resumeState.VMStatePath); err != nil {
 			return &stageError{Stage: "restore", Err: err}
 		}
@@ -328,7 +329,6 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 
 	featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
-		logger:     m.logger,
 		qmpTimeout: m.effectiveQMPCommandTimeout(),
 		notifier:   notifier,
 	}, manifest, qmpClient)
@@ -353,7 +353,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 					stderr.Suppress()
 					sshRetryLog.Log(err, output)
 					if options.Verbosity > 1 {
-						m.logger.Printf("ssh retry failed: %v", err)
+						m.logger.Info("ssh retry failed", "err", err)
 					}
 					started = started[:len(started)-1]
 					select {
@@ -393,7 +393,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 	}
 
-	m.logger.Printf("connect with: %s", buildSSHCommandHint(manifest, cid))
+	fmt.Fprintf(m.outputWriter(), "connect with: %s\n", buildSSHCommandHint(manifest, cid))
 	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
 		return err
 	}
@@ -529,9 +529,9 @@ func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 		name := "virtiofsd"
 		if daemon.Tag != "" {
 			name = fmt.Sprintf("virtiofsd[%s]", daemon.Tag)
-			m.logger.Printf("starting virtiofsd [%s]", daemon.Tag)
+			m.logger.Info("starting virtiofsd", "tag", daemon.Tag)
 		} else {
-			m.logger.Printf("starting virtiofsd")
+			m.logger.Info("starting virtiofsd")
 		}
 
 		process, err := m.startManagedProcess(processSpec{
@@ -880,11 +880,11 @@ const (
 )
 
 type sshRetryLogger struct {
-	logger *log.Logger
+	logger *slog.Logger
 	seen   map[sshRetryPhase]bool
 }
 
-func newSSHRetryLogger(logger *log.Logger) *sshRetryLogger {
+func newSSHRetryLogger(logger *slog.Logger) *sshRetryLogger {
 	return &sshRetryLogger{
 		logger: logger,
 		seen:   make(map[sshRetryPhase]bool),
@@ -892,9 +892,6 @@ func newSSHRetryLogger(logger *log.Logger) *sshRetryLogger {
 }
 
 func (l *sshRetryLogger) Log(err error, stderr string) {
-	if l == nil || l.logger == nil {
-		return
-	}
 	phase := sshRetryPhaseForFailure(err, stderr)
 	if phase == sshRetryPhaseNone || l.seen[phase] {
 		return
@@ -902,9 +899,9 @@ func (l *sshRetryLogger) Log(err error, stderr string) {
 	l.seen[phase] = true
 	switch phase {
 	case sshRetryPhaseWaiting:
-		l.logger.Printf("waiting for ssh connection...")
+		l.logger.Info("waiting for ssh connection")
 	case sshRetryPhaseConnecting:
-		l.logger.Printf("connecting ssh...")
+		l.logger.Info("connecting ssh")
 	}
 }
 

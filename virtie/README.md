@@ -44,6 +44,8 @@ hand. See the root flake for packaging and launch integration.
 ## Notes
 
 - The manifest format is owned by this repository and is intentionally narrow.
+- Verbose runtime logs use stdlib `log/slog` text output on stderr, with
+  package identity carried as an attribute such as `package=manager`.
 - Suspend/resume uses QEMU migration-to-file for disk-backed restore. The
   `SIGTSTP` signal is an internal control shim used by `virtie suspend`, not a
   terminal/job-control suspend. Live pause/resume and `SIGCONT` resume are not
