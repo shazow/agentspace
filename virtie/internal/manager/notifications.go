@@ -3,7 +3,7 @@ package manager
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +47,7 @@ type commandNotifier struct {
 	states  map[string]struct{}
 	dir     string
 	runner  notificationRunner
-	logger  *log.Logger
+	logger  *slog.Logger
 }
 
 func (m *manager) effectiveNotifier(manifest *manifest.Manifest) notificationSink {
@@ -57,7 +57,7 @@ func (m *manager) effectiveNotifier(manifest *manifest.Manifest) notificationSin
 	return newCommandNotifier(manifest, m.logger, m.notificationRunner)
 }
 
-func newCommandNotifier(manifest *manifest.Manifest, logger *log.Logger, runner notificationRunner) notificationSink {
+func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner notificationRunner) notificationSink {
 	if manifest == nil {
 		return noopNotifier{}
 	}
@@ -109,7 +109,7 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 	}
 	env := notificationEnv(state, message, values)
 	if err := n.runner.Run(ctx, n.command.Path, n.command.Args, n.dir, env); err != nil && n.logger != nil {
-		n.logger.Printf("notification hook failed for %s: %v", state, err)
+		n.logger.Info("notification hook failed", "state", state, "err", err)
 	}
 }
 

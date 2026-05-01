@@ -3,6 +3,7 @@ package balloon
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 )
@@ -224,6 +225,7 @@ func TestControllerResolveQOMPathFallsBackToQOMList(t *testing.T) {
 
 	controller := &controller{
 		Session:    session,
+		Logger:     slog.New(slog.DiscardHandler),
 		DeviceID:   "balloon0",
 		QMPTimeout: time.Second,
 	}
@@ -260,6 +262,7 @@ func TestControllerNotifiesAfterSuccessfulResize(t *testing.T) {
 	}
 	controller := &controller{
 		Session:    session,
+		Logger:     slog.New(slog.DiscardHandler),
 		DeviceID:   "balloon0",
 		QMPTimeout: time.Second,
 		Config: ControllerConfig{
@@ -326,6 +329,7 @@ func TestControllerDoesNotNotifyWhenResizeIsNotApplied(t *testing.T) {
 	}
 	controller := &controller{
 		Session:    session,
+		Logger:     slog.New(slog.DiscardHandler),
 		DeviceID:   "balloon0",
 		QMPTimeout: time.Second,
 		Config: ControllerConfig{

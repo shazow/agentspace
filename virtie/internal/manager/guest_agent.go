@@ -229,7 +229,7 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		return &stageError{Stage: "guest agent", Err: err}
 	}
 
-	m.logger.Printf("waiting for guest agent readiness")
+	m.logger.Info("waiting for guest agent readiness")
 	client, err := m.waitForGuestAgent(ctx, socketPath, watchers...)
 	if err != nil {
 		return err
@@ -257,7 +257,7 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 				return &stageError{Stage: "guest file write", Err: err}
 			}
 		}
-		m.logger.Printf("wrote guest file %s", file.GuestPath)
+		m.logger.Info("wrote guest file", "path", file.GuestPath)
 	}
 	return nil
 }

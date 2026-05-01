@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"log"
 	"time"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
@@ -13,7 +12,6 @@ import (
 type qemuTransportResolver func(string) (govmmQemu.VirtioTransport, error)
 
 type optionalFeatureRuntime struct {
-	logger     *log.Logger
 	qmpTimeout time.Duration
 	notifier   notificationSink
 }
@@ -84,7 +82,7 @@ func (balloonFeature) StartTask(
 		return nil
 	}
 
-	task := balloon.ControllerTask(runtime.logger, runtime.qmpTimeout, qmpClient, manifest.QEMU.Devices.Balloon, runtime.notifier)
+	task := balloon.ControllerTask(runtime.qmpTimeout, qmpClient, manifest.QEMU.Devices.Balloon, runtime.notifier)
 	if task == nil {
 		return nil
 	}

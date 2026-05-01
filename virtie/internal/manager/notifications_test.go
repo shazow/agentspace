@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,7 +25,7 @@ func TestCommandNotifierHonorsStateAllowlistAndPassesEnv(t *testing.T) {
 		States: []string{notifyStateRuntimeResume},
 	}
 	runner := &recordingNotificationRunner{}
-	notifier := newCommandNotifier(cfg, log.New(os.Stderr, "", 0), runner)
+	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
 
 	notifier.Notify(context.Background(), notifyStateRuntimeSuspend, "ignored", nil)
 	if len(runner.calls) != 0 {
@@ -68,7 +68,7 @@ func TestCommandNotifierResolvesRelativeCommandAgainstAbsoluteWorkingDir(t *test
 	cfg := validManifest("work")
 	cfg.Notifications.Command = &manifest.Command{Path: "bin/notify"}
 	runner := &recordingNotificationRunner{}
-	notifier := newCommandNotifier(cfg, log.New(os.Stderr, "", 0), runner)
+	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
 
 	notifier.Notify(context.Background(), notifyStateRuntimeResume, "Restored", nil)
 
@@ -89,14 +89,14 @@ func TestCommandNotifierLogsAndIgnoresHookFailure(t *testing.T) {
 	cfg.Notifications.Command = &manifest.Command{Path: "/bin/notify"}
 	runner := &recordingNotificationRunner{err: errors.New("exit status 1")}
 	var logs bytes.Buffer
-	notifier := newCommandNotifier(cfg, log.New(&logs, "", 0), runner)
+	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(&logs, nil)), runner)
 
 	notifier.Notify(context.Background(), notifyStateRuntimeResume, "Restored", nil)
 
 	if got, want := len(runner.calls), 1; got != want {
 		t.Fatalf("expected one notification command, got %d", got)
 	}
-	if !strings.Contains(logs.String(), "notification hook failed for runtime:resume") {
+	if !strings.Contains(logs.String(), "notification hook failed") || !strings.Contains(logs.String(), "state=runtime:resume") {
 		t.Fatalf("expected hook failure log, got %q", logs.String())
 	}
 }
@@ -174,7 +174,7 @@ func TestLaunchResumeNotifiesAfterMigrationAndContinue(t *testing.T) {
 		runner:              runner,
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
-		logger:              log.New(os.Stderr, "", 0),
+		logger:              slog.New(slog.NewTextHandler(os.Stderr, nil)),
 		sshRetryDelay:       0,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpConnectTimeout:   time.Millisecond,
