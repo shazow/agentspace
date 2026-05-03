@@ -6,9 +6,15 @@
 }:
 let
   args = {
-    inherit mkLaunch mkSandbox pkgs virtiePackage;
+    inherit
+      mkLaunch
+      mkSandbox
+      pkgs
+      virtiePackage
+      ;
   };
 in
 import ./virtie-manifest.nix args
+// import ./alpine.nix args
 // import ./virtie-e2e.nix args
 // import ./consumer-workflow.nix args

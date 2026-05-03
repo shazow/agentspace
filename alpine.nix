@@ -22,14 +22,34 @@ let
   transport = "pci";
   virtioFSTransport = "pci";
   aioEngine = if pkgs.stdenv.hostPlatform.isLinux then "io_uring" else "threads";
-  accel =
-    if pkgs.stdenv.hostPlatform.isLinux then
-      "kvm:tcg"
-    else if pkgs.stdenv.hostPlatform.isDarwin then
-      "hvf:tcg"
+  defaultMachineOpts = {
+    accel =
+      if pkgs.stdenv.hostPlatform.isLinux then
+        "kvm:tcg"
+      else if pkgs.stdenv.hostPlatform.isDarwin then
+        "hvf:tcg"
+      else
+        "tcg";
+    mem-merge = "on";
+    acpi = "on";
+    pit = "off";
+    pic = "off";
+    pcie = "on";
+    rtc = "on";
+    usb = "off";
+  };
+  machineOpts =
+    if config.microvm.qemu.machineOpts != null then
+      config.microvm.qemu.machineOpts
     else
-      "tcg";
-  cpuModel = if pkgs.stdenv.hostPlatform.isLinux then "host,+x2apic,-sgx" else "host";
+      defaultMachineOpts;
+  cpuModel =
+    if config.microvm.cpu != null then
+      config.microvm.cpu
+    else if pkgs.stdenv.hostPlatform.isLinux then
+      "host,+x2apic,-sgx"
+    else
+      "host";
 
   authorizedKeys = lib.concatStringsSep "\n" cfg.ssh.authorizedKeys;
 
@@ -149,7 +169,7 @@ let
       pkgs.gzip
     ];
     outputHashMode = "recursive";
-    outputHash = "sha256-OYm6RJGjdRLSiUMBUO5/5zky4UHgScPr3jmmoyDg+50=";
+    outputHash = "sha256-HnpryGRgkknpYCBmhPPChAWCaw0/9bvKvrrpUhvN/VM=";
 
     buildCommand = ''
       export HOME="$TMPDIR"
@@ -220,6 +240,9 @@ let
       cat > root/etc/network/interfaces <<'INTERFACES'
       auto lo
       iface lo inet loopback
+
+      auto eth0
+      iface eth0 inet dhcp
       INTERFACES
 
       mkdir -p root/etc/ssh/sshd_config.d
@@ -254,6 +277,9 @@ let
       cp root/lib/modules/"$kernel_version"/modules.{alias,builtin,dep} "$initrd/lib/modules/$kernel_version/"
       for module in \
         kernel/drivers/block/virtio_blk.ko.gz \
+        kernel/drivers/net/net_failover.ko.gz \
+        kernel/drivers/net/virtio_net.ko.gz \
+        kernel/net/core/failover.ko.gz \
         kernel/crypto/crc32c_generic.ko.gz \
         kernel/lib/libcrc32c.ko.gz \
         kernel/fs/ext4/ext4.ko.gz \
@@ -279,6 +305,9 @@ let
         insmod "$dst"
       }
       load_module kernel/drivers/block/virtio_blk.ko.gz
+      load_module kernel/net/core/failover.ko.gz
+      load_module kernel/drivers/net/net_failover.ko.gz
+      load_module kernel/drivers/net/virtio_net.ko.gz
       load_module kernel/crypto/crc32c_generic.ko.gz
       load_module kernel/lib/libcrc32c.ko.gz
       load_module kernel/lib/crc16.ko.gz
@@ -354,20 +383,11 @@ let
     name = cfg.hostName;
     machine = {
       type = "microvm";
-      options = [
-        "accel=${accel}"
-        "mem-merge=on"
-        "acpi=on"
-        "pit=off"
-        "pic=off"
-        "pcie=on"
-        "rtc=on"
-        "usb=off"
-      ];
+      options = map (name: "${name}=${machineOpts.${name}}") (builtins.attrNames machineOpts);
     };
     cpu = {
       model = cpuModel;
-      enableKvm = pkgs.stdenv.hostPlatform.isLinux;
+      enableKvm = pkgs.stdenv.hostPlatform.isLinux && config.microvm.cpu == null;
     };
     memory = {
       sizeMiB = config.microvm.mem;
