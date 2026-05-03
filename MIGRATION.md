@@ -238,6 +238,53 @@ virtie suspend --manifest=MANIFEST
 
 Do not use `virtie launch --resume=force` unless saved suspend state exists.
 
+## 2026-05-03: experimental Alpine API attrset and root disk builder
+
+### Who Is Affected
+
+- Consumers using `agentspace.sandbox.alpine = true`.
+- Consumers that want to customize the experimental Alpine root disk builder.
+
+### What Changed
+
+The experimental Alpine switch is now an attrset. Use
+`agentspace.sandbox.alpine.enable = true` instead of assigning `true` directly.
+
+Agentspace also exposes `agentspace.lib.mkAlpineRootDisk`, a public
+experimental callable for constructing the Alpine root disk builder used by
+`mkSandbox`.
+
+### Migration Steps
+
+Before:
+
+```nix
+agentspace.lib.mkSandbox {
+  alpine = true;
+}
+```
+
+After:
+
+```nix
+agentspace.lib.mkSandbox {
+  alpine.enable = true;
+}
+```
+
+To customize image construction:
+
+```nix
+agentspace.lib.mkSandbox {
+  alpine = {
+    enable = true;
+    rootDiskBuilder = agentspace.lib.mkAlpineRootDisk {
+      rootDiskSizeMiB = 640;
+    };
+  };
+}
+```
+
 ## 2026-04-27: persistence state directory and resume workspace
 
 ### Who Is Affected

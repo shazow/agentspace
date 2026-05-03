@@ -27,7 +27,7 @@ let
   };
 
   vmAlpine = mkSandbox {
-    alpine = true;
+    alpine.enable = true;
     hostName = "agent-sandbox-alpine-e2e";
     mountWorkspace = false;
     ssh = {

@@ -27,10 +27,21 @@ in
   options.agentspace.sandbox = {
     enable = lib.mkEnableOption "Agent Sandbox MicroVM Environment";
 
-    alpine = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Build and launch an experimental Alpine guest image instead of the default NixOS microvm guest.";
+    alpine = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Build and launch an experimental Alpine guest image instead of the default NixOS microvm guest.";
+      };
+
+      rootDiskBuilder = lib.mkOption {
+        type = lib.types.raw;
+        default = import ./alpine-root-disk.nix { };
+        description = ''
+          Experimental callable that builds the Alpine root disk artifacts for
+          the evaluated sandbox configuration.
+        '';
+      };
     };
 
     user = lib.mkOption {
@@ -417,12 +428,13 @@ in
         builtins.toJSON virtieManifestData
       );
       virtieManifest = "${persistenceBaseDir}/virtie-${cfg.hostName}.json";
-      launchCommonInit = if cfg.alpine then alpineLaunch.commonInit else commonInit;
+      launchCommonInit = if cfg.alpine.enable then alpineLaunch.commonInit else commonInit;
       launchVirtieManifestData =
-        if cfg.alpine then alpineLaunch.virtieManifestData else virtieManifestData;
+        if cfg.alpine.enable then alpineLaunch.virtieManifestData else virtieManifestData;
       launchVirtieManifestTemplate =
-        if cfg.alpine then alpineLaunch.virtieManifestTemplate else virtieManifestTemplate;
-      launchVirtieManifest = if cfg.alpine then alpineLaunch.virtieManifest else virtieManifest;
+        if cfg.alpine.enable then alpineLaunch.virtieManifestTemplate else virtieManifestTemplate;
+      launchVirtieManifest =
+        if cfg.alpine.enable then alpineLaunch.virtieManifest else virtieManifest;
     in
     lib.mkMerge [
       {
@@ -431,7 +443,7 @@ in
           virtieManifestData = launchVirtieManifestData;
           virtieManifest = launchVirtieManifest;
           virtieManifestTemplate = launchVirtieManifestTemplate;
-          alpineRootDisk = if cfg.alpine then alpineLaunch.rootDisk else null;
+          alpineRootDisk = if cfg.alpine.enable then alpineLaunch.rootDisk else null;
         };
 
         networking.hostName = cfg.hostName;

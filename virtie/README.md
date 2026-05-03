@@ -132,7 +132,7 @@ is configured, the guest must also run QEMU guest agent on the manifest's
 `qemu.guestAgent.socketPath`.
 
 The agentspace Nix wrapper also has an experimental Alpine image path via
-`mkSandbox { alpine = true; }`. That path builds the guest artifacts in Nix and
+`mkSandbox { alpine.enable = true; }`. That path builds the guest artifacts in Nix and
 emits the `virtie` manifest for the generated kernel, initrd, and root disk.
 
 ## Features

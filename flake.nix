@@ -115,10 +115,12 @@
         in
         "${script}/bin/launch-agent";
 
+      mkAlpineRootDisk = import ./alpine-root-disk.nix;
+
       vmConfigs = {
         default = mkSandbox { };
         alpine = mkSandbox {
-          alpine = true;
+          alpine.enable = true;
         };
       };
     in
@@ -131,12 +133,17 @@
       };
 
       lib = {
-        inherit mkSandbox mkLaunch;
+        inherit
+          mkAlpineRootDisk
+          mkLaunch
+          mkSandbox
+          ;
       };
 
       checks.${system} = import ./checks {
         inherit
           mkLaunch
+          mkAlpineRootDisk
           mkSandbox
           pkgs
           virtiePackage

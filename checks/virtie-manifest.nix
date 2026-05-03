@@ -1,4 +1,5 @@
 {
+  mkAlpineRootDisk,
   mkSandbox,
   pkgs,
   ...
@@ -54,7 +55,7 @@ let
   };
 
   vmVirtieAlpine = mkSandbox {
-    alpine = true;
+    alpine.enable = true;
     ssh.authorizedKeys = [ testPublicKey ];
     ssh.identityFile = ".agentspace-test/id_ed25519";
     persistence.homeImage = null;
@@ -76,9 +77,24 @@ let
   };
 
   vmVirtieAlpineNoWorkspace = mkSandbox {
-    alpine = true;
+    alpine.enable = true;
     mountWorkspace = false;
     persistence.basedir = ".agentspace-alpine";
+  };
+
+  vmVirtieAlpineAlternateHost = mkSandbox {
+    alpine.enable = true;
+    hostName = "agent-sandbox-alpine-alt";
+  };
+
+  vmVirtieAlpineCustomBuilder = mkSandbox {
+    alpine = {
+      enable = true;
+      rootDiskBuilder = mkAlpineRootDisk {
+        pname = "agentspace-alpine-custom-root";
+        rootDiskSizeMiB = 640;
+      };
+    };
   };
 
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
@@ -91,6 +107,10 @@ let
   alpineManifest = alpineLaunch.virtieManifestData;
   alpineNoWorkspaceManifest =
     vmVirtieAlpineNoWorkspace.config.agentspace.sandbox.launch.virtieManifestData;
+  alpineAlternateHostLaunch =
+    vmVirtieAlpineAlternateHost.config.agentspace.sandbox.launch;
+  alpineCustomBuilderLaunch =
+    vmVirtieAlpineCustomBuilder.config.agentspace.sandbox.launch;
 
   _ =
     assert manifest.qemu.binaryPath != "";
@@ -177,7 +197,7 @@ let
     true;
 
   _alpine =
-    assert vmVirtieAlpine.config.agentspace.sandbox.alpine;
+    assert vmVirtieAlpine.config.agentspace.sandbox.alpine.enable;
     assert alpineManifest.qemu.binaryPath == "${pkgs.qemu}/bin/qemu-system-x86_64";
     assert alpineManifest.qemu.name == "agent-sandbox";
     assert alpineManifest.qemu.machine.type == "microvm";
@@ -220,6 +240,16 @@ let
     assert builtins.match ".*Installing Alpine root disk.*" alpineLaunch.commonInit != null;
     assert builtins.match ".*alpine-root.img.*" alpineLaunch.commonInit != null;
     true;
+
+  _alpineBuilder =
+    assert alpineLaunch.alpineRootDisk != alpineAlternateHostLaunch.alpineRootDisk;
+    assert builtins.match ".*agentspace-alpine-custom-root.*" (
+      toString alpineCustomBuilderLaunch.alpineRootDisk
+    ) != null;
+    assert builtins.match ".*vmlinuz-virt.*" (
+      alpineCustomBuilderLaunch.virtieManifestData.qemu.kernel.path
+    ) != null;
+    true;
 in
 {
   virtie-manifest-contract =
@@ -245,4 +275,8 @@ in
   virtie-manifest-alpine-contract =
     assert _alpine;
     pkgs.runCommand "virtie-manifest-alpine-contract" { } "touch $out";
+
+  virtie-manifest-alpine-builder-contract =
+    assert _alpineBuilder;
+    pkgs.runCommand "virtie-manifest-alpine-builder-contract" { } "touch $out";
 }

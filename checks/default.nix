@@ -1,12 +1,14 @@
 {
   mkSandbox,
   mkLaunch,
+  mkAlpineRootDisk,
   pkgs,
   virtiePackage,
 }:
 let
   args = {
     inherit
+      mkAlpineRootDisk
       mkLaunch
       mkSandbox
       pkgs
