@@ -53,12 +53,44 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
+  vmVirtieAlpine = mkSandbox {
+    alpine = true;
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
+    persistence.homeImage = null;
+    balloon = true;
+    writeFiles = {
+      "/etc/agentspace-inline" = {
+        chown = "agent:users";
+        content = "aGVsbG8=";
+        mode = "0640";
+      };
+    };
+    notifications = {
+      command = notificationCommand;
+      states = [
+        "runtime:resume"
+        "runtime:suspend"
+      ];
+    };
+  };
+
+  vmVirtieAlpineNoWorkspace = mkSandbox {
+    alpine = true;
+    mountWorkspace = false;
+    persistence.basedir = ".agentspace-alpine";
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
+  alpineLaunch = vmVirtieAlpine.config.agentspace.sandbox.launch;
+  alpineManifest = alpineLaunch.virtieManifestData;
+  alpineNoWorkspaceManifest =
+    vmVirtieAlpineNoWorkspace.config.agentspace.sandbox.launch.virtieManifestData;
 
   _ =
     assert manifest.qemu.binaryPath != "";
@@ -143,6 +175,51 @@ let
         "balloon:resize"
       ];
     true;
+
+  _alpine =
+    assert vmVirtieAlpine.config.agentspace.sandbox.alpine;
+    assert alpineManifest.qemu.binaryPath == "${pkgs.qemu}/bin/qemu-system-x86_64";
+    assert alpineManifest.qemu.name == "agent-sandbox";
+    assert alpineManifest.qemu.machine.type == "microvm";
+    assert builtins.any (option: option == "pcie=on") alpineManifest.qemu.machine.options;
+    assert builtins.match ".*vmlinuz-virt.*" alpineManifest.qemu.kernel.path != null;
+    assert builtins.match ".*initramfs-virt.*" alpineManifest.qemu.kernel.initrdPath != null;
+    assert builtins.match ".*root=/dev/vda.*" alpineManifest.qemu.kernel.params != null;
+    assert alpineManifest.qemu.qmp.socketPath == "qmp.sock";
+    assert alpineManifest.qemu.guestAgent.socketPath == "qga.sock";
+    assert alpineManifest.qemu.devices.rng.id == "rng0";
+    assert alpineManifest.qemu.devices.vsock.id == "vsock0";
+    assert alpineManifest.qemu.devices.balloon.id == "balloon0";
+    assert builtins.length alpineManifest.qemu.devices.block == 1;
+    assert (builtins.head alpineManifest.qemu.devices.block).id == "vda";
+    assert (builtins.head alpineManifest.qemu.devices.block).imagePath == ".agentspace/alpine-root.img";
+    assert (builtins.head alpineManifest.qemu.devices.block).readOnly == false;
+    assert builtins.length alpineManifest.qemu.devices.network == 1;
+    assert (builtins.head alpineManifest.qemu.devices.network).backend == "user";
+    assert builtins.length alpineManifest.qemu.devices.virtiofs == 1;
+    assert (builtins.head alpineManifest.qemu.devices.virtiofs).tag == "workspace";
+    assert builtins.length alpineManifest.virtiofs.daemons == 1;
+    assert (builtins.head alpineManifest.virtiofs.daemons).tag == "workspace";
+    assert !(builtins.any (share: share.tag == "ro-store") alpineManifest.qemu.devices.virtiofs);
+    assert alpineNoWorkspaceManifest.qemu.devices.virtiofs == [ ];
+    assert alpineNoWorkspaceManifest.virtiofs.daemons == [ ];
+    assert alpineManifest.ssh.user == "agent";
+    assert builtins.head alpineManifest.ssh.argv == "${pkgs.openssh}/bin/ssh";
+    assert builtins.elem ".agentspace-test/id_ed25519" alpineManifest.ssh.argv;
+    assert alpineManifest.persistence.baseDir == ".agentspace";
+    assert alpineManifest.persistence.stateDir == ".agentspace";
+    assert alpineManifest.persistence.directories == [ ".agentspace" ];
+    assert alpineManifest.volumes == [ ];
+    assert alpineManifest.writeFiles."/etc/agentspace-inline".content == "aGVsbG8=";
+    assert alpineManifest.notifications.command.path == pkgs.runtimeShell;
+    assert
+      alpineManifest.notifications.states == [
+        "runtime:resume"
+        "runtime:suspend"
+      ];
+    assert builtins.match ".*Installing Alpine root disk.*" alpineLaunch.commonInit != null;
+    assert builtins.match ".*alpine-root.img.*" alpineLaunch.commonInit != null;
+    true;
 in
 {
   virtie-manifest-contract =
@@ -164,4 +241,8 @@ in
   virtie-manifest-notifications-contract =
     assert _notifications;
     pkgs.runCommand "virtie-manifest-notifications-contract" { } "touch $out";
+
+  virtie-manifest-alpine-contract =
+    assert _alpine;
+    pkgs.runCommand "virtie-manifest-alpine-contract" { } "touch $out";
 }

@@ -131,16 +131,9 @@ runtime vsock CID that `virtie` appends as `agent@vsock/<cid>`. If `writeFiles`
 is configured, the guest must also run QEMU guest agent on the manifest's
 `qemu.guestAgent.socketPath`.
 
-For a quick live Alpine boot, run:
-
-```console
-scripts/launch-alpine-virtie.sh
-```
-
-The script downloads Alpine's latest stable `virt` netboot artifacts into
-`.virtie-alpine/`, writes a standalone manifest, creates a small raw disk, and
-launches `virtie`. The guest fetches `modloop` from the Alpine mirror during
-boot, boots to the serial console, and does not configure guest SSH.
+The agentspace Nix wrapper also has an experimental Alpine image path via
+`mkSandbox { alpine = true; }`. That path builds the guest artifacts in Nix and
+emits the `virtie` manifest for the generated kernel, initrd, and root disk.
 
 ## Features
 

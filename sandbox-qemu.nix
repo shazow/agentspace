@@ -27,6 +27,12 @@ in
   options.agentspace.sandbox = {
     enable = lib.mkEnableOption "Agent Sandbox MicroVM Environment";
 
+    alpine = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Build and launch an experimental Alpine guest image instead of the default NixOS microvm guest.";
+    };
+
     user = lib.mkOption {
       type = lib.types.str;
       default = "agent";
@@ -216,6 +222,12 @@ in
         readOnly = true;
         internal = true;
       };
+
+      alpineRootDisk = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        readOnly = true;
+        internal = true;
+      };
     };
   };
 
@@ -359,6 +371,16 @@ in
         };
       };
 
+      alpineLaunch = import ./alpine.nix {
+        inherit
+          config
+          lib
+          notificationManifest
+          pkgs
+          sshBaseArgv
+          ;
+      };
+
       manifestVolumes = builtins.map (volume: {
         imagePath = volume.image;
         sizeMiB = volume.size;
@@ -395,14 +417,21 @@ in
         builtins.toJSON virtieManifestData
       );
       virtieManifest = "${persistenceBaseDir}/virtie-${cfg.hostName}.json";
+      launchCommonInit = if cfg.alpine then alpineLaunch.commonInit else commonInit;
+      launchVirtieManifestData =
+        if cfg.alpine then alpineLaunch.virtieManifestData else virtieManifestData;
+      launchVirtieManifestTemplate =
+        if cfg.alpine then alpineLaunch.virtieManifestTemplate else virtieManifestTemplate;
+      launchVirtieManifest = if cfg.alpine then alpineLaunch.virtieManifest else virtieManifest;
     in
     lib.mkMerge [
       {
         agentspace.sandbox.launch = {
-          inherit commonInit;
-          inherit virtieManifestData;
-          inherit virtieManifest;
-          inherit virtieManifestTemplate;
+          commonInit = launchCommonInit;
+          virtieManifestData = launchVirtieManifestData;
+          virtieManifest = launchVirtieManifest;
+          virtieManifestTemplate = launchVirtieManifestTemplate;
+          alpineRootDisk = if cfg.alpine then alpineLaunch.rootDisk else null;
         };
 
         networking.hostName = cfg.hostName;

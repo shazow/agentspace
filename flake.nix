@@ -117,6 +117,9 @@
 
       vmConfigs = {
         default = mkSandbox { };
+        alpine = mkSandbox {
+          alpine = true;
+        };
       };
     in
     {
@@ -124,6 +127,7 @@
 
       packages.${system} = {
         virtie = virtiePackage;
+        alpine-root-disk = vmConfigs.alpine.config.agentspace.sandbox.launch.alpineRootDisk;
       };
 
       lib = {
