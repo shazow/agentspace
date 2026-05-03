@@ -85,6 +85,41 @@ let
     }
   '';
 
+  sshdScript = pkgs.writeText "sshd" ''
+    #!/sbin/openrc-run
+
+    description="OpenSSH server"
+    command="/usr/sbin/sshd"
+    command_args="-D -e"
+    command_background="yes"
+    pidfile="/run/sshd.pid"
+
+    depend() {
+      need net
+      after agentspace-init
+    }
+
+    start_pre() {
+      install -d -m 0755 /run/sshd
+      ssh-keygen -A
+    }
+  '';
+
+  qemuGuestAgentScript = pkgs.writeText "qemu-guest-agent" ''
+    #!/sbin/openrc-run
+
+    description="QEMU guest agent"
+    command="/usr/bin/qemu-ga"
+    command_args="-m virtio-serial -p /dev/virtio-ports/org.qemu.guest_agent.0"
+    command_background="yes"
+    pidfile="/run/qemu-guest-agent.pid"
+
+    depend() {
+      need dev
+      after agentspace-init
+    }
+  '';
+
   vsockSSHScript = pkgs.writeText "agentspace-vsock-ssh" ''
     #!/sbin/openrc-run
 
@@ -96,6 +131,11 @@ let
 
     depend() {
       need sshd
+    }
+
+    start_pre() {
+      modprobe vsock
+      modprobe vmw_vsock_virtio_transport
     }
   '';
 
@@ -109,7 +149,7 @@ let
       pkgs.gzip
     ];
     outputHashMode = "recursive";
-    outputHash = "sha256-OipzzXth6czd4AxNi58EwlKYVKshrP8ACK6k1Z4Zafk=";
+    outputHash = "sha256-OYm6RJGjdRLSiUMBUO5/5zky4UHgScPr3jmmoyDg+50=";
 
     buildCommand = ''
       export HOME="$TMPDIR"
@@ -142,6 +182,8 @@ let
       fakeroot tar --extract --file ${rootfs}/rootfs.tar --directory root --numeric-owner
 
       install -Dm0755 ${initScript} root/etc/init.d/agentspace-init
+      install -Dm0755 ${sshdScript} root/etc/init.d/sshd
+      install -Dm0755 ${qemuGuestAgentScript} root/etc/init.d/qemu-guest-agent
       install -Dm0755 ${vsockSSHScript} root/etc/init.d/agentspace-vsock-ssh
       ln -s /etc/init.d/agentspace-init root/etc/runlevels/boot/agentspace-init
       ln -s /etc/init.d/devfs root/etc/runlevels/boot/devfs
@@ -163,7 +205,7 @@ let
         echo '${cfg.user}:x:1000:100:agentspace user:/home/${cfg.user}:/bin/ash' >> root/etc/passwd
       fi
       if ! grep -q '^${cfg.user}:' root/etc/shadow; then
-        echo '${cfg.user}:!:19000:0:99999:7:::' >> root/etc/shadow
+        echo '${cfg.user}:*:19000:0:99999:7:::' >> root/etc/shadow
       fi
       sed -i 's/^wheel:x:10:.*/wheel:x:10:${cfg.user}/' root/etc/group
       echo '%wheel ALL=(ALL) NOPASSWD: ALL' > root/etc/sudoers.d/agentspace
@@ -175,6 +217,10 @@ let
       127.0.1.1 ${cfg.hostName}
       ::1 localhost
       HOSTS
+      cat > root/etc/network/interfaces <<'INTERFACES'
+      auto lo
+      iface lo inet loopback
+      INTERFACES
 
       mkdir -p root/etc/ssh/sshd_config.d
       cat > root/etc/ssh/sshd_config.d/agentspace.conf <<'SSHD'
@@ -208,6 +254,8 @@ let
       cp root/lib/modules/"$kernel_version"/modules.{alias,builtin,dep} "$initrd/lib/modules/$kernel_version/"
       for module in \
         kernel/drivers/block/virtio_blk.ko.gz \
+        kernel/crypto/crc32c_generic.ko.gz \
+        kernel/lib/libcrc32c.ko.gz \
         kernel/fs/ext4/ext4.ko.gz \
         kernel/fs/jbd2/jbd2.ko.gz \
         kernel/fs/mbcache.ko.gz \
@@ -228,13 +276,16 @@ let
         name="''${1##*/}"
         dst="/tmp/''${name%.gz}"
         gzip -dc "$src" > "$dst"
-        insmod "$dst" || true
+        insmod "$dst"
       }
       load_module kernel/drivers/block/virtio_blk.ko.gz
+      load_module kernel/crypto/crc32c_generic.ko.gz
+      load_module kernel/lib/libcrc32c.ko.gz
       load_module kernel/lib/crc16.ko.gz
       load_module kernel/fs/mbcache.ko.gz
       load_module kernel/fs/jbd2/jbd2.ko.gz
       load_module kernel/fs/ext4/ext4.ko.gz
+      mdev -s
       rootdev=
       for _ in 1 2 3 4 5 6 7 8 9 10; do
         for candidate in /dev/vda /dev/vdb /dev/sda /dev/sdb; do
@@ -245,7 +296,11 @@ let
         done
         sleep 1
       done
-      mount "$rootdev" /newroot
+      if [ -z "$rootdev" ]; then
+        echo "failed to find Alpine root block device" >&2
+        exec sh
+      fi
+      mount -t ext4 "$rootdev" /newroot
       exec switch_root /newroot /sbin/init
       INIT
       chmod 0755 "$initrd/init"
@@ -254,7 +309,7 @@ let
       fakeroot_state="$TMPDIR/agentspace-alpine.fakeroot"
       fakeroot -s "$fakeroot_state" chown -R 1000:100 root/home/${cfg.user}
 
-      size="$((1024 * 1024 * 1024))"
+      size="$((512 * 1024 * 1024))"
       truncate -s "$size" alpine-root.img
       fakeroot -i "$fakeroot_state" mkfs.ext4 -q -L AGENTROOT -d root alpine-root.img
       mkdir -p "$out"

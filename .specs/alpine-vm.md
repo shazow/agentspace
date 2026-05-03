@@ -2,7 +2,7 @@
 
 Experimental Alpine guest image support for the `virtie` sandbox launcher.
 
-**Status**: In-Progress
+**Status**: Complete
 
 ## Goals
 
@@ -24,7 +24,7 @@ Acceptance criteria:
 - [x] Alpine mode still emits workspace virtiofs when `mountWorkspace = true`.
 - [x] The launch wrapper installs a mutable Alpine root disk under `persistence.basedir` on first launch.
 - [x] Repo checks cover the Alpine manifest contract.
-- [ ] KVM smoke test boots Alpine and attaches SSH over vsock.
+- [x] KVM smoke test boots Alpine and attaches SSH over vsock.
 
 ## Progress
 
@@ -35,9 +35,14 @@ Acceptance criteria:
 - [x] Added Alpine manifest contract assertions to `checks/virtie-manifest.nix`.
 - [x] Verified `nix build .#alpine-root-disk --no-link`.
 - [x] Verified `nix flake check`.
-- [ ] Fix Alpine boot: current KVM smoke reaches QEMU but the initramfs fails to mount the virtio root device before SSH can start.
+- [x] Fixed Alpine boot by refreshing the pinned rootfs hash, loading ext4 dependencies strictly, rerunning `mdev` after initramfs module load, and providing minimal OpenRC networking.
+- [x] Fixed vsock SSH by loading guest vsock modules before starting the vsock forwarder and using an unlockable shadow entry for the `agent` user.
+- [x] Verified KVM smoke with a small test VM: 128 MiB RAM, 1 vCPU, `mountWorkspace = false`, CID 4. It requires at least 65 MiB in this environment; a 64 MiB smoke booted but did not complete SSH reliably.
 
 ## Appendix
 
-- Current smoke-test failure: QEMU starts and QMP becomes ready, but the guest initramfs reports `mounting /dev/vda on /newroot failed: No such file or directory`, then panics before OpenRC starts.
-- The host used for the smoke test already had vsock CID 3 in use, so the test held the CID 3 lock and used CID 4.
+- The host used for smoke tests already had vsock CID 3 in use, so tests held the CID 3 lock and used CID 4.
+- Validation after the boot fix:
+  - `nix build .#alpine-root-disk --no-link --print-out-paths`
+  - `nix flake check --no-build`
+  - `nix flake check`
