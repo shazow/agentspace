@@ -325,11 +325,17 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 	assertLaunchStatsLog(t, logOutput.String(), []string{
 		"started_to_boot=",
+		"boot_to_qmp=",
+		"files_to_first_ssh=",
+		"boot_to_completed=",
+		"total=",
+		"ssh_attempts=1",
+	}, []string{
+		"files_to_ssh=",
 		"boot_to_ssh=",
 		"ssh_to_completed=",
-		"total=",
-	}, []string{
-		"boot_to_completed=",
+		"qmp_to_guest_agent=",
+		"guest_agent_to_files=",
 	})
 }
 
@@ -384,11 +390,13 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 	assertLaunchStatsLog(t, logOutput.String(), []string{
 		"started_to_boot=",
+		"boot_to_qmp=",
 		"boot_to_completed=",
 		"total=",
 	}, []string{
 		"boot_to_ssh=",
 		"ssh_to_completed=",
+		"ssh_attempts=",
 	})
 	if qmpClient.quitCalls != 0 {
 		t.Fatalf("expected natural qemu exit without qmp quit, got %d calls", qmpClient.quitCalls)
@@ -400,6 +408,7 @@ func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.SSH.RetryDelayMS = intPtr(0)
 	cfg.Volumes[0].AutoCreate = false
 
 	runner := &fakeRunner{
@@ -421,14 +430,17 @@ func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
 		logWriter:         &logOutput,
-		sshRetryDelay:     0,
+		sshRetryDelay:     time.Hour,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
 		qmpConnectTimeout: time.Millisecond,
 		qmpQuitTimeout:    time.Millisecond,
 	}
 
-	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true}); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := manager.launchWithOptions(ctx, cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true}); err != nil {
 		t.Fatalf("launch with ssh: %v", err)
 	}
 	if got, want := len(runner.sshArgs), 3; got != want {
@@ -449,6 +461,10 @@ func TestManagerLaunchWithSSHRetriesTransientSessionFailure(t *testing.T) {
 	if strings.Contains(logs, "starting ssh session") {
 		t.Fatalf("unexpected per-attempt ssh start log: %q", logs)
 	}
+	assertLaunchStatsLog(t, logs, []string{
+		"ssh_attempts=3",
+		"boot_to_ssh=",
+	}, []string{})
 }
 
 func TestSSHRetryOutputSuppressesTransientFailureOutput(t *testing.T) {
@@ -2021,6 +2037,7 @@ func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest.QEMU.Memory.Shared = false
 	manifest.QEMU.Devices.VirtioFS = nil
 	manifest.QEMU.Devices.Block = nil
+	manifest.QEMU.Devices.Network = nil
 	manifest.Volumes = nil
 	manifest.VirtioFS.Daemons = nil
 
@@ -2035,8 +2052,8 @@ func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	if containsString(spec.Args, "virtio-blk") {
 		t.Fatalf("expected qemu args to omit block devices: %v", spec.Args)
 	}
-	if !containsString(spec.Args, "-netdev") {
-		t.Fatalf("expected qemu args to retain network device: %v", spec.Args)
+	if containsString(spec.Args, "-netdev") || containsString(spec.Args, "virtio-net") {
+		t.Fatalf("expected qemu args to omit network devices: %v", spec.Args)
 	}
 	if !containsString(spec.Args, "virtio-rng-pci") {
 		t.Fatalf("expected qemu args to retain rng device: %v", spec.Args)

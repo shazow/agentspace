@@ -153,7 +153,3 @@ func validManifest() *Manifest {
 		}},
 	}
 }
-
-func intPtr(value int) *int {
-	return &value
-}
