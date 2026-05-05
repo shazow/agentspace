@@ -56,6 +56,29 @@ OpenSSH is used for the first experiment because it matches the existing host
 SSH flow. Dropbear is the expected future size reduction path, but that would
 change the guest daemon implementation and should be evaluated separately.
 
+## Size Reduction
+
+Tiny mode trims NixOS defaults that are not used by the initrd appliance:
+
+- in-guest Nix and generated Nix/NixOS documentation are disabled
+- default system/user packages and command-not-found are disabled
+- dbus, dhcpcd, logrotate, lvm, sudo, and udev are disabled
+- default initrd kernel modules are disabled; tiny mode keeps only its explicit
+  virtio, virtiofs, fuse, and vsock module set
+- the scripted-initrd ext filesystem module is disabled because tiny mode has
+  no block devices, ext root, or persistent ext volumes
+
+Reference planning measurements from 2026-05-05 showed the safe trim reducing
+the tiny toplevel closure from about 1.20 GB to about 578 MB. Disabling default
+initrd modules and the unused ext filesystem module reduced the packed initrd
+from about 16.0 MB to about 13.7 MB.
+
+Two more reductions are intentionally deferred. Importing NixOS
+`profiles/perlless.nix` is not currently drop-in because the scripted initrd
+and toplevel activation still pull Perl. Disabling the NixOS security wrappers
+module saved only about 8.7 MB locally and requires a compatibility shim, so it
+should be evaluated separately if further toplevel closure reduction matters.
+
 ## Benchmark Reference
 
 Use `nix run .#tiny-sandbox-benchmark` to compare the size and boot-to-SSH

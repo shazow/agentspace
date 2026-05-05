@@ -120,6 +120,10 @@ let
   );
 in
 {
+  disabledModules = [
+    "tasks/filesystems/ext.nix"
+  ];
+
   options.agentspace.tinySandbox = {
     enable = lib.mkEnableOption "experimental initrd-only Agent Sandbox appliance";
 
@@ -272,6 +276,20 @@ in
     networking.hostName = cfg.hostName;
     system.stateVersion = "25.11";
 
+    nix.enable = false;
+    documentation.enable = false;
+    documentation.nixos.enable = false;
+    environment.defaultPackages = lib.mkForce [ ];
+    environment.systemPackages = lib.mkForce [ ];
+    programs.command-not-found.enable = false;
+    services.udev.enable = false;
+    services.lvm.enable = false;
+    services.dbus.enable = lib.mkForce false;
+    services.logrotate.enable = false;
+    networking.useDHCP = false;
+    networking.dhcpcd.enable = false;
+    security.sudo.enable = false;
+
     fileSystems."/" = {
       device = "tmpfs";
       fsType = "tmpfs";
@@ -284,24 +302,25 @@ in
 
     boot.loader.grub.enable = false;
     boot.initrd.systemd.enable = false;
+    boot.initrd.includeDefaultModules = false;
     boot.initrd.verbose = false;
     boot.consoleLogLevel = 4;
     boot.kernelParams = [
       "panic=-1"
       "reboot=t"
     ];
-    boot.initrd.availableKernelModules = [
-      "virtio"
-      "virtio_ring"
-      "virtio_mmio"
-      "virtio_pci"
-      "virtio_console"
-      "virtiofs"
-      "fuse"
-      "vsock"
-      "vmw_vsock_virtio_transport_common"
-      "vmw_vsock_virtio_transport"
-    ];
+    boot.initrd.availableKernelModules = {
+      virtio = true;
+      virtio_ring = true;
+      virtio_mmio = true;
+      virtio_pci = true;
+      virtio_console = true;
+      virtiofs = true;
+      fuse = true;
+      vsock = true;
+      vmw_vsock_virtio_transport_common = true;
+      vmw_vsock_virtio_transport = true;
+    };
 
     boot.initrd.extraUtilsCommands = ''
       copy_bin_and_libs ${pkgs.busybox}/bin/busybox
