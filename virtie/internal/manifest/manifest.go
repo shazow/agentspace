@@ -111,7 +111,7 @@ type QEMUKernel struct {
 }
 
 type QEMUSMP struct {
-	CPUs int `json:"cpus"`
+	CPUs *int `json:"cpus,omitempty"`
 }
 
 type QEMUConsole struct {
@@ -299,7 +299,7 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.kernel.path is required")
 	case m.QEMU.Kernel.InitrdPath == "":
 		return fmt.Errorf("manifest.qemu.kernel.initrdPath is required")
-	case m.QEMU.SMP.CPUs <= 0:
+	case m.QEMU.SMP.CPUs != nil && *m.QEMU.SMP.CPUs <= 0:
 		return fmt.Errorf("manifest.qemu.smp.cpus must be greater than zero")
 	case m.QEMU.QMP.SocketPath == "":
 		return fmt.Errorf("manifest.qemu.qmp.socketPath is required")

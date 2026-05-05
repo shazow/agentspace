@@ -539,6 +539,27 @@ func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	}
 }
 
+func TestManifestAllowsRuntimeResolvedCPUs(t *testing.T) {
+	manifest := validManifest()
+	manifest.QEMU.SMP.CPUs = nil
+
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
+func TestManifestRejectsNonPositiveCPUsWhenProvided(t *testing.T) {
+	for _, cpus := range []int{0, -1} {
+		manifest := validManifest()
+		manifest.QEMU.SMP.CPUs = &cpus
+
+		err := manifest.Validate()
+		if err == nil || !strings.Contains(err.Error(), "manifest.qemu.smp.cpus must be greater than zero") {
+			t.Fatalf("expected cpus validation error for %d, got %v", cpus, err)
+		}
+	}
+}
+
 func stringPtr(value string) *string {
 	return &value
 }

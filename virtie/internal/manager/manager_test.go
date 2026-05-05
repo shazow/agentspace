@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -1976,6 +1977,24 @@ func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	}
 }
 
+func TestBuildQEMUSpecUsesRuntimeCPUCountWhenOmitted(t *testing.T) {
+	manifest := validManifest("/tmp/work")
+	manifest.QEMU.SMP.CPUs = nil
+
+	spec, err := buildQEMUSpec(manifest, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	smpIndex := indexString(spec.Args, "-smp")
+	if smpIndex == -1 || smpIndex+1 >= len(spec.Args) {
+		t.Fatalf("expected qemu args to include -smp: %v", spec.Args)
+	}
+	if got, want := spec.Args[smpIndex+1], fmt.Sprintf("%d", runtime.NumCPU()); got != want {
+		t.Fatalf("unexpected runtime cpu count: got %q want %q", got, want)
+	}
+}
+
 func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
@@ -2130,7 +2149,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 				Params:     "panic=-1",
 			},
 			SMP: manifest.QEMUSMP{
-				CPUs: 2,
+				CPUs: intPtr(2),
 			},
 			Console: manifest.QEMUConsole{
 				StdioChardev: true,
@@ -2960,6 +2979,10 @@ func indexString(values []string, needle string) int {
 }
 
 func stringPtr(value string) *string {
+	return &value
+}
+
+func intPtr(value int) *int {
 	return &value
 }
 

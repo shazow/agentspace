@@ -95,7 +95,7 @@ func validManifest() *Manifest {
 				InitrdPath: "/tmp/initrd",
 			},
 			SMP: QEMUSMP{
-				CPUs: 2,
+				CPUs: intPtr(2),
 			},
 			QMP: QEMUQMP{
 				SocketPath: "qmp.sock",
@@ -152,4 +152,8 @@ func validManifest() *Manifest {
 			},
 		}},
 	}
+}
+
+func intPtr(value int) *int {
+	return &value
 }
