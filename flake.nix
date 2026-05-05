@@ -163,6 +163,18 @@
 
       packages.${system} = {
         virtie = virtiePackage;
+        tiny-sandbox-benchmark = pkgs.writeShellApplication {
+          name = "tiny-sandbox-benchmark";
+          runtimeInputs = [
+            pkgs.coreutils
+            pkgs.gawk
+            pkgs.gnugrep
+            pkgs.gnused
+            pkgs.nix
+            pkgs.util-linux
+          ];
+          text = builtins.readFile ./scripts/tiny-sandbox-benchmark.sh;
+        };
       };
 
       lib = {

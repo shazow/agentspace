@@ -25,6 +25,10 @@ let
     ssh.authorizedKeys = [ tinyPublicKey ];
     ssh.identityFile = "id_ed25519";
     persistence.basedir = ".agentspace-tiny-e2e";
+    writeFiles."/tmp/tiny-e2e-write-file" = {
+      content = "dGlueS1lMmUtd3JpdGUtZmlsZXMtb2s=";
+      mode = "0644";
+    };
     extraModules = [
       {
         microvm.cpu = "max";
@@ -43,9 +47,12 @@ let
     assert manifest.qemu.memory.sizeMiB == 192;
     assert manifest.qemu.smp.cpus == 1;
     assert manifest.qemu.cpu.enableKvm == false;
-    assert manifest.qemu.devices.virtiofs == [ ];
+    assert manifest.qemu.guestAgent.socketPath == "qga.sock";
+    assert builtins.length manifest.qemu.devices.virtiofs == 1;
     assert manifest.qemu.devices.block == [ ];
     assert manifest.volumes == [ ];
+    assert builtins.length manifest.virtiofs.daemons == 1;
+    assert manifest.writeFiles."/tmp/tiny-e2e-write-file".content == "dGlueS1lMmUtd3JpdGUtZmlsZXMtb2s=";
     true;
 in
 {
@@ -96,13 +103,16 @@ in
         mkdir -p "$XDG_RUNTIME_DIR"
 
         cd "$workspace_dir"
-        timeout 70s ${launchScript} sh -c 'printf tiny-sandbox-e2e-ok' >"$launch_log" 2>&1
+        timeout 70s ${launchScript} sh -c 'test "$(cat /tmp/tiny-e2e-write-file)" = tiny-e2e-write-files-ok; printf tiny-sandbox-e2e-ok' >"$launch_log" 2>&1
 
         grep -F 'tiny-sandbox-e2e-ok' "$launch_log" >/dev/null
         grep -F 'allocated vsock cid' "$launch_log" >/dev/null
         grep -F 'stats:' "$launch_log" >/dev/null
         test -f "$workspace_dir/.agentspace-tiny-e2e/virtie-agent-tiny-e2e.json"
-        grep -F '"virtiofs":[]' "$workspace_dir/.agentspace-tiny-e2e/virtie-agent-tiny-e2e.json" >/dev/null
+        grep -F '"guestAgent":{"socketPath":"qga.sock"}' "$workspace_dir/.agentspace-tiny-e2e/virtie-agent-tiny-e2e.json" >/dev/null
+        grep -F '"virtiofs":[{"id":"fs0"' "$workspace_dir/.agentspace-tiny-e2e/virtie-agent-tiny-e2e.json" >/dev/null
+        grep -F '"tag":"workspace"' "$workspace_dir/.agentspace-tiny-e2e/virtie-agent-tiny-e2e.json" >/dev/null
+        grep -F '"/tmp/tiny-e2e-write-file"' "$workspace_dir/.agentspace-tiny-e2e/virtie-agent-tiny-e2e.json" >/dev/null
         grep -F '"block":[]' "$workspace_dir/.agentspace-tiny-e2e/virtie-agent-tiny-e2e.json" >/dev/null
 
         touch "$out"

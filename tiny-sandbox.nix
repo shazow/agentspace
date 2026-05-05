@@ -31,13 +31,66 @@ let
     inherit config lib pkgs;
   };
   qemuConfig = baseQemuConfig // {
-    guestAgent.socketPath = "";
     smp = lib.optionalAttrs (cfg.machine.vcpu != null) {
       cpus = cfg.machine.vcpu;
     };
   };
   extraUtils = config.system.build.extraUtils;
   opensshLibexecCompat = "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-openssh-${pkgs.openssh.version}/libexec";
+
+  virtiofsShares = builtins.filter (share: share.proto == "virtiofs") config.microvm.shares;
+
+  mkVirtioFSDaemonCommand =
+    {
+      tag,
+      socket,
+      source,
+      readOnly,
+      cache,
+      ...
+    }:
+    pkgs.writeShellScript "virtiofsd-${cfg.hostName}-${tag}" ''
+      if [ "$(id -u)" = 0 ]; then
+        opt_rlimit=(--rlimit-nofile 1048576)
+      else
+        opt_rlimit=()
+      fi
+
+      socket_path=${lib.escapeShellArg socket}
+      if [ -n "''${VIRTIE_SOCKET_PATH-}" ]; then
+        socket_path="$VIRTIE_SOCKET_PATH"
+      fi
+
+      exec ${lib.getExe config.microvm.virtiofsd.package} \
+        --socket-path="$socket_path" \
+        ${
+          lib.optionalString (
+            config.microvm.virtiofsd.group != null
+          ) "--socket-group=${config.microvm.virtiofsd.group}"
+        } \
+        --shared-dir=${lib.escapeShellArg source} \
+        "''${opt_rlimit[@]}" \
+        --thread-pool-size ${toString config.microvm.virtiofsd.threadPoolSize} \
+        --posix-acl --xattr \
+        --cache=${cache} \
+        ${
+          lib.optionalString (
+            config.microvm.virtiofsd.inodeFileHandles != null
+          ) "--inode-file-handles=${config.microvm.virtiofsd.inodeFileHandles}"
+        } \
+        ${lib.optionalString (config.microvm.hypervisor == "crosvm") "--tag=${tag}"} \
+        ${lib.optionalString readOnly "--readonly"} \
+        ${lib.escapeShellArgs config.microvm.virtiofsd.extraArgs}
+    '';
+
+  virtiofsDaemons = builtins.map (share: {
+    tag = share.tag;
+    socketPath = share.socket;
+    command = {
+      path = mkVirtioFSDaemonCommand share;
+      args = [ ];
+    };
+  }) virtiofsShares;
 
   virtieManifestData = {
     identity.hostName = cfg.hostName;
@@ -57,8 +110,8 @@ let
     };
     qemu = qemuConfig;
     volumes = [ ];
-    virtiofs.daemons = [ ];
-    writeFiles = { };
+    virtiofs.daemons = virtiofsDaemons;
+    writeFiles = cfg.writeFiles;
     notifications.states = [ ];
   };
 
@@ -128,6 +181,55 @@ in
       description = "Base directory for generated tiny sandbox runtime manifest paths.";
     };
 
+    mountWorkspace = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Mount the current working directory into the tiny VM as the workspace share.";
+    };
+
+    writeFiles = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule (
+          { ... }:
+          {
+            options = {
+              content = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Base64-encoded content to write into the guest file.";
+              };
+
+              chown = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Optional user:group ownership value applied after writing the guest file.";
+              };
+
+              path = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Host path whose bytes are base64-encoded and written into the guest file.";
+              };
+
+              mode = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Optional four-digit octal permission mode applied after writing the guest file.";
+              };
+            };
+          }
+        )
+      );
+      default = { };
+      description = "Files to write into the tiny guest during fresh VM launch, keyed by absolute guest path.";
+    };
+
+    workspaceMountPoint = lib.mkOption {
+      type = lib.types.str;
+      default = "/home/${cfg.user}/workspace";
+      description = "Where to mount the current working directory inside the tiny VM.";
+    };
+
     launch = {
       commonInit = lib.mkOption {
         type = lib.types.lines;
@@ -159,6 +261,9 @@ in
     agentspace.tinySandbox.launch = {
       commonInit = ''
         echo "Preparing experimental tiny Agent QEMU Sandbox..."
+      ''
+      + lib.optionalString cfg.mountWorkspace ''
+        cd "$REPO_DIR"
       '';
       inherit virtieManifestData virtieManifestTemplate;
       virtieManifest = "${persistenceBaseDir}/virtie-${cfg.hostName}.json";
@@ -189,6 +294,10 @@ in
       "virtio"
       "virtio_ring"
       "virtio_mmio"
+      "virtio_pci"
+      "virtio_console"
+      "virtiofs"
+      "fuse"
       "vsock"
       "vmw_vsock_virtio_transport_common"
       "vmw_vsock_virtio_transport"
@@ -206,6 +315,7 @@ in
       copy_bin_and_libs ${pkgs.openssh}/libexec/sftp-server
       copy_bin_and_libs ${pkgs.openssh}/libexec/sshd-auth
       copy_bin_and_libs ${pkgs.openssh}/libexec/sshd-session
+      copy_bin_and_libs ${pkgs.qemu.ga}/bin/qemu-ga
 
       mkdir -p $out/etc/ssh
     '';
@@ -225,6 +335,12 @@ in
       mkdir -p ${opensshLibexecCompat}
       ln -sf ${extraUtils}/bin/sshd-auth ${opensshLibexecCompat}/sshd-auth
       ln -sf ${extraUtils}/bin/sshd-session ${opensshLibexecCompat}/sshd-session
+      mkdir -p /run/current-system/sw/bin
+      ln -sf ${extraUtils}/bin/busybox /run/current-system/sw/bin/chmod
+      ln -sf ${extraUtils}/bin/busybox /run/current-system/sw/bin/chown
+      ln -sf ${extraUtils}/bin/busybox /run/current-system/sw/bin/install
+      ln -sf ${extraUtils}/bin/busybox /run/current-system/sw/bin/ps
+      ln -sf ${extraUtils}/bin/busybox /run/current-system/sw/bin/test
       chmod 0755 /run/sshd /var/empty
       chmod 0700 /home/${cfg.user} /home/${cfg.user}/.ssh
 
@@ -247,13 +363,44 @@ EOF
       echo "tiny-sandbox: generating ephemeral OpenSSH host keys"
       ${extraUtils}/bin/ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key
       ${extraUtils}/bin/ssh-keygen -q -t rsa -b 3072 -N "" -f /etc/ssh/ssh_host_rsa_key
-      echo "tiny-sandbox: loading virtio-vsock modules"
+      echo "tiny-sandbox: loading virtio modules"
       modprobe virtio || true
       modprobe virtio_ring || true
       modprobe virtio_mmio || true
+      modprobe virtio_pci || true
+      modprobe virtio_console || true
+      modprobe fuse || true
+      modprobe virtiofs || true
       modprobe vsock || true
       modprobe vmw_vsock_virtio_transport_common || true
       modprobe vmw_vsock_virtio_transport || true
+
+      echo "tiny-sandbox: starting QEMU guest agent"
+      mkdir -p /dev/virtio-ports
+      qga_port=""
+      for attempt in $(seq 1 50); do
+        for name_file in /sys/class/virtio-ports/*/name; do
+          [ -e "$name_file" ] || continue
+          if [ "$(cat "$name_file")" = "org.qemu.guest_agent.0" ]; then
+            port_name="$(basename "$(dirname "$name_file")")"
+            qga_port="/dev/$port_name"
+            ln -sf "$qga_port" /dev/virtio-ports/org.qemu.guest_agent.0
+            break
+          fi
+        done
+        [ -n "$qga_port" ] && [ -e "$qga_port" ] && break
+        sleep 0.1
+      done
+      ${extraUtils}/bin/qemu-ga -m virtio-serial -p /dev/virtio-ports/org.qemu.guest_agent.0 -t /run -r &
+
+      ${
+        lib.optionalString cfg.mountWorkspace ''
+          echo "tiny-sandbox: mounting workspace virtiofs"
+          mkdir -p ${cfg.workspaceMountPoint}
+          mount -t virtiofs workspace ${cfg.workspaceMountPoint}
+          chown ${cfg.user}:users ${cfg.workspaceMountPoint} || true
+        ''
+      }
 
       # OpenSSH is intentionally used for the first experiment. Dropbear is the
       # expected future size reduction path, but changes the daemon behavior.
@@ -285,12 +432,21 @@ EOF
       mem = cfg.machine.memory;
       vcpu = lib.mkIf (cfg.machine.vcpu != null) cfg.machine.vcpu;
       socket = "qmp.sock";
-      shares = [ ];
+      shares = lib.optionals cfg.mountWorkspace [
+        {
+          proto = "virtiofs";
+          tag = "workspace";
+          source = ".";
+          mountPoint = cfg.workspaceMountPoint;
+          securityModel = "mapped";
+        }
+      ];
       volumes = [ ];
       storeOnDisk = false;
       writableStoreOverlay = null;
 
       qemu.serialConsole = true;
+      virtiofsd.group = lib.mkDefault null;
 
       interfaces = [
         {

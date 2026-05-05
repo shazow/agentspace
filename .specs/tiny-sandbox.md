@@ -9,8 +9,10 @@ full NixOS agentspace.
 The first success target is intentionally narrow:
 
 - boot a Linux kernel with a Nix-built initrd
+- start the QEMU guest agent inside the initrd
 - start OpenSSH inside the initrd
 - listen on guest vsock port 22
+- mount the host workspace through a managed virtiofs share
 - attach through the existing `virtie launch --ssh` flow as `agent@vsock/<cid>`
 
 Tiny and full sandbox examples should use the same SSH-facing and machine
@@ -24,25 +26,76 @@ sizing options where practical:
 - `machine.memory` in MiB
 - `machine.vcpu`, where `null` lets virtie choose the host-visible CPU count at
   launch time
+- `mountWorkspace`
+- `workspaceMountPoint`
+- `writeFiles`
 
 ## Current Contract
 
-The tiny profile avoids persistent and shared storage:
+The tiny profile is still an initrd appliance, but now includes the host control
+and workspace pieces needed for normal `virtie` operation:
 
-- no virtiofs shares or virtiofsd daemons
+- QEMU guest agent is always enabled at `qga.sock`
+- `writeFiles` is supported through the guest agent during fresh launch
+- `mountWorkspace = true` by default
+- the current host directory is shared as one managed `virtiofs` share tagged
+  `workspace`
+- the workspace is mounted in the initrd at `workspaceMountPoint`, defaulting to
+  `/home/${user}/workspace`
 - no block devices or microvm volumes
 - `microvm.guest.enable = false`
 - `microvm.storeOnDisk = false`
 - `microvm.writableStoreOverlay = null`
-- no QEMU guest agent
 
-This means `writeFiles`, workspace mounts, Nix store sharing, and the normal
-Home Manager/NixOS user environment are not part of the tiny appliance contract.
-The initrd creates only the minimal passwd/group/home/ssh state needed for SSH.
+Nix store sharing, persistent storage, generic volumes, and the normal Home
+Manager/NixOS user environment are not part of the tiny appliance contract. The
+initrd creates only the minimal passwd/group/home/ssh state needed for SSH and
+the workspace mount.
 
 OpenSSH is used for the first experiment because it matches the existing host
 SSH flow. Dropbear is the expected future size reduction path, but that would
 change the guest daemon implementation and should be evaluated separately.
+
+## Benchmark Reference
+
+Use `nix run .#tiny-sandbox-benchmark` to compare the size and boot-to-SSH
+impact of the guest agent, `writeFiles`, and workspace virtiofs. The benchmark
+builds two flake refs, records toplevel/initrd size, and, when
+`/dev/vhost-vsock` is visible, launches each VM and captures `virtie`'s
+`boot_to_ssh` stats.
+
+Example command:
+
+```sh
+nix run .#tiny-sandbox-benchmark -- \
+  --iterations 1 \
+  --out /tmp/tiny-sandbox-benchmark.tsv \
+  "git+file://$PWD?rev=$(git rev-parse HEAD)" \
+  "path:$PWD"
+```
+
+Reference run from 2026-05-05 on the NixOS QEMU workspace VM, comparing Git
+HEAD before these features with the working tree after enabling QGA,
+`writeFiles`, and workspace virtiofs, plus a full `mkSandbox` baseline from
+the same working tree using 4096 MiB of guest memory:
+
+| profile | metric | value |
+| --- | --- | ---: |
+| tiny before | toplevel closure bytes | 1195996240 |
+| tiny before | initrd closure bytes | 14910520 |
+| tiny before | initrd file bytes | 14910037 |
+| tiny after | toplevel closure bytes | 1197126648 |
+| tiny after | initrd closure bytes | 16040936 |
+| tiny after | initrd file bytes | 16040452 |
+| full | toplevel closure bytes | 1349995872 |
+| full | initrd closure bytes | 23687680 |
+| full | initrd file bytes | 23687194 |
+| tiny before run 1 | wall elapsed ms | 2304 |
+| tiny before run 1 | virtie stats | `started_to_boot=368.799µs boot_to_ssh=2.126174958s ssh_to_completed=121.236174ms total=2.247779931s` |
+| tiny after run 1 | wall elapsed ms | 2888 |
+| tiny after run 1 | virtie stats | `started_to_boot=101.7346ms boot_to_ssh=2.603010513s ssh_to_completed=129.517161ms total=2.834262274s` |
+| full run 1 | wall elapsed ms | 14975 |
+| full run 1 | virtie stats | `started_to_boot=142.520713ms boot_to_ssh=12.033426302s ssh_to_completed=2.746541059s total=14.922488074s` |
 
 ## Parity TODOs
 
@@ -56,6 +109,10 @@ work for `mkSandbox`, without turning the tiny appliance into a full agentspace.
   `machine.vcpu`.
 - [x] Support runtime CPU defaulting by omitting `qemu.smp.cpus` when
   `machine.vcpu = null`.
+- [x] Enable the QEMU guest agent for VM control and `writeFiles`.
+- [x] Support managed workspace virtiofs by default.
+- [x] Support `mountWorkspace`, `workspaceMountPoint`, and `writeFiles` where
+  they match `mkSandbox`.
 - [ ] Keep the minimal example identical except for constructor name. The target
   example should be valid for both `lib.mkSandbox` and `lib.mkTinySandbox`:
 
@@ -77,8 +134,6 @@ work for `mkSandbox`, without turning the tiny appliance into a full agentspace.
   tiny mode. It works through the shared launcher, but tiny mode lacks the
   normal shell environment and should advertise only simple commands until the
   initrd userland is expanded.
-- [ ] Add a tiny-specific `writeTextFile` or `authorizedFiles` style option only
-  if a concrete need appears. Do not copy `writeFiles`; tiny has no guest agent.
 - [ ] Make host-key behavior configurable if repeated SSH host identity becomes
   important for consumers. The current ephemeral host keys are correct for an
   appliance smoke path but are not parity with a persistent NixOS guest.
@@ -97,9 +152,6 @@ work for `mkSandbox`, without turning the tiny appliance into a full agentspace.
 These features should stay out of tiny mode unless the goal changes from
 "initrd appliance" to "small full agentspace".
 
-- **Workspace mounts through virtiofs**: requires host `virtiofsd`, QEMU shared
-  memory, guest mount orchestration, and a writable user environment. This is
-  the core full-sandbox storage model, not an initrd appliance concern.
 - **Nix store sharing or writable Nix store overlays**: pulls tiny mode toward a
   normal NixOS runtime and reintroduces block devices or `virtiofs` shares.
 - **Persistent home images or arbitrary microvm volumes**: conflicts with the
@@ -108,9 +160,6 @@ These features should stay out of tiny mode unless the goal changes from
 - **Home Manager modules and full user package environments**: require a real
   root filesystem and system activation model. Tiny mode should expose a small
   appliance userland instead.
-- **QEMU guest agent and `writeFiles` parity**: the guest agent is a long-lived
-  service expected in the full guest. Tiny mode should avoid adding it solely to
-  support file injection.
 - **Swap files**: require writable guest storage and add little value to an
   appliance intended to boot fast with a small, explicit memory budget.
 - **Runtime balloon control**: useful for the full sandbox where memory pressure
