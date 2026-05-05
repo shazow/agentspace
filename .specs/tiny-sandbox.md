@@ -23,6 +23,9 @@ sizing options where practical:
 - `ssh.authorizedKeys`
 - `ssh.identityFile`
 - `ssh.autoconnect`
+- `ssh.retryDelayMs`
+- `ssh.hostKeyPath`
+- `ssh.useDeterministicTestingHostKey`
 - `machine.memory` in MiB
 - `machine.vcpu`, where `null` lets virtie choose the host-visible CPU count at
   launch time
@@ -43,6 +46,8 @@ and workspace pieces needed for normal `virtie` operation:
 - the workspace is mounted in the initrd at `workspaceMountPoint`, defaulting to
   `/home/${user}/workspace`
 - no block devices or microvm volumes
+- no QEMU user network devices
+- no x86 i8042 controller device
 - `microvm.guest.enable = false`
 - `microvm.storeOnDisk = false`
 - `microvm.writableStoreOverlay = null`
@@ -50,7 +55,12 @@ and workspace pieces needed for normal `virtie` operation:
 Nix store sharing, persistent storage, generic volumes, and the normal Home
 Manager/NixOS user environment are not part of the tiny appliance contract. The
 initrd creates only the minimal passwd/group/home/ssh state needed for SSH and
-the workspace mount.
+the workspace mount. By default the initrd generates one ephemeral ed25519 SSH
+host key at boot. `ssh.hostKeyPath` can copy a caller-provided ed25519 private
+host key into the initrd, and `ssh.useDeterministicTestingHostKey = true` uses a
+fixed test-only key for checks and benchmarks. Both build-time host-key paths
+place private key material in the Nix store and should not be used for
+production secrets.
 
 OpenSSH is used for the first experiment because it matches the existing host
 SSH flow. Dropbear is the expected future size reduction path, but that would
@@ -67,6 +77,11 @@ Tiny mode trims NixOS defaults that are not used by the initrd appliance:
   virtio, virtiofs, fuse, and vsock module set
 - the scripted-initrd ext filesystem module is disabled because tiny mode has
   no block devices, ext root, or persistent ext volumes
+- runtime SSH host-key generation is ed25519-only, and `ssh-keygen` is omitted
+  from the initrd when a build-time host key is configured
+- the OpenSSH listener starts before QEMU guest-agent probing, after the
+  workspace mount and host-key setup
+- tiny mode emits no QEMU user network device and disables the x86 i8042 device
 
 Reference planning measurements from 2026-05-05 showed the safe trim reducing
 the tiny toplevel closure from about 1.20 GB to about 578 MB. Disabling default
@@ -86,7 +101,6 @@ impact of the guest agent, `writeFiles`, and workspace virtiofs. The benchmark
 builds two flake refs, records toplevel/initrd size, and, when
 `/dev/vhost-vsock` is visible, launches each VM and captures `virtie`'s
 `boot_to_ssh` stats.
-
 Example command:
 
 ```sh
@@ -97,28 +111,31 @@ nix run .#tiny-sandbox-benchmark -- \
   "path:$PWD"
 ```
 
-Reference run from 2026-05-05 on the NixOS QEMU workspace VM, comparing Git
-HEAD before these features with the working tree after enabling QGA,
-`writeFiles`, and workspace virtiofs, plus a full `mkSandbox` baseline from
-the same working tree using 4096 MiB of guest memory:
+Reference run from 2026-05-05 on the NixOS QEMU workspace VM, comparing commit
+`a7fdd6581947` with the working tree after adding deterministic benchmark host
+keys, ed25519-only runtime host-key generation, early SSH listener startup,
+zero tiny user-network devices, and detailed launch stats. The tiny after paths
+used `ssh.useDeterministicTestingHostKey = true`, `ssh.retryDelayMs = 100`,
+one `writeFiles` entry, and workspace virtiofs. The full baseline used
+`mkSandbox` from the same working tree with 4096 MiB of guest memory.
 
 | profile | metric | value |
 | --- | --- | ---: |
-| tiny before | toplevel closure bytes | 1195996240 |
-| tiny before | initrd closure bytes | 14910520 |
-| tiny before | initrd file bytes | 14910037 |
-| tiny after | toplevel closure bytes | 1197126648 |
-| tiny after | initrd closure bytes | 16040936 |
-| tiny after | initrd file bytes | 16040452 |
+| tiny before | toplevel closure bytes | 568842504 |
+| tiny before | initrd closure bytes | 13739176 |
+| tiny before | initrd file bytes | 13738689 |
+| tiny after | toplevel closure bytes | 568813552 |
+| tiny after | initrd closure bytes | 13710232 |
+| tiny after | initrd file bytes | 13709751 |
 | full | toplevel closure bytes | 1349995872 |
 | full | initrd closure bytes | 23687680 |
 | full | initrd file bytes | 23687194 |
-| tiny before run 1 | wall elapsed ms | 2304 |
-| tiny before run 1 | virtie stats | `started_to_boot=368.799µs boot_to_ssh=2.126174958s ssh_to_completed=121.236174ms total=2.247779931s` |
-| tiny after run 1 | wall elapsed ms | 2888 |
-| tiny after run 1 | virtie stats | `started_to_boot=101.7346ms boot_to_ssh=2.603010513s ssh_to_completed=129.517161ms total=2.834262274s` |
-| full run 1 | wall elapsed ms | 14975 |
-| full run 1 | virtie stats | `started_to_boot=142.520713ms boot_to_ssh=12.033426302s ssh_to_completed=2.746541059s total=14.922488074s` |
+| tiny before | average wall elapsed ms, 5 runs | 5631.8 |
+| tiny after | average wall elapsed ms, 5 runs | 4573.8 |
+| full | average wall elapsed ms, 5 runs | 27040.2 |
+| tiny before run 1 | virtie stats | `started_to_boot=102.964908ms boot_to_ssh=5.24109837s ssh_to_completed=222.63088ms total=5.566694158s` |
+| tiny after run 1 | virtie stats | `started_to_boot=102.920936ms boot_to_qmp=233.294478ms qmp_to_guest_agent=3.704300393s guest_agent_to_files=106.803065ms files_to_first_ssh=4.449µs files_to_ssh=4.449µs boot_to_ssh=4.044402385s ssh_to_completed=232.626231ms total=4.379949552s ssh_attempts=1` |
+| full run 1 | virtie stats | `started_to_boot=175.115765ms boot_to_qmp=245.265157ms qmp_to_guest_agent=20.726333285s guest_agent_to_files=240.790769ms files_to_first_ssh=6.221µs files_to_ssh=6.221µs boot_to_ssh=21.212395432s ssh_to_completed=5.467873424s total=26.855384621s ssh_attempts=1` |
 
 ## Parity TODOs
 
@@ -157,9 +174,8 @@ work for `mkSandbox`, without turning the tiny appliance into a full agentspace.
   tiny mode. It works through the shared launcher, but tiny mode lacks the
   normal shell environment and should advertise only simple commands until the
   initrd userland is expanded.
-- [ ] Make host-key behavior configurable if repeated SSH host identity becomes
-  important for consumers. The current ephemeral host keys are correct for an
-  appliance smoke path but are not parity with a persistent NixOS guest.
+- [x] Make host-key behavior configurable for checks and benchmark paths while
+  keeping runtime-generated ephemeral host keys as the consumer default.
 - [ ] Investigate replacing `socat + sshd -i` with an inetd-style SSH server
   setup that has clearer lifecycle and logging. This should preserve the
   existing host-side SSH argv and `virtie launch --ssh` behavior.

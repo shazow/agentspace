@@ -96,6 +96,12 @@ let
     };
   };
 
+  vmTinyTestingHostKey = mkTinySandbox {
+    hostName = "agent-tiny-testing-host-key-test";
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.useDeterministicTestingHostKey = true;
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
@@ -112,6 +118,9 @@ let
   tinyWriteFilesManifest =
     vmTinyWriteFiles.config.agentspace.tinySandbox.launch.virtieManifestData;
   tinyInitrdScript = pkgs.writeText "tiny-initrd-pre-device-commands" vmTinyVirtie.config.boot.initrd.preDeviceCommands;
+  tinyExtraUtilsCommands = pkgs.writeText "tiny-initrd-extra-utils-commands" vmTinyVirtie.config.boot.initrd.extraUtilsCommands;
+  tinyTestingHostKeyInitrdScript = pkgs.writeText "tiny-testing-host-key-initrd-pre-device-commands" vmTinyTestingHostKey.config.boot.initrd.preDeviceCommands;
+  tinyTestingHostKeyExtraUtilsCommands = pkgs.writeText "tiny-testing-host-key-initrd-extra-utils-commands" vmTinyTestingHostKey.config.boot.initrd.extraUtilsCommands;
 
   _ =
     assert manifest.qemu.binaryPath != "";
@@ -135,6 +144,7 @@ let
     assert manifest.qemu.devices.vsock.id == "vsock0";
     assert builtins.head manifest.ssh.argv == "${pkgs.openssh}/bin/ssh";
     assert manifest.ssh.user == "agent";
+    assert manifest.ssh.retryDelayMs == 1000;
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.argv;
     assert builtins.length manifest.volumes > 0;
     assert builtins.any (
@@ -223,7 +233,8 @@ let
         transport = "pci";
       };
     assert builtins.length tinyManifest.qemu.devices.block == 0;
-    assert builtins.length tinyManifest.qemu.devices.network > 0;
+    assert builtins.length tinyManifest.qemu.devices.network == 0;
+    assert tinyManifest.qemu.devices.i8042 == false;
     assert tinyManifest.volumes == [ ];
     assert builtins.length tinyManifest.virtiofs.daemons == 1;
     assert (builtins.head tinyManifest.virtiofs.daemons).tag == "workspace";
@@ -231,6 +242,7 @@ let
     assert (builtins.head tinyManifest.virtiofs.daemons).command.path != "";
     assert tinyManifest.ssh.user == "tester";
     assert builtins.head tinyManifest.ssh.argv == "${pkgs.openssh}/bin/ssh";
+    assert tinyManifest.ssh.retryDelayMs == 1000;
     assert builtins.elem ".agentspace-test/id_ed25519" tinyManifest.ssh.argv;
     assert vmTinyVirtie.config.agentspace.tinySandbox.machine.memory == 192;
     assert vmTinyVirtie.config.agentspace.tinySandbox.machine.vcpu == 1;
@@ -243,6 +255,7 @@ let
     assert (builtins.head vmTinyVirtie.config.microvm.shares).mountPoint == "/home/tester/workspace";
     assert (builtins.head vmTinyVirtie.config.microvm.shares).securityModel == "mapped";
     assert vmTinyVirtie.config.microvm.volumes == [ ];
+    assert vmTinyVirtie.config.microvm.interfaces == [ ];
     assert vmTinyVirtie.config.microvm.storeOnDisk == false;
     assert vmTinyVirtie.config.microvm.writableStoreOverlay == null;
     true;
@@ -299,10 +312,19 @@ in
       grep -F ${pkgs.lib.escapeShellArg testPublicKey} ${tinyInitrdScript}
       grep -F 'tester:x:1000:100:Agent:/home/tester:/bin/sh' ${tinyInitrdScript}
       grep -F '/home/tester/.ssh/authorized_keys' ${tinyInitrdScript}
+      grep -F 'ssh-keygen -q -t ed25519' ${tinyInitrdScript}
+      ! grep -F 'ssh-keygen -q -t rsa' ${tinyInitrdScript}
+      grep -F 'HostKey /etc/ssh/ssh_host_ed25519_key' ${tinyInitrdScript}
+      ! grep -F 'HostKey /etc/ssh/ssh_host_rsa_key' ${tinyInitrdScript}
       grep -F 'qemu-ga -m virtio-serial -p /dev/virtio-ports/org.qemu.guest_agent.0 -t /run -r &' ${tinyInitrdScript}
       grep -F 'mount -t virtiofs workspace /home/tester/workspace' ${tinyInitrdScript}
       grep -F 'socat1 VSOCK-LISTEN:22' ${tinyInitrdScript}
       grep -F 'sshd -i -e -f /etc/ssh/sshd_config' ${tinyInitrdScript}
+      grep -F 'copy_bin_and_libs ${pkgs.openssh}/bin/ssh-keygen' ${tinyExtraUtilsCommands}
+      grep -F 'using build-time OpenSSH host key' ${tinyTestingHostKeyInitrdScript}
+      grep -F 'busybox cp' ${tinyTestingHostKeyInitrdScript}
+      ! grep -F 'ssh-keygen -q' ${tinyTestingHostKeyInitrdScript}
+      ! grep -F 'copy_bin_and_libs ${pkgs.openssh}/bin/ssh-keygen' ${tinyTestingHostKeyExtraUtilsCommands}
       touch $out
     '';
 }

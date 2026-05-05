@@ -86,7 +86,7 @@ expr_for() {
   local profile="$3"
   local mode="$4"
   local output="$5"
-  local constructor memory launch_attr persistence_dir root_override write_files
+  local constructor memory launch_attr persistence_dir root_override write_files testing_host_key ssh_retry_delay
 
   case "$profile" in
     tiny)
@@ -121,8 +121,16 @@ expr_for() {
         mode = "0644";
       };
     '
+    if [ "$profile" = tiny ]; then
+      testing_host_key='ssh.useDeterministicTestingHostKey = true;'
+    else
+      testing_host_key=''
+    fi
+    ssh_retry_delay='ssh.retryDelayMs = 100;'
   else
     write_files=''
+    testing_host_key=''
+    ssh_retry_delay=''
   fi
 
   cat <<NIX
@@ -139,6 +147,8 @@ let
     };
     ssh.authorizedKeys = [ "$public_key" ];
     ssh.identityFile = "id_ed25519";
+    $ssh_retry_delay
+    $testing_host_key
     persistence.basedir = "$persistence_dir";
     $write_files
     extraModules = [
@@ -193,6 +203,7 @@ record_size() {
   local toplevel initrd
 
   echo "building $label toplevel..." >&2
+
   toplevel="$(build_toplevel "$ref" "$label" "$profile" "$mode")"
   initrd="$(eval_initrd "$ref" "$label" "$profile" "$mode")"
 

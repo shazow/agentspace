@@ -26,6 +26,23 @@ let
   ];
 
   authorizedKeys = lib.concatStringsSep "\n" cfg.ssh.authorizedKeys;
+  deterministicTestingHostKey = pkgs.writeText "tiny-sandbox-testing-ssh-host-ed25519-key" ''
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+    QyNTUxOQAAACA29EZIuvr8lcSwUtvBky9l3xOlAm6brNHbgsfJdr44xQAAAJjTv2Ip079i
+    KQAAAAtzc2gtZWQyNTUxOQAAACA29EZIuvr8lcSwUtvBky9l3xOlAm6brNHbgsfJdr44xQ
+    AAAEB/Hj0k59Nf3i7ZlAmbbqJilR0evigNBxRiHYny4TgLWTb0Rki6+vyVxLBS28GTL2Xf
+    E6UCbpus0duCx8l2vjjFAAAAE2FnZW50c3BhY2UtdGlueS1lMmUBAg==
+    -----END OPENSSH PRIVATE KEY-----
+  '';
+  configuredHostKeyPath =
+    if cfg.ssh.hostKeyPath != null then
+      cfg.ssh.hostKeyPath
+    else if cfg.ssh.useDeterministicTestingHostKey then
+      deterministicTestingHostKey
+    else
+      null;
+  hasBuildTimeHostKey = configuredHostKeyPath != null;
 
   baseQemuConfig = import ./agentspace-qemu-config.nix {
     inherit config lib pkgs;
@@ -33,6 +50,9 @@ let
   qemuConfig = baseQemuConfig // {
     smp = lib.optionalAttrs (cfg.machine.vcpu != null) {
       cpus = cfg.machine.vcpu;
+    };
+    devices = baseQemuConfig.devices // {
+      i8042 = false;
     };
   };
   extraUtils = config.system.build.extraUtils;
@@ -107,6 +127,7 @@ let
     ssh = {
       argv = sshBaseArgv;
       user = cfg.user;
+      retryDelayMs = cfg.ssh.retryDelayMs;
     };
     qemu = qemuConfig;
     volumes = [ ];
@@ -176,6 +197,31 @@ in
         type = lib.types.bool;
         default = true;
         description = "Whether the generated launch wrapper should attach an SSH session automatically.";
+      };
+
+      retryDelayMs = lib.mkOption {
+        type = lib.types.ints.unsigned;
+        default = 1000;
+        description = "Delay in milliseconds before retrying transient SSH startup failures.";
+      };
+
+      hostKeyPath = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = ''
+          Optional ed25519 SSH host private key copied into the tiny initrd.
+          The key becomes private key material in the Nix store.
+        '';
+      };
+
+      useDeterministicTestingHostKey = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Use a fixed test-only ed25519 SSH host private key. This is intended
+          only for checks and benchmarks and places private key material in the
+          Nix store.
+        '';
       };
     };
 
@@ -290,6 +336,13 @@ in
     networking.dhcpcd.enable = false;
     security.sudo.enable = false;
 
+    assertions = [
+      {
+        assertion = !(cfg.ssh.hostKeyPath != null && cfg.ssh.useDeterministicTestingHostKey);
+        message = "Set only one of agentspace.tinySandbox.ssh.hostKeyPath or useDeterministicTestingHostKey.";
+      }
+    ];
+
     fileSystems."/" = {
       device = "tmpfs";
       fsType = "tmpfs";
@@ -329,7 +382,7 @@ in
       copy_bin_and_libs ${pkgs.openssh}/bin/ssh
       copy_bin_and_libs ${pkgs.openssh}/bin/scp
       copy_bin_and_libs ${pkgs.openssh}/bin/sftp
-      copy_bin_and_libs ${pkgs.openssh}/bin/ssh-keygen
+      ${lib.optionalString (!hasBuildTimeHostKey) "copy_bin_and_libs ${pkgs.openssh}/bin/ssh-keygen"}
       copy_bin_and_libs ${pkgs.openssh}/bin/sshd
       copy_bin_and_libs ${pkgs.openssh}/libexec/sftp-server
       copy_bin_and_libs ${pkgs.openssh}/libexec/sshd-auth
@@ -379,9 +432,19 @@ EOF
       chmod 0600 /home/${cfg.user}/.ssh/authorized_keys
       chown -R 1000:100 /home/${cfg.user}
 
-      echo "tiny-sandbox: generating ephemeral OpenSSH host keys"
-      ${extraUtils}/bin/ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key
-      ${extraUtils}/bin/ssh-keygen -q -t rsa -b 3072 -N "" -f /etc/ssh/ssh_host_rsa_key
+      ${
+        if hasBuildTimeHostKey then
+          ''
+            echo "tiny-sandbox: using build-time OpenSSH host key"
+            ${extraUtils}/bin/busybox cp ${lib.escapeShellArg configuredHostKeyPath} /etc/ssh/ssh_host_ed25519_key
+            chmod 0600 /etc/ssh/ssh_host_ed25519_key
+          ''
+        else
+          ''
+            echo "tiny-sandbox: generating ephemeral OpenSSH host key"
+            ${extraUtils}/bin/ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key
+          ''
+      }
       echo "tiny-sandbox: loading virtio modules"
       modprobe virtio || true
       modprobe virtio_ring || true
@@ -393,6 +456,33 @@ EOF
       modprobe vsock || true
       modprobe vmw_vsock_virtio_transport_common || true
       modprobe vmw_vsock_virtio_transport || true
+
+      ${
+        lib.optionalString cfg.mountWorkspace ''
+          echo "tiny-sandbox: mounting workspace virtiofs"
+          mkdir -p ${cfg.workspaceMountPoint}
+          mount -t virtiofs workspace ${cfg.workspaceMountPoint}
+          chown ${cfg.user}:users ${cfg.workspaceMountPoint} || true
+        ''
+      }
+
+      # OpenSSH is intentionally used for the first experiment. Dropbear is the
+      # expected future size reduction path, but changes the daemon behavior.
+      cat > /etc/ssh/sshd_config <<'EOF'
+HostKey /etc/ssh/ssh_host_ed25519_key
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+PermitUserEnvironment no
+PidFile /run/sshd/sshd.pid
+PrintMotd no
+UsePAM no
+Subsystem sftp ${extraUtils}/bin/sftp-server
+EOF
+
+      echo "tiny-sandbox: listening for OpenSSH on vsock port 22"
+      ${extraUtils}/bin/socat1 VSOCK-LISTEN:22,reuseaddr,fork EXEC:"${extraUtils}/bin/sshd -i -e -f /etc/ssh/sshd_config" &
 
       echo "tiny-sandbox: starting QEMU guest agent"
       mkdir -p /dev/virtio-ports
@@ -411,34 +501,6 @@ EOF
         sleep 0.1
       done
       ${extraUtils}/bin/qemu-ga -m virtio-serial -p /dev/virtio-ports/org.qemu.guest_agent.0 -t /run -r &
-
-      ${
-        lib.optionalString cfg.mountWorkspace ''
-          echo "tiny-sandbox: mounting workspace virtiofs"
-          mkdir -p ${cfg.workspaceMountPoint}
-          mount -t virtiofs workspace ${cfg.workspaceMountPoint}
-          chown ${cfg.user}:users ${cfg.workspaceMountPoint} || true
-        ''
-      }
-
-      # OpenSSH is intentionally used for the first experiment. Dropbear is the
-      # expected future size reduction path, but changes the daemon behavior.
-      cat > /etc/ssh/sshd_config <<'EOF'
-HostKey /etc/ssh/ssh_host_ed25519_key
-HostKey /etc/ssh/ssh_host_rsa_key
-AuthorizedKeysFile .ssh/authorized_keys
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-PermitRootLogin no
-PermitUserEnvironment no
-PidFile /run/sshd/sshd.pid
-PrintMotd no
-UsePAM no
-Subsystem sftp ${extraUtils}/bin/sftp-server
-EOF
-
-      echo "tiny-sandbox: listening for OpenSSH on vsock port 22"
-      ${extraUtils}/bin/socat1 VSOCK-LISTEN:22,reuseaddr,fork EXEC:"${extraUtils}/bin/sshd -i -e -f /etc/ssh/sshd_config" &
       echo "tiny-sandbox: appliance ready"
       while true; do
         sleep 3600
@@ -467,13 +529,7 @@ EOF
       qemu.serialConsole = true;
       virtiofsd.group = lib.mkDefault null;
 
-      interfaces = [
-        {
-          type = "user";
-          id = "microvm1";
-          mac = "02:02:00:00:00:01";
-        }
-      ];
+      interfaces = [ ];
     };
   };
 }
