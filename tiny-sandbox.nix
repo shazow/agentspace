@@ -32,6 +32,9 @@ let
   };
   qemuConfig = baseQemuConfig // {
     guestAgent.socketPath = "";
+    smp = lib.optionalAttrs (cfg.machine.vcpu != null) {
+      cpus = cfg.machine.vcpu;
+    };
   };
   extraUtils = config.system.build.extraUtils;
   opensshLibexecCompat = "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-openssh-${pkgs.openssh.version}/libexec";
@@ -50,7 +53,7 @@ let
     };
     ssh = {
       argv = sshBaseArgv;
-      user = "agent";
+      user = cfg.user;
     };
     qemu = qemuConfig;
     volumes = [ ];
@@ -73,16 +76,24 @@ in
       description = "Hostname for the tiny guest VM.";
     };
 
-    memoryMiB = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 256;
-      description = "Memory size for the tiny guest in MiB.";
+    user = lib.mkOption {
+      type = lib.types.str;
+      default = "agent";
+      description = "Username for the tiny guest SSH session.";
     };
 
-    vcpu = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 1;
-      description = "Number of vCPUs for the tiny guest.";
+    machine = {
+      memory = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 256;
+        description = "Memory size for the tiny guest in MiB.";
+      };
+
+      vcpu = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.positive;
+        default = null;
+        description = "Number of vCPUs for the tiny guest. Null lets virtie use the host-visible CPU count at launch time.";
+      };
     };
 
     ssh = {
@@ -210,16 +221,16 @@ in
       mkdir -p /dev/pts
       mount -t devpts devpts /dev/pts || true
 
-      mkdir -p /etc/ssh /run/sshd /var/empty /home/agent/.ssh /tmp
+      mkdir -p /etc/ssh /run/sshd /var/empty /home/${cfg.user}/.ssh /tmp
       mkdir -p ${opensshLibexecCompat}
       ln -sf ${extraUtils}/bin/sshd-auth ${opensshLibexecCompat}/sshd-auth
       ln -sf ${extraUtils}/bin/sshd-session ${opensshLibexecCompat}/sshd-session
       chmod 0755 /run/sshd /var/empty
-      chmod 0700 /home/agent /home/agent/.ssh
+      chmod 0700 /home/${cfg.user} /home/${cfg.user}/.ssh
 
       cat > /etc/passwd <<'EOF'
 root:x:0:0:root:/root:/bin/sh
-agent:x:1000:100:Agent:/home/agent:/bin/sh
+${cfg.user}:x:1000:100:Agent:/home/${cfg.user}:/bin/sh
 sshd:x:74:74:Privilege-separated SSH:/var/empty:/bin/false
 EOF
       cat > /etc/group <<'EOF'
@@ -227,11 +238,11 @@ root:x:0:
 users:x:100:
 sshd:x:74:
 EOF
-      cat > /home/agent/.ssh/authorized_keys <<'EOF'
+      cat > /home/${cfg.user}/.ssh/authorized_keys <<'EOF'
 ${authorizedKeys}
 EOF
-      chmod 0600 /home/agent/.ssh/authorized_keys
-      chown -R 1000:100 /home/agent
+      chmod 0600 /home/${cfg.user}/.ssh/authorized_keys
+      chown -R 1000:100 /home/${cfg.user}
 
       echo "tiny-sandbox: generating ephemeral OpenSSH host keys"
       ${extraUtils}/bin/ssh-keygen -q -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key
@@ -271,8 +282,8 @@ EOF
     microvm = {
       guest.enable = false;
       hypervisor = "qemu";
-      mem = cfg.memoryMiB;
-      vcpu = cfg.vcpu;
+      mem = cfg.machine.memory;
+      vcpu = lib.mkIf (cfg.machine.vcpu != null) cfg.machine.vcpu;
       socket = "qmp.sock";
       shares = [ ];
       volumes = [ ];

@@ -54,10 +54,30 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
-  vmTinyVirtie = mkTinySandbox {
-    hostName = "agent-tiny-test";
+  vmVirtieFixedMachine = mkSandbox {
     ssh.authorizedKeys = [ testPublicKey ];
     ssh.identityFile = ".agentspace-test/id_ed25519";
+    persistence.homeImage = null;
+    machine = {
+      memory = 512;
+      vcpu = 2;
+    };
+  };
+
+  vmTinyVirtie = mkTinySandbox {
+    hostName = "agent-tiny-test";
+    user = "tester";
+    machine = {
+      memory = 192;
+      vcpu = 1;
+    };
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
+  };
+
+  vmTinyDefaultMachine = mkTinySandbox {
+    hostName = "agent-tiny-default-test";
+    ssh.authorizedKeys = [ testPublicKey ];
   };
 
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
@@ -66,7 +86,11 @@ let
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
+  fixedMachineManifest =
+    vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   tinyManifest = vmTinyVirtie.config.agentspace.tinySandbox.launch.virtieManifestData;
+  tinyDefaultManifest =
+    vmTinyDefaultMachine.config.agentspace.tinySandbox.launch.virtieManifestData;
   tinyInitrdScript = pkgs.writeText "tiny-initrd-pre-device-commands" vmTinyVirtie.config.boot.initrd.preDeviceCommands;
 
   _ =
@@ -79,6 +103,8 @@ let
     assert manifest.persistence.stateDir == ".agentspace";
     assert manifest.qemu.qmp.socketPath == "qmp.sock";
     assert manifest.qemu.guestAgent.socketPath == "qga.sock";
+    assert manifest.qemu.memory.sizeMiB == 4096;
+    assert !(manifest.qemu.smp ? cpus);
     assert manifest.writeFiles == { };
     assert manifest.notifications.states == [ ];
     assert !(manifest.notifications ? command);
@@ -105,6 +131,13 @@ let
     assert !(manifest ? microvmRun);
     assert !(manifest ? virtiofsdRun);
     assert !builtins.any (arg: builtins.match ".*@vsock/.*" arg != null) manifest.ssh.argv;
+    true;
+
+  _fixedMachine =
+    assert fixedMachineManifest.qemu.memory.sizeMiB == 512;
+    assert fixedMachineManifest.qemu.smp.cpus == 2;
+    assert vmVirtieFixedMachine.config.microvm.mem == 512;
+    assert vmVirtieFixedMachine.config.microvm.vcpu == 2;
     true;
 
   _balloon =
@@ -158,7 +191,7 @@ let
     assert tinyManifest.qemu.name == "agent-tiny-test";
     assert tinyManifest.qemu.kernel.initrdPath != "";
     assert tinyManifest.qemu.guestAgent.socketPath == "";
-    assert tinyManifest.qemu.memory.sizeMiB == 256;
+    assert tinyManifest.qemu.memory.sizeMiB == 192;
     assert tinyManifest.qemu.smp.cpus == 1;
     assert tinyManifest.qemu.devices.rng.id == "rng0";
     assert tinyManifest.qemu.devices.vsock.id == "vsock0";
@@ -167,14 +200,24 @@ let
     assert builtins.length tinyManifest.qemu.devices.network > 0;
     assert tinyManifest.volumes == [ ];
     assert tinyManifest.virtiofs.daemons == [ ];
-    assert tinyManifest.ssh.user == "agent";
+    assert tinyManifest.ssh.user == "tester";
     assert builtins.head tinyManifest.ssh.argv == "${pkgs.openssh}/bin/ssh";
     assert builtins.elem ".agentspace-test/id_ed25519" tinyManifest.ssh.argv;
+    assert vmTinyVirtie.config.agentspace.tinySandbox.machine.memory == 192;
+    assert vmTinyVirtie.config.agentspace.tinySandbox.machine.vcpu == 1;
+    assert vmTinyVirtie.config.microvm.mem == 192;
+    assert vmTinyVirtie.config.microvm.vcpu == 1;
     assert vmTinyVirtie.config.microvm.guest.enable == false;
     assert vmTinyVirtie.config.microvm.shares == [ ];
     assert vmTinyVirtie.config.microvm.volumes == [ ];
     assert vmTinyVirtie.config.microvm.storeOnDisk == false;
     assert vmTinyVirtie.config.microvm.writableStoreOverlay == null;
+    true;
+
+  _tinyDefaultMachine =
+    assert tinyDefaultManifest.qemu.memory.sizeMiB == 256;
+    assert !(tinyDefaultManifest.qemu.smp ? cpus);
+    assert vmTinyDefaultMachine.config.agentspace.tinySandbox.machine.vcpu == null;
     true;
 in
 {
@@ -185,6 +228,10 @@ in
   virtie-manifest-balloon-contract =
     assert _balloon;
     pkgs.runCommand "virtie-manifest-balloon-contract" { } "touch $out";
+
+  virtie-manifest-fixed-machine-contract =
+    assert _fixedMachine;
+    pkgs.runCommand "virtie-manifest-fixed-machine-contract" { } "touch $out";
 
   virtie-manifest-external-store-socket-contract =
     assert _externalStoreSocket;
@@ -199,10 +246,12 @@ in
     pkgs.runCommand "virtie-manifest-notifications-contract" { } "touch $out";
 
   virtie-manifest-tiny-contract =
-    assert _tiny;
+    assert _tiny && _tinyDefaultMachine;
     pkgs.runCommand "virtie-manifest-tiny-contract" { } ''
       test -e ${pkgs.lib.escapeShellArg tinyManifest.qemu.kernel.initrdPath}
       grep -F ${pkgs.lib.escapeShellArg testPublicKey} ${tinyInitrdScript}
+      grep -F 'tester:x:1000:100:Agent:/home/tester:/bin/sh' ${tinyInitrdScript}
+      grep -F '/home/tester/.ssh/authorized_keys' ${tinyInitrdScript}
       grep -F 'socat1 VSOCK-LISTEN:22' ${tinyInitrdScript}
       grep -F 'sshd -i -e -f /etc/ssh/sshd_config' ${tinyInitrdScript}
       touch $out

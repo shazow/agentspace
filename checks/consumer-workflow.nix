@@ -11,18 +11,17 @@ let
     ssh.authorizedKeys = [ consumerPublicKey ];
     ssh.identityFile = "./id_ed25519";
     ssh.command = "bash -lc pwd";
+    machine = {
+      memory = 512;
+      vcpu = 16;
+    };
     persistence = {
       homeImage = "/var/lib/agentspace/home.img";
       storeOverlay = "/var/lib/agentspace/nix-store-overlay.img";
     };
     extraModules = [
       {
-        microvm.vcpu = 16;
-        agentspace.sandbox.extraModules = [
-          {
-            microvm.mem = 512;
-          }
-        ];
+        agentspace.sandbox.extraModules = [ { } ];
       }
     ];
     homeModules = [
@@ -69,9 +68,13 @@ let
     assert sandboxCfg.ssh.autoconnect == true;
     assert sandboxCfg.persistence.homeImage == "/var/lib/agentspace/home.img";
     assert sandboxCfg.persistence.storeOverlay == "/var/lib/agentspace/nix-store-overlay.img";
+    assert sandboxCfg.machine.memory == 512;
+    assert sandboxCfg.machine.vcpu == 16;
     assert builtins.length sandboxCfg.extraModules == 1;
     assert vmConsumer.config.microvm.vcpu == 16;
     assert vmConsumer.config.microvm.mem == 512;
+    assert manifest.qemu.memory.sizeMiB == 512;
+    assert manifest.qemu.smp.cpus == 16;
     assert vmConsumer.config.microvm.vsock.cid == null;
     assert userCfg.home == "/home/${sandboxCfg.user}";
     assert userCfg.createHome;

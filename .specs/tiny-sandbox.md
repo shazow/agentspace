@@ -11,6 +11,18 @@ The first success target is intentionally narrow:
 - listen on guest vsock port 22
 - attach through the existing `virtie launch --ssh` flow as `agent@vsock/<cid>`
 
+Tiny and full sandbox examples should use the same SSH-facing and machine
+sizing options where practical:
+
+- `user`
+- `hostName`
+- `ssh.authorizedKeys`
+- `ssh.identityFile`
+- `ssh.autoconnect`
+- `machine.memory` in MiB
+- `machine.vcpu`, where `null` lets virtie choose the host-visible CPU count at
+  launch time
+
 The tiny profile avoids persistent and shared storage:
 
 - no virtiofs shares or virtiofsd daemons

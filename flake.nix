@@ -32,7 +32,7 @@
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postInstall = ''
           wrapProgram $out/bin/virtie \
-            --prefix PATH : ${lib.makeBinPath [ pkgs.e2fsprogs ]}
+            --suffix PATH : ${lib.makeBinPath [ pkgs.e2fsprogs ]}
         '';
       };
 

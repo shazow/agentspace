@@ -4,6 +4,54 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-05: sandbox machine sizing options
+
+### Who Is Affected
+
+- Nix consumers configuring VM memory or vCPU count.
+- `lib.mkTinySandbox` consumers using the experimental `memoryMiB` or `vcpu`
+  options.
+- Direct manifest producers that always set `qemu.smp.cpus`.
+
+### What Changed
+
+Both sandbox constructors now accept a shared machine sizing interface:
+
+```nix
+machine.memory = 4096; # MiB
+machine.vcpu = null;  # let virtie use the host-visible CPU count at launch
+```
+
+`agentspace.sandbox.machine.memory` defaults to `4096`, and
+`agentspace.tinySandbox.machine.memory` defaults to `256`.
+`machine.vcpu` defaults to `null` for both. When null, generated manifests omit
+`qemu.smp.cpus`, and virtie resolves the CPU count with the host-visible CPU
+count at launch time.
+
+The experimental tiny options `agentspace.tinySandbox.memoryMiB` and
+`agentspace.tinySandbox.vcpu` were removed.
+
+### Migration Steps
+
+Update tiny sandbox sizing:
+
+```diff
+- memoryMiB = 256;
+- vcpu = 1;
++ machine.memory = 256;
++ machine.vcpu = 1;
+```
+
+Update full sandbox sizing that previously overrode microvm options directly:
+
+```diff
+- extraModules = [{ microvm.mem = 512; microvm.vcpu = 2; }];
++ machine.memory = 512;
++ machine.vcpu = 2;
+```
+
+Set `machine.vcpu = null` or omit it to use the runtime host-visible CPU count.
+
 ## 2026-04-28: SSH autoconnect is explicit
 
 ### Who Is Affected

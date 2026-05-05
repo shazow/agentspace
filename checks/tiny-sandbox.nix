@@ -18,8 +18,10 @@ let
 
   vmTinyE2E = mkTinySandbox {
     hostName = "agent-tiny-e2e";
-    memoryMiB = 192;
-    vcpu = 1;
+    machine = {
+      memory = 192;
+      vcpu = 1;
+    };
     ssh.authorizedKeys = [ tinyPublicKey ];
     ssh.identityFile = "id_ed25519";
     persistence.basedir = ".agentspace-tiny-e2e";

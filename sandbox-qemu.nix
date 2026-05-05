@@ -39,6 +39,20 @@ in
       description = "Hostname for the guest VM.";
     };
 
+    machine = {
+      memory = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 4 * 1024;
+        description = "Memory size for the guest VM in MiB.";
+      };
+
+      vcpu = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.positive;
+        default = null;
+        description = "Number of vCPUs for the guest VM. Null lets virtie use the host-visible CPU count at launch time.";
+      };
+    };
+
     ssh = {
       authorizedKeys = lib.mkOption {
         type = lib.types.listOf lib.types.str;
@@ -273,6 +287,9 @@ in
         share: !(nixStoreShareUsesSocket && isNixStoreShare share)
       ) virtiofsShares;
       qemuConfig = baseQemuConfig // {
+        smp = lib.optionalAttrs (cfg.machine.vcpu != null) {
+          cpus = cfg.machine.vcpu;
+        };
         devices =
           baseQemuConfig.devices
           // {
@@ -501,8 +518,8 @@ in
 
         # MicroVM Configuration
         microvm = {
-          vcpu = lib.mkDefault 8;
-          mem = lib.mkDefault (4 * 1024);
+          mem = cfg.machine.memory;
+          vcpu = lib.mkIf (cfg.machine.vcpu != null) cfg.machine.vcpu;
           balloon = lib.mkDefault cfg.balloon;
           socket = "qmp.sock";
           hypervisor = "qemu";
