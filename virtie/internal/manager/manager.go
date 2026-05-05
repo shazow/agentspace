@@ -271,9 +271,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	started = append(started, virtiofsd...)
 
-	m.logger.Info("waiting for virtiofs sockets")
-	if err := m.waitForSockets(launchCtx, virtioFSSocketPaths, started...); err != nil {
-		return err
+	if len(virtioFSSocketPaths) > 0 {
+		m.logger.Info("waiting for virtiofs sockets")
+		if err := m.waitForSockets(launchCtx, virtioFSSocketPaths, started...); err != nil {
+			return err
+		}
 	}
 
 	if resumeState != nil {
@@ -297,6 +299,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return err
 	}
+	stats.MarkQMPReady(time.Now())
 	qemu.shutdown = func() error {
 		return qmpClient.Quit(m.effectiveQMPQuitTimeout())
 	}
@@ -323,9 +326,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 
 	if resumeState == nil {
-		if err := m.writeGuestFiles(launchCtx, manifest, qemu); err != nil {
+		if err := m.writeGuestFiles(launchCtx, manifest, stats, qemu); err != nil {
 			return err
 		}
+		stats.MarkFilesReady(time.Now())
 	}
 
 	featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
@@ -335,8 +339,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 
 	if options.SSH {
 		sshRetryLog := newSSHRetryLogger(m.logger)
+		sshRetryDelay := manifest.SSHRetryDelay(m.sshRetryDelay)
 		for {
-			stats.MarkSSHStarted(time.Now())
+			attemptStarted := time.Now()
+			stats.MarkSSHAttempt(attemptStarted)
 			spec := buildSSHSpec(manifest, cid, remoteCommand)
 			stderr := newSSHRetryOutput(os.Stderr, options.Verbosity > 0)
 			spec.Stderr = stderr
@@ -357,7 +363,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 					}
 					started = started[:len(started)-1]
 					select {
-					case <-time.After(m.sshRetryDelay):
+					case <-time.After(sshRetryDelay):
 						continue
 					case <-suspendRequests:
 						return suspendHandler.saveAndExit(launchCtx)
@@ -372,6 +378,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 				return err
 			}
 			stderr.Flush()
+			stats.MarkSSHStarted(attemptStarted)
 			if resumeState != nil {
 				if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 					return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}

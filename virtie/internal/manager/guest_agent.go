@@ -218,7 +218,7 @@ func (c *socketGuestAgentClient) run(timeout time.Duration, execute string, argu
 	}
 }
 
-func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, watchers ...*managedProcess) error {
+func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *launchStats, watchers ...*managedProcess) error {
 	files := launchManifest.ResolvedWriteFiles()
 	if len(files) == 0 {
 		return nil
@@ -233,6 +233,9 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 	client, err := m.waitForGuestAgent(ctx, socketPath, watchers...)
 	if err != nil {
 		return err
+	}
+	if stats != nil {
+		stats.MarkGuestAgentReady(time.Now())
 	}
 	defer client.Disconnect()
 

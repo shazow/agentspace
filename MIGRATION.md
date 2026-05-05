@@ -4,6 +4,112 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-05: tiny sandbox host keys and devices
+
+### Who Is Affected
+
+- `lib.mkTinySandbox` consumers that inspect generated QEMU device manifests.
+- Tiny sandbox checks or benchmarks that want stable SSH host identity.
+- Direct manifest validators that assumed `qemu.devices.network` is non-empty.
+
+### What Changed
+
+Tiny mode now generates only an ed25519 SSH host key at runtime. It also exposes
+two default-off host-key options:
+
+```nix
+agentspace.tinySandbox.ssh.hostKeyPath = ./ssh_host_ed25519_key;
+agentspace.tinySandbox.ssh.useDeterministicTestingHostKey = true;
+```
+
+`hostKeyPath` copies a caller-provided ed25519 private key into the initrd.
+`useDeterministicTestingHostKey` uses a fixed test-only key for checks and
+benchmarks. Both options place private key material in the Nix store.
+
+Tiny mode no longer emits a QEMU user network device and disables the x86 i8042
+device. The manifest validator now accepts an empty `qemu.devices.network`
+array while still validating every network device when one is present.
+
+### Migration Steps
+
+Do not rely on `qemu.devices.network` being non-empty. Consumers that need a
+stable tiny SSH host key should provide `ssh.hostKeyPath`; reserve
+`ssh.useDeterministicTestingHostKey` for reproducible tests and benchmarks.
+
+## 2026-05-05: SSH retry delay manifest field
+
+### Who Is Affected
+
+- Direct manifest producers that want to tune transient SSH startup retries.
+- Nix consumers that want a retry delay other than the default.
+
+### What Changed
+
+The manifest `ssh` object now accepts `retryDelayMs`, a non-negative integer
+delay in milliseconds before retrying transient SSH startup failures. When the
+field is omitted, `virtie` defaults it to `1000`.
+
+Both sandbox constructors expose the same value as a Nix option:
+
+```nix
+agentspace.sandbox.ssh.retryDelayMs = 1000;
+agentspace.tinySandbox.ssh.retryDelayMs = 1000;
+```
+
+### Migration Steps
+
+No migration is required for existing manifests. Omit `ssh.retryDelayMs` to keep
+the existing 1000 ms behavior, or set it explicitly when a faster or slower
+startup retry loop is needed.
+
+## 2026-05-05: sandbox machine sizing options
+
+### Who Is Affected
+
+- Nix consumers configuring VM memory or vCPU count.
+- `lib.mkTinySandbox` consumers using the experimental `memoryMiB` or `vcpu`
+  options.
+- Direct manifest producers that always set `qemu.smp.cpus`.
+
+### What Changed
+
+Both sandbox constructors now accept a shared machine sizing interface:
+
+```nix
+machine.memory = 4096; # MiB
+machine.vcpu = null;  # let virtie use the host-visible CPU count at launch
+```
+
+`agentspace.sandbox.machine.memory` defaults to `4096`, and
+`agentspace.tinySandbox.machine.memory` defaults to `256`.
+`machine.vcpu` defaults to `null` for both. When null, generated manifests omit
+`qemu.smp.cpus`, and virtie resolves the CPU count with the host-visible CPU
+count at launch time.
+
+The experimental tiny options `agentspace.tinySandbox.memoryMiB` and
+`agentspace.tinySandbox.vcpu` were removed.
+
+### Migration Steps
+
+Update tiny sandbox sizing:
+
+```diff
+- memoryMiB = 256;
+- vcpu = 1;
++ machine.memory = 256;
++ machine.vcpu = 1;
+```
+
+Update full sandbox sizing that previously overrode microvm options directly:
+
+```diff
+- extraModules = [{ microvm.mem = 512; microvm.vcpu = 2; }];
++ machine.memory = 512;
++ machine.vcpu = 2;
+```
+
+Set `machine.vcpu = null` or omit it to use the runtime host-visible CPU count.
+
 ## 2026-04-28: SSH autoconnect is explicit
 
 ### Who Is Affected

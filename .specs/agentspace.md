@@ -67,6 +67,7 @@ Acceptance criteria:
   - `ssh.identityFile`
   - `ssh.command`
   - `ssh.autoconnect`
+  - `ssh.retryDelayMs`
   - `mountWorkspace`, `workspaceMountPoint`
   - `persistence.*`
   - `user`, `hostName`, `swapSize`

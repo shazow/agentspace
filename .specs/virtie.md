@@ -72,6 +72,7 @@ Acceptance criteria:
   - `persistence.directories`
   - `ssh.argv`
   - `ssh.user`
+  - optional `ssh.retryDelayMs`, defaulting to `1000`
   - `qemu.binaryPath`
   - `qemu.name`
   - `qemu.machine`
@@ -87,7 +88,7 @@ Acceptance criteria:
   - optional `qemu.devices.balloon.controller`
   - `qemu.devices.virtiofs[]`
   - `qemu.devices.block[]`
-  - `qemu.devices.network[]`
+  - optional `qemu.devices.network[]`
   - `qemu.devices.vsock`
   - `qemu.machineId`
   - `qemu.passthroughArgs`
@@ -117,9 +118,9 @@ Acceptance criteria:
   - `virtie launch --resume=force` requires saved suspend state and errors if it is absent or invalid.
   - `virtie suspend` validates the launch PID and sends `SIGTSTP` as an internal control signal; `virtie launch` catches it, saves migration state through the existing QMP session, then exits.
   - Live pause/resume, terminal job-control suspend, and `SIGCONT` resume are not supported.
-  - `virtie launch` writes final shutdown stats after teardown and cleanup complete; non-SSH launches omit the SSH-session interval. Verbose package logs use stdlib `log/slog` text records on stderr, with package identity carried as an attribute such as `package=manager`.
+  - `virtie launch` writes final shutdown stats after teardown and cleanup complete; non-SSH launches omit the SSH-session interval. Stats preserve `started_to_boot`, `boot_to_ssh`, `ssh_to_completed`, and `total`, and also include stage fields such as `boot_to_qmp`, `qmp_to_guest_agent`, `guest_agent_to_files`, `files_to_first_ssh`, `files_to_ssh`, and `ssh_attempts` when those stages occur. Verbose package logs use stdlib `log/slog` text records on stderr, with package identity carried as an attribute such as `package=manager`.
   - `SIGUSR1` asks a running launch process to collect guest info through the configured QGA socket. The current info payload is raw `ps -eo pid,ppid,stat,comm,args` output; collection failures are logged and do not affect the VM lifecycle.
-  - Attached SSH retries log `waiting for ssh connection` or `connecting ssh` once per phase instead of printing every failed attempt.
+  - Attached SSH retries log `waiting for ssh connection` or `connecting ssh` once per phase instead of printing every failed attempt. Transient retry delay comes from `ssh.retryDelayMs` and defaults to 1000 ms.
   - When `qemu.devices.balloon` is present, `virtie` resolves the balloon QOM path, enables `guest-stats-polling-interval`, reads `guest-stats` plus `query-balloon`, and adjusts the logical guest memory size within configured or synthesized bounds.
   - If the manifest omits `qemu.devices.balloon.controller`, `virtie` defaults to `maxActualMiB = qemu.memory.sizeMiB`, an idle reclaim target of 50% of that max, a grow threshold at 25% available memory, and the existing step, poll, and reclaim-holdoff defaults.
   - Notification hooks are best-effort and never fail launch, suspend, resume, teardown, or balloon control.
