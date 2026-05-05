@@ -78,12 +78,45 @@
             modules = sandboxExtraModules;
           };
 
+      mkTinySandbox =
+        cfg:
+        let
+          extraModules = cfg.extraModules or [ ];
+          sandboxCfg = builtins.removeAttrs cfg [ "extraModules" ];
+        in
+        nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            microvm.nixosModules.microvm
+            ./tiny-sandbox.nix
+            {
+              agentspace.tinySandbox = {
+                enable = true;
+              }
+              // sandboxCfg;
+
+              nix.registry.nixpkgs.flake = nixpkgs;
+              nix.nixPath = [ "nixpkgs=${nixpkgs}" ];
+              nix.settings.experimental-features = [
+                "nix-command"
+                "flakes"
+              ];
+            }
+          ]
+          ++ extraModules;
+        };
+
       mkLaunch =
         nixosConfig:
         let
           vmConfig = nixosConfig.config;
-          launchCfg = vmConfig.agentspace.sandbox.launch;
-          sshCfg = vmConfig.agentspace.sandbox.ssh or { };
+          sandboxCfg =
+            if vmConfig.agentspace ? sandbox then
+              vmConfig.agentspace.sandbox
+            else
+              vmConfig.agentspace.tinySandbox;
+          launchCfg = sandboxCfg.launch;
+          sshCfg = sandboxCfg.ssh or { };
           remoteCommand = sshCfg.command or "";
           sshAutoconnect = sshCfg.autoconnect or true;
           script = pkgs.writeShellScriptBin "launch-agent" ''
@@ -122,6 +155,7 @@
 
       vmConfigs = {
         default = mkSandbox { };
+        tiny = mkTinySandbox { };
       };
     in
     {
@@ -132,13 +166,14 @@
       };
 
       lib = {
-        inherit mkSandbox mkLaunch;
+        inherit mkSandbox mkTinySandbox mkLaunch;
       };
 
       checks.${system} = import ./checks {
         inherit
           mkLaunch
           mkSandbox
+          mkTinySandbox
           pkgs
           virtiePackage
           ;
@@ -149,6 +184,10 @@
         launch = {
           type = "app";
           program = mkLaunch vmConfigs.default;
+        };
+        tiny = {
+          type = "app";
+          program = mkLaunch vmConfigs.tiny;
         };
       };
     };

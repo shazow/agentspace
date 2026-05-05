@@ -516,6 +516,29 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	}
 }
 
+func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
+	manifest := validManifest()
+	manifest.QEMU.Devices.VirtioFS = nil
+	manifest.QEMU.Devices.Block = nil
+	manifest.Volumes = nil
+	manifest.VirtioFS.Daemons = nil
+
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+
+	virtioFSSocketPaths, err := manifest.ResolvedVirtioFSSocketPaths()
+	if err != nil {
+		t.Fatalf("resolve virtiofs socket paths: %v", err)
+	}
+	if len(virtioFSSocketPaths) != 0 {
+		t.Fatalf("unexpected virtiofs socket paths: got %v want none", virtioFSSocketPaths)
+	}
+	if volumes := manifest.ResolvedVolumes(); len(volumes) != 0 {
+		t.Fatalf("unexpected volumes: got %v want none", volumes)
+	}
+}
+
 func stringPtr(value string) *string {
 	return &value
 }

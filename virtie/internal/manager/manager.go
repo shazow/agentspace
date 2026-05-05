@@ -271,9 +271,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	started = append(started, virtiofsd...)
 
-	m.logger.Info("waiting for virtiofs sockets")
-	if err := m.waitForSockets(launchCtx, virtioFSSocketPaths, started...); err != nil {
-		return err
+	if len(virtioFSSocketPaths) > 0 {
+		m.logger.Info("waiting for virtiofs sockets")
+		if err := m.waitForSockets(launchCtx, virtioFSSocketPaths, started...); err != nil {
+			return err
+		}
 	}
 
 	if resumeState != nil {

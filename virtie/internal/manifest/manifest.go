@@ -313,10 +313,6 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.devices.rng.id is required")
 	case !validQEMUTransport(m.QEMU.Devices.RNG.Transport):
 		return fmt.Errorf("manifest.qemu.devices.rng.transport must be one of pci, mmio, or ccw")
-	case len(m.QEMU.Devices.VirtioFS) == 0:
-		return fmt.Errorf("manifest.qemu.devices.virtiofs must contain at least one share")
-	case len(m.QEMU.Devices.Block) == 0:
-		return fmt.Errorf("manifest.qemu.devices.block must contain at least one device")
 	case len(m.QEMU.Devices.Network) == 0:
 		return fmt.Errorf("manifest.qemu.devices.network must contain at least one device")
 	case m.QEMU.Devices.VSOCK.ID == "":

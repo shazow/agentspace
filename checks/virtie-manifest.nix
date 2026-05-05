@@ -1,5 +1,6 @@
 {
   mkSandbox,
+  mkTinySandbox,
   pkgs,
   ...
 }:
@@ -53,12 +54,20 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
+  vmTinyVirtie = mkTinySandbox {
+    hostName = "agent-tiny-test";
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
+  tinyManifest = vmTinyVirtie.config.agentspace.tinySandbox.launch.virtieManifestData;
+  tinyInitrdScript = pkgs.writeText "tiny-initrd-pre-device-commands" vmTinyVirtie.config.boot.initrd.preDeviceCommands;
 
   _ =
     assert manifest.qemu.binaryPath != "";
@@ -143,6 +152,30 @@ let
         "balloon:resize"
       ];
     true;
+
+  _tiny =
+    assert tinyManifest.qemu.binaryPath != "";
+    assert tinyManifest.qemu.name == "agent-tiny-test";
+    assert tinyManifest.qemu.kernel.initrdPath != "";
+    assert tinyManifest.qemu.guestAgent.socketPath == "";
+    assert tinyManifest.qemu.memory.sizeMiB == 256;
+    assert tinyManifest.qemu.smp.cpus == 1;
+    assert tinyManifest.qemu.devices.rng.id == "rng0";
+    assert tinyManifest.qemu.devices.vsock.id == "vsock0";
+    assert builtins.length tinyManifest.qemu.devices.virtiofs == 0;
+    assert builtins.length tinyManifest.qemu.devices.block == 0;
+    assert builtins.length tinyManifest.qemu.devices.network > 0;
+    assert tinyManifest.volumes == [ ];
+    assert tinyManifest.virtiofs.daemons == [ ];
+    assert tinyManifest.ssh.user == "agent";
+    assert builtins.head tinyManifest.ssh.argv == "${pkgs.openssh}/bin/ssh";
+    assert builtins.elem ".agentspace-test/id_ed25519" tinyManifest.ssh.argv;
+    assert vmTinyVirtie.config.microvm.guest.enable == false;
+    assert vmTinyVirtie.config.microvm.shares == [ ];
+    assert vmTinyVirtie.config.microvm.volumes == [ ];
+    assert vmTinyVirtie.config.microvm.storeOnDisk == false;
+    assert vmTinyVirtie.config.microvm.writableStoreOverlay == null;
+    true;
 in
 {
   virtie-manifest-contract =
@@ -164,4 +197,14 @@ in
   virtie-manifest-notifications-contract =
     assert _notifications;
     pkgs.runCommand "virtie-manifest-notifications-contract" { } "touch $out";
+
+  virtie-manifest-tiny-contract =
+    assert _tiny;
+    pkgs.runCommand "virtie-manifest-tiny-contract" { } ''
+      test -e ${pkgs.lib.escapeShellArg tinyManifest.qemu.kernel.initrdPath}
+      grep -F ${pkgs.lib.escapeShellArg testPublicKey} ${tinyInitrdScript}
+      grep -F 'socat1 VSOCK-LISTEN:22' ${tinyInitrdScript}
+      grep -F 'sshd -i -e -f /etc/ssh/sshd_config' ${tinyInitrdScript}
+      touch $out
+    '';
 }
