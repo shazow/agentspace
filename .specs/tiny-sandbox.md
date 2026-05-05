@@ -137,6 +137,19 @@ one `writeFiles` entry, and workspace virtiofs. The full baseline used
 | tiny after run 1 | virtie stats | `started_to_boot=102.920936ms boot_to_qmp=233.294478ms qmp_to_guest_agent=3.704300393s guest_agent_to_files=106.803065ms files_to_first_ssh=4.449µs files_to_ssh=4.449µs boot_to_ssh=4.044402385s ssh_to_completed=232.626231ms total=4.379949552s ssh_attempts=1` |
 | full run 1 | virtie stats | `started_to_boot=175.115765ms boot_to_qmp=245.265157ms qmp_to_guest_agent=20.726333285s guest_agent_to_files=240.790769ms files_to_first_ssh=6.221µs files_to_ssh=6.221µs boot_to_ssh=21.212395432s ssh_to_completed=5.467873424s total=26.855384621s ssh_attempts=1` |
 
+The 5-run average wall elapsed time improved by about 1058 ms, from 5631.8 ms
+to 4573.8 ms. The benchmark did not isolate individual changes, so the
+following attribution is speculative and overlapping:
+
+| optimization | estimated contribution | share of net improvement | rationale |
+| --- | ---: | ---: | --- |
+| Build-time deterministic host key plus removing runtime RSA host-key generation | 800-950 ms | 75-90% | Runtime OpenSSH RSA key generation was the largest obvious serial initrd cost. The after run skips `ssh-keygen` entirely for the benchmark key path. |
+| Removing tiny QEMU user networking and disabling i8042 | 80-180 ms | 8-17% | Fewer devices reduce QEMU setup and kernel PCI/device probing. The effect is likely real but smaller than host-key generation. |
+| Smaller initrd from omitting `ssh-keygen` in the build-time key path | 20-60 ms | 2-6% | The packed initrd shrank by about 29 KB in the default after path. This should help slightly, but overlaps with the host-key change. |
+| Starting SSH before QGA probing | 0-30 ms in this benchmark | 0-3% | This benchmark uses `writeFiles`, so host-side SSH still waits for QGA file injection before connecting. It should matter more for tiny launches without `writeFiles`. |
+| `ssh.retryDelayMs = 100` benchmark setting | 0 ms measured | 0% | All after runs reported `ssh_attempts=1`, so no retry delay was paid. |
+| Detailed launch stats | approximately 0 ms | approximately 0% | This is instrumentation and should not materially affect boot time. |
+
 ## Parity TODOs
 
 These items would make `mkTinySandbox` easier to use with examples that also
