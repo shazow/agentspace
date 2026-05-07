@@ -15,15 +15,17 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"time"
 
 	"github.com/adrg/xdg"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 )
 
 const (
-	defaultVSockCIDStart = 3
-	defaultVSockCIDEnd   = 65535
-	defaultVolumeFSType  = "ext4"
+	defaultSSHRetryDelayMS = 1000
+	defaultVSockCIDStart   = 3
+	defaultVSockCIDEnd     = 65535
+	defaultVolumeFSType    = "ext4"
 )
 
 var writeFileModePattern = regexp.MustCompile(`^0[0-7]{3}$`)
@@ -58,8 +60,9 @@ type Persistence struct {
 }
 
 type SSH struct {
-	Argv []string `json:"argv"`
-	User string   `json:"user"`
+	Argv         []string `json:"argv"`
+	User         string   `json:"user"`
+	RetryDelayMS *int     `json:"retryDelayMs,omitempty"`
 }
 
 type VSockCIDRange struct {
@@ -111,7 +114,7 @@ type QEMUKernel struct {
 }
 
 type QEMUSMP struct {
-	CPUs int `json:"cpus"`
+	CPUs *int `json:"cpus,omitempty"`
 }
 
 type QEMUConsole struct {
@@ -253,6 +256,10 @@ func (m *Manifest) applyDefaults() {
 		return
 	}
 
+	if m.SSH.RetryDelayMS == nil {
+		m.SSH.RetryDelayMS = intPtr(defaultSSHRetryDelayMS)
+	}
+
 	if m.VSock.CIDRange.Start == 0 {
 		m.VSock.CIDRange.Start = defaultVSockCIDStart
 	}
@@ -285,6 +292,8 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.ssh.argv must contain at least the ssh executable")
 	case m.SSH.User == "":
 		return fmt.Errorf("manifest.ssh.user is required")
+	case m.SSH.RetryDelayMS != nil && *m.SSH.RetryDelayMS < 0:
+		return fmt.Errorf("manifest.ssh.retryDelayMs must be greater than or equal to zero")
 	case m.QEMU.BinaryPath == "":
 		return fmt.Errorf("manifest.qemu.binaryPath is required")
 	case m.QEMU.Name == "":
@@ -299,7 +308,7 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.kernel.path is required")
 	case m.QEMU.Kernel.InitrdPath == "":
 		return fmt.Errorf("manifest.qemu.kernel.initrdPath is required")
-	case m.QEMU.SMP.CPUs <= 0:
+	case m.QEMU.SMP.CPUs != nil && *m.QEMU.SMP.CPUs <= 0:
 		return fmt.Errorf("manifest.qemu.smp.cpus must be greater than zero")
 	case m.QEMU.QMP.SocketPath == "":
 		return fmt.Errorf("manifest.qemu.qmp.socketPath is required")
@@ -313,12 +322,6 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.devices.rng.id is required")
 	case !validQEMUTransport(m.QEMU.Devices.RNG.Transport):
 		return fmt.Errorf("manifest.qemu.devices.rng.transport must be one of pci, mmio, or ccw")
-	case len(m.QEMU.Devices.VirtioFS) == 0:
-		return fmt.Errorf("manifest.qemu.devices.virtiofs must contain at least one share")
-	case len(m.QEMU.Devices.Block) == 0:
-		return fmt.Errorf("manifest.qemu.devices.block must contain at least one device")
-	case len(m.QEMU.Devices.Network) == 0:
-		return fmt.Errorf("manifest.qemu.devices.network must contain at least one device")
 	case m.QEMU.Devices.VSOCK.ID == "":
 		return fmt.Errorf("manifest.qemu.devices.vsock.id is required")
 	case !validQEMUTransport(m.QEMU.Devices.VSOCK.Transport):
@@ -402,6 +405,13 @@ func (m *Manifest) Validate() error {
 	}
 
 	return nil
+}
+
+func (m *Manifest) SSHRetryDelay(fallback time.Duration) time.Duration {
+	if m == nil || m.SSH.RetryDelayMS == nil {
+		return fallback
+	}
+	return time.Duration(*m.SSH.RetryDelayMS) * time.Millisecond
 }
 
 func validateNotifications(notifications Notifications) error {
@@ -677,4 +687,8 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 
 func (m *Manifest) SSHDestination(cid int) string {
 	return fmt.Sprintf("%s@vsock/%d", m.SSH.User, cid)
+}
+
+func intPtr(value int) *int {
+	return &value
 }

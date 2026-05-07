@@ -4,6 +4,47 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-07: sandbox machine sizing and SSH retry delay
+
+### Who Is Affected
+
+- Nix consumers configuring VM memory or vCPU count through lower-level
+  `microvm` overrides.
+- Direct manifest producers that always set `qemu.smp.cpus`.
+- Consumers that need to tune transient SSH startup retry timing.
+
+### What Changed
+
+The full sandbox now accepts a public machine sizing interface:
+
+```nix
+agentspace.sandbox.machine.memory = 4096; # MiB
+agentspace.sandbox.machine.vcpu = null;  # use host-visible CPU count
+```
+
+`agentspace.sandbox.machine.memory` defaults to `4096`.
+`agentspace.sandbox.machine.vcpu` defaults to `null`. When null, generated
+manifests omit `qemu.smp.cpus`, and `virtie` resolves the CPU count with the
+host-visible CPU count at launch time.
+
+Generated manifests now also include `ssh.retryDelayMs`, defaulting to `1000`.
+`virtie launch` uses this value as the delay before retrying transient SSH
+startup failures.
+
+### Migration Steps
+
+Update full sandbox sizing that previously overrode microvm options directly:
+
+```diff
+- extraModules = [{ microvm.mem = 512; microvm.vcpu = 2; }];
++ machine.memory = 512;
++ machine.vcpu = 2;
+```
+
+Set `machine.vcpu = null` or omit it to use the runtime host-visible CPU count.
+Set `agentspace.sandbox.ssh.retryDelayMs = 0` to retry immediately, or a larger
+millisecond value to slow retries down.
+
 ## 2026-04-28: SSH autoconnect is explicit
 
 ### Who Is Affected

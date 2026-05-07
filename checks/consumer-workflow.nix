@@ -15,12 +15,15 @@ let
       homeImage = "/var/lib/agentspace/home.img";
       storeOverlay = "/var/lib/agentspace/nix-store-overlay.img";
     };
+    machine = {
+      memory = 512;
+      vcpu = 16;
+    };
     extraModules = [
       {
-        microvm.vcpu = 16;
         agentspace.sandbox.extraModules = [
           {
-            microvm.mem = 512;
+            environment.variables.AGENTSPACE_EXTRA_MODULE = "1";
           }
         ];
       }
@@ -69,10 +72,13 @@ let
     assert sandboxCfg.ssh.autoconnect == true;
     assert sandboxCfg.persistence.homeImage == "/var/lib/agentspace/home.img";
     assert sandboxCfg.persistence.storeOverlay == "/var/lib/agentspace/nix-store-overlay.img";
+    assert sandboxCfg.machine.memory == 512;
+    assert sandboxCfg.machine.vcpu == 16;
     assert builtins.length sandboxCfg.extraModules == 1;
     assert vmConsumer.config.microvm.vcpu == 16;
     assert vmConsumer.config.microvm.mem == 512;
     assert vmConsumer.config.microvm.vsock.cid == null;
+    assert vmConsumer.config.environment.variables.AGENTSPACE_EXTRA_MODULE == "1";
     assert userCfg.home == "/home/${sandboxCfg.user}";
     assert userCfg.createHome;
     assert userCfg.openssh.authorizedKeys.keys == [ consumerPublicKey ];
@@ -84,6 +90,8 @@ let
     assert homeCfg.programs.git.enable;
     assert builtins.elem pkgs.hello homeCfg.home.packages;
     assert builtins.elem "./id_ed25519" manifest.ssh.argv;
+    assert manifest.qemu.memory.sizeMiB == 512;
+    assert manifest.qemu.smp.cpus == 16;
     assert builtins.any (volume: volume.imagePath == "/var/lib/agentspace/home.img") manifest.volumes;
     assert builtins.any (
       volume: volume.imagePath == "/var/lib/agentspace/nix-store-overlay.img"

@@ -53,12 +53,24 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
+  vmVirtieFixedMachine = mkSandbox {
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
+    persistence.homeImage = null;
+    machine = {
+      memory = 512;
+      vcpu = 2;
+    };
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
+  fixedMachineManifest =
+    vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
 
   _ =
     assert manifest.qemu.binaryPath != "";
@@ -70,6 +82,8 @@ let
     assert manifest.persistence.stateDir == ".agentspace";
     assert manifest.qemu.qmp.socketPath == "qmp.sock";
     assert manifest.qemu.guestAgent.socketPath == "qga.sock";
+    assert manifest.qemu.memory.sizeMiB == 4096;
+    assert !(manifest.qemu.smp ? cpus);
     assert manifest.writeFiles == { };
     assert manifest.notifications.states == [ ];
     assert !(manifest.notifications ? command);
@@ -80,6 +94,7 @@ let
     assert manifest.qemu.devices.vsock.id == "vsock0";
     assert builtins.head manifest.ssh.argv == "${pkgs.openssh}/bin/ssh";
     assert manifest.ssh.user == "agent";
+    assert manifest.ssh.retryDelayMs == 1000;
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.argv;
     assert builtins.length manifest.volumes > 0;
     assert builtins.any (
@@ -96,6 +111,13 @@ let
     assert !(manifest ? microvmRun);
     assert !(manifest ? virtiofsdRun);
     assert !builtins.any (arg: builtins.match ".*@vsock/.*" arg != null) manifest.ssh.argv;
+    true;
+
+  _fixedMachine =
+    assert fixedMachineManifest.qemu.memory.sizeMiB == 512;
+    assert fixedMachineManifest.qemu.smp.cpus == 2;
+    assert vmVirtieFixedMachine.config.microvm.mem == 512;
+    assert vmVirtieFixedMachine.config.microvm.vcpu == 2;
     true;
 
   _balloon =
@@ -152,6 +174,10 @@ in
   virtie-manifest-balloon-contract =
     assert _balloon;
     pkgs.runCommand "virtie-manifest-balloon-contract" { } "touch $out";
+
+  virtie-manifest-fixed-machine-contract =
+    assert _fixedMachine;
+    pkgs.runCommand "virtie-manifest-fixed-machine-contract" { } "touch $out";
 
   virtie-manifest-external-store-socket-contract =
     assert _externalStoreSocket;
