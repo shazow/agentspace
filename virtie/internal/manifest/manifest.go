@@ -23,6 +23,7 @@ import (
 
 const (
 	defaultSSHRetryDelayMS = 1000
+	defaultSSHReadySocket  = "ssh-ready.sock"
 	defaultVSockCIDStart   = 3
 	defaultVSockCIDEnd     = 65535
 	defaultVolumeFSType    = "ext4"
@@ -86,6 +87,7 @@ type QEMU struct {
 	Knobs           QEMUKnobs      `json:"knobs"`
 	QMP             QEMUQMP        `json:"qmp"`
 	GuestAgent      QEMUGuestAgent `json:"guestAgent,omitempty"`
+	SSHReady        QEMUSSHReady   `json:"sshReady,omitempty"`
 	Devices         QEMUDevices    `json:"devices"`
 	MachineID       *string        `json:"machineId,omitempty"`
 	PassthroughArgs []string       `json:"passthroughArgs,omitempty"`
@@ -135,6 +137,10 @@ type QEMUQMP struct {
 }
 
 type QEMUGuestAgent struct {
+	SocketPath string `json:"socketPath,omitempty"`
+}
+
+type QEMUSSHReady struct {
 	SocketPath string `json:"socketPath,omitempty"`
 }
 
@@ -215,10 +221,11 @@ type VirtioFS struct {
 }
 
 type WriteFile struct {
-	Chown   *string `json:"chown,omitempty"`
-	Content *string `json:"content,omitempty"`
-	Mode    *string `json:"mode,omitempty"`
-	Path    *string `json:"path,omitempty"`
+	Chown     *string `json:"chown,omitempty"`
+	Content   *string `json:"content,omitempty"`
+	Mode      *string `json:"mode,omitempty"`
+	Overwrite *bool   `json:"overwrite,omitempty"`
+	Path      *string `json:"path,omitempty"`
 }
 
 type WriteFiles map[string]WriteFile
@@ -228,6 +235,7 @@ type ResolvedWriteFile struct {
 	Chown     *string
 	Content   *string
 	Mode      *string
+	Overwrite bool
 	HostPath  *string
 }
 
@@ -258,6 +266,9 @@ func (m *Manifest) applyDefaults() {
 
 	if m.SSH.RetryDelayMS == nil {
 		m.SSH.RetryDelayMS = intPtr(defaultSSHRetryDelayMS)
+	}
+	if m.QEMU.SSHReady.SocketPath == "" {
+		m.QEMU.SSHReady.SocketPath = defaultSSHReadySocket
 	}
 
 	if m.VSock.CIDRange.Start == 0 {
@@ -558,6 +569,10 @@ func (m *Manifest) ResolvedGuestAgentSocketPath() (string, error) {
 	return m.resolveSocketPath(m.QEMU.GuestAgent.SocketPath)
 }
 
+func (m *Manifest) ResolvedSSHReadySocketPath() (string, error) {
+	return m.resolveSocketPath(m.QEMU.SSHReady.SocketPath)
+}
+
 func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved := m.QEMU
 	resolved.BinaryPath = m.resolvePath(resolved.BinaryPath)
@@ -576,6 +591,12 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 		return QEMU{}, err
 	}
 	resolved.GuestAgent.SocketPath = guestAgentSocketPath
+
+	sshReadySocketPath, err := m.resolveSocketPath(resolved.SSHReady.SocketPath)
+	if err != nil {
+		return QEMU{}, err
+	}
+	resolved.SSHReady.SocketPath = sshReadySocketPath
 
 	if resolved.MachineID != nil {
 		value := *resolved.MachineID
@@ -675,6 +696,7 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 			Chown:     entry.Chown,
 			Content:   entry.Content,
 			Mode:      entry.Mode,
+			Overwrite: writeFileOverwrite(entry),
 		}
 		if entry.Path != nil {
 			hostPath := m.resolvePath(*entry.Path)
@@ -683,6 +705,10 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 		files = append(files, resolved)
 	}
 	return files
+}
+
+func writeFileOverwrite(file WriteFile) bool {
+	return file.Overwrite != nil && *file.Overwrite
 }
 
 func (m *Manifest) SSHDestination(cid int) string {

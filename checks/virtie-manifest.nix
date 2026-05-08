@@ -23,6 +23,7 @@ let
         chown = "agent:users";
         content = "aGVsbG8=";
         mode = "0640";
+        overwrite = true;
       };
       "/etc/agentspace-host" = {
         path = ".agentspace-test/host-file";
@@ -82,6 +83,7 @@ let
     assert manifest.persistence.stateDir == ".agentspace";
     assert manifest.qemu.qmp.socketPath == "qmp.sock";
     assert manifest.qemu.guestAgent.socketPath == "qga.sock";
+    assert manifest.qemu.sshReady.socketPath == "ssh-ready.sock";
     assert manifest.qemu.memory.sizeMiB == 4096;
     assert !(manifest.qemu.smp ? cpus);
     assert manifest.writeFiles == { };
@@ -92,9 +94,12 @@ let
     assert builtins.length manifest.qemu.devices.block > 0;
     assert builtins.length manifest.qemu.devices.network > 0;
     assert manifest.qemu.devices.vsock.id == "vsock0";
+    assert vmVirtie.config.systemd.services.virtie-ssh-signal.after == [ "sshd.service" ];
+    assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
+    assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
     assert builtins.head manifest.ssh.argv == "${pkgs.openssh}/bin/ssh";
     assert manifest.ssh.user == "agent";
-    assert manifest.ssh.retryDelayMs == 1000;
+    assert !(manifest.ssh ? retryDelayMs);
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.argv;
     assert builtins.length manifest.volumes > 0;
     assert builtins.any (
@@ -144,10 +149,12 @@ let
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".chown == "agent:users";
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".content == "aGVsbG8=";
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".mode == "0640";
+    assert featureRichManifest.writeFiles."/etc/agentspace-inline".overwrite == true;
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".path == null;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".chown == null;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".content == null;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".mode == null;
+    assert featureRichManifest.writeFiles."/etc/agentspace-host".overwrite == false;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".path == ".agentspace-test/host-file";
     true;
 

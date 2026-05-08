@@ -126,6 +126,18 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 		)
 	}
 
+	if qemu.SSHReady.SocketPath != "" {
+		serialDriver, err := guestAgentSerialDriver(qemu.Devices.VSOCK.Transport)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args,
+			"-chardev", fmt.Sprintf("socket,path=%s,server=on,wait=off,id=ssh_ready_char", qemu.SSHReady.SocketPath),
+			"-device", fmt.Sprintf("%s,id=ssh-ready-serial", serialDriver),
+			"-device", "virtserialport,chardev=ssh_ready_char,name=virtie.ssh.ready",
+		)
+	}
+
 	switch qemu.Memory.Backend {
 	case "", "default":
 		// No extra memory object required.

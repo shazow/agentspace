@@ -94,6 +94,9 @@ func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
 	if got, want := manifest.SSHRetryDelay(25*time.Millisecond), time.Second; got != want {
 		t.Fatalf("unexpected default ssh retry delay: got %s want %s", got, want)
 	}
+	if got, want := manifest.QEMU.SSHReady.SocketPath, "ssh-ready.sock"; got != want {
+		t.Fatalf("unexpected default ssh readiness socket: got %q want %q", got, want)
+	}
 
 	custom := validManifest()
 	custom.SSH.RetryDelayMS = intPtr(250)
@@ -123,6 +126,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 		wantSocket string
 		wantQMP    string
 		wantQGA    string
+		wantReady  string
 	}{
 		{
 			name:       "legacy working dir",
@@ -131,6 +135,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			wantSocket: "/tmp/work/fs.sock",
 			wantQMP:    "/tmp/work/qmp.sock",
 			wantQGA:    "/tmp/work/qga.sock",
+			wantReady:  "/tmp/work/ssh-ready.sock",
 		},
 		{
 			name:       "default runtime dir",
@@ -139,6 +144,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			wantSocket: filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "fs.sock"),
 			wantQMP:    filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qmp.sock"),
 			wantQGA:    filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qga.sock"),
+			wantReady:  filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "ssh-ready.sock"),
 		},
 		{
 			name:       "relative runtime dir",
@@ -147,6 +153,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			wantSocket: "/tmp/work/runtime/fs.sock",
 			wantQMP:    "/tmp/work/runtime/qmp.sock",
 			wantQGA:    "/tmp/work/runtime/qga.sock",
+			wantReady:  "/tmp/work/runtime/ssh-ready.sock",
 		},
 		{
 			name:       "absolute runtime dir",
@@ -155,6 +162,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			wantSocket: "/tmp/runtime/fs.sock",
 			wantQMP:    "/tmp/runtime/qmp.sock",
 			wantQGA:    "/tmp/runtime/qga.sock",
+			wantReady:  "/tmp/runtime/ssh-ready.sock",
 		},
 		{
 			name:       "absolute socket path bypasses runtime dir",
@@ -163,6 +171,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			wantSocket: "/tmp/explicit-fs.sock",
 			wantQMP:    "/tmp/explicit-qmp.sock",
 			wantQGA:    "/tmp/explicit-qga.sock",
+			wantReady:  "/tmp/explicit-ready.sock",
 		},
 	}
 
@@ -173,9 +182,11 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			manifest.VirtioFS.Daemons[0].SocketPath = tt.socketPath
 			manifest.QEMU.Devices.VirtioFS[0].SocketPath = tt.socketPath
 			manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+			manifest.QEMU.SSHReady.SocketPath = "ssh-ready.sock"
 			if tt.name == "absolute socket path bypasses runtime dir" {
 				manifest.QEMU.QMP.SocketPath = "/tmp/explicit-qmp.sock"
 				manifest.QEMU.GuestAgent.SocketPath = "/tmp/explicit-qga.sock"
+				manifest.QEMU.SSHReady.SocketPath = "/tmp/explicit-ready.sock"
 			}
 
 			socketPaths, err := manifest.ResolvedSocketPaths()
@@ -207,6 +218,13 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			if guestAgentSocketPath != tt.wantQGA {
 				t.Fatalf("unexpected guest agent socket path: got %q want %q", guestAgentSocketPath, tt.wantQGA)
 			}
+			sshReadySocketPath, err := manifest.ResolvedSSHReadySocketPath()
+			if err != nil {
+				t.Fatalf("resolve ssh readiness socket path: %v", err)
+			}
+			if sshReadySocketPath != tt.wantReady {
+				t.Fatalf("unexpected ssh readiness socket path: got %q want %q", sshReadySocketPath, tt.wantReady)
+			}
 
 			qemu, err := manifest.ResolvedQEMU()
 			if err != nil {
@@ -220,6 +238,9 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			}
 			if got, want := qemu.GuestAgent.SocketPath, tt.wantQGA; got != want {
 				t.Fatalf("unexpected qemu guest agent socket path: got %q want %q", got, want)
+			}
+			if got, want := qemu.SSHReady.SocketPath, tt.wantReady; got != want {
+				t.Fatalf("unexpected qemu ssh readiness socket path: got %q want %q", got, want)
 			}
 
 			daemons, err := manifest.ResolvedVirtioFSDaemons()
@@ -401,19 +422,21 @@ func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
 	content := "aGVsbG8="
 	chown := "agent:users"
 	mode := "0640"
+	overwrite := false
+	overwriteTrue := true
 	relativeHostPath := "files/agent.conf"
 	absoluteHostPath := "/tmp/host.conf"
 	manifest.WriteFiles = WriteFiles{
-		"/etc/a.conf": {Path: &relativeHostPath},
-		"/etc/b.conf": {Content: &content, Chown: &chown, Mode: &mode},
+		"/etc/a.conf": {Path: &relativeHostPath, Overwrite: &overwrite},
+		"/etc/b.conf": {Content: &content, Chown: &chown, Mode: &mode, Overwrite: &overwriteTrue},
 		"/etc/c.conf": {Path: &absoluteHostPath},
 	}
 
 	got := manifest.ResolvedWriteFiles()
 	want := []ResolvedWriteFile{
-		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf")},
-		{GuestPath: "/etc/b.conf", Chown: &chown, Content: &content, Mode: &mode},
-		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath},
+		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf"), Overwrite: false},
+		{GuestPath: "/etc/b.conf", Chown: &chown, Content: &content, Mode: &mode, Overwrite: true},
+		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath, Overwrite: false},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected resolved write files: got %#v want %#v", got, want)

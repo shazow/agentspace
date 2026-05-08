@@ -171,6 +171,10 @@ in
     socketPath = "qga.sock";
   };
 
+  sshReady = {
+    socketPath = "ssh-ready.sock";
+  };
+
   devices =
     {
       rng = {

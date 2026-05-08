@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"time"
 )
 
 type lock interface {
@@ -27,6 +28,10 @@ type runner interface {
 
 type socketWaiter interface {
 	Wait(ctx context.Context, socketPaths []string) error
+}
+
+type sshReadyDialer interface {
+	Dial(ctx context.Context, socketPath string, timeout time.Duration) (io.ReadCloser, error)
 }
 
 type processSpec struct {
