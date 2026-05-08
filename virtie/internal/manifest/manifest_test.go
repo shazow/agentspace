@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adrg/xdg"
 )
@@ -79,6 +80,35 @@ func TestLoadRejectsTrailingData(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unexpected trailing data") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
+	manifest := validManifest()
+	if manifest.SSH.RetryDelayMS != nil {
+		t.Fatalf("test fixture should leave retry delay unset before validation, got %d", *manifest.SSH.RetryDelayMS)
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("validate manifest: %v", err)
+	}
+	if got, want := manifest.SSHRetryDelay(25*time.Millisecond), time.Second; got != want {
+		t.Fatalf("unexpected default ssh retry delay: got %s want %s", got, want)
+	}
+
+	custom := validManifest()
+	custom.SSH.RetryDelayMS = intPtr(250)
+	if err := custom.Validate(); err != nil {
+		t.Fatalf("validate custom retry delay: %v", err)
+	}
+	if got, want := custom.SSHRetryDelay(time.Second), 250*time.Millisecond; got != want {
+		t.Fatalf("unexpected custom ssh retry delay: got %s want %s", got, want)
+	}
+
+	invalid := validManifest()
+	invalid.SSH.RetryDelayMS = intPtr(-1)
+	err := invalid.Validate()
+	if err == nil || !strings.Contains(err.Error(), "manifest.ssh.retryDelayMs must be greater than or equal to zero") {
+		t.Fatalf("expected retry delay validation error, got %v", err)
 	}
 }
 
@@ -513,6 +543,51 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	}
 	if got, want := virtioFSSocketPaths, []string{"/var/run/virtiofs-nix-store.sock"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected virtiofs socket paths: got %v want %v", got, want)
+	}
+}
+
+func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
+	manifest := validManifest()
+	manifest.QEMU.Devices.VirtioFS = nil
+	manifest.QEMU.Devices.Block = nil
+	manifest.QEMU.Devices.Network = nil
+	manifest.Volumes = nil
+	manifest.VirtioFS.Daemons = nil
+
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+
+	virtioFSSocketPaths, err := manifest.ResolvedVirtioFSSocketPaths()
+	if err != nil {
+		t.Fatalf("resolve virtiofs socket paths: %v", err)
+	}
+	if len(virtioFSSocketPaths) != 0 {
+		t.Fatalf("unexpected virtiofs socket paths: got %v want none", virtioFSSocketPaths)
+	}
+	if volumes := manifest.ResolvedVolumes(); len(volumes) != 0 {
+		t.Fatalf("unexpected volumes: got %v want none", volumes)
+	}
+}
+
+func TestManifestAllowsRuntimeResolvedCPUs(t *testing.T) {
+	manifest := validManifest()
+	manifest.QEMU.SMP.CPUs = nil
+
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
+func TestManifestRejectsNonPositiveCPUsWhenProvided(t *testing.T) {
+	for _, cpus := range []int{0, -1} {
+		manifest := validManifest()
+		manifest.QEMU.SMP.CPUs = &cpus
+
+		err := manifest.Validate()
+		if err == nil || !strings.Contains(err.Error(), "manifest.qemu.smp.cpus must be greater than zero") {
+			t.Fatalf("expected cpus validation error for %d, got %v", cpus, err)
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package manager
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
@@ -57,7 +58,7 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	args = append(args, "-M", machineArg)
 
 	args = append(args, "-m", fmt.Sprintf("%d", qemu.Memory.SizeMiB))
-	args = append(args, "-smp", fmt.Sprintf("%d", qemu.SMP.CPUs))
+	args = append(args, "-smp", fmt.Sprintf("%d", qemuCPUCount(qemu.SMP.CPUs)))
 
 	if qemu.Knobs.NoDefaults {
 		args = append(args, "-nodefaults")
@@ -234,6 +235,17 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	args = append(args, qemu.PassthroughArgs...)
 
 	return args, nil
+}
+
+func qemuCPUCount(cpus *int) int {
+	if cpus != nil {
+		return *cpus
+	}
+	count := runtime.NumCPU()
+	if count < 1 {
+		return 1
+	}
+	return count
 }
 
 func guestAgentSerialDriver(transport string) (string, error) {
