@@ -18,6 +18,11 @@ let
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
+
+  # It is an atrocity that lib doesn't have a toBase64 encoder, but alas we don't live in a just society.
+  toBase64 = content: builtins.readFile (pkgs.runCommand "encode-base64" {} ''
+    echo -n ${pkgs.lib.escapeShellArg content} | ${pkgs.coreutils}/bin/base64 -w0 > $out
+  '');
 in
 {
   imports = [
@@ -150,12 +155,14 @@ in
               content = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
-                description = "Base64-encoded content to write into the guest file.";
+                example = ''{"foo": "bar"}'';
+                description = "Content to write as file";
               };
 
               chown = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
+                example = "agent:users";
                 description = "Optional user:group ownership value applied after writing the guest file.";
               };
 
@@ -168,6 +175,7 @@ in
               mode = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
+                example = "0644";
                 description = "Optional four-digit octal permission mode applied after writing the guest file.";
               };
 
@@ -411,8 +419,12 @@ in
         qemu = qemuConfig;
         volumes = manifestVolumes;
         virtiofs.daemons = virtiofsDaemons;
-        writeFiles = cfg.writeFiles;
         notifications = notificationManifest;
+        writeFiles = lib.mapAttrs (path: fileDef:
+          fileDef // lib.optionalAttrs (fileDef.content != null) {
+            content = toBase64 fileDef.content;
+          }
+        ) cfg.writeFiles;
       };
 
       virtieManifestTemplate = pkgs.writeText "virtie-${cfg.hostName}.json" (
