@@ -569,7 +569,7 @@ let
       writeFiles = {
         "/etc/virtie/inline" = {
           chown = "agent:users";
-          content = "aW5saW5lLWZyb20tbWFuaWZlc3Q=";
+          text = "inline-from-manifest";
           mode = "0640";
           overwrite = true;
         };

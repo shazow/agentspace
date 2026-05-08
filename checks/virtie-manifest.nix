@@ -21,7 +21,7 @@ let
     writeFiles = {
       "/etc/agentspace-inline" = {
         chown = "agent:users";
-        content = "aGVsbG8=";
+        text = "hello";
         mode = "0640";
         overwrite = true;
       };
@@ -147,12 +147,12 @@ let
   _writeFiles =
     assert featureRichManifest.qemu.guestAgent.socketPath == "qga.sock";
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".chown == "agent:users";
-    assert featureRichManifest.writeFiles."/etc/agentspace-inline".content == "aGVsbG8=";
+    assert featureRichManifest.writeFiles."/etc/agentspace-inline".text == "hello";
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".mode == "0640";
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".overwrite == true;
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".path == null;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".chown == null;
-    assert featureRichManifest.writeFiles."/etc/agentspace-host".content == null;
+    assert featureRichManifest.writeFiles."/etc/agentspace-host".text == null;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".mode == null;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".overwrite == false;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".path == ".agentspace-test/host-file";

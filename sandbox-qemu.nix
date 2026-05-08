@@ -18,11 +18,6 @@ let
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
-
-  # It is an atrocity that lib doesn't have a toBase64 encoder, but alas we don't live in a just society.
-  toBase64 = content: builtins.readFile (pkgs.runCommand "encode-base64" {} ''
-    echo -n ${pkgs.lib.escapeShellArg content} | ${pkgs.coreutils}/bin/base64 -w0 > $out
-  '');
 in
 {
   imports = [
@@ -152,11 +147,11 @@ in
           { ... }:
           {
             options = {
-              content = lib.mkOption {
+              text = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
                 example = ''{"foo": "bar"}'';
-                description = "Content to write as file";
+                description = "Plaintext to write into the guest file. Use path for binary files.";
               };
 
               chown = lib.mkOption {
@@ -169,7 +164,7 @@ in
               path = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
-                description = "Host path whose bytes are base64-encoded and written into the guest file.";
+                description = "Host path whose bytes are written into the guest file.";
               };
 
               mode = lib.mkOption {
@@ -420,11 +415,7 @@ in
         volumes = manifestVolumes;
         virtiofs.daemons = virtiofsDaemons;
         notifications = notificationManifest;
-        writeFiles = lib.mapAttrs (path: fileDef:
-          fileDef // lib.optionalAttrs (fileDef.content != null) {
-            content = toBase64 fileDef.content;
-          }
-        ) cfg.writeFiles;
+        writeFiles = cfg.writeFiles;
       };
 
       virtieManifestTemplate = pkgs.writeText "virtie-${cfg.hostName}.json" (
