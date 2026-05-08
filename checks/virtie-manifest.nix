@@ -23,6 +23,7 @@ let
         chown = "agent:users";
         content = "aGVsbG8=";
         mode = "0640";
+        overwrite = true;
       };
       "/etc/agentspace-host" = {
         path = ".agentspace-test/host-file";
@@ -148,10 +149,12 @@ let
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".chown == "agent:users";
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".content == "aGVsbG8=";
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".mode == "0640";
+    assert featureRichManifest.writeFiles."/etc/agentspace-inline".overwrite == true;
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".path == null;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".chown == null;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".content == null;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".mode == null;
+    assert featureRichManifest.writeFiles."/etc/agentspace-host".overwrite == false;
     assert featureRichManifest.writeFiles."/etc/agentspace-host".path == ".agentspace-test/host-file";
     true;
 

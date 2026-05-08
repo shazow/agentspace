@@ -170,6 +170,12 @@ in
                 default = null;
                 description = "Optional four-digit octal permission mode applied after writing the guest file.";
               };
+
+              overwrite = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Whether to overwrite the guest file when it already exists.";
+              };
             };
           }
         )

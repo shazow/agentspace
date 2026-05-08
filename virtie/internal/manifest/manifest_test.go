@@ -422,19 +422,21 @@ func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
 	content := "aGVsbG8="
 	chown := "agent:users"
 	mode := "0640"
+	overwrite := false
+	overwriteTrue := true
 	relativeHostPath := "files/agent.conf"
 	absoluteHostPath := "/tmp/host.conf"
 	manifest.WriteFiles = WriteFiles{
-		"/etc/a.conf": {Path: &relativeHostPath},
-		"/etc/b.conf": {Content: &content, Chown: &chown, Mode: &mode},
+		"/etc/a.conf": {Path: &relativeHostPath, Overwrite: &overwrite},
+		"/etc/b.conf": {Content: &content, Chown: &chown, Mode: &mode, Overwrite: &overwriteTrue},
 		"/etc/c.conf": {Path: &absoluteHostPath},
 	}
 
 	got := manifest.ResolvedWriteFiles()
 	want := []ResolvedWriteFile{
-		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf")},
-		{GuestPath: "/etc/b.conf", Chown: &chown, Content: &content, Mode: &mode},
-		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath},
+		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf"), Overwrite: false},
+		{GuestPath: "/etc/b.conf", Chown: &chown, Content: &content, Mode: &mode, Overwrite: true},
+		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath, Overwrite: false},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected resolved write files: got %#v want %#v", got, want)

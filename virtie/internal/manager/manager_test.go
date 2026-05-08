@@ -690,9 +690,10 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	inlineContent := "aW5saW5l"
 	inlineChown := "agent:users"
 	inlineMode := "0640"
+	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/inline":   {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode},
-		"/var/lib/virtie/host": {Path: &hostPath},
+		"/etc/virtie/inline":   {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode, Overwrite: &overwrite},
+		"/var/lib/virtie/host": {Path: &hostPath, Overwrite: &overwrite},
 	}
 
 	var eventMu sync.Mutex
@@ -816,8 +817,9 @@ func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.
 
 	inlineContent := "aW5saW5l"
 	inlineChown := "agent:users"
+	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/inline": {Content: &inlineContent, Chown: &inlineChown},
+		"/etc/virtie/inline": {Content: &inlineContent, Chown: &inlineChown, Overwrite: &overwrite},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -869,6 +871,131 @@ func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.
 	}
 }
 
+func TestManagerLaunchSkipsGuestFileWhenOverwriteFalseAndPathExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	hostPath := "missing-host-file"
+	overwrite := false
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/virtie/existing": {Path: &hostPath, Overwrite: &overwrite},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{
+			{Exited: true},
+		},
+	}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	if got, want := guestAgent.execs, []guestExecCall{
+		{
+			path:          guestTestPath,
+			args:          []string{"-e", "/etc/virtie/existing"},
+			captureOutput: true,
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected guest execs: got %#v want %#v", got, want)
+	}
+	if len(guestAgent.writes) != 0 {
+		t.Fatalf("expected no guest writes, got %#v", guestAgent.writes)
+	}
+	if logs := logOutput.String(); !strings.Contains(logs, "skipped existing guest file because overwrite is false") || !strings.Contains(logs, "/etc/virtie/existing") {
+		t.Fatalf("expected overwrite=false skip log, got %q", logs)
+	}
+}
+
+func TestManagerLaunchWritesGuestFileWhenOverwriteFalseAndPathMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	content := "bmV3"
+	overwrite := false
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/virtie/new": {Content: &content, Overwrite: &overwrite},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{
+			{Exited: true, ExitCode: 1},
+			{Exited: true},
+			{Exited: true},
+		},
+	}
+	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	if got, want := guestAgent.execs, []guestExecCall{
+		{
+			path:          guestTestPath,
+			args:          []string{"-e", "/etc/virtie/new"},
+			captureOutput: true,
+		},
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/etc/virtie"},
+			captureOutput: true,
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected guest execs: got %#v want %#v", got, want)
+	}
+	if got, want := guestAgent.writes["/etc/virtie/new"], content; got != want {
+		t.Fatalf("unexpected guest write content: got %q want %q", got, want)
+	}
+}
+
 func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -880,8 +1007,9 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 	inlineContent := "aW5saW5l"
 	inlineChown := "agent:users"
 	inlineMode := "0600"
+	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode},
+		"/etc/inline": {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode, Overwrite: &overwrite},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -948,8 +1076,9 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 
 	inlineContent := "aW5saW5l"
 	inlineChown := "agent:users"
+	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/inline": {Content: &inlineContent, Chown: &inlineChown},
+		"/etc/virtie/inline": {Content: &inlineContent, Chown: &inlineChown, Overwrite: &overwrite},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -1019,8 +1148,9 @@ func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
 
 	inlineContent := "aW5saW5l"
 	inlineMode := "0600"
+	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Content: &inlineContent, Mode: &inlineMode},
+		"/etc/inline": {Content: &inlineContent, Mode: &inlineMode, Overwrite: &overwrite},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}

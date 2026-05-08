@@ -571,8 +571,10 @@ let
           chown = "agent:users";
           content = "aW5saW5lLWZyb20tbWFuaWZlc3Q=";
           mode = "0640";
+          overwrite = true;
         };
         "/var/lib/virtie/host" = {
+          overwrite = true;
           path = "host-write-file";
         };
       };

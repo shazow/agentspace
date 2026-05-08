@@ -240,6 +240,16 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 	defer client.Disconnect()
 
 	for _, file := range files {
+		if !file.Overwrite {
+			exists, err := m.guestPathExists(ctx, client, file.GuestPath)
+			if err != nil {
+				return &stageError{Stage: "guest file write", Err: err}
+			}
+			if exists {
+				m.logger.Info("skipped existing guest file because overwrite is false", "path", file.GuestPath)
+				continue
+			}
+		}
 		contentBase64, err := guestFileContentBase64(file)
 		if err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
@@ -322,6 +332,14 @@ func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAge
 
 func (m *manager) guestDirectoryExists(ctx context.Context, client guestAgentClient, guestDir string) (bool, error) {
 	status, err := m.runGuestFileCommandStatus(ctx, client, "test -d", guestTestPath, []string{"-d", guestDir}, guestDir)
+	if err != nil {
+		return false, err
+	}
+	return status.ExitCode == 0, nil
+}
+
+func (m *manager) guestPathExists(ctx context.Context, client guestAgentClient, guestPath string) (bool, error) {
+	status, err := m.runGuestFileCommandStatus(ctx, client, "test -e", guestTestPath, []string{"-e", guestPath}, guestPath)
 	if err != nil {
 		return false, err
 	}

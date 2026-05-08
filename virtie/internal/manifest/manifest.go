@@ -221,10 +221,11 @@ type VirtioFS struct {
 }
 
 type WriteFile struct {
-	Chown   *string `json:"chown,omitempty"`
-	Content *string `json:"content,omitempty"`
-	Mode    *string `json:"mode,omitempty"`
-	Path    *string `json:"path,omitempty"`
+	Chown     *string `json:"chown,omitempty"`
+	Content   *string `json:"content,omitempty"`
+	Mode      *string `json:"mode,omitempty"`
+	Overwrite *bool   `json:"overwrite,omitempty"`
+	Path      *string `json:"path,omitempty"`
 }
 
 type WriteFiles map[string]WriteFile
@@ -234,6 +235,7 @@ type ResolvedWriteFile struct {
 	Chown     *string
 	Content   *string
 	Mode      *string
+	Overwrite bool
 	HostPath  *string
 }
 
@@ -694,6 +696,7 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 			Chown:     entry.Chown,
 			Content:   entry.Content,
 			Mode:      entry.Mode,
+			Overwrite: writeFileOverwrite(entry),
 		}
 		if entry.Path != nil {
 			hostPath := m.resolvePath(*entry.Path)
@@ -702,6 +705,10 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 		files = append(files, resolved)
 	}
 	return files
+}
+
+func writeFileOverwrite(file WriteFile) bool {
+	return file.Overwrite != nil && *file.Overwrite
 }
 
 func (m *Manifest) SSHDestination(cid int) string {

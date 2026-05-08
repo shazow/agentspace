@@ -96,7 +96,7 @@ Acceptance criteria:
   - `virtiofs.daemons[].socketPath`
   - `virtiofs.daemons[].command`
   - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set.
-  - optional `writeFiles`, keyed by absolute guest path, with exactly one of `content` or `path`, optional `chown`, and optional four-digit octal `mode`
+  - optional `writeFiles`, keyed by absolute guest path, with exactly one of `content` or `path`, optional `chown`, optional four-digit octal `mode`, and optional `overwrite` defaulting to false
   - optional `notifications.command` with `{ path, args }`
   - optional `notifications.states` allowlist; empty or omitted means all states
   - optional `vsock.cidRange`, defaulting to `3..65535`
