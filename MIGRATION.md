@@ -4,6 +4,42 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-08: writeFiles inline content is plaintext text
+
+### Who Is Affected
+
+- Nix consumers setting `agentspace.sandbox.writeFiles.*.content`.
+- Direct manifest producers setting `writeFiles.*.content`.
+- Consumers writing binary files inline in manifests.
+
+### What Changed
+
+Inline `writeFiles` entries now use `text` instead of `content`.
+
+```diff
+  {
+    "writeFiles": {
+-     "/etc/example.conf": { "content": "cGxhaW4gdGV4dCBieXRlcw==" }
++     "/etc/example.conf": { "text": "plain text bytes" }
+    }
+  }
+```
+
+The `text` value is plaintext JSON string data and is not base64-encoded.
+Binary files must be supplied through `path`.
+
+For Nix consumers:
+
+```diff
+- agentspace.sandbox.writeFiles."/etc/example.conf".content = "plain text bytes";
++ agentspace.sandbox.writeFiles."/etc/example.conf".text = "plain text bytes";
+```
+
+### Migration Steps
+
+Rename inline `content` entries to `text`. Direct manifest producers must decode
+old base64 strings to plaintext, or move binary files to `path`.
+
 ## 2026-05-07: sandbox machine sizing and SSH retry delay
 
 ### Who Is Affected
@@ -176,15 +212,16 @@ The manifest accepts an optional `writeFiles` map:
 ```json
 {
   "writeFiles": {
-    "/etc/example.conf": { "content": "YmFzZTY0IGJ5dGVz", "chown": "agent:users", "mode": "0640" },
+    "/etc/example.conf": { "text": "plain text bytes", "chown": "agent:users", "mode": "0640" },
     "/etc/from-host": { "path": "relative-or-absolute-host-path" }
   }
 }
 ```
 
-Exactly one of `content` or `path` is required for each entry. `content` must
-already be base64-encoded. Relative host `path` values resolve against
-`paths.workingDir`; guest target paths must be absolute.
+Exactly one of `text` or `path` is required for each entry. `text` is
+plaintext JSON string content for non-binary files. Binary files must use
+`path`. Relative host `path` values resolve against `paths.workingDir`; guest
+target paths must be absolute.
 
 Each entry may also set `chown` to a guest ownership string such as
 `"agent:users"` and `mode` to a four-digit octal string such as `"0640"`.
@@ -198,11 +235,14 @@ written and closed. Directory creation, chown, and chmod failures are fatal.
 For Nix users, the equivalent option is:
 
 ```nix
-agentspace.sandbox.writeFiles."/etc/example.conf".content = "YmFzZTY0IGJ5dGVz";
+agentspace.sandbox.writeFiles."/etc/example.conf".text = "plain text bytes";
 agentspace.sandbox.writeFiles."/etc/example.conf".chown = "agent:users";
 agentspace.sandbox.writeFiles."/etc/example.conf".mode = "0640";
 agentspace.sandbox.writeFiles."/etc/from-host".path = "relative-host-path";
 ```
+
+The Nix option emits `text` directly into the generated manifest. It no longer
+base64-encodes inline file content.
 
 `virtie launch` writes these files after QMP readiness and guest-agent ping, and
 before SSH readiness. File injection runs only for fresh launches; restores via
@@ -211,8 +251,12 @@ before SSH readiness. File injection runs only for fresh launches; restores via
 ### Migration Steps
 
 No migration is required for consumers that do not set `writeFiles`. Direct
-manifest producers should include `qemu.guestAgent.socketPath` when using
-`writeFiles`.
+manifest producers should rename inline `writeFiles.*.content` entries to
+`writeFiles.*.text` and decode any existing base64 strings to plaintext. Nix
+consumers should rename `agentspace.sandbox.writeFiles.*.content` to
+`agentspace.sandbox.writeFiles.*.text`. Binary files should move to `path`.
+Direct manifest producers should include `qemu.guestAgent.socketPath` when
+using `writeFiles`.
 
 ## 2026-04-27: launch resume modes replace `virtie resume`
 

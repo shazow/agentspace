@@ -687,12 +687,12 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpDir, hostPath), hostBytes, 0o644); err != nil {
 		t.Fatalf("write host fixture: %v", err)
 	}
-	inlineContent := "aW5saW5l"
+	inlineText := "inline"
 	inlineChown := "agent:users"
 	inlineMode := "0640"
 	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/inline":   {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode, Overwrite: &overwrite},
+		"/etc/virtie/inline":   {Text: &inlineText, Chown: &inlineChown, Mode: &inlineMode, Overwrite: &overwrite},
 		"/var/lib/virtie/host": {Path: &hostPath, Overwrite: &overwrite},
 	}
 
@@ -745,11 +745,11 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 		t.Fatalf("launch: %v", err)
 	}
 
-	if got, want := guestAgent.writes["/etc/virtie/inline"], inlineContent; got != want {
-		t.Fatalf("unexpected inline write content: got %q want %q", got, want)
+	if got, want := guestAgent.writes["/etc/virtie/inline"], "aW5saW5l"; got != want {
+		t.Fatalf("unexpected inline write text: got %q want %q", got, want)
 	}
 	if got, want := guestAgent.writes["/var/lib/virtie/host"], "ZnJvbSBob3N0"; got != want {
-		t.Fatalf("unexpected host write content: got %q want %q", got, want)
+		t.Fatalf("unexpected host write text: got %q want %q", got, want)
 	}
 	if got, want := guestAgent.execs, []guestExecCall{
 		{
@@ -815,11 +815,11 @@ func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.Volumes[0].AutoCreate = false
 
-	inlineContent := "aW5saW5l"
+	inlineText := "inline"
 	inlineChown := "agent:users"
 	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/inline": {Content: &inlineContent, Chown: &inlineChown, Overwrite: &overwrite},
+		"/etc/virtie/inline": {Text: &inlineText, Chown: &inlineChown, Overwrite: &overwrite},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -866,8 +866,8 @@ func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected guest execs: got %#v want %#v", got, want)
 	}
-	if got, want := guestAgent.writes["/etc/virtie/inline"], inlineContent; got != want {
-		t.Fatalf("unexpected inline write content: got %q want %q", got, want)
+	if got, want := guestAgent.writes["/etc/virtie/inline"], "aW5saW5l"; got != want {
+		t.Fatalf("unexpected inline write text: got %q want %q", got, want)
 	}
 }
 
@@ -940,10 +940,10 @@ func TestManagerLaunchWritesGuestFileWhenOverwriteFalseAndPathMissing(t *testing
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.Volumes[0].AutoCreate = false
 
-	content := "bmV3"
+	text := "new"
 	overwrite := false
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/new": {Content: &content, Overwrite: &overwrite},
+		"/etc/virtie/new": {Text: &text, Overwrite: &overwrite},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -991,8 +991,8 @@ func TestManagerLaunchWritesGuestFileWhenOverwriteFalseAndPathMissing(t *testing
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected guest execs: got %#v want %#v", got, want)
 	}
-	if got, want := guestAgent.writes["/etc/virtie/new"], content; got != want {
-		t.Fatalf("unexpected guest write content: got %q want %q", got, want)
+	if got, want := guestAgent.writes["/etc/virtie/new"], "bmV3"; got != want {
+		t.Fatalf("unexpected guest write text: got %q want %q", got, want)
 	}
 }
 
@@ -1004,12 +1004,12 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.Volumes[0].AutoCreate = false
 
-	inlineContent := "aW5saW5l"
+	inlineText := "inline"
 	inlineChown := "agent:users"
 	inlineMode := "0600"
 	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Content: &inlineContent, Chown: &inlineChown, Mode: &inlineMode, Overwrite: &overwrite},
+		"/etc/inline": {Text: &inlineText, Chown: &inlineChown, Mode: &inlineMode, Overwrite: &overwrite},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -1074,11 +1074,11 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.Volumes[0].AutoCreate = false
 
-	inlineContent := "aW5saW5l"
+	inlineText := "inline"
 	inlineChown := "agent:users"
 	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/inline": {Content: &inlineContent, Chown: &inlineChown, Overwrite: &overwrite},
+		"/etc/virtie/inline": {Text: &inlineText, Chown: &inlineChown, Overwrite: &overwrite},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -1146,11 +1146,11 @@ func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.Volumes[0].AutoCreate = false
 
-	inlineContent := "aW5saW5l"
+	inlineText := "inline"
 	inlineMode := "0600"
 	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Content: &inlineContent, Mode: &inlineMode, Overwrite: &overwrite},
+		"/etc/inline": {Text: &inlineText, Mode: &inlineMode, Overwrite: &overwrite},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -1206,9 +1206,9 @@ func TestManagerLaunchSkipsGuestFilesOnResume(t *testing.T) {
 	cfg.QEMU.QMP.SocketPath = "qmp.sock"
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.Volumes[0].AutoCreate = false
-	inlineContent := "aW5saW5l"
+	inlineText := "inline"
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Content: &inlineContent},
+		"/etc/inline": {Text: &inlineText},
 	}
 
 	vmStatePath := filepath.Join(tmpDir, ".agentspace", "agent-sandbox.vmstate")
@@ -2737,13 +2737,13 @@ func (c *fakeGuestAgentClient) OpenFile(timeout time.Duration, path string) (int
 	return c.nextHandle, nil
 }
 
-func (c *fakeGuestAgentClient) WriteFile(timeout time.Duration, handle int, contentBase64 string) error {
+func (c *fakeGuestAgentClient) WriteFile(timeout time.Duration, handle int, payloadBase64 string) error {
 	c.mu.Lock()
 	path := c.handles[handle]
 	if c.writes == nil {
 		c.writes = make(map[string]string)
 	}
-	c.writes[path] = contentBase64
+	c.writes[path] = payloadBase64
 	c.mu.Unlock()
 
 	if c.record != nil {

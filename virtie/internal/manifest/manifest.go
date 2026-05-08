@@ -8,7 +8,6 @@
 package manifest
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -222,7 +221,7 @@ type VirtioFS struct {
 
 type WriteFile struct {
 	Chown     *string `json:"chown,omitempty"`
-	Content   *string `json:"content,omitempty"`
+	Text      *string `json:"text,omitempty"`
 	Mode      *string `json:"mode,omitempty"`
 	Overwrite *bool   `json:"overwrite,omitempty"`
 	Path      *string `json:"path,omitempty"`
@@ -233,7 +232,7 @@ type WriteFiles map[string]WriteFile
 type ResolvedWriteFile struct {
 	GuestPath string
 	Chown     *string
-	Content   *string
+	Text      *string
 	Mode      *string
 	Overwrite bool
 	HostPath  *string
@@ -450,17 +449,12 @@ func validateWriteFiles(files WriteFiles) error {
 			return fmt.Errorf("manifest.writeFiles contains an empty guest path")
 		case !filepath.IsAbs(guestPath):
 			return fmt.Errorf("manifest.writeFiles[%q] guest path must be absolute", guestPath)
-		case (entry.Content == nil) == (entry.Path == nil):
-			return fmt.Errorf("manifest.writeFiles[%q] must set exactly one of content or path", guestPath)
+		case (entry.Text == nil) == (entry.Path == nil):
+			return fmt.Errorf("manifest.writeFiles[%q] must set exactly one of text or path", guestPath)
 		case entry.Path != nil && *entry.Path == "":
 			return fmt.Errorf("manifest.writeFiles[%q].path must not be empty", guestPath)
 		case entry.Mode != nil && !writeFileModePattern.MatchString(*entry.Mode):
 			return fmt.Errorf("manifest.writeFiles[%q].mode must match ^0[0-7]{3}$", guestPath)
-		}
-		if entry.Content != nil {
-			if _, err := base64.StdEncoding.Strict().DecodeString(*entry.Content); err != nil {
-				return fmt.Errorf("manifest.writeFiles[%q].content must be valid base64: %w", guestPath, err)
-			}
 		}
 	}
 	return nil
@@ -694,7 +688,7 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 		resolved := ResolvedWriteFile{
 			GuestPath: guestPath,
 			Chown:     entry.Chown,
-			Content:   entry.Content,
+			Text:      entry.Text,
 			Mode:      entry.Mode,
 			Overwrite: writeFileOverwrite(entry),
 		}

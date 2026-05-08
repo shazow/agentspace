@@ -83,6 +83,33 @@ func TestLoadRejectsTrailingData(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsLegacyWriteFileContent(t *testing.T) {
+	manifest := validManifest()
+	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+
+	var data map[string]any
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := json.Unmarshal(encoded, &data); err != nil {
+		t.Fatalf("unmarshal manifest map: %v", err)
+	}
+	data["writeFiles"] = map[string]any{
+		"/etc/agent.conf": map[string]any{"content": "aGVsbG8="},
+	}
+
+	encoded, err = json.Marshal(data)
+	if err != nil {
+		t.Fatalf("marshal legacy manifest: %v", err)
+	}
+
+	_, err = Load(bytes.NewReader(encoded))
+	if err == nil || !strings.Contains(err.Error(), "must set exactly one of text or path") {
+		t.Fatalf("expected legacy content validation error, got %v", err)
+	}
+}
+
 func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
 	manifest := validManifest()
 	if manifest.SSH.RetryDelayMS != nil {
@@ -255,7 +282,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 }
 
 func TestManifestWriteFilesValidation(t *testing.T) {
-	validContent := "aGVsbG8="
+	validText := "hello"
 	validMode := "0640"
 
 	tests := []struct {
@@ -264,11 +291,11 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 		wantError string
 	}{
 		{
-			name: "valid content",
+			name: "valid text",
 			configure: func(manifest *Manifest) {
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Content: &validContent},
+					"/etc/agent.conf": {Text: &validText},
 				}
 			},
 		},
@@ -277,7 +304,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			configure: func(manifest *Manifest) {
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Content: &validContent, Mode: &validMode},
+					"/etc/agent.conf": {Text: &validText, Mode: &validMode},
 				}
 			},
 		},
@@ -287,7 +314,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 				chown := ""
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Content: &validContent, Chown: &chown},
+					"/etc/agent.conf": {Text: &validText, Chown: &chown},
 				}
 			},
 		},
@@ -305,7 +332,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			name: "requires guest agent socket",
 			configure: func(manifest *Manifest) {
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Content: &validContent},
+					"/etc/agent.conf": {Text: &validText},
 				}
 			},
 			wantError: "manifest.qemu.guestAgent.socketPath is required",
@@ -315,7 +342,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			configure: func(manifest *Manifest) {
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"etc/agent.conf": {Content: &validContent},
+					"etc/agent.conf": {Text: &validText},
 				}
 			},
 			wantError: "guest path must be absolute",
@@ -336,21 +363,10 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 				hostPath := "agent.conf"
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Content: &validContent, Path: &hostPath},
+					"/etc/agent.conf": {Text: &validText, Path: &hostPath},
 				}
 			},
 			wantError: "must set exactly one",
-		},
-		{
-			name: "rejects invalid base64",
-			configure: func(manifest *Manifest) {
-				invalidContent := "not base64"
-				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
-				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Content: &invalidContent},
-				}
-			},
-			wantError: "content must be valid base64",
 		},
 		{
 			name: "rejects mode without leading zero",
@@ -358,7 +374,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 				mode := "640"
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Content: &validContent, Mode: &mode},
+					"/etc/agent.conf": {Text: &validText, Mode: &mode},
 				}
 			},
 			wantError: "mode must match",
@@ -369,7 +385,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 				mode := "0888"
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Content: &validContent, Mode: &mode},
+					"/etc/agent.conf": {Text: &validText, Mode: &mode},
 				}
 			},
 			wantError: "mode must match",
@@ -380,7 +396,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 				mode := "u=rw"
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Content: &validContent, Mode: &mode},
+					"/etc/agent.conf": {Text: &validText, Mode: &mode},
 				}
 			},
 			wantError: "mode must match",
@@ -391,7 +407,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 				mode := ""
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Content: &validContent, Mode: &mode},
+					"/etc/agent.conf": {Text: &validText, Mode: &mode},
 				}
 			},
 			wantError: "mode must match",
@@ -419,7 +435,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 
 func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
 	manifest := validManifest()
-	content := "aGVsbG8="
+	text := "hello"
 	chown := "agent:users"
 	mode := "0640"
 	overwrite := false
@@ -428,14 +444,14 @@ func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
 	absoluteHostPath := "/tmp/host.conf"
 	manifest.WriteFiles = WriteFiles{
 		"/etc/a.conf": {Path: &relativeHostPath, Overwrite: &overwrite},
-		"/etc/b.conf": {Content: &content, Chown: &chown, Mode: &mode, Overwrite: &overwriteTrue},
+		"/etc/b.conf": {Text: &text, Chown: &chown, Mode: &mode, Overwrite: &overwriteTrue},
 		"/etc/c.conf": {Path: &absoluteHostPath},
 	}
 
 	got := manifest.ResolvedWriteFiles()
 	want := []ResolvedWriteFile{
 		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf"), Overwrite: false},
-		{GuestPath: "/etc/b.conf", Chown: &chown, Content: &content, Mode: &mode, Overwrite: true},
+		{GuestPath: "/etc/b.conf", Chown: &chown, Text: &text, Mode: &mode, Overwrite: true},
 		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath, Overwrite: false},
 	}
 	if !reflect.DeepEqual(got, want) {

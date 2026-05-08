@@ -19,7 +19,7 @@ import (
 type guestAgentClient interface {
 	Ping(timeout time.Duration) error
 	OpenFile(timeout time.Duration, path string) (int, error)
-	WriteFile(timeout time.Duration, handle int, contentBase64 string) error
+	WriteFile(timeout time.Duration, handle int, payloadBase64 string) error
 	CloseFile(timeout time.Duration, handle int) error
 	Exec(timeout time.Duration, path string, args []string, captureOutput bool) (int, error)
 	ExecStatus(timeout time.Duration, pid int) (guestExecStatus, error)
@@ -92,10 +92,10 @@ func (c *socketGuestAgentClient) OpenFile(timeout time.Duration, path string) (i
 	return handle, nil
 }
 
-func (c *socketGuestAgentClient) WriteFile(timeout time.Duration, handle int, contentBase64 string) error {
+func (c *socketGuestAgentClient) WriteFile(timeout time.Duration, handle int, payloadBase64 string) error {
 	_, err := c.run(timeout, "guest-file-write", map[string]any{
 		"handle":  handle,
-		"buf-b64": contentBase64,
+		"buf-b64": payloadBase64,
 	})
 	if err != nil {
 		return fmt.Errorf("guest agent write handle %d: %w", handle, err)
@@ -250,14 +250,14 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 				continue
 			}
 		}
-		contentBase64, err := guestFileContentBase64(file)
+		payloadBase64, err := guestFilePayloadBase64(file)
 		if err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
 		if err := m.installGuestFileDirectory(ctx, client, file.GuestPath, file.Chown); err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
-		if err := m.writeGuestFile(client, file.GuestPath, contentBase64); err != nil {
+		if err := m.writeGuestFile(client, file.GuestPath, payloadBase64); err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
 		if file.Chown != nil {
@@ -275,12 +275,12 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 	return nil
 }
 
-func guestFileContentBase64(file manifest.ResolvedWriteFile) (string, error) {
-	if file.Content != nil {
-		return *file.Content, nil
+func guestFilePayloadBase64(file manifest.ResolvedWriteFile) (string, error) {
+	if file.Text != nil {
+		return base64.StdEncoding.EncodeToString([]byte(*file.Text)), nil
 	}
 	if file.HostPath == nil {
-		return "", fmt.Errorf("guest file %q has no content or host path", file.GuestPath)
+		return "", fmt.Errorf("guest file %q has no text or host path", file.GuestPath)
 	}
 
 	data, err := os.ReadFile(*file.HostPath)
@@ -290,14 +290,14 @@ func guestFileContentBase64(file manifest.ResolvedWriteFile) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, contentBase64 string) error {
+func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, payloadBase64 string) error {
 	timeout := m.effectiveQMPCommandTimeout()
 	handle, err := client.OpenFile(timeout, guestPath)
 	if err != nil {
 		return err
 	}
 
-	writeErr := client.WriteFile(timeout, handle, contentBase64)
+	writeErr := client.WriteFile(timeout, handle, payloadBase64)
 	closeErr := client.CloseFile(timeout, handle)
 	if writeErr != nil {
 		if closeErr != nil {
