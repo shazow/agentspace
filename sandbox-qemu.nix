@@ -78,11 +78,6 @@ in
         description = "Whether the generated launch wrapper should attach an SSH session automatically.";
       };
 
-      retryDelayMs = lib.mkOption {
-        type = lib.types.ints.unsigned;
-        default = 1000;
-        description = "Delay in milliseconds before retrying transient SSH startup failures.";
-      };
     };
 
     persistence = {
@@ -406,7 +401,6 @@ in
         ssh = {
           argv = sshBaseArgv;
           user = cfg.user;
-          retryDelayMs = cfg.ssh.retryDelayMs;
         };
         qemu = qemuConfig;
         volumes = manifestVolumes;
@@ -486,6 +480,15 @@ in
             KbdInteractiveAuthentication = false;
             PermitRootLogin = "no";
           };
+        };
+        systemd.services.virtie-ssh-signal = {
+          wantedBy = [ "multi-user.target" ];
+          requires = [ "sshd.service" ];
+          after = [ "sshd.service" ];
+          serviceConfig.Type = "oneshot";
+          script = ''
+            ${pkgs.coreutils}/bin/echo READY > /dev/virtio-ports/virtie.ssh.ready
+          '';
         };
         services.qemuGuest.enable = true;
 

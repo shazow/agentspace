@@ -14,6 +14,7 @@ let
                 mkdir -p "$PWD/state"
                 qmp_socket=""
                 qga_socket=""
+                ssh_ready_socket=""
                 incoming=""
 
                 while [ "$#" -gt 0 ]; do
@@ -31,6 +32,14 @@ let
                           for chardev_part in "''${chardev_parts[@]}"; do
                             case "$chardev_part" in
                               path=*) qga_socket="''${chardev_part#path=}" ;;
+                            esac
+                          done
+                          ;;
+                        socket,*id=ssh_ready_char*|socket,*id=ssh_ready_char)
+                          IFS=',' read -r -a chardev_parts <<< "$chardev_spec"
+                          for chardev_part in "''${chardev_parts[@]}"; do
+                            case "$chardev_part" in
+                              path=*) ssh_ready_socket="''${chardev_part#path=}" ;;
                             esac
                           done
                           ;;
@@ -70,6 +79,7 @@ let
 
                 export QMP_SOCKET="$qmp_socket"
                 export QGA_SOCKET="$qga_socket"
+                export SSH_READY_SOCKET="$ssh_ready_socket"
                 export QEMU_PARENT_PID="$$"
                 ${pkgs.python3}/bin/python - <<'PY' &
         import base64
@@ -81,6 +91,7 @@ let
 
         socket_path = os.environ["QMP_SOCKET"]
         qga_socket_path = os.environ.get("QGA_SOCKET", "")
+        ssh_ready_socket_path = os.environ.get("SSH_READY_SOCKET", "")
         parent_pid = int(os.environ["QEMU_PARENT_PID"])
         state_dir = os.path.join(os.getcwd(), "state")
 
@@ -281,6 +292,24 @@ let
 
         threading.Thread(target=qga_serve, daemon=True).start()
 
+        def ssh_ready_serve():
+            if not ssh_ready_socket_path:
+                return
+            os.makedirs(os.path.dirname(ssh_ready_socket_path) or ".", exist_ok=True)
+            try:
+                os.unlink(ssh_ready_socket_path)
+            except FileNotFoundError:
+                pass
+            ready_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            ready_server.bind(ssh_ready_socket_path)
+            ready_server.listen(1)
+            conn, _ = ready_server.accept()
+            conn.sendall(b"READY\n")
+            conn.close()
+            touch("ssh-ready-sent")
+
+        threading.Thread(target=ssh_ready_serve, daemon=True).start()
+
         while True:
             conn, _ = server.accept()
             with status_lock:
@@ -298,7 +327,7 @@ let
                   trap - EXIT INT TERM
                   kill "$qmp_pid" 2>/dev/null || true
                   wait "$qmp_pid" 2>/dev/null || true
-                  rm -f "$qmp_socket" "$qga_socket"
+                  rm -f "$qmp_socket" "$qga_socket" "$ssh_ready_socket"
                   touch "$PWD/state/qemu-stopped"
                   exit 0
                 }
@@ -649,7 +678,7 @@ in
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qga.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
+    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f state/ssh-ready-sent; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qga.sock"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/ssh-ready.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; test ! -e ssh-ready.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
       echo "virtie-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1
@@ -884,10 +913,6 @@ in
       echo "virtie-ssh-auth-failure-e2e: autoconnect unexpectedly logged retry phases" >&2
       exit 1
     fi
-    if grep -F 'waiting for ssh readiness' "$auth_log" >/dev/null; then
-      echo "virtie-ssh-auth-failure-e2e: autoconnect unexpectedly ran ssh readiness" >&2
-      exit 1
-    fi
     if [ "$(cat "$workspace_dir/state/ssh-auth-failure-first-last-arg")" = "true" ]; then
       echo "virtie-ssh-auth-failure-e2e: first autoconnect ssh was readiness probe" >&2
       exit 1
@@ -921,8 +946,8 @@ in
     done
 
     grep -F 'connect with' "$no_ssh_log" >/dev/null
-    if grep -F 'ssh readiness' "$no_ssh_log" >/dev/null || grep -F 'ssh-add' "$no_ssh_log" >/dev/null; then
-      echo "virtie-ssh-auth-failure-e2e: no-ssh launch unexpectedly checked ssh readiness" >&2
+    if grep -F 'ssh-add' "$no_ssh_log" >/dev/null; then
+      echo "virtie-ssh-auth-failure-e2e: no-ssh launch unexpectedly checked ssh auth" >&2
       exit 1
     fi
     test ! -e "$no_ssh_workspace_dir/state/ssh-auth-failure-attempt"

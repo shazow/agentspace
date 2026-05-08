@@ -30,10 +30,10 @@ Acceptance criteria:
 - [x] `virtie launch --manifest=MANIFEST [--ssh] [--resume=no|auto|force] [-- <remote-cmd...>]` is the supported launch command.
 - [x] `virtie suspend --manifest=MANIFEST` saves QEMU migration state to disk, records saved suspend state, and exits the launch session.
 - [x] `virtie launch --resume=force --manifest=MANIFEST` restores only from saved suspend state.
-- [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, QEMU devices, `virtiofs` daemons, and auto-created volumes.
+- [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, SSH readiness socket, QEMU devices, `virtiofs` daemons, and auto-created volumes.
 - [x] QEMU launch is compiled from the typed manifest plus the runtime-selected CID rather than string-substituting a Nix-generated argv template.
 - [x] Launch acquires per-sandbox and per-CID locks before starting guest processes.
-- [x] Launch waits for `virtiofs` socket readiness, then QMP readiness, then retries SSH probes before printing SSH instructions or starting the interactive session.
+- [x] Launch waits for `virtiofs` socket readiness, then QMP readiness, then guest-pushed SSH readiness over virtio-serial before printing SSH instructions or starting the interactive session.
 - [x] Teardown stops the foreground SSH session when present, then requests QMP `quit`, then falls back to signal-based QEMU shutdown, then stops `virtiofsd`.
 - [x] Repo-level Nix checks exercise the generated wrapper and E2E launch path by default.
 
@@ -44,11 +44,11 @@ Acceptance criteria:
 - [x] Implement QEMU argv compilation inside `virtie`, using `govmm/qemu` for typed device emission where it fits and local raw-arg assembly for user networking, memfd memory, balloon flags, and block-device details that are not modeled cleanly.
 - [x] Implement QMP connection management with `go-qemu/qmp` for monitor readiness and graceful `quit` during teardown.
 - [x] Extend the QMP session to use `go-qemu/qmp/raw` for `query-balloon`, `balloon`, `qom-set`, `qom-get`, and `qom-list` so runtime balloon control can share the same monitor connection as shutdown.
-- [x] Implement launch sequencing for preflight, `virtiofs` socket wait, QMP readiness, QEMU start, SSH readiness probing, session attach, and ordered shutdown.
+- [x] Implement launch sequencing for preflight, `virtiofs` socket wait, QMP readiness, QEMU start, virtio-serial SSH readiness, session attach, and ordered shutdown.
 - [x] Start an optional guest-pressure balloon controller only after SSH readiness succeeds, and stop it before sending the final QMP `quit`.
 - [x] Implement volume auto-create handling, including filesystem defaults and `mkfs.<fsType>` execution.
 - [x] Implement per-sandbox and per-CID lock files for concurrent session safety.
-- [x] Add runtime-dir-based socket resolution for relative QMP and `virtiofs` sockets, using XDG defaults when requested by the manifest.
+- [x] Add runtime-dir-based socket resolution for relative QMP, SSH readiness, QGA, and `virtiofs` sockets, using XDG defaults when requested by the manifest.
 - [x] Allow the Nix store `virtiofs` share to target a provided host socket while `virtie` only starts and removes sockets listed under `virtiofs.daemons`.
 - [x] Implement stage-aware errors and foreground SSH exit-code propagation.
 - [x] Add explicit launch signal handling for interrupt/terminate teardown.
@@ -57,8 +57,8 @@ Acceptance criteria:
 - [x] Replace the separate `virtie resume` command with `virtie launch --resume=no|auto|force` so fresh and restored sessions share one lifecycle.
 - [x] Print launch lifecycle stats after shutdown, including start-to-boot, boot-to-SSH-session when attached, shutdown completion, and total duration.
 - [x] Print guest process diagnostics on `SIGUSR1` by collecting process-list output through QGA `guest-exec`.
-- [x] Collapse noisy SSH autoconnect retry logs into one-time phase messages for waiting versus connecting failures.
-- [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH retry behavior, and launch/teardown ordering with Go tests.
+- [x] Replace SSH autoconnect retry probing with a guest-pushed `READY` signal over the `virtie.ssh.ready` virtio-serial port.
+- [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH readiness behavior, and launch/teardown ordering with Go tests.
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
 - [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface, including saved suspend/resume coverage.
 
@@ -82,6 +82,7 @@ Acceptance criteria:
   - `qemu.console`
   - `qemu.knobs`
   - `qemu.qmp.socketPath`
+  - `qemu.sshReady.socketPath`
   - `qemu.devices.rng`
   - `qemu.devices.balloon`
   - optional `qemu.devices.balloon.controller`
@@ -102,7 +103,8 @@ Acceptance criteria:
 - Runtime assumptions:
   - Nix has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
   - `ssh` and the required `mkfs.<fsType>` tools are available on the host.
-  - The guest SSH service is reachable over the runtime-selected vsock CID.
+  - The guest writes `READY` to `/dev/virtio-ports/virtie.ssh.ready` after `sshd.service` is started.
+  - The guest SSH service is reachable over the runtime-selected vsock CID after the readiness signal is received.
 - Runtime socket policy:
   - If `paths.runtimeDir` is omitted, relative socket paths still resolve from `paths.workingDir`.
   - If `paths.runtimeDir` is the empty string, `virtie` resolves relative socket paths under the per-user XDG runtime location at `agentspace/<hostName>/...`.
@@ -110,16 +112,16 @@ Acceptance criteria:
   - `virtie launch` records its PID at `<workingDir>/.virtie/<hostName>.pid` after acquiring the sandbox lock and removes that file during teardown.
 - Implementation notes:
   - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.
-  - QMP is used for monitor readiness, graceful shutdown, disk-backed suspend/resume, and optional runtime balloon control, not for guest readiness.
+  - QMP is used for monitor readiness, graceful shutdown, disk-backed suspend/resume, and optional runtime balloon control, not for SSH readiness.
   - `virtie launch --resume=no` is the default fresh launch mode.
-  - `virtie launch --ssh` attaches SSH; without `--ssh`, launch prints the SSH command and waits for VM exit or suspend.
+  - `virtie launch --ssh` attaches SSH; without `--ssh`, launch still drains SSH readiness, then prints the SSH command and waits for VM exit or suspend.
   - `virtie launch --resume=auto` restores saved state when valid state is present and otherwise launches fresh.
   - `virtie launch --resume=force` requires saved suspend state and errors if it is absent or invalid.
   - `virtie suspend` validates the launch PID and sends `SIGTSTP` as an internal control signal; `virtie launch` catches it, saves migration state through the existing QMP session, then exits.
   - Live pause/resume, terminal job-control suspend, and `SIGCONT` resume are not supported.
   - `virtie launch` writes final shutdown stats after teardown and cleanup complete; non-SSH launches omit the SSH-session interval. Verbose package logs use stdlib `log/slog` text records on stderr, with package identity carried as an attribute such as `package=manager`.
   - `SIGUSR1` asks a running launch process to collect guest info through the configured QGA socket. The current info payload is raw `ps -eo pid,ppid,stat,comm,args` output; collection failures are logged and do not affect the VM lifecycle.
-  - Attached SSH retries log `waiting for ssh connection` or `connecting ssh` once per phase instead of printing every failed attempt.
+  - Fresh launches consume the exact `READY` token over the SSH readiness socket regardless of SSH autoconnect; startup fails if QEMU exits first, the token is wrong, or the readiness timeout expires.
   - When `qemu.devices.balloon` is present, `virtie` resolves the balloon QOM path, enables `guest-stats-polling-interval`, reads `guest-stats` plus `query-balloon`, and adjusts the logical guest memory size within configured or synthesized bounds.
   - If the manifest omits `qemu.devices.balloon.controller`, `virtie` defaults to `maxActualMiB = qemu.memory.sizeMiB`, an idle reclaim target of 50% of that max, a grow threshold at 25% available memory, and the existing step, poll, and reclaim-holdoff defaults.
   - Notification hooks are best-effort and never fail launch, suspend, resume, teardown, or balloon control.
@@ -139,7 +141,7 @@ flowchart TD
   G --> H[Compile QEMU argv from typed manifest plus runtime CID]
   H --> I[Start QEMU]
   I --> J[Wait for QMP socket and connect monitor]
-  J --> K[Probe SSH until guest is ready]
+  J --> K[Wait for READY on virtio-serial SSH readiness socket]
   K --> L{--ssh?}
   L -->|yes| M[Attach interactive SSH session]
   L -->|no| N[Print SSH command and wait for VM]

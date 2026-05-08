@@ -82,6 +82,7 @@ let
     assert manifest.persistence.stateDir == ".agentspace";
     assert manifest.qemu.qmp.socketPath == "qmp.sock";
     assert manifest.qemu.guestAgent.socketPath == "qga.sock";
+    assert manifest.qemu.sshReady.socketPath == "ssh-ready.sock";
     assert manifest.qemu.memory.sizeMiB == 4096;
     assert !(manifest.qemu.smp ? cpus);
     assert manifest.writeFiles == { };
@@ -92,9 +93,12 @@ let
     assert builtins.length manifest.qemu.devices.block > 0;
     assert builtins.length manifest.qemu.devices.network > 0;
     assert manifest.qemu.devices.vsock.id == "vsock0";
+    assert vmVirtie.config.systemd.services.virtie-ssh-signal.after == [ "sshd.service" ];
+    assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
+    assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
     assert builtins.head manifest.ssh.argv == "${pkgs.openssh}/bin/ssh";
     assert manifest.ssh.user == "agent";
-    assert manifest.ssh.retryDelayMs == 1000;
+    assert !(manifest.ssh ? retryDelayMs);
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.argv;
     assert builtins.length manifest.volumes > 0;
     assert builtins.any (

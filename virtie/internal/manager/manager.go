@@ -58,9 +58,11 @@ type manager struct {
 	socketWaiter        socketWaiter
 	qmpDialer           qmpDialer
 	guestAgentDialer    guestAgentDialer
+	sshReadyDialer      sshReadyDialer
 	logger              *slog.Logger
 	logWriter           io.Writer
 	sshRetryDelay       time.Duration
+	sshReadyTimeout     time.Duration
 	shutdownDelay       time.Duration
 	qmpRetryDelay       time.Duration
 	qmpConnectTimeout   time.Duration
@@ -80,9 +82,11 @@ func newManager() *manager {
 		socketWaiter:        &pollingSocketWaiter{},
 		qmpDialer:           &socketMonitorDialer{},
 		guestAgentDialer:    &socketGuestAgentDialer{},
+		sshReadyDialer:      &unixSSHReadyDialer{},
 		logger:              logger,
 		logWriter:           logWriter,
 		sshRetryDelay:       defaultSSHRetryDelay,
+		sshReadyTimeout:     defaultSSHReadyTimeout,
 		shutdownDelay:       defaultShutdownDelay,
 		qmpRetryDelay:       defaultQMPRetryDelay,
 		qmpConnectTimeout:   defaultQMPConnectTimeout,
@@ -172,6 +176,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	sshReadySocketPath, err := manifest.ResolvedSSHReadySocketPath()
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
 	volumes := manifest.ResolvedVolumes()
 
 	lock, err := m.locker.Acquire(manifest.ResolvedLockPath())
@@ -220,6 +228,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
+	if err := ensureParentDirectories([]string{sshReadySocketPath}); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -233,6 +244,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if err := removeSocketPaths([]string{guestAgentSocketPath}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
+	}
+	if err := removeSocketPaths([]string{sshReadySocketPath}); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureVolumeImages(volumes); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -255,6 +269,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if guestAgentSocketPath != "" {
 			cleanupPaths = append(cleanupPaths, guestAgentSocketPath)
 		}
+		cleanupPaths = append(cleanupPaths, sshReadySocketPath)
 		cleanupErr := removeSocketPaths(cleanupPaths)
 		if err == nil {
 			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
@@ -330,66 +345,48 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return err
 		}
 		stats.MarkFilesReady(time.Now())
+
+		m.logger.Info("waiting for ssh readiness")
+		if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, qemu); err != nil {
+			return err
+		}
+		stats.MarkSSHReady(time.Now())
+	}
+
+	if options.SSH {
+		featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
+			qmpTimeout: m.effectiveQMPCommandTimeout(),
+			notifier:   notifier,
+		}, manifest, qmpClient)
+
+		attemptStarted := time.Now()
+		stats.MarkSSHAttempt(attemptStarted)
+		spec := buildSSHSpec(manifest, cid, remoteCommand)
+		session, err := m.startManagedProcess(spec)
+		if err != nil {
+			return &stageError{Stage: "active session", Err: err}
+		}
+		started = append(started, session)
+		stats.MarkSSHStarted(attemptStarted)
+
+		if err := m.waitForSession(launchCtx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
+			return err
+		}
+		if resumeState != nil {
+			if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
+			}
+			if err := removeSuspendState(manifest); err != nil {
+				return &stageError{Stage: "restore", Err: err}
+			}
+		}
+		return nil
 	}
 
 	featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
 		qmpTimeout: m.effectiveQMPCommandTimeout(),
 		notifier:   notifier,
 	}, manifest, qmpClient)
-
-	if options.SSH {
-		sshRetryLog := newSSHRetryLogger(m.logger)
-		sshRetryDelay := manifest.SSHRetryDelay(m.sshRetryDelay)
-		for {
-			attemptStarted := time.Now()
-			stats.MarkSSHAttempt(attemptStarted)
-			spec := buildSSHSpec(manifest, cid, remoteCommand)
-			stderr := newSSHRetryOutput(os.Stderr, options.Verbosity > 0)
-			spec.Stderr = stderr
-
-			session, err := m.startManagedProcess(spec)
-			if err != nil {
-				return &stageError{Stage: "active session", Err: err}
-			}
-			started = append(started, session)
-
-			if err := m.waitForSession(launchCtx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
-				output := stderr.String()
-				if sshTransientStartupFailure(err, output) {
-					stderr.Suppress()
-					sshRetryLog.Log(err, output)
-					if options.Verbosity > 1 {
-						m.logger.Info("ssh retry failed", "err", err)
-					}
-					started = started[:len(started)-1]
-					select {
-					case <-time.After(sshRetryDelay):
-						continue
-					case <-suspendRequests:
-						return suspendHandler.saveAndExit(launchCtx)
-					case <-infoRequests:
-						m.printGuestInfo(launchCtx, guestAgentSocketPath, started...)
-						continue
-					case <-launchCtx.Done():
-						return &stageError{Stage: "active session", Err: launchCtx.Err()}
-					}
-				}
-				stderr.Flush()
-				return err
-			}
-			stderr.Flush()
-			stats.MarkSSHStarted(attemptStarted)
-			if resumeState != nil {
-				if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-					return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
-				}
-				if err := removeSuspendState(manifest); err != nil {
-					return &stageError{Stage: "restore", Err: err}
-				}
-			}
-			return nil
-		}
-	}
 
 	if resumeState != nil {
 		if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {

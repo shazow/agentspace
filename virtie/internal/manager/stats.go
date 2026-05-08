@@ -12,6 +12,7 @@ type launchStats struct {
 	qmpReady        time.Time
 	guestAgentReady time.Time
 	filesReady      time.Time
+	sshReady        time.Time
 	firstSSHAttempt time.Time
 	sshStarted      time.Time
 	completed       time.Time
@@ -45,6 +46,10 @@ func (s *launchStats) MarkSSHAttempt(t time.Time) {
 	}
 }
 
+func (s *launchStats) MarkSSHReady(t time.Time) {
+	s.sshReady = t
+}
+
 func (s *launchStats) MarkSSHStarted(t time.Time) {
 	s.sshStarted = t
 }
@@ -70,11 +75,15 @@ func (s *launchStats) String() string {
 	if !s.filesReady.IsZero() && !s.firstSSHAttempt.IsZero() {
 		fields = append(fields, formatStatDuration("files_to_first_ssh", s.firstSSHAttempt.Sub(s.filesReady)))
 	}
-	if !s.filesReady.IsZero() && !s.sshStarted.IsZero() {
-		fields = append(fields, formatStatDuration("files_to_ssh", s.sshStarted.Sub(s.filesReady)))
+	sshReady := s.sshReady
+	if sshReady.IsZero() {
+		sshReady = s.sshStarted
 	}
-	if !s.bootStarted.IsZero() && !s.sshStarted.IsZero() {
-		fields = append(fields, formatStatDuration("boot_to_ssh", s.sshStarted.Sub(s.bootStarted)))
+	if !s.filesReady.IsZero() && !sshReady.IsZero() {
+		fields = append(fields, formatStatDuration("files_to_ssh", sshReady.Sub(s.filesReady)))
+	}
+	if !s.bootStarted.IsZero() && !sshReady.IsZero() {
+		fields = append(fields, formatStatDuration("boot_to_ssh", sshReady.Sub(s.bootStarted)))
 	}
 	if !s.sshStarted.IsZero() && !s.completed.IsZero() {
 		fields = append(fields, formatStatDuration("ssh_to_completed", s.completed.Sub(s.sshStarted)))

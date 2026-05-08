@@ -23,6 +23,7 @@ import (
 
 const (
 	defaultSSHRetryDelayMS = 1000
+	defaultSSHReadySocket  = "ssh-ready.sock"
 	defaultVSockCIDStart   = 3
 	defaultVSockCIDEnd     = 65535
 	defaultVolumeFSType    = "ext4"
@@ -86,6 +87,7 @@ type QEMU struct {
 	Knobs           QEMUKnobs      `json:"knobs"`
 	QMP             QEMUQMP        `json:"qmp"`
 	GuestAgent      QEMUGuestAgent `json:"guestAgent,omitempty"`
+	SSHReady        QEMUSSHReady   `json:"sshReady,omitempty"`
 	Devices         QEMUDevices    `json:"devices"`
 	MachineID       *string        `json:"machineId,omitempty"`
 	PassthroughArgs []string       `json:"passthroughArgs,omitempty"`
@@ -135,6 +137,10 @@ type QEMUQMP struct {
 }
 
 type QEMUGuestAgent struct {
+	SocketPath string `json:"socketPath,omitempty"`
+}
+
+type QEMUSSHReady struct {
 	SocketPath string `json:"socketPath,omitempty"`
 }
 
@@ -258,6 +264,9 @@ func (m *Manifest) applyDefaults() {
 
 	if m.SSH.RetryDelayMS == nil {
 		m.SSH.RetryDelayMS = intPtr(defaultSSHRetryDelayMS)
+	}
+	if m.QEMU.SSHReady.SocketPath == "" {
+		m.QEMU.SSHReady.SocketPath = defaultSSHReadySocket
 	}
 
 	if m.VSock.CIDRange.Start == 0 {
@@ -558,6 +567,10 @@ func (m *Manifest) ResolvedGuestAgentSocketPath() (string, error) {
 	return m.resolveSocketPath(m.QEMU.GuestAgent.SocketPath)
 }
 
+func (m *Manifest) ResolvedSSHReadySocketPath() (string, error) {
+	return m.resolveSocketPath(m.QEMU.SSHReady.SocketPath)
+}
+
 func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved := m.QEMU
 	resolved.BinaryPath = m.resolvePath(resolved.BinaryPath)
@@ -576,6 +589,12 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 		return QEMU{}, err
 	}
 	resolved.GuestAgent.SocketPath = guestAgentSocketPath
+
+	sshReadySocketPath, err := m.resolveSocketPath(resolved.SSHReady.SocketPath)
+	if err != nil {
+		return QEMU{}, err
+	}
+	resolved.SSHReady.SocketPath = sshReadySocketPath
 
 	if resolved.MachineID != nil {
 		value := *resolved.MachineID
