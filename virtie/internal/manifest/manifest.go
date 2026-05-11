@@ -148,6 +148,7 @@ type QEMUDevices struct {
 	I8042    bool                `json:"i8042,omitempty"`
 	Balloon  *balloon.Device     `json:"balloon,omitempty"`
 	VirtioFS []QEMUVirtioFSShare `json:"virtiofs,omitempty"`
+	NineP    []QEMUNinePShare    `json:"9p,omitempty"`
 	Block    []QEMUBlockDevice   `json:"block,omitempty"`
 	Network  []QEMUNetDevice     `json:"network,omitempty"`
 	VSOCK    QEMUVSOCKDevice     `json:"vsock"`
@@ -163,6 +164,15 @@ type QEMUVirtioFSShare struct {
 	SocketPath string `json:"socketPath"`
 	Tag        string `json:"tag"`
 	Transport  string `json:"transport"`
+}
+
+type QEMUNinePShare struct {
+	ID            string `json:"id"`
+	SourcePath    string `json:"sourcePath"`
+	Tag           string `json:"tag"`
+	SecurityModel string `json:"securityModel"`
+	ReadOnly      bool   `json:"readOnly"`
+	Transport     string `json:"transport"`
 }
 
 type QEMUBlockDevice struct {
@@ -370,6 +380,23 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
+	for i, share := range m.QEMU.Devices.NineP {
+		switch {
+		case share.ID == "":
+			return fmt.Errorf("manifest.qemu.devices.9p[%d].id is required", i)
+		case share.SourcePath == "":
+			return fmt.Errorf("manifest.qemu.devices.9p[%d].sourcePath is required", i)
+		case share.Tag == "":
+			return fmt.Errorf("manifest.qemu.devices.9p[%d].tag is required", i)
+		case share.SecurityModel == "":
+			return fmt.Errorf("manifest.qemu.devices.9p[%d].securityModel is required", i)
+		case !validNinePSecurityModel(share.SecurityModel):
+			return fmt.Errorf("manifest.qemu.devices.9p[%d].securityModel must be one of passthrough, none, mapped, or mapped-file", i)
+		case !validQEMUTransport(share.Transport):
+			return fmt.Errorf("manifest.qemu.devices.9p[%d].transport must be one of pci, mmio, or ccw", i)
+		}
+	}
+
 	for i, block := range m.QEMU.Devices.Block {
 		switch {
 		case block.ID == "":
@@ -463,6 +490,15 @@ func validateWriteFiles(files WriteFiles) error {
 func validQEMUTransport(transport string) bool {
 	switch transport {
 	case "pci", "mmio", "ccw":
+		return true
+	default:
+		return false
+	}
+}
+
+func validNinePSecurityModel(securityModel string) bool {
+	switch securityModel {
+	case "passthrough", "none", "mapped", "mapped-file":
 		return true
 	default:
 		return false
@@ -606,6 +642,11 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 			return QEMU{}, err
 		}
 		resolved.Devices.VirtioFS[i].SocketPath = socketPath
+	}
+
+	resolved.Devices.NineP = append([]QEMUNinePShare(nil), resolved.Devices.NineP...)
+	for i := range resolved.Devices.NineP {
+		resolved.Devices.NineP[i].SourcePath = m.resolvePath(resolved.Devices.NineP[i].SourcePath)
 	}
 
 	resolved.Devices.Block = append([]QEMUBlockDevice(nil), resolved.Devices.Block...)

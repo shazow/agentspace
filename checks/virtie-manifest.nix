@@ -54,6 +54,29 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
+  vmVirtieExtraShares = mkSandbox {
+    ssh.authorizedKeys = [ testPublicKey ];
+    ssh.identityFile = ".agentspace-test/id_ed25519";
+    persistence.homeImage = null;
+    shares = [
+      {
+        proto = "9p";
+        tag = "cache";
+        source = ".agentspace-test/cache";
+        mountPoint = "/mnt/cache";
+        securityModel = "mapped";
+        readOnly = true;
+      }
+      {
+        proto = "virtiofs";
+        tag = "tools";
+        source = ".agentspace-test/tools";
+        mountPoint = "/mnt/tools";
+        readOnly = true;
+      }
+    ];
+  };
+
   vmVirtieFixedMachine = mkSandbox {
     ssh.authorizedKeys = [ testPublicKey ];
     ssh.identityFile = ".agentspace-test/id_ed25519";
@@ -70,6 +93,7 @@ let
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
+  extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
   fixedMachineManifest =
     vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
 
@@ -91,6 +115,7 @@ let
     assert !(manifest.notifications ? command);
     assert manifest.qemu.devices.rng.id == "rng0";
     assert builtins.length manifest.qemu.devices.virtiofs > 0;
+    assert manifest.qemu.devices."9p" == [ ];
     assert builtins.length manifest.qemu.devices.block > 0;
     assert builtins.length manifest.qemu.devices.network > 0;
     assert manifest.qemu.devices.vsock.id == "vsock0";
@@ -144,6 +169,23 @@ let
     assert externalStoreSocketManifest.virtiofs.daemons == [ ];
     true;
 
+  _extraShares =
+    assert builtins.length extraSharesManifest.qemu.devices."9p" == 1;
+    assert builtins.head extraSharesManifest.qemu.devices."9p" == {
+      id = "fs9p0";
+      sourcePath = ".agentspace-test/cache";
+      tag = "cache";
+      securityModel = "mapped";
+      readOnly = true;
+      transport = "pci";
+    };
+    assert builtins.any (
+      share: share.tag == "tools" && share.socketPath != "" && share.transport == "pci"
+    ) extraSharesManifest.qemu.devices.virtiofs;
+    assert builtins.any (daemon: daemon.tag == "tools") extraSharesManifest.virtiofs.daemons;
+    assert !(builtins.any (daemon: daemon.tag == "cache") extraSharesManifest.virtiofs.daemons);
+    true;
+
   _writeFiles =
     assert featureRichManifest.qemu.guestAgent.socketPath == "qga.sock";
     assert featureRichManifest.writeFiles."/etc/agentspace-inline".chown == "agent:users";
@@ -189,6 +231,10 @@ in
   virtie-manifest-external-store-socket-contract =
     assert _externalStoreSocket;
     pkgs.runCommand "virtie-manifest-external-store-socket-contract" { } "touch $out";
+
+  virtie-manifest-extra-shares-contract =
+    assert _extraShares;
+    pkgs.runCommand "virtie-manifest-extra-shares-contract" { } "touch $out";
 
   virtie-manifest-write-files-contract =
     assert _writeFiles;

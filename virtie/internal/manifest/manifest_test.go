@@ -18,6 +18,15 @@ func TestLoadReadsFromReader(t *testing.T) {
 	manifest.QEMU.BinaryPath = "bin/qemu-system-x86_64"
 	manifest.QEMU.Kernel.Path = "boot/vmlinuz"
 	manifest.QEMU.Kernel.InitrdPath = "boot/initrd"
+	manifest.QEMU.Devices.NineP = []QEMUNinePShare{
+		{
+			ID:            "fs9p0",
+			SourcePath:    "shares/cache",
+			Tag:           "cache",
+			SecurityModel: "none",
+			Transport:     "pci",
+		},
+	}
 	manifest.QEMU.Devices.Block[0].ImagePath = "images/root.img"
 	manifest.VirtioFS.Daemons[0].Command.Path = "bin/virtiofsd-workspace"
 
@@ -46,6 +55,9 @@ func TestLoadReadsFromReader(t *testing.T) {
 	}
 	if got, want := qemu.Devices.Block[0].ImagePath, "/tmp/work/images/root.img"; got != want {
 		t.Fatalf("unexpected block image path: got %q want %q", got, want)
+	}
+	if got, want := qemu.Devices.NineP[0].SourcePath, "/tmp/work/shares/cache"; got != want {
+		t.Fatalf("unexpected 9p source path: got %q want %q", got, want)
 	}
 
 	daemons, err := loaded.ResolvedVirtioFSDaemons()
@@ -582,6 +594,88 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	}
 	if got, want := virtioFSSocketPaths, []string{"/var/run/virtiofs-nix-store.sock"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected virtiofs socket paths: got %v want %v", got, want)
+	}
+}
+
+func TestManifestValidatesNinePDevices(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*QEMUNinePShare)
+		wantError string
+	}{
+		{
+			name: "valid",
+		},
+		{
+			name: "requires id",
+			configure: func(share *QEMUNinePShare) {
+				share.ID = ""
+			},
+			wantError: "manifest.qemu.devices.9p[0].id is required",
+		},
+		{
+			name: "requires source path",
+			configure: func(share *QEMUNinePShare) {
+				share.SourcePath = ""
+			},
+			wantError: "manifest.qemu.devices.9p[0].sourcePath is required",
+		},
+		{
+			name: "requires tag",
+			configure: func(share *QEMUNinePShare) {
+				share.Tag = ""
+			},
+			wantError: "manifest.qemu.devices.9p[0].tag is required",
+		},
+		{
+			name: "requires security model",
+			configure: func(share *QEMUNinePShare) {
+				share.SecurityModel = ""
+			},
+			wantError: "manifest.qemu.devices.9p[0].securityModel is required",
+		},
+		{
+			name: "validates security model",
+			configure: func(share *QEMUNinePShare) {
+				share.SecurityModel = "bad"
+			},
+			wantError: "manifest.qemu.devices.9p[0].securityModel must be one of passthrough, none, mapped, or mapped-file",
+		},
+		{
+			name: "validates transport",
+			configure: func(share *QEMUNinePShare) {
+				share.Transport = "usb"
+			},
+			wantError: "manifest.qemu.devices.9p[0].transport must be one of pci, mmio, or ccw",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := validManifest()
+			share := QEMUNinePShare{
+				ID:            "fs9p0",
+				SourcePath:    "shares/cache",
+				Tag:           "cache",
+				SecurityModel: "none",
+				Transport:     "pci",
+			}
+			if tt.configure != nil {
+				tt.configure(&share)
+			}
+			manifest.QEMU.Devices.NineP = []QEMUNinePShare{share}
+
+			err := manifest.Validate()
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("unexpected validation error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected validation error containing %q, got %v", tt.wantError, err)
+			}
+		})
 	}
 }
 

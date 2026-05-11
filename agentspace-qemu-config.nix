@@ -20,6 +20,8 @@ let
 
   requirePci = (!lib.hasPrefix "microvm" microvm.qemu.machine) || microvm.shares != [ ];
   transport = if requirePci then "pci" else "mmio";
+  virtiofsShares = builtins.filter (share: share.proto == "virtiofs") microvm.shares;
+  ninepShares = builtins.filter (share: share.proto == "9p") microvm.shares;
 
   machineOpts =
     if microvm.qemu.machineOpts != null then
@@ -134,8 +136,8 @@ in
 
   memory = {
     sizeMiB = microvm.mem;
-    backend = if microvm.shares != [ ] && pkgs.stdenv.hostPlatform.isLinux then "memfd" else "default";
-    shared = microvm.shares != [ ];
+    backend = if virtiofsShares != [ ] && pkgs.stdenv.hostPlatform.isLinux then "memfd" else "default";
+    shared = virtiofsShares != [ ];
   };
 
   kernel = {
@@ -191,7 +193,18 @@ in
           tag = share.tag;
           inherit transport;
         }
-      ) microvm.shares;
+      ) virtiofsShares;
+
+      "9p" = lib.imap0 (
+        index: share: {
+          id = "fs9p${toString index}";
+          sourcePath = share.source;
+          tag = share.tag;
+          securityModel = share.securityModel;
+          readOnly = share.readOnly;
+          inherit transport;
+        }
+      ) ninepShares;
 
       block = builtins.map (
         volume: {

@@ -20,7 +20,7 @@ Out of scope:
 
 - full hibernation restore from RAM and device state
 - reconnect support
-- alternate guest attach or share workflows beyond the supported SSH + `virtiofs` path
+- alternate guest attach workflows beyond the supported SSH path
 - `systemd --user`, `journalctl`, or machined integration
 - bridge, tap, macvtap, graphics, or passthrough workflows
 - full `microvm-run` parity
@@ -30,7 +30,7 @@ Acceptance criteria:
 - [x] `virtie launch --manifest=MANIFEST [--ssh] [--resume=no|auto|force] [-- <remote-cmd...>]` is the supported launch command.
 - [x] `virtie suspend --manifest=MANIFEST` saves QEMU migration state to disk, records saved suspend state, and exits the launch session.
 - [x] `virtie launch --resume=force --manifest=MANIFEST` restores only from saved suspend state.
-- [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, SSH readiness socket, QEMU devices, `virtiofs` daemons, and auto-created volumes.
+- [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, SSH readiness socket, QEMU devices, `virtiofs` daemons, opt-in `9p` shares, and auto-created volumes.
 - [x] QEMU launch is compiled from the typed manifest plus the runtime-selected CID rather than string-substituting a Nix-generated argv template.
 - [x] Launch acquires per-sandbox and per-CID locks before starting guest processes.
 - [x] Launch waits for `virtiofs` socket readiness, then QMP readiness, then guest-pushed SSH readiness over virtio-serial before printing SSH instructions or starting the interactive session.
@@ -50,6 +50,7 @@ Acceptance criteria:
 - [x] Implement per-sandbox and per-CID lock files for concurrent session safety.
 - [x] Add runtime-dir-based socket resolution for relative QMP, SSH readiness, QGA, and `virtiofs` sockets, using XDG defaults when requested by the manifest.
 - [x] Allow the Nix store `virtiofs` share to target a provided host socket while `virtie` only starts and removes sockets listed under `virtiofs.daemons`.
+- [x] Add opt-in `qemu.devices.9p[]` support, resolving relative host source paths from `paths.workingDir` and lowering them to QEMU `-fsdev local` plus `virtio-9p-*` devices.
 - [x] Implement stage-aware errors and foreground SSH exit-code propagation.
 - [x] Add explicit launch signal handling for interrupt/terminate teardown.
 - [x] Add disk-backed suspend/resume commands and saved suspend state records under `paths.workingDir/.virtie`.
@@ -87,6 +88,7 @@ Acceptance criteria:
   - `qemu.devices.balloon`
   - optional `qemu.devices.balloon.controller`
   - `qemu.devices.virtiofs[]`
+  - `qemu.devices.9p[]`
   - `qemu.devices.block[]`
   - `qemu.devices.network[]`
   - `qemu.devices.vsock`
@@ -96,12 +98,14 @@ Acceptance criteria:
   - `virtiofs.daemons[].socketPath`
   - `virtiofs.daemons[].command`
   - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set.
+  - `qemu.devices.9p[]` shares contain `id`, `sourcePath`, `tag`, `securityModel`, `readOnly`, and `transport`; they do not start `virtiofsd` daemons or add socket readiness waits.
   - optional `writeFiles`, keyed by absolute guest path, with exactly one of plaintext `text` or host `path`, optional `chown`, optional four-digit octal `mode`, and optional `overwrite` defaulting to false
   - optional `notifications.command` with `{ path, args }`
   - optional `notifications.states` allowlist; empty or omitted means all states
   - optional `vsock.cidRange`, defaulting to `3..65535`
 - Runtime assumptions:
-  - Nix has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
+  - An upstream producer has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
+  - `virtie` treats the manifest as a Nix-agnostic runtime contract; Nix and microvm.nix option semantics must be lowered before this boundary.
   - `ssh` and the required `mkfs.<fsType>` tools are available on the host.
   - The guest writes `READY` to `/dev/virtio-ports/virtie.ssh.ready` after `sshd.service` is started.
   - The guest SSH service is reachable over the runtime-selected vsock CID after the readiness signal is received.
