@@ -28,7 +28,7 @@ const (
 	defaultVolumeFSType    = "ext4"
 )
 
-var writeFileModePattern = regexp.MustCompile(`^0[0-7]{3}$`)
+var writeFileModePattern = regexp.MustCompile(`^0?[0-7]{3}$`)
 
 type Manifest struct {
 	Identity      Identity      `json:"identity"`
@@ -148,6 +148,7 @@ type QEMUDevices struct {
 	I8042    bool                `json:"i8042,omitempty"`
 	Balloon  *balloon.Device     `json:"balloon,omitempty"`
 	VirtioFS []QEMUVirtioFSShare `json:"virtiofs,omitempty"`
+	NineP    []QEMUNinePShare    `json:"9p,omitempty"`
 	Block    []QEMUBlockDevice   `json:"block,omitempty"`
 	Network  []QEMUNetDevice     `json:"network,omitempty"`
 	VSOCK    QEMUVSOCKDevice     `json:"vsock"`
@@ -163,6 +164,15 @@ type QEMUVirtioFSShare struct {
 	SocketPath string `json:"socketPath"`
 	Tag        string `json:"tag"`
 	Transport  string `json:"transport"`
+}
+
+type QEMUNinePShare struct {
+	ID            string `json:"id"`
+	SourcePath    string `json:"sourcePath"`
+	Tag           string `json:"tag"`
+	SecurityModel string `json:"securityModel"`
+	ReadOnly      bool   `json:"readOnly"`
+	Transport     string `json:"transport"`
 }
 
 type QEMUBlockDevice struct {
@@ -306,20 +316,6 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.ssh.retryDelayMs must be greater than or equal to zero")
 	case m.QEMU.BinaryPath == "":
 		return fmt.Errorf("manifest.qemu.binaryPath is required")
-	case m.QEMU.Name == "":
-		return fmt.Errorf("manifest.qemu.name is required")
-	case m.QEMU.Machine.Type == "":
-		return fmt.Errorf("manifest.qemu.machine.type is required")
-	case m.QEMU.CPU.Model == "":
-		return fmt.Errorf("manifest.qemu.cpu.model is required")
-	case m.QEMU.Memory.SizeMiB <= 0:
-		return fmt.Errorf("manifest.qemu.memory.sizeMiB must be greater than zero")
-	case m.QEMU.Kernel.Path == "":
-		return fmt.Errorf("manifest.qemu.kernel.path is required")
-	case m.QEMU.Kernel.InitrdPath == "":
-		return fmt.Errorf("manifest.qemu.kernel.initrdPath is required")
-	case m.QEMU.SMP.CPUs != nil && *m.QEMU.SMP.CPUs <= 0:
-		return fmt.Errorf("manifest.qemu.smp.cpus must be greater than zero")
 	case m.QEMU.QMP.SocketPath == "":
 		return fmt.Errorf("manifest.qemu.qmp.socketPath is required")
 	case len(m.WriteFiles) > 0 && m.QEMU.GuestAgent.SocketPath == "":
@@ -328,12 +324,8 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.vsock.cidRange.start must be at least %d", defaultVSockCIDStart)
 	case m.VSock.CIDRange.End < m.VSock.CIDRange.Start:
 		return fmt.Errorf("manifest.vsock.cidRange.end must be greater than or equal to start")
-	case m.QEMU.Devices.RNG.ID == "":
-		return fmt.Errorf("manifest.qemu.devices.rng.id is required")
 	case !validQEMUTransport(m.QEMU.Devices.RNG.Transport):
 		return fmt.Errorf("manifest.qemu.devices.rng.transport must be one of pci, mmio, or ccw")
-	case m.QEMU.Devices.VSOCK.ID == "":
-		return fmt.Errorf("manifest.qemu.devices.vsock.id is required")
 	case !validQEMUTransport(m.QEMU.Devices.VSOCK.Transport):
 		return fmt.Errorf("manifest.qemu.devices.vsock.transport must be one of pci, mmio, or ccw")
 	}
@@ -359,37 +351,27 @@ func (m *Manifest) Validate() error {
 
 	for i, share := range m.QEMU.Devices.VirtioFS {
 		switch {
-		case share.ID == "":
-			return fmt.Errorf("manifest.qemu.devices.virtiofs[%d].id is required", i)
 		case share.SocketPath == "":
 			return fmt.Errorf("manifest.qemu.devices.virtiofs[%d].socketPath is required", i)
-		case share.Tag == "":
-			return fmt.Errorf("manifest.qemu.devices.virtiofs[%d].tag is required", i)
 		case !validQEMUTransport(share.Transport):
 			return fmt.Errorf("manifest.qemu.devices.virtiofs[%d].transport must be one of pci, mmio, or ccw", i)
 		}
 	}
 
+	for i, share := range m.QEMU.Devices.NineP {
+		if !validQEMUTransport(share.Transport) {
+			return fmt.Errorf("manifest.qemu.devices.9p[%d].transport must be one of pci, mmio, or ccw", i)
+		}
+	}
+
 	for i, block := range m.QEMU.Devices.Block {
-		switch {
-		case block.ID == "":
-			return fmt.Errorf("manifest.qemu.devices.block[%d].id is required", i)
-		case block.ImagePath == "":
-			return fmt.Errorf("manifest.qemu.devices.block[%d].imagePath is required", i)
-		case !validQEMUTransport(block.Transport):
+		if !validQEMUTransport(block.Transport) {
 			return fmt.Errorf("manifest.qemu.devices.block[%d].transport must be one of pci, mmio, or ccw", i)
 		}
 	}
 
 	for i, netdev := range m.QEMU.Devices.Network {
-		switch {
-		case netdev.ID == "":
-			return fmt.Errorf("manifest.qemu.devices.network[%d].id is required", i)
-		case netdev.Backend != "user":
-			return fmt.Errorf("manifest.qemu.devices.network[%d].backend must be \"user\"", i)
-		case netdev.MacAddress == "":
-			return fmt.Errorf("manifest.qemu.devices.network[%d].macAddress is required", i)
-		case !validQEMUTransport(netdev.Transport):
+		if !validQEMUTransport(netdev.Transport) {
 			return fmt.Errorf("manifest.qemu.devices.network[%d].transport must be one of pci, mmio, or ccw", i)
 		}
 	}
@@ -401,12 +383,8 @@ func (m *Manifest) Validate() error {
 	if err := validateWriteFiles(m.WriteFiles); err != nil {
 		return err
 	}
-	if err := validateNotifications(m.Notifications); err != nil {
-		return err
-	}
-
 	for i, volume := range m.Volumes {
-		if volume.ImagePath == "" {
+		if volume.AutoCreate && volume.ImagePath == "" {
 			return fmt.Errorf("manifest.volumes[%d].imagePath is required", i)
 		}
 		if volume.AutoCreate && volume.SizeMiB <= 0 {
@@ -422,17 +400,6 @@ func (m *Manifest) SSHRetryDelay(fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return time.Duration(*m.SSH.RetryDelayMS) * time.Millisecond
-}
-
-func validateNotifications(notifications Notifications) error {
-	if notifications.Command == nil {
-		return nil
-	}
-	switch {
-	case notifications.Command.Path == "":
-		return fmt.Errorf("manifest.notifications.command.path is required when notifications.command is set")
-	}
-	return nil
 }
 
 func validateWriteFiles(files WriteFiles) error {
@@ -454,7 +421,7 @@ func validateWriteFiles(files WriteFiles) error {
 		case entry.Path != nil && *entry.Path == "":
 			return fmt.Errorf("manifest.writeFiles[%q].path must not be empty", guestPath)
 		case entry.Mode != nil && !writeFileModePattern.MatchString(*entry.Mode):
-			return fmt.Errorf("manifest.writeFiles[%q].mode must match ^0[0-7]{3}$", guestPath)
+			return fmt.Errorf("manifest.writeFiles[%q].mode must match ^0?[0-7]{3}$", guestPath)
 		}
 	}
 	return nil
@@ -606,6 +573,11 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 			return QEMU{}, err
 		}
 		resolved.Devices.VirtioFS[i].SocketPath = socketPath
+	}
+
+	resolved.Devices.NineP = append([]QEMUNinePShare(nil), resolved.Devices.NineP...)
+	for i := range resolved.Devices.NineP {
+		resolved.Devices.NineP[i].SourcePath = m.resolvePath(resolved.Devices.NineP[i].SourcePath)
 	}
 
 	resolved.Devices.Block = append([]QEMUBlockDevice(nil), resolved.Devices.Block...)

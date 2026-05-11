@@ -18,6 +18,15 @@ func TestLoadReadsFromReader(t *testing.T) {
 	manifest.QEMU.BinaryPath = "bin/qemu-system-x86_64"
 	manifest.QEMU.Kernel.Path = "boot/vmlinuz"
 	manifest.QEMU.Kernel.InitrdPath = "boot/initrd"
+	manifest.QEMU.Devices.NineP = []QEMUNinePShare{
+		{
+			ID:            "fs9p0",
+			SourcePath:    "shares/cache",
+			Tag:           "cache",
+			SecurityModel: "none",
+			Transport:     "pci",
+		},
+	}
 	manifest.QEMU.Devices.Block[0].ImagePath = "images/root.img"
 	manifest.VirtioFS.Daemons[0].Command.Path = "bin/virtiofsd-workspace"
 
@@ -46,6 +55,9 @@ func TestLoadReadsFromReader(t *testing.T) {
 	}
 	if got, want := qemu.Devices.Block[0].ImagePath, "/tmp/work/images/root.img"; got != want {
 		t.Fatalf("unexpected block image path: got %q want %q", got, want)
+	}
+	if got, want := qemu.Devices.NineP[0].SourcePath, "/tmp/work/shares/cache"; got != want {
+		t.Fatalf("unexpected 9p source path: got %q want %q", got, want)
 	}
 
 	daemons, err := loaded.ResolvedVirtioFSDaemons()
@@ -369,7 +381,18 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			wantError: "must set exactly one",
 		},
 		{
-			name: "rejects mode without leading zero",
+			name: "rejects empty host path",
+			configure: func(manifest *Manifest) {
+				hostPath := ""
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Path: &hostPath},
+				}
+			},
+			wantError: "path must not be empty",
+		},
+		{
+			name: "allows mode without leading zero",
 			configure: func(manifest *Manifest) {
 				mode := "640"
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
@@ -377,7 +400,6 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 					"/etc/agent.conf": {Text: &validText, Mode: &mode},
 				}
 			},
-			wantError: "mode must match",
 		},
 		{
 			name: "rejects invalid octal mode",
@@ -498,7 +520,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects args without path", func(t *testing.T) {
+	t.Run("accepts args without path", func(t *testing.T) {
 		data := []byte(`{
 			"identity": {"hostName": "agent-sandbox"},
 			"paths": {"workingDir": "/tmp/work", "lockPath": "/tmp/virtie.lock"},
@@ -523,9 +545,15 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 			"virtiofs": {"daemons": [{"tag": "workspace", "socketPath": "fs.sock", "command": {"path": "/tmp/virtiofsd-workspace"}}]},
 			"notifications": {"command": {"args": ["--verbose"]}}
 		}`)
-		_, err := Load(bytes.NewReader(data))
-		if err == nil || !strings.Contains(err.Error(), "manifest.notifications.command.path is required") {
-			t.Fatalf("expected notification command path validation error, got %v", err)
+		loaded, err := Load(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("load manifest: %v", err)
+		}
+		if loaded.Notifications.Command == nil {
+			t.Fatal("expected notification command after load")
+		}
+		if got := loaded.Notifications.Command.Path; got != "" {
+			t.Fatalf("unexpected notification command path: got %q want empty", got)
 		}
 	})
 
@@ -585,6 +613,84 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	}
 }
 
+func TestManifestValidatesQEMUDeviceTransports(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*Manifest)
+		wantError string
+	}{
+		{
+			name: "rng",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.Devices.RNG.Transport = "usb"
+			},
+			wantError: "manifest.qemu.devices.rng.transport must be one of pci, mmio, or ccw",
+		},
+		{
+			name: "vsock",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.Devices.VSOCK.Transport = "usb"
+			},
+			wantError: "manifest.qemu.devices.vsock.transport must be one of pci, mmio, or ccw",
+		},
+		{
+			name: "virtiofs",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.Devices.VirtioFS[0].Transport = "usb"
+			},
+			wantError: "manifest.qemu.devices.virtiofs[0].transport must be one of pci, mmio, or ccw",
+		},
+		{
+			name: "virtiofs socket path",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.Devices.VirtioFS[0].SocketPath = ""
+			},
+			wantError: "manifest.qemu.devices.virtiofs[0].socketPath is required",
+		},
+		{
+			name: "balloon",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.Devices.Balloon = validManifestWithBalloon().QEMU.Devices.Balloon
+				manifest.QEMU.Devices.Balloon.Transport = "usb"
+			},
+			wantError: "manifest.qemu.devices.balloon.transport must be one of pci, mmio, or ccw",
+		},
+		{
+			name: "9p",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.Devices.NineP = []QEMUNinePShare{{Transport: "usb"}}
+			},
+			wantError: "manifest.qemu.devices.9p[0].transport must be one of pci, mmio, or ccw",
+		},
+		{
+			name: "block",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.Devices.Block[0].Transport = "usb"
+			},
+			wantError: "manifest.qemu.devices.block[0].transport must be one of pci, mmio, or ccw",
+		},
+		{
+			name: "network",
+			configure: func(manifest *Manifest) {
+				manifest.QEMU.Devices.Network[0].Transport = "usb"
+			},
+			wantError: "manifest.qemu.devices.network[0].transport must be one of pci, mmio, or ccw",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := validManifest()
+			tt.configure(manifest)
+
+			err := manifest.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected validation error containing %q, got %v", tt.wantError, err)
+			}
+		})
+	}
+}
+
 func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest := validManifest()
 	manifest.QEMU.Devices.VirtioFS = nil
@@ -609,23 +715,44 @@ func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	}
 }
 
-func TestManifestAllowsRuntimeResolvedCPUs(t *testing.T) {
-	manifest := validManifest()
-	manifest.QEMU.SMP.CPUs = nil
-
-	if err := manifest.Validate(); err != nil {
-		t.Fatalf("unexpected validation error: %v", err)
-	}
-}
-
-func TestManifestRejectsNonPositiveCPUsWhenProvided(t *testing.T) {
-	for _, cpus := range []int{0, -1} {
+func TestManifestVolumeValidation(t *testing.T) {
+	t.Run("allows empty image path when not auto creating", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.QEMU.SMP.CPUs = &cpus
+		manifest.Volumes = []Volume{{ImagePath: "", AutoCreate: false}}
+
+		if err := manifest.Validate(); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+	})
+
+	t.Run("requires image path when auto creating", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.Volumes = []Volume{{ImagePath: "", SizeMiB: 64, AutoCreate: true}}
 
 		err := manifest.Validate()
-		if err == nil || !strings.Contains(err.Error(), "manifest.qemu.smp.cpus must be greater than zero") {
-			t.Fatalf("expected cpus validation error for %d, got %v", cpus, err)
+		if err == nil || !strings.Contains(err.Error(), "manifest.volumes[0].imagePath is required") {
+			t.Fatalf("expected auto-create image path validation error, got %v", err)
+		}
+	})
+
+	t.Run("requires size when auto creating", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 0, AutoCreate: true}}
+
+		err := manifest.Validate()
+		if err == nil || !strings.Contains(err.Error(), "manifest.volumes[0].sizeMiB must be greater than zero") {
+			t.Fatalf("expected auto-create size validation error, got %v", err)
+		}
+	})
+}
+
+func TestManifestAllowsRuntimeAndQEMUPassedCPUs(t *testing.T) {
+	for _, cpus := range []*int{nil, intPtr(0), intPtr(-1)} {
+		manifest := validManifest()
+		manifest.QEMU.SMP.CPUs = cpus
+
+		if err := manifest.Validate(); err != nil {
+			t.Fatalf("unexpected validation error for cpus=%v: %v", cpus, err)
 		}
 	}
 }

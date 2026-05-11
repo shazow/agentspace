@@ -1509,6 +1509,71 @@ func TestManagerLaunchSkipsVirtioFSReadinessWhenNoVirtioFSDevices(t *testing.T) 
 	}
 }
 
+func TestManagerLaunchWithOnlyNinePShareDoesNotWaitForVirtioFS(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.Devices.VirtioFS = nil
+	cfg.QEMU.Devices.Block = nil
+	cfg.QEMU.Devices.NineP = []manifest.QEMUNinePShare{
+		{
+			ID:            "fs9p0",
+			SourcePath:    "shared",
+			Tag:           "shared",
+			SecurityModel: "mapped",
+			Transport:     "pci",
+		},
+	}
+	cfg.Volumes = nil
+	cfg.VirtioFS.Daemons = nil
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &fakeRunner{cancel: cancel}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	waiter := &fakeSocketWaiter{
+		callback: func(paths []string) error {
+			return nil
+		},
+	}
+	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      waiter,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launch(cancelCtx, cfg, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+
+	if got, want := runner.starts, []string{"qemu", "ssh"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected start order: got %v want %v", got, want)
+	}
+	qmpSocket := filepath.Join(tmpDir, "qmp.sock")
+	sshReadySocket := filepath.Join(tmpDir, "ssh-ready.sock")
+	if got, want := waiter.paths, [][]string{{qmpSocket}, {sshReadySocket}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected socket waits: got %v want %v", got, want)
+	}
+	if containsString(runner.qemuArgs, "vhost-user-fs") {
+		t.Fatalf("expected qemu args to omit virtiofs devices: %v", runner.qemuArgs)
+	}
+	if !containsString(runner.qemuArgs, "virtio-9p-pci,fsdev=fs9p0,mount_tag=shared") {
+		t.Fatalf("expected qemu args to include 9p device: %v", runner.qemuArgs)
+	}
+}
+
 func TestSaveSuspendStateConnectedStopsMigratesAndWritesSavedState(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -2228,6 +2293,32 @@ func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
 	}
 	if !containsString(spec.Args, "virtserialport,chardev=ssh_ready_char,name=virtie.ssh.ready") {
 		t.Fatalf("expected qemu args to include ssh readiness port: %v", spec.Args)
+	}
+}
+
+func TestBuildQEMUSpecAddsNinePDevice(t *testing.T) {
+	cfg := validManifest("/tmp/work")
+	cfg.QEMU.Devices.NineP = []manifest.QEMUNinePShare{
+		{
+			ID:            "fs9p0",
+			SourcePath:    "shares/cache",
+			Tag:           "cache",
+			SecurityModel: "none",
+			ReadOnly:      true,
+			Transport:     "pci",
+		},
+	}
+
+	spec, err := buildQEMUSpec(cfg, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	if !containsString(spec.Args, "local,id=fs9p0,path=/tmp/work/shares/cache,security_model=none,readonly=on") {
+		t.Fatalf("expected qemu args to include resolved 9p fsdev: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "virtio-9p-pci,fsdev=fs9p0,mount_tag=cache") {
+		t.Fatalf("expected qemu args to include 9p device: %v", spec.Args)
 	}
 }
 

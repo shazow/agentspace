@@ -23,8 +23,14 @@
         message = "microvm.registerWithMachined is unsupported until dynamic vsock CID state is plumbed through machined registration.";
       }
       {
-        assertion = lib.all (share: share.proto == "virtiofs") config.microvm.shares;
-        message = "Only virtiofs shares are supported by the direct virtie QEMU launcher.";
+        assertion = lib.all (
+          share:
+          builtins.elem share.proto [
+            "virtiofs"
+            "9p"
+          ]
+        ) config.microvm.shares;
+        message = "Only virtiofs and 9p shares are supported by the direct virtie QEMU launcher.";
       }
       {
         assertion = lib.all (interface: interface.type == "user") config.microvm.interfaces;

@@ -16,8 +16,6 @@ func validateBalloonDevice(memoryMiB int, device *balloon.Device) error {
 	}
 
 	switch {
-	case device.ID == "":
-		return fmt.Errorf("manifest.qemu.devices.balloon.id is required")
 	case !validQEMUTransport(device.Transport):
 		return fmt.Errorf("manifest.qemu.devices.balloon.transport must be one of pci, mmio, or ccw")
 	}

@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
@@ -110,6 +111,12 @@ in
       type = lib.types.bool;
       default = true;
       description = "Mount the current working directory into the VM as the workspace share.";
+    };
+
+    shares = lib.mkOption {
+      type = options.microvm.shares.type;
+      default = [ ];
+      description = "Additional host directory shares mounted in the sandbox, using the microvm.shares schema.";
     };
 
     swapSize = lib.mkOption {
@@ -570,7 +577,8 @@ in
               mountPoint = cfg.workspaceMountPoint;
               securityModel = "mapped";
             }
-          ];
+          ]
+          ++ cfg.shares;
 
           writableStoreOverlay = "/nix/.rw-store";
 

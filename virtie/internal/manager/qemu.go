@@ -167,6 +167,27 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 		}.QemuParams(config)...)
 	}
 
+	for _, share := range qemu.Devices.NineP {
+		driver, err := ninePDriver(share.Transport)
+		if err != nil {
+			return nil, err
+		}
+		fsdevParams := []string{
+			"local",
+			fmt.Sprintf("id=%s", share.ID),
+			fmt.Sprintf("path=%s", share.SourcePath),
+			fmt.Sprintf("security_model=%s", share.SecurityModel),
+			fmt.Sprintf("readonly=%s", onOff(share.ReadOnly)),
+		}
+		deviceParams := []string{
+			driver,
+			fmt.Sprintf("fsdev=%s", share.ID),
+			fmt.Sprintf("mount_tag=%s", share.Tag),
+		}
+		args = append(args, "-fsdev", strings.Join(fsdevParams, ","))
+		args = append(args, "-device", strings.Join(deviceParams, ","))
+	}
+
 	for _, block := range qemu.Devices.Block {
 		blockTransport, err := resolveQEMUTransport(block.Transport)
 		if err != nil {
@@ -268,6 +289,19 @@ func guestAgentSerialDriver(transport string) (string, error) {
 		return "virtio-serial-device", nil
 	case "ccw":
 		return "virtio-serial-ccw", nil
+	default:
+		return "", fmt.Errorf("unsupported qemu transport %q", transport)
+	}
+}
+
+func ninePDriver(transport string) (string, error) {
+	switch transport {
+	case "pci":
+		return "virtio-9p-pci", nil
+	case "mmio":
+		return "virtio-9p-device", nil
+	case "ccw":
+		return "virtio-9p-ccw", nil
 	default:
 		return "", fmt.Errorf("unsupported qemu transport %q", transport)
 	}
