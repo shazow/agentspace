@@ -46,7 +46,7 @@ func (c *launchCommand) Execute(args []string) error {
 		return err
 	}
 
-	baseLogger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	baseLogger := slog.Default()
 	discardLogger := slog.New(slog.DiscardHandler)
 	manager.SetLogger(discardLogger)
 	balloon.SetLogger(discardLogger)
