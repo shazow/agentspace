@@ -99,13 +99,14 @@ Acceptance criteria:
   - `virtiofs.daemons[].command`
   - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set.
   - `qemu.devices.9p[]` shares contain `id`, `sourcePath`, `tag`, `securityModel`, `readOnly`, and `transport`; they do not start `virtiofsd` daemons or add socket readiness waits.
-  - optional `writeFiles`, keyed by absolute guest path, with exactly one of plaintext `text` or host `path`, optional `chown`, optional four-digit octal `mode`, and optional `overwrite` defaulting to false
-  - optional `notifications.command` with `{ path, args }`
+  - optional `writeFiles`, keyed by absolute guest path, with exactly one of plaintext `text` or host `path`, optional `chown`, optional three- or four-digit octal `mode`, and optional `overwrite` defaulting to false
+  - optional `notifications.command` with `{ path, args }`; notification command execution is best-effort
   - optional `notifications.states` allowlist; empty or omitted means all states
   - optional `vsock.cidRange`, defaulting to `3..65535`
 - Runtime assumptions:
   - An upstream producer has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
   - `virtie` treats the manifest as a Nix-agnostic runtime contract; Nix and microvm.nix option semantics must be lowered before this boundary.
+  - QEMU fields are validated only when `virtie` must interpret them before launch, such as transport selection or virtiofs socket waits. Values passed directly into QEMU args are allowed through so QEMU reports invalid inputs.
   - `ssh` and the required `mkfs.<fsType>` tools are available on the host.
   - The guest writes `READY` to `/dev/virtio-ports/virtie.ssh.ready` after `sshd.service` is started.
   - The guest SSH service is reachable over the runtime-selected vsock CID after the readiness signal is received.
