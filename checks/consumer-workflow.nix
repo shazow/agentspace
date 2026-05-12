@@ -5,11 +5,11 @@
   ...
 }:
 let
-  consumerPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGUQ2FsZrmb4kVgX9X6N1Llqfu6N7o8gBC4M0coYv0Ab agentspace-consumer-test";
+  sshKeys = import ./ssh-keys.nix { inherit pkgs; };
 
   vmConsumer = mkSandbox {
-    ssh.authorizedKeys = [ consumerPublicKey ];
-    ssh.identityFile = "./id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.consumer.publicKey ];
+    ssh.identityFile = sshKeys.consumer.identityFile;
     ssh.command = "bash -lc pwd";
     persistence = {
       homeImage = "/var/lib/agentspace/home.img";
@@ -67,7 +67,7 @@ let
   virtiofsdHelper = "${runner}/bin/virtiofsd-run";
 
   consumerWorkflow =
-    assert sandboxCfg.ssh.identityFile == "./id_ed25519";
+    assert sandboxCfg.ssh.identityFile == sshKeys.consumer.identityFile;
     assert sandboxCfg.ssh.command == "bash -lc pwd";
     assert sandboxCfg.ssh.autoconnect == true;
     assert sandboxCfg.persistence.homeImage == "/var/lib/agentspace/home.img";
@@ -81,7 +81,7 @@ let
     assert vmConsumer.config.environment.variables.AGENTSPACE_EXTRA_MODULE == "1";
     assert userCfg.home == "/home/${sandboxCfg.user}";
     assert userCfg.createHome;
-    assert userCfg.openssh.authorizedKeys.keys == [ consumerPublicKey ];
+    assert userCfg.openssh.authorizedKeys.keys == [ sshKeys.consumer.publicKey ];
     assert homeCfg.home.username == sandboxCfg.user;
     assert homeCfg.home.homeDirectory == "/home/${sandboxCfg.user}";
     assert homeCfg.home.stateVersion == vmConsumer.config.system.stateVersion;

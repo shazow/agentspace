@@ -5,6 +5,8 @@
   ...
 }:
 let
+  sshKeys = import ./ssh-keys.nix { inherit pkgs; };
+
   fakeTools = pkgs.symlinkJoin {
     name = "virtie-fake-tools";
     paths = [
@@ -440,17 +442,6 @@ let
     done
   '';
 
-  passphraseProtectedPrivateKey = pkgs.writeText "virtie-passphrase-test-key" ''
-    -----BEGIN OPENSSH PRIVATE KEY-----
-    b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABC6P5muIj
-    Mitcjuj0yqzfEvAAAAGAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIELNH7oZlQETmedW
-    3DvYdyKEl4PJMo3MQECij+LtlPQFAAAAsLwMe02lLm69/c0loxzXskvyYVoggmV8cUdNFV
-    VuOYy9JookOpg//cwY8/Jf7cHhumn9JiJ6mXJpF77a3qt8DkuNbmGGk5sk6xn6ANwM5koK
-    v1Vi5NJ7CYNuifl0X08NZiCWcddMpkCvwbiMv9ZRHLLpNUlAqQzep9e7sakLRwvflIKChq
-    eg34FS3urV8j0+zZ4WI3AukBEM80P2WVdc6+l7jBE8aQGEv4mLD+b6Q5IE
-    -----END OPENSSH PRIVATE KEY-----
-  '';
-
   manifest = pkgs.writeText "virtie-fake-manifest.json" (
     builtins.toJSON {
       identity.hostName = "virtie-fake";
@@ -861,7 +852,7 @@ in
     mkdir -p "$workspace_dir/.agentspace-test"
     cd "$workspace_dir"
     printf '%s' 'host payload' > host-write-file
-    install -m 0600 ${passphraseProtectedPrivateKey} .agentspace-test/id_ed25519
+    install -m 0600 ${sshKeys.passphraseProtected.privateKey} .agentspace-test/id_ed25519
     if ${pkgs.openssh}/bin/ssh-keygen -y -P "" -f .agentspace-test/id_ed25519 >/dev/null 2>&1; then
       echo "virtie-ssh-auth-failure-e2e: test key is not passphrase protected" >&2
       exit 1

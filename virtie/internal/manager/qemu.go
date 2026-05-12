@@ -105,8 +105,14 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	if qemu.Devices.I8042 {
 		args = append(args, "-device", "i8042")
 	}
-	if qemu.Knobs.NoGraphic {
+	if qemu.NoGraphicEnabled() {
 		args = append(args, "-nographic")
+	} else if qemu.Graphics != nil {
+		displayArgs, err := qemuGraphicsArgs(*qemu.Graphics)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, displayArgs...)
 	}
 	if qemu.Knobs.SeccompSandbox {
 		args = append(args, "-sandbox", "on")
@@ -279,6 +285,24 @@ func qemuCPUCount(cpus *int) int {
 		return 1
 	}
 	return count
+}
+
+func qemuGraphicsArgs(graphics manifest.QEMUGraphics) ([]string, error) {
+	args := []string{}
+	switch graphics.Backend {
+	case "gtk":
+		args = append(args, "-display", "gtk,gl=on", "-device", "virtio-vga-gl")
+	case "cocoa":
+		args = append(args, "-display", "cocoa", "-device", "virtio-gpu")
+	default:
+		return nil, fmt.Errorf("unsupported qemu graphics backend %q", graphics.Backend)
+	}
+
+	return append(args,
+		"-device", "qemu-xhci",
+		"-device", "usb-tablet",
+		"-device", "usb-kbd",
+	), nil
 }
 
 func guestAgentSerialDriver(transport string) (string, error) {

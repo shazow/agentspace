@@ -136,6 +136,9 @@ func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
 	if got, want := manifest.QEMU.SSHReady.SocketPath, "ssh-ready.sock"; got != want {
 		t.Fatalf("unexpected default ssh readiness socket: got %q want %q", got, want)
 	}
+	if !manifest.QEMU.NoGraphicEnabled() {
+		t.Fatalf("expected manifest without graphics to default to noGraphic")
+	}
 
 	custom := validManifest()
 	custom.SSH.RetryDelayMS = intPtr(250)
@@ -689,6 +692,77 @@ func TestManifestValidatesQEMUDeviceTransports(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestManifestValidatesQEMUGraphicsBackend(t *testing.T) {
+	for _, backend := range []string{"gtk", "cocoa"} {
+		t.Run("allows "+backend, func(t *testing.T) {
+			manifest := validManifest()
+			manifest.QEMU.Knobs.NoGraphic = boolPtr(false)
+			manifest.QEMU.Graphics = &QEMUGraphics{Backend: backend}
+
+			if err := manifest.Validate(); err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+
+	t.Run("rejects unsupported backend", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.QEMU.Knobs.NoGraphic = boolPtr(false)
+		manifest.QEMU.Graphics = &QEMUGraphics{Backend: "vnc"}
+
+		err := manifest.Validate()
+		if err == nil || !strings.Contains(err.Error(), "manifest.qemu.graphics.backend must be one of gtk or cocoa") {
+			t.Fatalf("expected graphics backend validation error, got %v", err)
+		}
+	})
+}
+
+func TestManifestNoGraphicDefaultsPreserveExplicitFalse(t *testing.T) {
+	t.Run("defaults omitted headless manifest to noGraphic", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.QEMU.Knobs.NoGraphic = nil
+
+		if err := manifest.Validate(); err != nil {
+			t.Fatalf("validate manifest: %v", err)
+		}
+		if !manifest.QEMU.NoGraphicEnabled() {
+			t.Fatalf("expected omitted noGraphic without graphics to default true")
+		}
+	})
+
+	t.Run("preserves explicit false without typed graphics", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.QEMU.Knobs.NoGraphic = boolPtr(false)
+		manifest.QEMU.Graphics = nil
+
+		data, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatalf("marshal manifest: %v", err)
+		}
+
+		loaded, err := Load(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("load manifest: %v", err)
+		}
+		if loaded.QEMU.Knobs.NoGraphic == nil || *loaded.QEMU.Knobs.NoGraphic {
+			t.Fatalf("expected explicit noGraphic=false to be preserved, got %#v", loaded.QEMU.Knobs.NoGraphic)
+		}
+	})
+
+	t.Run("defaults typed graphics to graphical", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.QEMU.Knobs.NoGraphic = nil
+		manifest.QEMU.Graphics = &QEMUGraphics{Backend: "gtk"}
+
+		if err := manifest.Validate(); err != nil {
+			t.Fatalf("validate manifest: %v", err)
+		}
+		if manifest.QEMU.Knobs.NoGraphic == nil || *manifest.QEMU.Knobs.NoGraphic {
+			t.Fatalf("expected omitted noGraphic with graphics to default false, got %#v", manifest.QEMU.Knobs.NoGraphic)
+		}
+	})
 }
 
 func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {

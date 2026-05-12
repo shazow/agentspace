@@ -4,18 +4,22 @@
   ...
 }:
 let
-  testPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBIqXkHFLTDd7n09425txXfdOgJDUb7CpMAdCPVRS94z agentspace-virtie-test";
+  sshKeys = import ./ssh-keys.nix { inherit pkgs; };
   notificationCommand = "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\"";
+  fakeQemuPackage = pkgs.runCommand "fake-qemu-package" { configureFlags = [ ]; } ''
+    mkdir -p "$out/bin"
+    touch "$out/bin/qemu-system-x86_64"
+  '';
 
   vmVirtie = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
   };
 
   vmVirtieFeatureRich = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
     balloon = true;
     writeFiles = {
@@ -40,23 +44,23 @@ let
   };
 
   vmVirtieBalloonDisabled = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
     balloon = false;
   };
 
   vmVirtieExternalStoreSocket = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
     mountWorkspace = false;
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
   vmVirtieExtraShares = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
     shares = [
       {
@@ -78,8 +82,8 @@ let
   };
 
   vmVirtieFixedMachine = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
     machine = {
       memory = 512;
@@ -97,6 +101,49 @@ let
   fixedMachineManifest =
     vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
 
+  graphicalQemuConfig = import ../agentspace-qemu-config.nix {
+    inherit pkgs;
+    lib = pkgs.lib;
+    config = {
+      networking.hostName = "graphical-contract";
+      microvm = {
+        qemu = {
+          machine = "microvm";
+          machineOpts = null;
+          package = fakeQemuPackage;
+          serialConsole = false;
+          extraArgs = [ ];
+        };
+        graphics = {
+          enable = true;
+          backend = "gtk";
+        };
+        shares = [ ];
+        cpu = "max";
+        kernel = {
+          out = pkgs.emptyDirectory;
+        };
+        initrdPath = "${pkgs.emptyDirectory}/initrd";
+        kernelParams = [ ];
+        forwardPorts = [ ];
+        storeOnDisk = false;
+        volumes = [ ];
+        vcpu = 1;
+        mem = 768;
+        socket = "qmp.sock";
+        machineId = null;
+        user = null;
+        interfaces = [
+          {
+            type = "user";
+            id = "net0";
+            mac = "02:02:00:00:00:01";
+          }
+        ];
+      };
+    };
+  };
+
   _ =
     assert manifest.qemu.binaryPath != "";
     assert manifest.qemu.name == "agent-sandbox";
@@ -110,6 +157,8 @@ let
     assert manifest.qemu.sshReady.socketPath == "ssh-ready.sock";
     assert manifest.qemu.memory.sizeMiB == 4096;
     assert !(manifest.qemu.smp ? cpus);
+    assert manifest.qemu.knobs.noGraphic == true;
+    assert !(manifest.qemu ? graphics);
     assert manifest.writeFiles == { };
     assert manifest.notifications.states == [ ];
     assert !(manifest.notifications ? command);
@@ -155,6 +204,15 @@ let
     assert featureRichManifest.qemu.devices.balloon.id == "balloon0";
     assert !(featureRichManifest.qemu.devices.balloon ? controller);
     assert !(disabledBalloonManifest.qemu.devices ? balloon);
+    true;
+
+  _graphical =
+    assert graphicalQemuConfig.knobs.noGraphic == false;
+    assert graphicalQemuConfig.graphics.backend == "gtk";
+    assert builtins.elem "pcie=on" graphicalQemuConfig.machine.options;
+    assert graphicalQemuConfig.devices.rng.transport == "pci";
+    assert graphicalQemuConfig.devices.vsock.transport == "pci";
+    assert builtins.all (network: network.transport == "pci") graphicalQemuConfig.devices.network;
     true;
 
   _externalStoreSocket =
@@ -223,6 +281,10 @@ in
   virtie-manifest-balloon-contract =
     assert _balloon;
     pkgs.runCommand "virtie-manifest-balloon-contract" { } "touch $out";
+
+  virtie-manifest-graphical-contract =
+    assert _graphical;
+    pkgs.runCommand "virtie-manifest-graphical-contract" { } "touch $out";
 
   virtie-manifest-fixed-machine-contract =
     assert _fixedMachine;

@@ -37,10 +37,6 @@
         message = "Only microvm.interfaces.*.type = \"user\" is supported by the direct virtie QEMU launcher.";
       }
       {
-        assertion = config.microvm.graphics.enable == false;
-        message = "microvm.graphics.enable is unsupported by the direct virtie QEMU launcher.";
-      }
-      {
         assertion = config.microvm.devices == [ ];
         message = "microvm.devices passthrough is unsupported by the direct virtie QEMU launcher.";
       }
