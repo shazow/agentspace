@@ -399,7 +399,6 @@ in
         fsType = volume.fsType;
         autoCreate = volume.autoCreate;
         label = volume.label;
-        mkfsExtraArgs = volume.mkfsExtraArgs;
       }) config.microvm.volumes;
 
       virtieManifestData = {

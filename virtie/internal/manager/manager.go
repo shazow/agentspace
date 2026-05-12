@@ -25,6 +25,8 @@ import (
 	"syscall"
 	"time"
 
+	backendfile "github.com/diskfs/go-diskfs/backend/file"
+	"github.com/diskfs/go-diskfs/filesystem/ext4"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -1321,10 +1323,19 @@ func ensureVolumeImages(volumes []manifest.Volume) error {
 }
 
 func createVolumeImage(volume manifest.Volume) error {
+	sizeBytes := int64(volume.SizeMiB) * 1024 * 1024
 	file, err := os.OpenFile(volume.ImagePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return fmt.Errorf("create volume image %q: %w", volume.ImagePath, err)
 	}
+
+	created := false
+	defer func() {
+		if !created {
+			_ = os.Remove(volume.ImagePath)
+		}
+	}()
+
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close volume image %q: %w", volume.ImagePath, err)
 	}
@@ -1334,44 +1345,33 @@ func createVolumeImage(volume manifest.Volume) error {
 		_ = cmd.Run()
 	}
 
-	sizeBytes := int64(volume.SizeMiB) * 1024 * 1024
 	if err := os.Truncate(volume.ImagePath, sizeBytes); err != nil {
 		return fmt.Errorf("truncate volume image %q: %w", volume.ImagePath, err)
 	}
 
-	mkfsArgs := []string{}
+	image, err := backendfile.OpenFromPath(volume.ImagePath, false)
+	if err != nil {
+		return fmt.Errorf("open volume image %q: %w", volume.ImagePath, err)
+	}
+	defer image.Close()
+
+	params := &ext4.Params{}
 	if volume.Label != nil {
-		if labelOption := mkfsLabelOption(volume.FSType); labelOption != "" {
-			mkfsArgs = append(mkfsArgs, labelOption, *volume.Label)
+		params.VolumeName = *volume.Label
+	}
+	params.SectorsPerBlock = 8
+	fs, err := ext4.Create(image, sizeBytes, 0, int64(ext4.SectorSize512), params)
+	if err != nil {
+		return fmt.Errorf("format ext4 volume image %q: %w", volume.ImagePath, err)
+	}
+	if volume.Label == nil {
+		if err := fs.SetLabel(""); err != nil {
+			return fmt.Errorf("clear default ext4 volume label for %q: %w", volume.ImagePath, err)
 		}
 	}
-	mkfsArgs = append(mkfsArgs, volume.MkfsExtraArgs...)
-	mkfsArgs = append(mkfsArgs, volume.ImagePath)
 
-	mkfsPath, err := exec.LookPath(fmt.Sprintf("mkfs.%s", volume.FSType))
-	if err != nil {
-		return fmt.Errorf("find mkfs tool for %q: %w", volume.FSType, err)
-	}
-
-	cmd := exec.Command(mkfsPath, mkfsArgs...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("format volume image %q with %s: %w", volume.ImagePath, filepath.Base(mkfsPath), err)
-	}
-
+	created = true
 	return nil
-}
-
-func mkfsLabelOption(fsType string) string {
-	switch fsType {
-	case "ext2", "ext3", "ext4", "xfs", "btrfs":
-		return "-L"
-	case "vfat":
-		return "-n"
-	default:
-		return ""
-	}
 }
 
 func ensureParentDirectories(paths []string) error {
