@@ -15,8 +15,6 @@ import (
 )
 
 const (
-	ManifestVersion = 2
-
 	defaultHostName      = "virtie"
 	defaultWorkingDir    = "."
 	defaultBaseDir       = ".virtie"
@@ -41,7 +39,6 @@ var defaultSSHArgv = []string{
 }
 
 type Document struct {
-	Version       int              `json:"version" toml:"version"`
 	Identity      Identity         `json:"identity,omitempty" toml:"identity"`
 	Paths         Paths            `json:"paths,omitempty" toml:"paths"`
 	Persistence   Persistence      `json:"persistence,omitempty" toml:"persistence"`
@@ -234,9 +231,6 @@ func manifestLooksTOML(data []byte, name string) bool {
 }
 
 func (d Document) Manifest() (*Manifest, error) {
-	if d.Version != ManifestVersion {
-		return nil, fmt.Errorf("manifest.version must be %d", ManifestVersion)
-	}
 	if d.Kernel.Path == "" {
 		return nil, fmt.Errorf("manifest.kernel.path is required")
 	}
@@ -408,7 +402,7 @@ func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
 		PassthroughArgs: qemuPassthroughArgs(d.QEMU),
 	}
 	if d.Machine.Type != "" && d.Machine.Type == machineType {
-		// The public v2 schema intentionally keeps machine identity separate
+		// The public schema intentionally keeps machine identity separate
 		// from SMBIOS identity for now.
 	}
 	return qemu, nil

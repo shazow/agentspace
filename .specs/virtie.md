@@ -42,7 +42,7 @@ Acceptance criteria:
 
 - [x] Implement manifest loading, validation, defaulting, and path resolution.
 - [x] Replace `qemu.argvTemplate` with a typed `qemu` manifest contract that captures the resolved host-side launch inputs.
-- [x] Replace the resolved `qemu` manifest contract with manifest v2 facts and move host-side QEMU policy derivation into `virtie`.
+- [x] Replace the resolved `qemu` manifest contract with launch facts and move host-side QEMU policy derivation into `virtie`.
 - [x] Implement QEMU argv compilation inside `virtie`, using `govmm/qemu` for typed device emission where it fits and local raw-arg assembly for user networking, memfd memory, balloon flags, and block-device details that are not modeled cleanly.
 - [x] Implement QMP connection management with `go-qemu/qmp` for monitor readiness and graceful `quit` during teardown.
 - [x] Extend the QMP session to use `go-qemu/qmp/raw` for `query-balloon`, `balloon`, `qom-set`, `qom-get`, and `qom-list` so runtime balloon control can share the same monitor connection as shutdown.
@@ -65,12 +65,11 @@ Acceptance criteria:
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
 - [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface, including saved suspend/resume coverage.
 - [x] Add typed graphical display compilation for `gtk` and `cocoa` manifest backends.
-- [x] Add JSON and TOML decoding for manifest v2, with Nix-generated manifests remaining JSON.
+- [x] Add JSON and TOML decoding for the manifest, with Nix-generated manifests remaining JSON.
 
 ## Appendix
 
-- Current manifest contract is v2:
-  - `version = 2`
+- Current manifest contract:
   - `identity.hostName`
   - `paths.workingDir`
   - `paths.lockPath`
@@ -98,7 +97,7 @@ Acceptance criteria:
   - optional `vsock.cidRange`, defaulting to `3..65535`
 - Runtime assumptions:
   - An upstream producer has already produced the guest image inputs, package paths, host facts, and manifest.
-  - `virtie` treats the manifest as a Nix-agnostic runtime contract; Nix and microvm.nix option semantics must be lowered into v2 facts before this boundary.
+  - `virtie` treats the manifest as a Nix-agnostic runtime contract; Nix and microvm.nix option semantics must be lowered into launch facts before this boundary.
   - QEMU fields are validated only when `virtie` must interpret them before launch, such as transport selection or virtiofs socket waits. Values passed directly into QEMU args are allowed through so QEMU reports invalid inputs.
   - `ssh` is available on the host.
   - The guest writes `READY` to `/dev/virtio-ports/virtie.ssh.ready` after `sshd.service` is started.

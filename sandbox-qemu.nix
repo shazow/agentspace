@@ -420,7 +420,6 @@ in
       ) cfg.writeFiles;
 
       virtieManifestData = {
-        version = 2;
         identity.hostName = cfg.hostName;
         paths = {
           workingDir = ".";

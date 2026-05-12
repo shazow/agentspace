@@ -116,7 +116,6 @@ let
   virtiofsDaemonMounts = builtins.filter (mount: mount.type == "virtiofs" && mount ? daemon) manifest.mounts;
 
   _ =
-    assert manifest.version == 2;
     assert manifest.qemu.binaryPath != "";
     assert manifest.identity.hostName == "agent-sandbox";
     assert manifest.host.system == pkgs.stdenv.hostPlatform.system;

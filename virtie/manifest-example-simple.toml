@@ -1,5 +1,3 @@
-version = 2
-
 [kernel]
 path = "/tmp/vmlinuz"
 initrdPath = "/tmp/initrd"

@@ -2,7 +2,7 @@
 
 Future refactor to move host-side microvm-to-QEMU policy ownership from Nix into `virtie`.
 
-**Status**: Implemented by manifest v2
+**Status**: Implemented
 
 ## Goals
 
@@ -35,12 +35,12 @@ Acceptance criteria:
 ## Progress
 
 - [x] Move final QEMU argv construction out of Nix and into `virtie`.
-- [x] Keep Nix responsible for guest evaluation while emitting a manifest v2 facts contract.
+- [x] Keep Nix responsible for guest evaluation while emitting a manifest facts contract.
 - [x] Re-establish contract and E2E checks around the current typed-manifest path so future parity work has a stable baseline.
 - [ ] Decide the target manifest boundary: "raw evaluated microvm facts" versus "minimal resolved launch facts".
 - [ ] Inventory every policy decision currently encoded in `agentspace-qemu-config.nix` and classify whether it should stay Nix-owned, move to `virtie`, or be represented as a capability flag from Nix.
-- [x] Design the thinner manifest schema and versioning story.
-- [x] Build checks so generated v2 manifests validate representative launch configurations.
+- [x] Design the thinner manifest schema.
+- [x] Build checks so generated manifests validate representative launch configurations.
 - [x] Teach `virtie` to derive the supported QEMU policy from the thinner manifest.
 - [x] Remove `agentspace-qemu-config.nix` and update the launcher documentation and checks.
 

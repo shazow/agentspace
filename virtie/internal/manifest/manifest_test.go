@@ -536,7 +536,6 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 
 	t.Run("accepts args without path", func(t *testing.T) {
 		data := []byte(`{
-			"version": 2,
 			"identity": {"hostName": "agent-sandbox"},
 			"paths": {"workingDir": "/tmp/work", "lockPath": "/tmp/virtie.lock"},
 			"ssh": {"argv": ["/bin/ssh"], "user": "agent"},
@@ -876,7 +875,6 @@ func TestManifestAllowsRuntimeAndQEMUPassedCPUs(t *testing.T) {
 
 func validDocument() Document {
 	return Document{
-		Version: ManifestVersion,
 		Identity: Identity{
 			HostName: "agent-sandbox",
 		},

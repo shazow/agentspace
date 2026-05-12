@@ -444,7 +444,6 @@ let
 
   manifest = pkgs.writeText "virtie-fake-manifest.json" (
     builtins.toJSON {
-      version = 2;
       identity.hostName = "virtie-fake";
       paths = {
         workingDir = ".";

@@ -65,9 +65,8 @@ Policy that should move to `virtie`:
 
 ## Implementation Plan
 
-- [x] Add a new manifest version or compatibility discriminator so `virtie` can
-  distinguish the current fully resolved `qemu` contract from the thinner facts
-  contract during migration.
+- [x] Replace the current fully resolved `qemu` contract with the thinner facts
+  contract.
 - [x] Introduce Go types for the thinner facts contract without mirroring raw
   `microvm.nix` option internals one-for-one.
 - [x] Add a Go policy compiler that converts the thinner facts into the existing

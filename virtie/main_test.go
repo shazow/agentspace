@@ -164,7 +164,6 @@ func TestLoadLaunchManifestPersistsAbsoluteWorkingDir(t *testing.T) {
 
 func testManifestJSON(workingDir string) string {
 	return `{
-  "version": 2,
   "identity": {
     "hostName": "test-vm"
   },

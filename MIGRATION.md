@@ -4,7 +4,7 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
-## 2026-05-12: virtie manifest v2
+## 2026-05-12: simplified virtie manifest
 
 ### Who Is Affected
 
@@ -16,10 +16,9 @@ flake output, manifest contract, or generated wrapper behavior changes.
 
 ### What Changed
 
-`virtie` now requires manifest `version = 2`. The public manifest carries
-evaluated launch facts, and `virtie` derives the concrete host-side QEMU policy
-from those facts. Nix-generated manifests remain JSON, but `virtie` also accepts
-TOML for hand-written manifests.
+The public manifest now carries evaluated launch facts, and `virtie` derives
+the concrete host-side QEMU policy from those facts. Nix-generated manifests
+remain JSON, but `virtie` also accepts TOML for hand-written manifests.
 
 The previous resolved `qemu` contract was removed. Fields such as machine
 options, transport selection, device IDs, block letters, memory backend, QMP and
@@ -30,9 +29,9 @@ are attached to `mounts[]` entries instead. `writeFiles` is now a list with
 
 ### Migration Steps
 
-Set `version = 2`, move required kernel paths to top-level `kernel.path` and
-`kernel.initrdPath`, describe shares under `mounts[]`, describe volumes under
-`volumes[]`, and convert path-keyed write files to list entries:
+Move required kernel paths to top-level `kernel.path` and `kernel.initrdPath`,
+describe shares under `mounts[]`, describe volumes under `volumes[]`, and
+convert path-keyed write files to list entries:
 
 ```diff
 - "writeFiles": {
@@ -44,7 +43,7 @@ Set `version = 2`, move required kernel paths to top-level `kernel.path` and
 ```
 
 Use `virtie/manifest-example-simple.toml` for the smallest hand-written shape
-and `virtie/manifest-example-full.toml` for the complete v2 field set.
+and `virtie/manifest-example-full.toml` for the complete field set.
 
 ## 2026-05-12: native ext4 volume image creation
 

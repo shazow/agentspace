@@ -23,12 +23,12 @@ virtie suspend --manifest=MANIFEST
 
 In normal use this is invoked by the generated launch wrapper rather than by
 hand. See the root flake for packaging and launch integration. Hand-written
-manifests may be JSON or TOML; the v2 TOML examples in this directory show a
+manifests may be JSON or TOML; the TOML examples in this directory show a
 minimal manifest and a full manifest with default-valued fields included.
 
 ## Features
 
-- Loads and validates a v2 manifest for the supported sandbox launch path.
+- Loads and validates a manifest for the supported sandbox launch path.
 - Accepts JSON and TOML manifests, with Nix-generated manifests remaining JSON.
 - Allocates a runtime vsock CID for each session.
 - Starts `virtiofsd`, launches QEMU, waits for SSH readiness, and either
@@ -47,7 +47,7 @@ minimal manifest and a full manifest with default-valued fields included.
 ## Notes
 
 - The manifest format is owned by this repository and is intentionally narrow.
-  Version 2 carries evaluated launch facts while `virtie` derives the concrete
+  It carries evaluated launch facts while `virtie` derives the concrete
   host-side QEMU policy.
 - Verbose runtime logs use Go's default `log/slog` handler on stderr, with
   package identity carried as an attribute such as `package=manager`.
