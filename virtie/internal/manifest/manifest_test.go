@@ -71,7 +71,7 @@ func TestLoadReadsFromReader(t *testing.T) {
 	if got, want := loaded.ResolvedVolumes(), []Volume{
 		{
 			ImagePath:  "/tmp/work/root.img",
-			SizeMiB:    64,
+			SizeMiB:    256,
 			FSType:     "ext4",
 			AutoCreate: true,
 		},
@@ -727,7 +727,7 @@ func TestManifestVolumeValidation(t *testing.T) {
 
 	t.Run("requires image path when auto creating", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.Volumes = []Volume{{ImagePath: "", SizeMiB: 64, AutoCreate: true}}
+		manifest.Volumes = []Volume{{ImagePath: "", SizeMiB: 256, AutoCreate: true}}
 
 		err := manifest.Validate()
 		if err == nil || !strings.Contains(err.Error(), "manifest.volumes[0].imagePath is required") {
@@ -742,6 +742,51 @@ func TestManifestVolumeValidation(t *testing.T) {
 		err := manifest.Validate()
 		if err == nil || !strings.Contains(err.Error(), "manifest.volumes[0].sizeMiB must be greater than zero") {
 			t.Fatalf("expected auto-create size validation error, got %v", err)
+		}
+	})
+
+	t.Run("rejects auto-created volumes below minimum size", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 255, AutoCreate: true}}
+
+		err := manifest.Validate()
+		if err == nil || !strings.Contains(err.Error(), "manifest.volumes[0].sizeMiB must be at least 256") {
+			t.Fatalf("expected auto-create minimum size validation error, got %v", err)
+		}
+	})
+
+	t.Run("rejects non-ext4 filesystem when auto creating", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 256, FSType: "xfs", AutoCreate: true}}
+
+		err := manifest.Validate()
+		if err == nil || !strings.Contains(err.Error(), `manifest.volumes[0].fsType must be "ext4"`) {
+			t.Fatalf("expected auto-create fsType validation error, got %v", err)
+		}
+	})
+
+	t.Run("rejects mkfs extra args when auto creating", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.Volumes = []Volume{{
+			ImagePath:     "root.img",
+			SizeMiB:       256,
+			AutoCreate:    true,
+			MkfsExtraArgs: []string{"-E", "discard"},
+		}}
+
+		err := manifest.Validate()
+		if err == nil || !strings.Contains(err.Error(), "manifest.volumes[0].mkfsExtraArgs is not supported") {
+			t.Fatalf("expected auto-create mkfsExtraArgs validation error, got %v", err)
+		}
+	})
+
+	t.Run("allows label when auto creating ext4", func(t *testing.T) {
+		manifest := validManifest()
+		label := "persist"
+		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 256, AutoCreate: true, Label: &label}}
+
+		if err := manifest.Validate(); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
 		}
 	})
 }

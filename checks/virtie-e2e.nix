@@ -359,12 +359,6 @@ let
           sleep 1
         done
       '')
-      (pkgs.writeShellScriptBin "mkfs.ext4" ''
-        set -euo pipefail
-
-        mkdir -p "$PWD/state"
-        printf '%s\n' "$@" > "$PWD/state/mkfs-ext4-args"
-      '')
     ];
   };
 
@@ -549,11 +543,10 @@ let
       volumes = [
         {
           imagePath = "overlay.img";
-          sizeMiB = 64;
+          sizeMiB = 256;
           fsType = "ext4";
           autoCreate = true;
           label = null;
-          mkfsExtraArgs = [ ];
         }
       ];
       virtiofs.daemons = [
@@ -692,7 +685,6 @@ in
     grep -F '"workingDir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtie-fake.json" >/dev/null
     grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
     grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
-    grep -Fx "$workspace_real/overlay.img" "$workspace_dir/state/mkfs-ext4-args" >/dev/null
     grep -Fx '/etc/virtie/inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
     grep -Fx '/var/lib/virtie/host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
     grep -Fx '/etc/virtie/inline' "$workspace_dir/state/guest-agent-closes" >/dev/null

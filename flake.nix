@@ -26,14 +26,9 @@
         pname = "virtie";
         version = "0.1.0";
         src = ./virtie;
-        vendorHash = "sha256-zgrEcEl+75sTcATL7n5gb+hoQguDEnJMIIs0OkuXsuI=";
+        vendorHash = "sha256-KZwtf49dz0LE+rKc98Ne+2xohmb0s2BpN5puWdhYITk=";
         subPackages = [ "." ];
         env.CGO_ENABLED = 0;
-        nativeBuildInputs = [ pkgs.makeWrapper ];
-        postInstall = ''
-          wrapProgram $out/bin/virtie \
-            --suffix PATH : ${lib.makeBinPath [ pkgs.e2fsprogs ]}
-        '';
       };
 
       mkSandbox =

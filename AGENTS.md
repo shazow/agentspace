@@ -8,6 +8,8 @@
 ## Code Style
 
 - Avoid making helpers that are only used once unless the helper code needs to be tested.
+- When taking a string path input for reading/writing, convert it to an `io.Reader` or `io.Writer` in the `main` package early. Helpers and sub-packages and tests should prefer `io` interfaces.
+- Avoid using the real filesystem in tests, prefer `io` or `io/fs` or `testing/fstest` when possible for virtual filesystem (such as `fs.File`, `fs.FS`, `fstest.MapFS`).
 
 ## Commits
 
@@ -16,7 +18,7 @@
 Commit message style:
 - First line: `<component name>: <short description of changes>`
 - Following paragraph: `<Additional details about the changes worth noting>`
-- When written the a coding agent, final line should include: `Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL1] [TOOL2]`
+- When written the a coding agent, final line should include: `Assisted-by: AGENT_NAME:MODEL_VERSION`
 
 Example resulting commit message:
 

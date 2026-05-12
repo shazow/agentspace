@@ -4,6 +4,33 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-12: native ext4 volume image creation
+
+### Who Is Affected
+
+- Direct manifest producers using `volumes[].autoCreate` with a non-`ext4`
+  `fsType`.
+- Direct manifest producers setting `volumes[].mkfsExtraArgs`.
+- Consumers relying on `virtie`'s package wrapper to provide `mkfs.ext4`.
+
+### What Changed
+
+`virtie` now creates auto-created ext4 volume images natively instead of running
+`mkfs.<fsType>`. Auto-created volumes only support `fsType = "ext4"`, and
+`mkfsExtraArgs` is rejected because no external mkfs command is invoked.
+`volumes[].sizeMiB` must be at least `256`, and `volumes[].label` remains
+supported.
+
+Nix-generated agentspace manifests no longer emit `mkfsExtraArgs` for managed
+volumes, and the `virtie` package no longer adds `e2fsprogs` to `PATH`.
+
+### Migration Steps
+
+Use ext4 for auto-created volumes, set `sizeMiB` to at least `256`, and remove
+`mkfsExtraArgs` from direct manifests. If you need a different filesystem,
+custom mkfs options, or a smaller image, create the image outside `virtie` and
+reference it with `autoCreate = false`.
+
 ## 2026-05-08: writeFiles inline content is plaintext text
 
 ### Who Is Affected

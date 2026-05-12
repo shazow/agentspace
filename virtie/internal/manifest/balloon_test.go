@@ -137,7 +137,7 @@ func validManifest() *Manifest {
 		Volumes: []Volume{
 			{
 				ImagePath:  "root.img",
-				SizeMiB:    64,
+				SizeMiB:    256,
 				FSType:     "ext4",
 				AutoCreate: true,
 			},

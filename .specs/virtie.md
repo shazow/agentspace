@@ -46,7 +46,7 @@ Acceptance criteria:
 - [x] Extend the QMP session to use `go-qemu/qmp/raw` for `query-balloon`, `balloon`, `qom-set`, `qom-get`, and `qom-list` so runtime balloon control can share the same monitor connection as shutdown.
 - [x] Implement launch sequencing for preflight, `virtiofs` socket wait, QMP readiness, QEMU start, virtio-serial SSH readiness, session attach, and ordered shutdown.
 - [x] Start an optional guest-pressure balloon controller only after SSH readiness succeeds, and stop it before sending the final QMP `quit`.
-- [x] Implement volume auto-create handling, including filesystem defaults and `mkfs.<fsType>` execution.
+- [x] Implement volume auto-create handling, including filesystem defaults and native ext4 image creation.
 - [x] Implement per-sandbox and per-CID lock files for concurrent session safety.
 - [x] Add runtime-dir-based socket resolution for relative QMP, SSH readiness, QGA, and `virtiofs` sockets, using XDG defaults when requested by the manifest.
 - [x] Allow the Nix store `virtiofs` share to target a provided host socket while `virtie` only starts and removes sockets listed under `virtiofs.daemons`.
@@ -94,7 +94,8 @@ Acceptance criteria:
   - `qemu.devices.vsock`
   - `qemu.machineId`
   - `qemu.passthroughArgs`
-  - `volumes[].imagePath`, `sizeMiB`, `fsType`, `autoCreate`, optional `label`, `mkfsExtraArgs`
+  - `volumes[].imagePath`, `sizeMiB`, `fsType`, `autoCreate`, optional `label`, optional `mkfsExtraArgs` rejected for auto-created volumes
+  - auto-created volumes are ext4 only and require `sizeMiB >= 256`; this is a conservative contract minimum for persistence volumes and formatter headroom, even though the current native ext4 codepath works for whole-MiB sizes greater than `128 MiB`
   - `virtiofs.daemons[].socketPath`
   - `virtiofs.daemons[].command`
   - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set.
@@ -107,7 +108,7 @@ Acceptance criteria:
   - An upstream producer has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
   - `virtie` treats the manifest as a Nix-agnostic runtime contract; Nix and microvm.nix option semantics must be lowered before this boundary.
   - QEMU fields are validated only when `virtie` must interpret them before launch, such as transport selection or virtiofs socket waits. Values passed directly into QEMU args are allowed through so QEMU reports invalid inputs.
-  - `ssh` and the required `mkfs.<fsType>` tools are available on the host.
+  - `ssh` is available on the host.
   - The guest writes `READY` to `/dev/virtio-ports/virtie.ssh.ready` after `sshd.service` is started.
   - The guest SSH service is reachable over the runtime-selected vsock CID after the readiness signal is received.
 - Runtime socket policy:

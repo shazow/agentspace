@@ -22,6 +22,8 @@ import (
 	"github.com/adrg/xdg"
 	doQMP "github.com/digitalocean/go-qemu/qmp"
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
+	diskfs "github.com/diskfs/go-diskfs"
+	"github.com/diskfs/go-diskfs/filesystem"
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -172,7 +174,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	cfg.Volumes = []manifest.Volume{
 		{
 			ImagePath:  "overlay.img",
-			SizeMiB:    64,
+			SizeMiB:    256,
 			FSType:     "ext4",
 			AutoCreate: true,
 		},
@@ -202,17 +204,6 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 
 	volumeImage := filepath.Join(tmpDir, "overlay.img")
-	mkfsLog := filepath.Join(tmpDir, "mkfs.log")
-
-	binDir := filepath.Join(tmpDir, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	mkfsPath := filepath.Join(binDir, "mkfs.ext4")
-	if err := os.WriteFile(mkfsPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+mkfsLog+"\n"), 0o755); err != nil {
-		t.Fatalf("write fake mkfs tool: %v", err)
-	}
-	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -319,18 +310,24 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 	if info, err := os.Stat(volumeImage); err != nil {
 		t.Fatalf("expected volume image to exist: %v", err)
-	} else if got, want := info.Size(), int64(64*1024*1024); got != want {
+	} else if got, want := info.Size(), int64(256*1024*1024); got != want {
 		t.Fatalf("unexpected volume size: got %d want %d", got, want)
-	}
-	if data, err := os.ReadFile(mkfsLog); err != nil {
-		t.Fatalf("expected mkfs log: %v", err)
-	} else if got, want := strings.TrimSpace(string(data)), volumeImage; got != want {
-		t.Fatalf("unexpected mkfs args: got %q want %q", got, want)
 	}
 	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
 		t.Fatalf("expected launch to clear stale suspend state, stat err: %v", err)
 	}
-	assertLaunchStatsLog(t, logOutput.String(), []string{
+	logs := logOutput.String()
+	for _, want := range []string{
+		"creating volume image",
+		"path=" + volumeImage,
+		"size_mib=256",
+		"fs_type=ext4",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected volume creation log to contain %q, got %q", want, logs)
+		}
+	}
+	assertLaunchStatsLog(t, logs, []string{
 		"started_to_boot=",
 		"boot_to_qmp=",
 		"files_to_first_ssh=",
@@ -344,6 +341,92 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		"qmp_to_guest_agent=",
 		"guest_agent_to_files=",
 	})
+}
+
+func TestCreateVolumeImageCreatesNativeExt4(t *testing.T) {
+	label := "persist"
+	for _, tt := range []struct {
+		name      string
+		sizeMiB   int
+		label     *string
+		wantLabel string
+	}{
+		{name: "minimum-size-without-label", sizeMiB: 256},
+		{name: "minimum-size-with-label", sizeMiB: 256, label: &label, wantLabel: label},
+		{name: "default-home-size", sizeMiB: 4096, label: &label, wantLabel: label},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			imagePath := filepath.Join(tmpDir, "volume.img")
+
+			err := createVolumeImage(manifest.Volume{
+				ImagePath:  imagePath,
+				SizeMiB:    tt.sizeMiB,
+				FSType:     "ext4",
+				AutoCreate: true,
+				Label:      tt.label,
+			})
+			if err != nil {
+				t.Fatalf("create volume image: %v", err)
+			}
+
+			if info, err := os.Stat(imagePath); err != nil {
+				t.Fatalf("expected volume image to exist: %v", err)
+			} else if got, want := info.Size(), int64(tt.sizeMiB)*testMiB; got != want {
+				t.Fatalf("unexpected volume size: got %d want %d", got, want)
+			}
+
+			image, err := diskfs.Open(imagePath, diskfs.WithOpenMode(diskfs.ReadOnly))
+			if err != nil {
+				t.Fatalf("open generated image: %v", err)
+			}
+			defer image.Close()
+
+			fs, err := image.GetFilesystem(0)
+			if err != nil {
+				t.Fatalf("read generated filesystem: %v", err)
+			}
+			if got, want := fs.Type(), filesystem.TypeExt4; got != want {
+				t.Fatalf("unexpected filesystem type: got %v want %v", got, want)
+			}
+			if got := strings.TrimSpace(fs.Label()); got != tt.wantLabel {
+				t.Fatalf("unexpected filesystem label: got %q want %q", got, tt.wantLabel)
+			}
+		})
+	}
+}
+
+func TestCreateVolumeImageRunsChattrBeforeSizingImage(t *testing.T) {
+	tmpDir := t.TempDir()
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	chattrLog := filepath.Join(tmpDir, "chattr-size.log")
+	chattrPath := filepath.Join(binDir, "chattr")
+	if err := os.WriteFile(chattrPath, []byte("#!/usr/bin/env sh\nset -eu\nstat -c '%s' \"$2\" > \"$CHATTR_LOG\"\n"), 0o755); err != nil {
+		t.Fatalf("write fake chattr tool: %v", err)
+	}
+	t.Setenv("CHATTR_LOG", chattrLog)
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	imagePath := filepath.Join(tmpDir, "volume.img")
+	if err := createVolumeImage(manifest.Volume{
+		ImagePath:  imagePath,
+		SizeMiB:    256,
+		FSType:     "ext4",
+		AutoCreate: true,
+	}); err != nil {
+		t.Fatalf("create volume image: %v", err)
+	}
+
+	data, err := os.ReadFile(chattrLog)
+	if err != nil {
+		t.Fatalf("read chattr log: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(data)), "0"; got != want {
+		t.Fatalf("expected chattr to run before image sizing: got size %q want %q", got, want)
+	}
 }
 
 func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
@@ -2516,7 +2599,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 		Volumes: []manifest.Volume{
 			{
 				ImagePath:  "root.img",
-				SizeMiB:    64,
+				SizeMiB:    256,
 				FSType:     "ext4",
 				AutoCreate: true,
 			},
