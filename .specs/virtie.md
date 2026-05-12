@@ -22,7 +22,7 @@ Out of scope:
 - reconnect support
 - alternate guest attach workflows beyond the supported SSH path
 - `systemd --user`, `journalctl`, or machined integration
-- bridge, tap, macvtap, graphics, or passthrough workflows
+- bridge, tap, macvtap, display protocols beyond local GTK/Cocoa graphics, or passthrough workflows
 - full `microvm-run` parity
 
 Acceptance criteria:
@@ -36,6 +36,7 @@ Acceptance criteria:
 - [x] Launch waits for `virtiofs` socket readiness, then QMP readiness, then guest-pushed SSH readiness over virtio-serial before printing SSH instructions or starting the interactive session.
 - [x] Teardown stops the foreground SSH session when present, then requests QMP `quit`, then falls back to signal-based QEMU shutdown, then stops `virtiofsd`.
 - [x] Repo-level Nix checks exercise the generated wrapper and E2E launch path by default.
+- [x] Graphical QEMU launch manifests can opt out of `-nographic` and request the supported GTK or Cocoa display backend.
 
 ## Progress
 
@@ -62,6 +63,7 @@ Acceptance criteria:
 - [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH readiness behavior, and launch/teardown ordering with Go tests.
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
 - [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface, including saved suspend/resume coverage.
+- [x] Add typed graphical display compilation for `gtk` and `cocoa` manifest backends.
 
 ## Appendix
 
@@ -82,6 +84,7 @@ Acceptance criteria:
   - `qemu.smp`
   - `qemu.console`
   - `qemu.knobs`
+  - optional `qemu.graphics.backend`, one of `gtk` or `cocoa`
   - `qemu.qmp.socketPath`
   - `qemu.sshReady.socketPath`
   - `qemu.devices.rng`
@@ -134,6 +137,7 @@ Acceptance criteria:
   - Current notification states are `runtime:suspend` after saved suspend state is written, `runtime:resume` after restore migration and QMP `cont` succeed, and `balloon:resize` after a balloon resize succeeds.
   - Notification commands receive `VIRTIE_NOTIFY_STATE`, `VIRTIE_NOTIFY_MESSAGE`, and `VIRTIE_NOTIFY_CONTEXT_<UPPER_SNAKE_KEY>` environment variables. Command args are passed unchanged.
   - The old Nix-owned argv-template path has been removed from the active contract.
+  - When `qemu.knobs.noGraphic` is false and `qemu.graphics.backend` is set, `virtie` emits the local QEMU display device set for `gtk` or `cocoa` instead of `-nographic`.
 - Current verification note: the Go package tests pass, and `checks/default.nix` keeps the launch-contract and fake-tools E2E coverage enabled alongside repo-level hook-compatibility checks.
 
 ```mermaid

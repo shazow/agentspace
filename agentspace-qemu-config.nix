@@ -159,7 +159,7 @@ in
     noDefaults = true;
     noUserConfig = true;
     noReboot = true;
-    noGraphic = true;
+    noGraphic = !microvm.graphics.enable;
     seccompSandbox = canSandbox;
   };
 
@@ -243,4 +243,9 @@ in
       microvm.user
     ]
     ++ microvm.qemu.extraArgs;
+}
+// lib.optionalAttrs microvm.graphics.enable {
+  graphics = {
+    backend = microvm.graphics.backend;
+  };
 }

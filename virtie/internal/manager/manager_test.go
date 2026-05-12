@@ -2326,8 +2326,52 @@ func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	if !containsString(spec.Args, "memory-backend-memfd,id=mem,size=1024M,share=on") {
 		t.Fatalf("expected qemu args to include the shared memory backend: %v", spec.Args)
 	}
+	if !containsString(spec.Args, "-nographic") {
+		t.Fatalf("expected headless qemu args to include -nographic: %v", spec.Args)
+	}
 	if !spec.ProcessGroup {
 		t.Fatal("expected qemu to run in its own process group")
+	}
+}
+
+func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		qemu manifest.QEMUGraphics
+		want []string
+	}{
+		{
+			name: "gtk",
+			qemu: manifest.QEMUGraphics{Backend: "gtk"},
+			want: []string{"-display", "gtk,gl=on", "virtio-vga-gl", "qemu-xhci", "usb-tablet", "usb-kbd"},
+		},
+		{
+			name: "cocoa",
+			qemu: manifest.QEMUGraphics{Backend: "cocoa"},
+			want: []string{"-display", "cocoa", "virtio-gpu", "qemu-xhci", "usb-tablet", "usb-kbd"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := validManifest("/tmp/work")
+			manifest.QEMU.Knobs.NoGraphic = false
+			manifest.QEMU.Graphics = &tt.qemu
+
+			spec, err := buildQEMUSpec(manifest, 42)
+			if err != nil {
+				t.Fatalf("build qemu spec: %v", err)
+			}
+
+			if containsString(spec.Args, "-nographic") {
+				t.Fatalf("expected graphical qemu args to omit -nographic: %v", spec.Args)
+			}
+			for _, want := range tt.want {
+				if !containsString(spec.Args, want) {
+					t.Fatalf("expected qemu args to include %q: %v", want, spec.Args)
+				}
+			}
+		})
 	}
 }
 

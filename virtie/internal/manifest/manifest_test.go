@@ -136,6 +136,9 @@ func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
 	if got, want := manifest.QEMU.SSHReady.SocketPath, "ssh-ready.sock"; got != want {
 		t.Fatalf("unexpected default ssh readiness socket: got %q want %q", got, want)
 	}
+	if !manifest.QEMU.Knobs.NoGraphic {
+		t.Fatalf("expected manifest without graphics to default to noGraphic")
+	}
 
 	custom := validManifest()
 	custom.SSH.RetryDelayMS = intPtr(250)
@@ -689,6 +692,31 @@ func TestManifestValidatesQEMUDeviceTransports(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestManifestValidatesQEMUGraphicsBackend(t *testing.T) {
+	for _, backend := range []string{"gtk", "cocoa"} {
+		t.Run("allows "+backend, func(t *testing.T) {
+			manifest := validManifest()
+			manifest.QEMU.Knobs.NoGraphic = false
+			manifest.QEMU.Graphics = &QEMUGraphics{Backend: backend}
+
+			if err := manifest.Validate(); err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+
+	t.Run("rejects unsupported backend", func(t *testing.T) {
+		manifest := validManifest()
+		manifest.QEMU.Knobs.NoGraphic = false
+		manifest.QEMU.Graphics = &QEMUGraphics{Backend: "vnc"}
+
+		err := manifest.Validate()
+		if err == nil || !strings.Contains(err.Error(), "manifest.qemu.graphics.backend must be one of gtk or cocoa") {
+			t.Fatalf("expected graphics backend validation error, got %v", err)
+		}
+	})
 }
 
 func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {

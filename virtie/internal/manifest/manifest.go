@@ -85,6 +85,7 @@ type QEMU struct {
 	SMP             QEMUSMP        `json:"smp"`
 	Console         QEMUConsole    `json:"console"`
 	Knobs           QEMUKnobs      `json:"knobs"`
+	Graphics        *QEMUGraphics  `json:"graphics,omitempty"`
 	QMP             QEMUQMP        `json:"qmp"`
 	GuestAgent      QEMUGuestAgent `json:"guestAgent,omitempty"`
 	SSHReady        QEMUSSHReady   `json:"sshReady,omitempty"`
@@ -130,6 +131,10 @@ type QEMUKnobs struct {
 	NoReboot       bool `json:"noReboot,omitempty"`
 	NoGraphic      bool `json:"noGraphic,omitempty"`
 	SeccompSandbox bool `json:"seccompSandbox,omitempty"`
+}
+
+type QEMUGraphics struct {
+	Backend string `json:"backend"`
 }
 
 type QEMUQMP struct {
@@ -280,6 +285,9 @@ func (m *Manifest) applyDefaults() {
 	if m.QEMU.SSHReady.SocketPath == "" {
 		m.QEMU.SSHReady.SocketPath = defaultSSHReadySocket
 	}
+	if m.QEMU.Graphics == nil {
+		m.QEMU.Knobs.NoGraphic = true
+	}
 
 	if m.VSock.CIDRange.Start == 0 {
 		m.VSock.CIDRange.Start = defaultVSockCIDStart
@@ -329,6 +337,10 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.devices.rng.transport must be one of pci, mmio, or ccw")
 	case !validQEMUTransport(m.QEMU.Devices.VSOCK.Transport):
 		return fmt.Errorf("manifest.qemu.devices.vsock.transport must be one of pci, mmio, or ccw")
+	}
+
+	if m.QEMU.Graphics != nil && !validQEMUGraphicsBackend(m.QEMU.Graphics.Backend) {
+		return fmt.Errorf("manifest.qemu.graphics.backend must be one of gtk or cocoa")
 	}
 
 	virtioFSShareTags := make(map[string]struct{}, len(m.QEMU.Devices.VirtioFS))
@@ -440,6 +452,15 @@ func validateWriteFiles(files WriteFiles) error {
 func validQEMUTransport(transport string) bool {
 	switch transport {
 	case "pci", "mmio", "ccw":
+		return true
+	default:
+		return false
+	}
+}
+
+func validQEMUGraphicsBackend(backend string) bool {
+	switch backend {
+	case "gtk", "cocoa":
 		return true
 	default:
 		return false
@@ -575,6 +596,10 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	}
 
 	resolved.Machine.Options = append([]string(nil), resolved.Machine.Options...)
+	if resolved.Graphics != nil {
+		value := *resolved.Graphics
+		resolved.Graphics = &value
+	}
 
 	resolved.Devices.VirtioFS = append([]QEMUVirtioFSShare(nil), resolved.Devices.VirtioFS...)
 	for i := range resolved.Devices.VirtioFS {
