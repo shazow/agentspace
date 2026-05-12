@@ -8,7 +8,6 @@
 package manifest
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -255,23 +254,11 @@ type ResolvedWriteFile struct {
 }
 
 func Load(r io.Reader) (*Manifest, error) {
-	var manifest Manifest
-	decoder := json.NewDecoder(r)
-	if err := decoder.Decode(&manifest); err != nil {
-		return nil, fmt.Errorf("decode manifest: %w", err)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read manifest: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return nil, fmt.Errorf("decode manifest: unexpected trailing data")
-		}
-		return nil, fmt.Errorf("decode manifest: %w", err)
-	}
-
-	if err := manifest.Validate(); err != nil {
-		return nil, err
-	}
-
-	return &manifest, nil
+	return LoadBytes(data, "")
 }
 
 func (m *Manifest) applyDefaults() {
@@ -721,6 +708,10 @@ func intPtr(value int) *int {
 }
 
 func boolPtr(value bool) *bool {
+	return &value
+}
+
+func stringPtr(value string) *string {
 	return &value
 }
 

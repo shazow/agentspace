@@ -4,6 +4,48 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-12: virtie manifest v2
+
+### Who Is Affected
+
+- Direct manifest producers that emit the previous fully resolved `qemu`
+  manifest object.
+- Direct manifest producers using path-keyed `writeFiles`.
+- Consumers reading generated `agentspace.sandbox.launch.virtieManifestData`
+  and expecting resolved QEMU device fields.
+
+### What Changed
+
+`virtie` now requires manifest `version = 2`. The public manifest carries
+evaluated launch facts, and `virtie` derives the concrete host-side QEMU policy
+from those facts. Nix-generated manifests remain JSON, but `virtie` also accepts
+TOML for hand-written manifests.
+
+The previous resolved `qemu` contract was removed. Fields such as machine
+options, transport selection, device IDs, block letters, memory backend, QMP and
+SSH-ready defaults, and network lowering are now `virtie` policy. The generated
+Nix manifest no longer includes `virtiofs.daemons`; managed `virtiofsd` commands
+are attached to `mounts[]` entries instead. `writeFiles` is now a list with
+`guestPath`, not an object keyed by guest path.
+
+### Migration Steps
+
+Set `version = 2`, move required kernel paths to top-level `kernel.path` and
+`kernel.initrdPath`, describe shares under `mounts[]`, describe volumes under
+`volumes[]`, and convert path-keyed write files to list entries:
+
+```diff
+- "writeFiles": {
+-   "/etc/example.conf": { "text": "hello" }
+- }
++ "writeFiles": [
++   { "guestPath": "/etc/example.conf", "text": "hello" }
++ ]
+```
+
+Use `virtie/manifest-example-simple.toml` for the smallest hand-written shape
+and `virtie/manifest-example-full.toml` for the complete v2 field set.
+
 ## 2026-05-12: native ext4 volume image creation
 
 ### Who Is Affected

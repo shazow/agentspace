@@ -2,9 +2,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -116,7 +114,7 @@ func loadManifestData(path string) (*manifest.Manifest, string, []byte, error) {
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("open manifest %q: %w", resolvedPath, err)
 	}
-	manifest, err := manifest.Load(bytes.NewReader(data))
+	manifest, err := manifest.LoadBytes(data, resolvedPath)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("load manifest %q: %w", resolvedPath, err)
 	}
@@ -125,22 +123,10 @@ func loadManifestData(path string) (*manifest.Manifest, string, []byte, error) {
 }
 
 func writeManifestWorkingDir(path string, data []byte, workingDir string) error {
-	var document map[string]any
-	if err := json.Unmarshal(data, &document); err != nil {
-		return fmt.Errorf("decode manifest %q for update: %w", path, err)
-	}
-
-	paths, ok := document["paths"].(map[string]any)
-	if !ok {
-		return fmt.Errorf("decode manifest %q for update: manifest.paths must be an object", path)
-	}
-	paths["workingDir"] = workingDir
-
-	updated, err := json.MarshalIndent(document, "", "  ")
+	updated, err := manifest.UpdateWorkingDirBytes(data, path, workingDir)
 	if err != nil {
-		return fmt.Errorf("encode manifest %q: %w", path, err)
+		return fmt.Errorf("update manifest %q working dir: %w", path, err)
 	}
-	updated = append(updated, '\n')
 
 	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {

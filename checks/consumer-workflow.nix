@@ -90,8 +90,8 @@ let
     assert homeCfg.programs.git.enable;
     assert builtins.elem pkgs.hello homeCfg.home.packages;
     assert builtins.elem "./id_ed25519" manifest.ssh.argv;
-    assert manifest.qemu.memory.sizeMiB == 512;
-    assert manifest.qemu.smp.cpus == 16;
+    assert manifest.memory.sizeMiB == 512;
+    assert manifest.machine.vcpu == 16;
     assert builtins.any (volume: volume.imagePath == "/var/lib/agentspace/home.img") manifest.volumes;
     assert builtins.any (
       volume: volume.imagePath == "/var/lib/agentspace/nix-store-overlay.img"

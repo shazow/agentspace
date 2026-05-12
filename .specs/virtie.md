@@ -42,6 +42,7 @@ Acceptance criteria:
 
 - [x] Implement manifest loading, validation, defaulting, and path resolution.
 - [x] Replace `qemu.argvTemplate` with a typed `qemu` manifest contract that captures the resolved host-side launch inputs.
+- [x] Replace the resolved `qemu` manifest contract with manifest v2 facts and move host-side QEMU policy derivation into `virtie`.
 - [x] Implement QEMU argv compilation inside `virtie`, using `govmm/qemu` for typed device emission where it fits and local raw-arg assembly for user networking, memfd memory, balloon flags, and block-device details that are not modeled cleanly.
 - [x] Implement QMP connection management with `go-qemu/qmp` for monitor readiness and graceful `quit` during teardown.
 - [x] Extend the QMP session to use `go-qemu/qmp/raw` for `query-balloon`, `balloon`, `qom-set`, `qom-get`, and `qom-list` so runtime balloon control can share the same monitor connection as shutdown.
@@ -64,52 +65,40 @@ Acceptance criteria:
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
 - [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface, including saved suspend/resume coverage.
 - [x] Add typed graphical display compilation for `gtk` and `cocoa` manifest backends.
+- [x] Add JSON and TOML decoding for manifest v2, with Nix-generated manifests remaining JSON.
 
 ## Appendix
 
-- Current manifest contract:
+- Current manifest contract is v2:
+  - `version = 2`
   - `identity.hostName`
   - `paths.workingDir`
   - `paths.lockPath`
   - optional `paths.runtimeDir`
   - `persistence.directories`
+  - optional `host.system`, `host.os`, `host.arch`, `host.netcatPath`, and `host.qemuSeccomp`
   - `ssh.argv`
   - `ssh.user`
-  - `qemu.binaryPath`
-  - `qemu.name`
-  - `qemu.machine`
-  - `qemu.cpu`
-  - `qemu.memory`
-  - `qemu.kernel`
-  - `qemu.smp`
-  - `qemu.console`
-  - `qemu.knobs`
-  - optional `qemu.graphics.backend`, one of `gtk` or `cocoa`
-  - `qemu.qmp.socketPath`
-  - `qemu.sshReady.socketPath`
-  - `qemu.devices.rng`
-  - `qemu.devices.balloon`
-  - optional `qemu.devices.balloon.controller`
-  - `qemu.devices.virtiofs[]`
-  - `qemu.devices.9p[]`
-  - `qemu.devices.block[]`
-  - `qemu.devices.network[]`
-  - `qemu.devices.vsock`
-  - `qemu.machineId`
-  - `qemu.passthroughArgs`
-  - `volumes[].imagePath`, `sizeMiB`, `fsType`, `autoCreate`, optional `label`, optional `mkfsExtraArgs` rejected for auto-created volumes
+  - optional `ssh.retryDelayMs`
+  - `qemu.binaryPath`, optional `qemu.user`, and optional `qemu.extraArgs`
+  - `machine.type`, optional `machine.vcpu`, optional `machine.id`, and optional `machine.options`
+  - optional `cpu.model` and `cpu.enableKvm`
+  - `memory.sizeMiB`
+  - `kernel.path`, `kernel.initrdPath`, optional `kernel.params`, and optional `kernel.serialConsole`
+  - optional `graphics.backend`, one of `gtk` or `cocoa`
+  - optional `sockets.qmp`, `sockets.guestAgent`, and `sockets.sshReady`
+  - `volumes[].imagePath`, `sizeMiB`, `fsType`, `autoCreate`, optional `label`, `readOnly`, `direct`, and optional `serial`
   - auto-created volumes are ext4 only and require `sizeMiB >= 256`; this is a conservative contract minimum for persistence volumes and formatter headroom, even though the current native ext4 codepath works for whole-MiB sizes greater than `128 MiB`
-  - `virtiofs.daemons[].socketPath`
-  - `virtiofs.daemons[].command`
-  - `virtiofs.daemons[]` contains only `virtiofsd` sockets managed by `virtie`; the generated Nix store share may omit a matching daemon when `agentspace.sandbox.nixStoreShareSocket` is set.
-  - `qemu.devices.9p[]` shares contain `id`, `sourcePath`, `tag`, `securityModel`, `readOnly`, and `transport`; they do not start `virtiofsd` daemons or add socket readiness waits.
-  - optional `writeFiles`, keyed by absolute guest path, with exactly one of plaintext `text` or host `path`, optional `chown`, optional three- or four-digit octal `mode`, and optional `overwrite` defaulting to false
+  - `mounts[]` entries for `virtiofs` and `9p`; managed `virtiofsd` commands live under `mounts[].daemon`
+  - optional `network[]` entries with structured `forwardPorts[]`
+  - optional `balloon` device facts and controller configuration
+  - optional `writeFiles[]`, with `guestPath`, exactly one of plaintext `text` or host `path`, optional `chown`, optional three- or four-digit octal `mode`, and optional `overwrite` defaulting to false
   - optional `notifications.command` with `{ path, args }`; notification command execution is best-effort
   - optional `notifications.states` allowlist; empty or omitted means all states
   - optional `vsock.cidRange`, defaulting to `3..65535`
 - Runtime assumptions:
-  - An upstream producer has already produced the guest image inputs, resolved host-side QEMU settings, and manifest.
-  - `virtie` treats the manifest as a Nix-agnostic runtime contract; Nix and microvm.nix option semantics must be lowered before this boundary.
+  - An upstream producer has already produced the guest image inputs, package paths, host facts, and manifest.
+  - `virtie` treats the manifest as a Nix-agnostic runtime contract; Nix and microvm.nix option semantics must be lowered into v2 facts before this boundary.
   - QEMU fields are validated only when `virtie` must interpret them before launch, such as transport selection or virtiofs socket waits. Values passed directly into QEMU args are allowed through so QEMU reports invalid inputs.
   - `ssh` is available on the host.
   - The guest writes `READY` to `/dev/virtio-ports/virtie.ssh.ready` after `sshd.service` is started.

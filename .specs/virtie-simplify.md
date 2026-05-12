@@ -3,7 +3,7 @@
 Proposal to simplify the sandbox launcher by moving host-side QEMU policy from
 Nix into `virtie`.
 
-**Status**: Proposal
+**Status**: Implemented
 
 ## Goals
 
@@ -65,20 +65,18 @@ Policy that should move to `virtie`:
 
 ## Implementation Plan
 
-- Add a new manifest version or compatibility discriminator so `virtie` can
+- [x] Add a new manifest version or compatibility discriminator so `virtie` can
   distinguish the current fully resolved `qemu` contract from the thinner facts
   contract during migration.
-- Introduce Go types for the thinner facts contract without mirroring raw
+- [x] Introduce Go types for the thinner facts contract without mirroring raw
   `microvm.nix` option internals one-for-one.
-- Add a Go policy compiler that converts the thinner facts into the existing
+- [x] Add a Go policy compiler that converts the thinner facts into the existing
   internal `manifest.QEMU` shape, then reuse the current QEMU argv builder.
-- Keep the current Nix-generated `manifest.qemu` path as the parity oracle while
-  the new compiler is developed.
-- Update `sandbox-qemu.nix` to emit the thinner facts contract once the parity
+- [x] Update `sandbox-qemu.nix` to emit the thinner facts contract once the parity
   suite covers representative launch configurations.
-- Delete `agentspace-qemu-config.nix` only after the new manifest path is used by
+- [x] Delete `agentspace-qemu-config.nix` only after the new manifest path is used by
   the generated launch wrapper and parity checks pass.
-- Update `.specs/agentspace.md`, `.specs/virtie.md`, and `MIGRATION.md` if the
+- [x] Update `.specs/agentspace.md`, `.specs/virtie.md`, and `MIGRATION.md` if the
   manifest contract changes for direct manifest producers.
 
 ## Validation
@@ -121,14 +119,14 @@ Repo-level checks should also cover:
 
 ## Acceptance Criteria
 
-- [ ] The generated manifest no longer embeds a fully resolved `qemu` section for
+- [x] The generated manifest no longer embeds a fully resolved `qemu` section for
       the supported launch path.
-- [ ] `virtie` derives the supported QEMU policy from the thinner manifest facts
+- [x] `virtie` derives the supported QEMU policy from the thinner manifest facts
       and produces the same effective QEMU invocation as the current path.
-- [ ] Parity checks cover the required representative configurations.
-- [ ] `agentspace-qemu-config.nix` is deleted and not replaced with an equivalent
+- [x] Parity checks cover the required representative configurations.
+- [x] `agentspace-qemu-config.nix` is deleted and not replaced with an equivalent
       Nix policy builder elsewhere.
-- [ ] Direct manifest producer migration notes are documented if compatibility
+- [x] Direct manifest producer migration notes are documented if compatibility
       changes.
-- [ ] The existing `virtie launch --manifest=MANIFEST` CLI and supported
+- [x] The existing `virtie launch --manifest=MANIFEST` CLI and supported
       sandbox UX remain unchanged.

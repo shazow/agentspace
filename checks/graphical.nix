@@ -47,8 +47,7 @@ in
 {
   graphical-manifest-contract =
     assert graphicalVM.config.microvm.graphics.enable == true;
-    assert manifest.qemu.knobs.noGraphic == false;
-    assert manifest.qemu.graphics.backend == graphicalVM.config.microvm.graphics.backend;
+    assert manifest.graphics.backend == graphicalVM.config.microvm.graphics.backend;
     assert builtins.elem "drm" graphicalVM.config.boot.kernelModules;
     assert builtins.elem "virtio_gpu" graphicalVM.config.boot.kernelModules;
     pkgs.runCommand "graphical-manifest-contract" { } "touch $out";

@@ -444,6 +444,7 @@ let
 
   manifest = pkgs.writeText "virtie-fake-manifest.json" (
     builtins.toJSON {
+      version = 2;
       identity.hostName = "virtie-fake";
       paths = {
         workingDir = ".";
@@ -461,75 +462,22 @@ let
       };
       qemu = {
         binaryPath = "${fakeTools}/bin/qemu-system-x86_64";
-        name = "virtie-fake";
-        machine = {
-          type = "microvm";
-          options = [ "accel=tcg" ];
-        };
-        cpu = {
-          model = "host";
-        };
-        memory = {
-          sizeMiB = 256;
-          backend = "default";
-        };
-        kernel = {
-          path = "/tmp/vmlinuz";
-          initrdPath = "/tmp/initrd";
-          params = "panic=-1";
-        };
-        smp = {
-          cpus = 2;
-        };
-        console = {
-          stdioChardev = true;
-        };
-        knobs = {
-          noDefaults = true;
-          noUserConfig = true;
-          noReboot = true;
-          noGraphic = true;
-        };
-        qmp = {
-          socketPath = "qmp.sock";
-        };
-        guestAgent = {
-          socketPath = "qga.sock";
-        };
-        devices = {
-          rng = {
-            id = "rng0";
-            transport = "pci";
-          };
-          virtiofs = [
-            {
-              id = "fs0";
-              socketPath = "virtiofs.sock";
-              tag = "workspace";
-              transport = "pci";
-            }
-          ];
-          block = [
-            {
-              id = "vda";
-              imagePath = "overlay.img";
-              aio = "threads";
-              transport = "pci";
-            }
-          ];
-          network = [
-            {
-              id = "net0";
-              backend = "user";
-              macAddress = "02:02:00:00:00:01";
-              transport = "pci";
-            }
-          ];
-          vsock = {
-            id = "vsock0";
-            transport = "pci";
-          };
-        };
+      };
+      host = {
+        system = "x86_64-linux";
+        os = "linux";
+        arch = "x86_64";
+      };
+      machine = {
+        type = "microvm";
+        vcpu = 2;
+        options.accel = "tcg";
+      };
+      cpu.model = "host";
+      memory.sizeMiB = 256;
+      kernel = {
+        path = "/tmp/vmlinuz";
+        initrdPath = "/tmp/initrd";
       };
       volumes = [
         {
@@ -540,28 +488,31 @@ let
           label = null;
         }
       ];
-      virtiofs.daemons = [
+      mounts = [
         {
+          type = "virtiofs";
           tag = "workspace";
           socketPath = "virtiofs.sock";
-          command = {
+          daemon = {
             path = "${fakeTools}/bin/virtiofsd-workspace";
             args = [ ];
           };
         }
       ];
-      writeFiles = {
-        "/etc/virtie/inline" = {
+      writeFiles = [
+        {
+          guestPath = "/etc/virtie/inline";
           chown = "agent:users";
           text = "inline-from-manifest";
           mode = "0640";
           overwrite = true;
-        };
-        "/var/lib/virtie/host" = {
+        }
+        {
+          guestPath = "/var/lib/virtie/host";
           overwrite = true;
           path = "host-write-file";
-        };
-      };
+        }
+      ];
     }
   );
 

@@ -18,21 +18,21 @@ const (
 )
 
 type Device struct {
-	ID                string            `json:"id"`
-	Transport         string            `json:"transport"`
-	DeflateOnOOM      bool              `json:"deflateOnOOM,omitempty"`
-	FreePageReporting bool              `json:"freePageReporting,omitempty"`
-	Controller        *ControllerConfig `json:"controller,omitempty"`
+	ID                string            `json:"id" toml:"id"`
+	Transport         string            `json:"transport" toml:"transport"`
+	DeflateOnOOM      bool              `json:"deflateOnOOM,omitempty" toml:"deflateOnOOM"`
+	FreePageReporting bool              `json:"freePageReporting,omitempty" toml:"freePageReporting"`
+	Controller        *ControllerConfig `json:"controller,omitempty" toml:"controller"`
 }
 
 type ControllerConfig struct {
-	MinActualMiB             int `json:"minActualMiB"`
-	MaxActualMiB             int `json:"maxActualMiB,omitempty"`
-	GrowBelowAvailableMiB    int `json:"growBelowAvailableMiB"`
-	ReclaimAboveAvailableMiB int `json:"reclaimAboveAvailableMiB"`
-	StepMiB                  int `json:"stepMiB,omitempty"`
-	PollIntervalSeconds      int `json:"pollIntervalSeconds,omitempty"`
-	ReclaimHoldoffSeconds    int `json:"reclaimHoldoffSeconds,omitempty"`
+	MinActualMiB             int `json:"minActualMiB" toml:"minActualMiB"`
+	MaxActualMiB             int `json:"maxActualMiB,omitempty" toml:"maxActualMiB"`
+	GrowBelowAvailableMiB    int `json:"growBelowAvailableMiB" toml:"growBelowAvailableMiB"`
+	ReclaimAboveAvailableMiB int `json:"reclaimAboveAvailableMiB" toml:"reclaimAboveAvailableMiB"`
+	StepMiB                  int `json:"stepMiB,omitempty" toml:"stepMiB"`
+	PollIntervalSeconds      int `json:"pollIntervalSeconds,omitempty" toml:"pollIntervalSeconds"`
+	ReclaimHoldoffSeconds    int `json:"reclaimHoldoffSeconds,omitempty" toml:"reclaimHoldoffSeconds"`
 }
 
 func ApplyDefaults(memoryMiB int, device *Device) {

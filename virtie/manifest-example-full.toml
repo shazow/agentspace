@@ -1,0 +1,139 @@
+version = 2
+
+[identity]
+hostName = "virtie"
+
+[paths]
+workingDir = "."
+lockPath = ".virtie/virtie.lock"
+runtimeDir = ""
+
+[persistence]
+directories = [".virtie"]
+baseDir = ".virtie"
+stateDir = ".virtie"
+
+[host]
+system = "x86_64-linux"
+os = "linux"
+arch = "x86_64"
+netcatPath = "nc"
+qemuSeccomp = false
+
+[qemu]
+binaryPath = "qemu-system-x86_64"
+extraArgs = []
+
+[machine]
+type = "microvm"
+vcpu = 2
+
+[machine.options]
+accel = "kvm:tcg"
+acpi = "on"
+mem-merge = "on"
+pic = "off"
+pit = "off"
+pcie = "on"
+rtc = "on"
+usb = "off"
+
+[cpu]
+model = "host,+x2apic,-sgx"
+enableKvm = true
+
+[memory]
+sizeMiB = 1024
+
+[kernel]
+path = "/tmp/vmlinuz"
+initrdPath = "/tmp/initrd"
+params = []
+serialConsole = false
+
+[sockets]
+qmp = "qmp.sock"
+guestAgent = "qga.sock"
+sshReady = "ssh-ready.sock"
+
+[ssh]
+argv = [
+  "ssh",
+  "-q",
+  "-o",
+  "StrictHostKeyChecking=no",
+  "-o",
+  "UserKnownHostsFile=/dev/null",
+  "-o",
+  "GlobalKnownHostsFile=/dev/null",
+]
+user = "agent"
+retryDelayMs = 1000
+
+[vsock.cidRange]
+start = 3
+end = 65535
+
+[[volumes]]
+imagePath = ".virtie/root.img"
+sizeMiB = 256
+fsType = "ext4"
+autoCreate = true
+readOnly = false
+
+[[mounts]]
+type = "virtiofs"
+tag = "workspace"
+sourcePath = "."
+socketPath = "workspace.sock"
+readOnly = false
+securityModel = "mapped"
+cache = "auto"
+
+[mounts.daemon]
+path = "/usr/libexec/virtiofsd"
+args = []
+
+[[network]]
+id = "microvm1"
+type = "user"
+macAddress = "02:02:00:00:00:01"
+
+[[network.forwardPorts]]
+proto = "tcp"
+from = "host"
+
+[network.forwardPorts.host]
+address = "127.0.0.1"
+port = 2222
+
+[network.forwardPorts.guest]
+address = "10.0.2.15"
+port = 22
+
+[balloon]
+id = "balloon0"
+deflateOnOOM = false
+freePageReporting = true
+
+[balloon.controller]
+minActualMiB = 512
+maxActualMiB = 1024
+growBelowAvailableMiB = 256
+reclaimAboveAvailableMiB = 512
+stepMiB = 256
+pollIntervalSeconds = 5
+reclaimHoldoffSeconds = 30
+
+[[writeFiles]]
+guestPath = "/etc/example.conf"
+text = "example"
+mode = "0644"
+overwrite = false
+
+[notifications.command]
+path = "/bin/sh"
+args = ["-c", "printf '%s\\n' \"$VIRTIE_NOTIFY_STATE\""]
+
+[notifications]
+states = []
