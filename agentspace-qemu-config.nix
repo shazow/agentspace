@@ -1,3 +1,8 @@
+# Lower evaluated microvm.nix settings into the typed manifest.qemu contract
+# consumed by virtie. This is active launch policy for the supported
+# virtiofs+ssh+qemu path, not dead legacy glue. Future removal should follow
+# .specs/virtie-microvm.md by moving policy ownership into virtie rather than
+# deleting fields ad hoc.
 {
   config,
   lib,
