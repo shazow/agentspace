@@ -316,7 +316,18 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
 		t.Fatalf("expected launch to clear stale suspend state, stat err: %v", err)
 	}
-	assertLaunchStatsLog(t, logOutput.String(), []string{
+	logs := logOutput.String()
+	for _, want := range []string{
+		"creating volume image",
+		"path=" + volumeImage,
+		"size_mib=256",
+		"fs_type=ext4",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected volume creation log to contain %q, got %q", want, logs)
+		}
+	}
+	assertLaunchStatsLog(t, logs, []string{
 		"started_to_boot=",
 		"boot_to_qmp=",
 		"files_to_first_ssh=",

@@ -250,7 +250,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err := removeSocketPaths([]string{sshReadySocketPath}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := ensureVolumeImages(volumes); err != nil {
+	if err := ensureVolumeImages(volumes, m.logger); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 
@@ -1297,7 +1297,7 @@ func volumeImagePaths(volumes []manifest.Volume) []string {
 	return paths
 }
 
-func ensureVolumeImages(volumes []manifest.Volume) error {
+func ensureVolumeImages(volumes []manifest.Volume, logger *slog.Logger) error {
 	for _, volume := range volumes {
 		if !volume.AutoCreate {
 			continue
@@ -1314,6 +1314,7 @@ func ensureVolumeImages(volumes []manifest.Volume) error {
 			return fmt.Errorf("stat volume image %q: %w", volume.ImagePath, err)
 		}
 
+		logger.Info("creating volume image", "path", volume.ImagePath, "size_mib", volume.SizeMiB, "fs_type", volume.FSType)
 		if err := createVolumeImage(volume); err != nil {
 			return err
 		}
