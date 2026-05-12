@@ -2343,7 +2343,7 @@ func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
 		{
 			name: "gtk",
 			qemu: manifest.QEMUGraphics{Backend: "gtk"},
-			want: []string{"-display", "gtk,gl=on", "virtio-vga-gl", "qemu-xhci", "usb-tablet", "usb-kbd"},
+			want: []string{"-display", "gtk,gl=off", "virtio-vga", "qemu-xhci", "usb-tablet", "usb-kbd"},
 		},
 		{
 			name: "cocoa",

@@ -42,7 +42,7 @@ mkSandbox {
 
 The supported v1 backends are:
 
-- `gtk`: Linux default, lowered to QEMU's GTK OpenGL display path.
+- `gtk`: Linux default, lowered to QEMU's GTK display path.
 - `cocoa`: Darwin default, lowered to QEMU's Cocoa display path.
 
 `microvm.graphics.socket` remains unused for the QEMU backend, matching the
@@ -60,8 +60,8 @@ adds the display, GPU, USB tablet, and USB keyboard QEMU devices.
 For `gtk`, `virtie` emits:
 
 ```console
--display gtk,gl=on
--device virtio-vga-gl
+-display gtk,gl=off
+-device virtio-vga
 -device qemu-xhci
 -device usb-tablet
 -device usb-kbd
@@ -89,6 +89,12 @@ module, including `drm` and `virtio_gpu`.
 - Opt-in E2E: add `checks/graphical.nix`, separate from default checks, that
   builds and boots a small graphical sandbox under a host display shim and uses
   SSH to assert guest graphics readiness before shutting down.
+  It is exposed as
+  `.#legacyPackages.x86_64-linux.graphicalChecks.graphical-real-boot-smoke`
+  rather than under `checks` so `nix flake check` does not run a real
+  graphical VM by default. Because it boots a real QEMU VM and needs host
+  devices such as `/dev/vhost-vsock`, run it with Nix sandboxing disabled:
+  `nix build .#legacyPackages.x86_64-linux.graphicalChecks.graphical-real-boot-smoke --option sandbox false`.
 
 ## Progress
 

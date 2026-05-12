@@ -25,6 +25,7 @@ let
         {
           microvm.cpu = "max";
           microvm.graphics.enable = true;
+          microvm.virtiofsd.group = null;
           microvm.qemu.machineOpts = {
             accel = "tcg";
             mem-merge = "on";
@@ -57,7 +58,7 @@ in
       nativeBuildInputs = [
         pkgs.coreutils
         pkgs.openssh
-        pkgs.xorg.xvfb
+        pkgs.xvfb-run
       ];
       __noChroot = true;
     }

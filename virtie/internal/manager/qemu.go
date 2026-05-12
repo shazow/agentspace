@@ -291,7 +291,7 @@ func qemuGraphicsArgs(graphics manifest.QEMUGraphics) ([]string, error) {
 	args := []string{}
 	switch graphics.Backend {
 	case "gtk":
-		args = append(args, "-display", "gtk,gl=on", "-device", "virtio-vga-gl")
+		args = append(args, "-display", "gtk,gl=off", "-device", "virtio-vga")
 	case "cocoa":
 		args = append(args, "-display", "cocoa", "-device", "virtio-gpu")
 	default:

@@ -118,6 +118,14 @@
       vmConfigs = {
         default = mkSandbox { };
       };
+      checkArgs = {
+        inherit
+          mkLaunch
+          mkSandbox
+          pkgs
+          virtiePackage
+          ;
+      };
     in
     {
       nixosConfigurations = vmConfigs;
@@ -131,13 +139,15 @@
       };
 
       checks.${system} = import ./checks {
-        inherit
+        inherit (checkArgs)
           mkLaunch
           mkSandbox
           pkgs
           virtiePackage
           ;
       };
+
+      legacyPackages.${system}.graphicalChecks = import ./checks/graphical.nix checkArgs;
 
       apps.${system} = {
         default = self.apps.${system}.launch;
