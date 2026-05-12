@@ -5,20 +5,11 @@
   ...
 }:
 let
-  graphicalPrivateKey = pkgs.writeText "agentspace-graphical-test-key" ''
-    -----BEGIN OPENSSH PRIVATE KEY-----
-    b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-    QyNTUxOQAAACDs5JSkHdhirv4IlJL748zDDZ8ALUx+pK52d0sD1s2neQAAAKDFGLshxRi7
-    IQAAAAtzc2gtZWQyNTUxOQAAACDs5JSkHdhirv4IlJL748zDDZ8ALUx+pK52d0sD1s2neQ
-    AAAEBIFmjS+iJuRr/KCw7dOZpUHHWV8isoRjOO0dU2QQjQN+zklKQd2GKu/giUkvvjzMMN
-    nwAtTH6krnZ3SwPWzad5AAAAGWFnZW50c3BhY2UtZ3JhcGhpY2FsLXRlc3QBAgME
-    -----END OPENSSH PRIVATE KEY-----
-  '';
-  graphicalPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOzklKQd2GKu/giUkvvjzMMNnwAtTH6krnZ3SwPWzad5 agentspace-graphical-test";
+  sshKeys = import ./ssh-keys.nix { inherit pkgs; };
 
   graphicalVM = mkSandbox {
-    ssh.authorizedKeys = [ graphicalPublicKey ];
-    ssh.identityFile = "./id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.graphical.publicKey ];
+    ssh.identityFile = sshKeys.graphical.identityFile;
     persistence = {
       homeImage = null;
       storeOverlay = "nix-store-overlay.img";
@@ -80,7 +71,7 @@ in
       mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
       chmod 700 "$XDG_RUNTIME_DIR"
 
-      install -m 0600 ${graphicalPrivateKey} ./id_ed25519
+      install -m 0600 ${sshKeys.graphical.privateKey} ./id_ed25519
 
       xvfb-run -a -s "-screen 0 1024x768x24" \
         timeout 240s ${launchScript} \

@@ -4,7 +4,7 @@
   ...
 }:
 let
-  testPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBIqXkHFLTDd7n09425txXfdOgJDUb7CpMAdCPVRS94z agentspace-virtie-test";
+  sshKeys = import ./ssh-keys.nix { inherit pkgs; };
   notificationCommand = "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\"";
   fakeQemuPackage = pkgs.runCommand "fake-qemu-package" { configureFlags = [ ]; } ''
     mkdir -p "$out/bin"
@@ -12,14 +12,14 @@ let
   '';
 
   vmVirtie = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
   };
 
   vmVirtieFeatureRich = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
     balloon = true;
     writeFiles = {
@@ -44,23 +44,23 @@ let
   };
 
   vmVirtieBalloonDisabled = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
     balloon = false;
   };
 
   vmVirtieExternalStoreSocket = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
     mountWorkspace = false;
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
   vmVirtieExtraShares = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
     shares = [
       {
@@ -82,8 +82,8 @@ let
   };
 
   vmVirtieFixedMachine = mkSandbox {
-    ssh.authorizedKeys = [ testPublicKey ];
-    ssh.identityFile = ".agentspace-test/id_ed25519";
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
     machine = {
       memory = 512;
