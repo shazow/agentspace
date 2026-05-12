@@ -18,7 +18,10 @@ let
     else
       "tcg";
 
-  requirePci = (!lib.hasPrefix "microvm" microvm.qemu.machine) || microvm.shares != [ ];
+  requirePci =
+    (!lib.hasPrefix "microvm" microvm.qemu.machine)
+    || microvm.shares != [ ]
+    || microvm.graphics.enable;
   transport = if requirePci then "pci" else "mmio";
   virtiofsShares = builtins.filter (share: share.proto == "virtiofs") microvm.shares;
   ninepShares = builtins.filter (share: share.proto == "9p") microvm.shares;

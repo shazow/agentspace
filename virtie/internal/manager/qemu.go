@@ -105,7 +105,7 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	if qemu.Devices.I8042 {
 		args = append(args, "-device", "i8042")
 	}
-	if qemu.Knobs.NoGraphic {
+	if qemu.NoGraphicEnabled() {
 		args = append(args, "-nographic")
 	} else if qemu.Graphics != nil {
 		displayArgs, err := qemuGraphicsArgs(*qemu.Graphics)

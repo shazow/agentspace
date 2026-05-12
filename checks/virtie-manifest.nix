@@ -109,16 +109,7 @@ let
       microvm = {
         qemu = {
           machine = "microvm";
-          machineOpts = {
-            accel = "tcg";
-            mem-merge = "on";
-            acpi = "on";
-            pit = "off";
-            pic = "off";
-            pcie = "on";
-            rtc = "on";
-            usb = "off";
-          };
+          machineOpts = null;
           package = fakeQemuPackage;
           serialConsole = false;
           extraArgs = [ ];
@@ -218,6 +209,10 @@ let
   _graphical =
     assert graphicalQemuConfig.knobs.noGraphic == false;
     assert graphicalQemuConfig.graphics.backend == "gtk";
+    assert builtins.elem "pcie=on" graphicalQemuConfig.machine.options;
+    assert graphicalQemuConfig.devices.rng.transport == "pci";
+    assert graphicalQemuConfig.devices.vsock.transport == "pci";
+    assert builtins.all (network: network.transport == "pci") graphicalQemuConfig.devices.network;
     true;
 
   _externalStoreSocket =

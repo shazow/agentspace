@@ -126,11 +126,11 @@ type QEMUConsole struct {
 }
 
 type QEMUKnobs struct {
-	NoDefaults     bool `json:"noDefaults,omitempty"`
-	NoUserConfig   bool `json:"noUserConfig,omitempty"`
-	NoReboot       bool `json:"noReboot,omitempty"`
-	NoGraphic      bool `json:"noGraphic,omitempty"`
-	SeccompSandbox bool `json:"seccompSandbox,omitempty"`
+	NoDefaults     bool  `json:"noDefaults,omitempty"`
+	NoUserConfig   bool  `json:"noUserConfig,omitempty"`
+	NoReboot       bool  `json:"noReboot,omitempty"`
+	NoGraphic      *bool `json:"noGraphic,omitempty"`
+	SeccompSandbox bool  `json:"seccompSandbox,omitempty"`
 }
 
 type QEMUGraphics struct {
@@ -285,8 +285,8 @@ func (m *Manifest) applyDefaults() {
 	if m.QEMU.SSHReady.SocketPath == "" {
 		m.QEMU.SSHReady.SocketPath = defaultSSHReadySocket
 	}
-	if m.QEMU.Graphics == nil {
-		m.QEMU.Knobs.NoGraphic = true
+	if m.QEMU.Knobs.NoGraphic == nil {
+		m.QEMU.Knobs.NoGraphic = boolPtr(m.QEMU.Graphics == nil)
 	}
 
 	if m.VSock.CIDRange.Start == 0 {
@@ -718,4 +718,15 @@ func (m *Manifest) SSHDestination(cid int) string {
 
 func intPtr(value int) *int {
 	return &value
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func (q QEMU) NoGraphicEnabled() bool {
+	if q.Knobs.NoGraphic != nil {
+		return *q.Knobs.NoGraphic
+	}
+	return q.Graphics == nil
 }

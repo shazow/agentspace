@@ -83,7 +83,7 @@ in
       install -m 0600 ${graphicalPrivateKey} ./id_ed25519
 
       xvfb-run -a -s "-screen 0 1024x768x24" \
-        timeout 240s ${launchScript} -- \
+        timeout 240s ${launchScript} \
           bash -lc 'test -d /sys/class/drm && ls /sys/class/drm/card* >/dev/null && command -v run-wayland-proxy >/dev/null'
 
       touch "$out"

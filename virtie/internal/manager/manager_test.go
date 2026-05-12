@@ -2355,7 +2355,7 @@ func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manifest := validManifest("/tmp/work")
-			manifest.QEMU.Knobs.NoGraphic = false
+			manifest.QEMU.Knobs.NoGraphic = boolPtr(false)
 			manifest.QEMU.Graphics = &tt.qemu
 
 			spec, err := buildQEMUSpec(manifest, 42)
@@ -2372,6 +2372,27 @@ func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildQEMUSpecPreservesPassthroughGraphicsArgs(t *testing.T) {
+	manifest := validManifest("/tmp/work")
+	manifest.QEMU.Knobs.NoGraphic = boolPtr(false)
+	manifest.QEMU.Graphics = nil
+	manifest.QEMU.PassthroughArgs = []string{"-display", "sdl", "-device", "virtio-vga"}
+
+	spec, err := buildQEMUSpec(manifest, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	if containsString(spec.Args, "-nographic") {
+		t.Fatalf("expected passthrough graphical qemu args to omit -nographic: %v", spec.Args)
+	}
+	for _, want := range manifest.QEMU.PassthroughArgs {
+		if !containsString(spec.Args, want) {
+			t.Fatalf("expected qemu args to include passthrough arg %q: %v", want, spec.Args)
+		}
 	}
 }
 
@@ -2597,7 +2618,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 				NoDefaults:   true,
 				NoUserConfig: true,
 				NoReboot:     true,
-				NoGraphic:    true,
+				NoGraphic:    boolPtr(true),
 			},
 			QMP: manifest.QEMUQMP{
 				SocketPath: "qmp.sock",
@@ -3478,6 +3499,10 @@ func stringPtr(value string) *string {
 }
 
 func intPtr(value int) *int {
+	return &value
+}
+
+func boolPtr(value bool) *bool {
 	return &value
 }
 
