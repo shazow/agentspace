@@ -594,6 +594,24 @@ func TestWaitForSSHReadyFailsOnTimeout(t *testing.T) {
 	}
 }
 
+func TestNewManagerUsesSSHReadyTimeoutEnv(t *testing.T) {
+	t.Setenv(sshReadyTimeoutEnv, "5m")
+
+	manager := newManager()
+	if got, want := manager.sshReadyTimeout, 5*time.Minute; got != want {
+		t.Fatalf("unexpected ssh readiness timeout: got %s want %s", got, want)
+	}
+}
+
+func TestNewManagerIgnoresInvalidSSHReadyTimeoutEnv(t *testing.T) {
+	t.Setenv(sshReadyTimeoutEnv, "0")
+
+	manager := newManager()
+	if got, want := manager.sshReadyTimeout, defaultSSHReadyTimeout; got != want {
+		t.Fatalf("unexpected ssh readiness timeout: got %s want %s", got, want)
+	}
+}
+
 func TestWaitForSSHReadyRejectsUnexpectedToken(t *testing.T) {
 	manager := &manager{
 		socketWaiter:    &fakeSocketWaiter{callback: func(paths []string) error { return nil }},

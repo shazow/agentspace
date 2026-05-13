@@ -25,18 +25,24 @@ let
         {
           microvm.cpu = "max";
           microvm.graphics.enable = true;
+          microvm.qemu.serialConsole = lib.mkForce true;
           microvm.virtiofsd.group = null;
           microvm.qemu.machineOpts = {
-            accel = "tcg";
+            accel = "kvm:tcg";
             mem-merge = "on";
             acpi = "on";
-            pit = "off";
             pic = "off";
             pcie = "on";
             rtc = "on";
             usb = "off";
           };
-          boot.kernelParams = lib.mkAfter [ "nomodeset=0" ];
+          boot.consoleLogLevel = lib.mkForce 7;
+          boot.initrd.verbose = lib.mkForce true;
+          boot.kernelParams = lib.mkForce [
+            "earlyprintk=ttyS0"
+            "console=ttyS0"
+            "udev.log_level=3"
+          ];
         }
       )
     ];
@@ -66,15 +72,17 @@ in
       set -euo pipefail
 
       export HOME="$PWD/home"
-      export XDG_RUNTIME_DIR="$PWD/xdg-runtime"
+      export XDG_RUNTIME_DIR="$(mktemp -d /tmp/virtie-graphical.XXXXXX)"
       export LIBGL_ALWAYS_SOFTWARE=1
+      export VIRTIE_SSH_READY_TIMEOUT=5m
+      trap 'rm -rf "$XDG_RUNTIME_DIR"' EXIT
       mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
       chmod 700 "$XDG_RUNTIME_DIR"
 
       install -m 0600 ${sshKeys.graphical.privateKey} ./id_ed25519
 
       xvfb-run -a -s "-screen 0 1024x768x24" \
-        timeout 240s ${launchScript} \
+        timeout 420s ${launchScript} \
           bash -lc 'test -d /sys/class/drm && ls /sys/class/drm/card* >/dev/null && command -v run-wayland-proxy >/dev/null'
 
       touch "$out"

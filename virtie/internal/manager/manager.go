@@ -90,7 +90,7 @@ func newManager() *manager {
 		logger:              logger,
 		logWriter:           logWriter,
 		sshRetryDelay:       defaultSSHRetryDelay,
-		sshReadyTimeout:     defaultSSHReadyTimeout,
+		sshReadyTimeout:     configuredSSHReadyTimeout(),
 		shutdownDelay:       defaultShutdownDelay,
 		qmpRetryDelay:       defaultQMPRetryDelay,
 		qmpConnectTimeout:   defaultQMPConnectTimeout,

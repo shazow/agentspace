@@ -6,16 +6,31 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"time"
 )
 
 const (
 	defaultSSHReadyTimeout = 2 * time.Minute
+	sshReadyTimeoutEnv     = "VIRTIE_SSH_READY_TIMEOUT"
 	sshReadyToken          = "READY"
 )
 
 type unixSSHReadyDialer struct{}
+
+func configuredSSHReadyTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(sshReadyTimeoutEnv))
+	if raw == "" {
+		return defaultSSHReadyTimeout
+	}
+
+	timeout, err := time.ParseDuration(raw)
+	if err != nil || timeout <= 0 {
+		return defaultSSHReadyTimeout
+	}
+	return timeout
+}
 
 func (d *unixSSHReadyDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (io.ReadCloser, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, timeout)

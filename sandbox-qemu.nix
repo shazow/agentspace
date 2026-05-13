@@ -29,6 +29,12 @@ in
       description = "Username for the guest.";
     };
 
+    groups = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ "wheel" "kvm" ];
+      description = "Extra groups for the guest user.";
+    };
+
     hostName = lib.mkOption {
       type = lib.types.str;
       default = "agent-sandbox";
@@ -547,7 +553,7 @@ in
           isNormalUser = true;
           createHome = true;
           home = "/home/${cfg.user}";
-          extraGroups = [ "wheel" ];
+          extraGroups = cfg.groups;
           openssh.authorizedKeys.keys = cfg.ssh.authorizedKeys;
         };
 
