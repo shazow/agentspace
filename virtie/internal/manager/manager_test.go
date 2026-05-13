@@ -2300,6 +2300,81 @@ func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
 	}
 }
 
+func TestAllocateCIDSkipsHostUnavailableIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{
+			WorkingDir: tmpDir,
+			LockPath:   filepath.Join(tmpDir, "virtie.lock"),
+		},
+		VSock: manifest.VSock{
+			CIDRange: manifest.VSockCIDRange{
+				Start: 7,
+				End:   8,
+			},
+		},
+	}
+
+	locker := &fileLocker{}
+	checker := &fakeVSockCIDChecker{unavailable: map[int]bool{7: true}}
+	manager := &manager{
+		locker:          locker,
+		vsockCIDChecker: checker,
+	}
+	cid, lock, err := manager.allocateCID(manifest)
+	if err != nil {
+		t.Fatalf("allocate cid: %v", err)
+	}
+	defer lock.Release()
+
+	if cid != 8 {
+		t.Fatalf("unexpected cid: got %d want 8", cid)
+	}
+	if got := checker.checked; !reflect.DeepEqual(got, []int{7, 8}) {
+		t.Fatalf("unexpected checked cids: got %v want [7 8]", got)
+	}
+
+	reacquired, err := locker.Acquire(manifest.ResolvedVSockLockPath(7))
+	if err != nil {
+		t.Fatalf("expected skipped cid lock to be released: %v", err)
+	}
+	reacquired.Release()
+}
+
+func TestAllocateCIDReleasesLockAfterHostCheckError(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{
+			WorkingDir: tmpDir,
+			LockPath:   filepath.Join(tmpDir, "virtie.lock"),
+		},
+		VSock: manifest.VSock{
+			CIDRange: manifest.VSockCIDRange{
+				Start: 7,
+				End:   7,
+			},
+		},
+	}
+
+	locker := &fileLocker{}
+	manager := &manager{
+		locker: locker,
+		vsockCIDChecker: &fakeVSockCIDChecker{
+			err: errors.New("probe failed"),
+		},
+	}
+	_, _, err := manager.allocateCID(manifest)
+	if err == nil || !strings.Contains(err.Error(), "probe failed") {
+		t.Fatalf("expected probe failure, got %v", err)
+	}
+
+	reacquired, err := locker.Acquire(manifest.ResolvedVSockLockPath(7))
+	if err != nil {
+		t.Fatalf("expected errored cid lock to be released: %v", err)
+	}
+	reacquired.Release()
+}
+
 func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 
@@ -2905,6 +2980,20 @@ type fakeSSHReadyDialer struct {
 	attempts int
 	record   func(string)
 	block    bool
+}
+
+type fakeVSockCIDChecker struct {
+	unavailable map[int]bool
+	err         error
+	checked     []int
+}
+
+func (c *fakeVSockCIDChecker) Available(cid int) (bool, error) {
+	c.checked = append(c.checked, cid)
+	if c.err != nil {
+		return false, c.err
+	}
+	return !c.unavailable[cid], nil
 }
 
 func (d *fakeSSHReadyDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (io.ReadCloser, error) {

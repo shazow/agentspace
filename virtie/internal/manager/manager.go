@@ -56,6 +56,7 @@ type LaunchOptions struct {
 
 type manager struct {
 	locker              locker
+	vsockCIDChecker     vsockCIDChecker
 	runner              runner
 	socketWaiter        socketWaiter
 	qmpDialer           qmpDialer
@@ -80,6 +81,7 @@ func newManager() *manager {
 	logWriter := io.Writer(os.Stderr)
 	return &manager{
 		locker:              &fileLocker{},
+		vsockCIDChecker:     newHostVSockCIDChecker(),
 		runner:              &execRunner{},
 		socketWaiter:        &pollingSocketWaiter{},
 		qmpDialer:           &socketMonitorDialer{},
@@ -565,6 +567,17 @@ func (m *manager) allocateCID(manifest *manifest.Manifest) (int, lock, error) {
 	for cid := manifest.VSock.CIDRange.Start; cid <= manifest.VSock.CIDRange.End; cid++ {
 		lock, err := m.locker.Acquire(manifest.ResolvedVSockLockPath(cid))
 		if err == nil {
+			if m.vsockCIDChecker != nil {
+				available, err := m.vsockCIDChecker.Available(cid)
+				if err != nil {
+					_ = lock.Release()
+					return 0, nil, err
+				}
+				if !available {
+					_ = lock.Release()
+					continue
+				}
+			}
 			return cid, lock, nil
 		}
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {

@@ -15,6 +15,10 @@ type locker interface {
 	Acquire(path string) (lock, error)
 }
 
+type vsockCIDChecker interface {
+	Available(cid int) (bool, error)
+}
+
 type process interface {
 	Wait() error
 	Signal(sig os.Signal) error
