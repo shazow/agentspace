@@ -106,6 +106,12 @@ in
         default = "nix-store-overlay.img";
         description = "Path for the writable nix store overlay image.";
       };
+
+      storeDisk = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Whether to boot from a generated read-only Nix store disk instead of a host store share.";
+      };
     };
 
     mountWorkspace = lib.mkOption {
@@ -295,9 +301,11 @@ in
         "-i"
         cfg.ssh.identityFile
       ];
-      virtiofsShares = builtins.filter (share: share.proto == "virtiofs") config.microvm.shares;
       nixStoreShareUsesSocket = cfg.nixStoreShareSocket != null;
       isNixStoreShare = share: share.tag == "ro-store";
+      virtiofsShares = builtins.filter (
+        share: share.proto == "virtiofs" && !(cfg.persistence.storeDisk && isNixStoreShare share)
+      ) config.microvm.shares;
       ninepShares = builtins.filter (share: share.proto == "9p") config.microvm.shares;
       inherit (pkgs.stdenv.hostPlatform) system;
       arch = builtins.head (builtins.split "-" system);
@@ -360,7 +368,7 @@ in
         };
       };
 
-      manifestVolumes = builtins.map (volume: {
+      mkManifestVolume = volume: {
         imagePath = volume.image;
         sizeMiB = volume.size;
         fsType = volume.fsType;
@@ -369,7 +377,15 @@ in
         readOnly = volume.readOnly;
         direct = volume.direct;
         serial = volume.serial;
-      }) config.microvm.volumes;
+      };
+      manifestVolumes =
+        lib.optionals cfg.persistence.storeDisk [
+          {
+            imagePath = config.microvm.storeDisk;
+            readOnly = true;
+          }
+        ]
+        ++ builtins.map mkManifestVolume config.microvm.volumes;
 
       manifestForwardPorts = builtins.map (
         {
@@ -627,6 +643,7 @@ in
 
         # MicroVM Configuration
         microvm = {
+          storeOnDisk = cfg.persistence.storeDisk;
           mem = cfg.machine.memory;
           vcpu = lib.mkIf (cfg.machine.vcpu != null) cfg.machine.vcpu;
           balloon = lib.mkDefault cfg.balloon;
@@ -643,7 +660,7 @@ in
             }
           ];
 
-          shares = [
+          shares = lib.optionals (!cfg.persistence.storeDisk) [
             {
               proto = "virtiofs";
               tag = "ro-store";

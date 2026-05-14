@@ -13,6 +13,7 @@ let
     persistence = {
       homeImage = null;
       storeOverlay = "nix-store-overlay.img";
+      storeDisk = true;
     };
     mountWorkspace = false;
     machine = {
@@ -25,7 +26,6 @@ let
         {
           microvm.cpu = "max";
           microvm.graphics.enable = true;
-          microvm.qemu.serialConsole = lib.mkForce true;
           microvm.virtiofsd.group = null;
           microvm.qemu.machineOpts = {
             accel = "kvm:tcg";
@@ -36,13 +36,6 @@ let
             rtc = "on";
             usb = "off";
           };
-          boot.consoleLogLevel = lib.mkForce 7;
-          boot.initrd.verbose = lib.mkForce true;
-          boot.kernelParams = lib.mkForce [
-            "earlyprintk=ttyS0"
-            "console=ttyS0"
-            "udev.log_level=3"
-          ];
         }
       )
     ];
