@@ -25,7 +25,7 @@ There's a couple of examples:
 
 But to recap, here's a flake you can make to give it a try:
 
-```
+```nix
 {
   inputs = {
     agentspace.url = "github:shazow/agentspace";
