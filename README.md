@@ -47,7 +47,7 @@ But to recap, here's a flake you can make to give it a try:
         ];
 
         # VM settings
-        #machine.vcpu = 8; # Default: Use all available cores
+        #machine.vcpu = 8; # Default: Use all available cores (recommended unless you want a slow VM)
         machine.memory = 8 * 1024;
 
         # NixOS modules
