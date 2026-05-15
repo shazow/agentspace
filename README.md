@@ -1,12 +1,11 @@
 # agentspace
 
-Codespace environment for AI agents.
+A full VM environment that is safe and can recursively run itself, great for agents to work on self-improving their environment.
 
 **Status**: Prototyping
 
 Most exploring concepts around ideas here: https://github.com/shazow/shazow.net/issues/87
 
-Not necessarily usable by third-parties yet. :)
 
 ## Architecture
 
