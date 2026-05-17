@@ -374,17 +374,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			notifier:   notifier,
 		}, manifest, qmpClient)
 
-		attemptStarted := time.Now()
-		stats.MarkSSHAttempt(attemptStarted)
-		spec := buildSSHSpec(manifest, cid, remoteCommand)
-		session, err := m.startManagedProcess(spec)
-		if err != nil {
-			return &stageError{Stage: "active session", Err: err}
-		}
-		started = append(started, session)
-		stats.MarkSSHStarted(attemptStarted)
-
-		if err := m.waitForSession(launchCtx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
+		if err := m.runSSHSession(launchCtx, manifest, cid, remoteCommand, stats, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, &started); err != nil {
 			return err
 		}
 		if resumeState != nil {
@@ -882,6 +872,119 @@ func (o *sshRetryOutput) Flush() {
 	}
 }
 
+func (m *manager) runSSHSession(
+	ctx context.Context,
+	launchManifest *manifest.Manifest,
+	cid int,
+	remoteCommand []string,
+	stats *launchStats,
+	suspendRequests <-chan struct{},
+	infoRequests <-chan struct{},
+	suspendHandler *launchSuspendHandler,
+	guestAgentSocketPath string,
+	started *[]*managedProcess,
+) error {
+	argv := append([]string(nil), launchManifest.SSH.Argv...)
+	sessionLogger := m.logger
+	if sessionLogger == nil {
+		sessionLogger = slog.New(slog.DiscardHandler)
+	}
+	retryLog := newSSHRetryLogger(sessionLogger)
+	provisioned := false
+
+	for {
+		stderr := newSSHRetryOutput(m.outputWriter(), false)
+		attemptStarted := time.Now()
+		stats.MarkSSHAttempt(attemptStarted)
+		spec := buildSSHSpecWithArgv(launchManifest, cid, remoteCommand, argv)
+		spec.Stderr = stderr
+		session, err := m.startManagedProcess(spec)
+		if err != nil {
+			return &stageError{Stage: "active session", Err: err}
+		}
+		watchers := append([]*managedProcess(nil), (*started)...)
+		*started = append(*started, session)
+		stats.MarkSSHStarted(attemptStarted)
+
+		err = m.waitForSession(ctx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers...)
+		stderrText := stderr.String()
+		if err == nil {
+			stderr.Flush()
+			return nil
+		}
+		if sshTransientStartupFailure(err, stderrText) {
+			stderr.Suppress()
+			retryLog.Log(err, stderrText)
+			removeStartedProcess(started, session)
+			if waitErr := m.waitBeforeSSHRetry(ctx, launchManifest, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers...); waitErr != nil {
+				return waitErr
+			}
+			continue
+		}
+		if launchManifest.SSH.Autoprovision && !provisioned && sshAuthenticationFailure(err, stderrText) {
+			stderr.Suppress()
+			removeStartedProcess(started, session)
+			sessionLogger.Info("ssh authentication failed; autoprovisioning a key", "state_dir", launchManifest.ResolvedPersistenceStateDir(), "user", launchManifest.SSH.User)
+			key, keyErr := m.ensureSSHAutoprovisionKey(launchManifest)
+			if keyErr != nil {
+				return &stageError{Stage: "ssh autoprovision", Err: keyErr}
+			}
+			if installErr := m.installSSHAutoprovisionKey(ctx, launchManifest, key, watchers...); installErr != nil {
+				return installErr
+			}
+			sessionLogger.Info("installed autoprovisioned ssh key; retrying ssh", "identity_file", key.IdentityFile, "public_key_file", key.PublicKeyFile)
+			argv = sshArgvWithIdentity(launchManifest.SSH.Argv, key.IdentityFile)
+			provisioned = true
+			continue
+		}
+		stderr.Flush()
+		return err
+	}
+}
+
+func removeStartedProcess(started *[]*managedProcess, process *managedProcess) {
+	if started == nil || process == nil {
+		return
+	}
+	for i := len(*started) - 1; i >= 0; i-- {
+		if (*started)[i] == process {
+			*started = append((*started)[:i], (*started)[i+1:]...)
+			return
+		}
+	}
+}
+
+func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
+	delay := launchManifest.SSHRetryDelay(m.sshRetryDelay)
+	if delay <= 0 {
+		delay = m.sshRetryDelay
+	}
+	if delay <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	ticker := time.NewTicker(defaultSocketPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-timer.C:
+			return nil
+		case <-suspendRequests:
+			return suspendHandler.saveAndExit(ctx)
+		case <-infoRequests:
+			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
+		case <-ticker.C:
+			if err := firstUnexpectedExit("active session", watchers...); err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			return &stageError{Stage: "active session", Err: ctx.Err()}
+		}
+	}
+}
+
 func sshTransientStartupFailure(err error, stderr string) bool {
 	if err == nil {
 		return false
@@ -897,6 +1000,30 @@ func sshTransientStartupFailure(err error, stderr string) bool {
 	}
 	for _, transient := range transientMessages {
 		if strings.Contains(message, transient) {
+			return true
+		}
+	}
+	return false
+}
+
+func sshAuthenticationFailure(err error, stderr string) bool {
+	if err == nil && stderr == "" {
+		return false
+	}
+	message := strings.ToLower("")
+	if err != nil {
+		message = strings.ToLower(err.Error() + "\n" + stderr)
+	} else {
+		message = strings.ToLower(stderr)
+	}
+	authMessages := []string{
+		"permission denied (publickey",
+		"permission denied, please try again",
+		"no more authentication methods to try",
+		"publickey,password",
+	}
+	for _, authMessage := range authMessages {
+		if strings.Contains(message, authMessage) {
 			return true
 		}
 	}
@@ -1228,7 +1355,11 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 }
 
 func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) processSpec {
-	argv := append([]string(nil), manifest.SSH.Argv...)
+	return buildSSHSpecWithArgv(manifest, cid, remoteCommand, manifest.SSH.Argv)
+}
+
+func buildSSHSpecWithArgv(manifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) processSpec {
+	argv = append([]string(nil), argv...)
 	path := argv[0]
 	args := append([]string(nil), argv[1:]...)
 
@@ -1247,6 +1378,11 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) 
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 	}
+}
+
+func sshArgvWithIdentity(argv []string, identityFile string) []string {
+	withIdentity := append([]string(nil), argv...)
+	return append(withIdentity, "-i", identityFile, "-o", "IdentitiesOnly=yes")
 }
 
 func buildSSHCommandHint(manifest *manifest.Manifest, cid int) string {

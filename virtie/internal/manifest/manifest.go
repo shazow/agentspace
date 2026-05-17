@@ -61,9 +61,10 @@ type Persistence struct {
 }
 
 type SSH struct {
-	Argv       []string `json:"argv"`
-	User       string   `json:"user"`
-	RetryDelay *float64 `json:"retryDelay,omitempty"`
+	Argv          []string `json:"argv"`
+	User          string   `json:"user"`
+	RetryDelay    *float64 `json:"retryDelay,omitempty"`
+	Autoprovision bool     `json:"autoprovision,omitempty"`
 }
 
 type VSockCIDRange struct {

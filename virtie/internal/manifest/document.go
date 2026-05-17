@@ -142,10 +142,11 @@ type BalloonControllerFacts struct {
 }
 
 type SSHFacts struct {
-	Exec        []string `json:"exec,omitempty" toml:"exec"`
-	User        string   `json:"user,omitempty" toml:"user"`
-	ReadySocket string   `json:"ready_socket,omitempty" toml:"ready_socket"`
-	RetryDelay  *float64 `json:"retry_delay,omitempty" toml:"retry_delay"`
+	Exec          []string `json:"exec,omitempty" toml:"exec"`
+	User          string   `json:"user,omitempty" toml:"user"`
+	ReadySocket   string   `json:"ready_socket,omitempty" toml:"ready_socket"`
+	RetryDelay    *float64 `json:"retry_delay,omitempty" toml:"retry_delay"`
+	Autoprovision bool     `json:"autoprovision,omitempty" toml:"autoprovision"`
 }
 
 type VSockFacts struct {
@@ -270,9 +271,10 @@ func (d Document) Manifest() (*Manifest, error) {
 			StateDir: d.StateDir,
 		},
 		SSH: SSH{
-			Argv:       append([]string(nil), d.SSH.Exec...),
-			User:       d.SSH.User,
-			RetryDelay: d.SSH.RetryDelay,
+			Argv:          append([]string(nil), d.SSH.Exec...),
+			User:          d.SSH.User,
+			RetryDelay:    d.SSH.RetryDelay,
+			Autoprovision: d.SSH.Autoprovision,
 		},
 		VSock: VSock{
 			CIDRange: VSockCIDRange{

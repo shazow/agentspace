@@ -3,15 +3,16 @@ module github.com/shazow/agentspace/virtie
 go 1.25.7
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/adrg/xdg v0.5.3
 	github.com/digitalocean/go-qemu v0.0.0-20250212194115-ee9b0668d242
 	github.com/diskfs/go-diskfs v1.9.2
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/kata-containers/govmm v0.0.0-20220119175834-88960a15dacd
+	golang.org/x/crypto v0.51.0
 )
 
 require (
-	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/anchore/go-lzo v0.1.0 // indirect
 	github.com/digitalocean/go-libvirt v0.0.0-20220804181439-8648fbde413e // indirect
 	github.com/djherbis/times v1.6.0 // indirect
@@ -22,5 +23,5 @@ require (
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 )

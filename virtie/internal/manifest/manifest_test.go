@@ -218,6 +218,19 @@ func TestDocumentSSHExecDefaultsToEmpty(t *testing.T) {
 	}
 }
 
+func TestDocumentSSHAutoprovisionLowersToManifest(t *testing.T) {
+	document := validDocument()
+	document.SSH.Autoprovision = true
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest with ssh autoprovision: %v", err)
+	}
+	if !manifest.SSH.Autoprovision {
+		t.Fatal("expected ssh autoprovision to lower to manifest")
+	}
+}
+
 func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)

@@ -28,7 +28,7 @@ Acceptance criteria:
 - [x] The manifest emitted from `sandbox-qemu.nix` carries the current `virtie` inputs: working dir, lock path, ssh argv/user, host facts, kernel paths, volumes, mounts with managed `virtiofsd` commands, and opt-in `9p` shares.
 - [x] Unsupported launch configurations fail through explicit assertions rather than hidden fallback behavior.
 - [x] `agentspace.sandbox.extraModules` remains usable through the follow-up evaluation pass in `mkSandbox`.
-- [ ] The default `mkSandbox {}` launch experience provisions a usable out-of-the-box SSH credential story.
+- [x] The default `mkSandbox {}` launch experience provisions a usable out-of-the-box SSH credential story.
 - [x] Repo-level flake outputs and enabled checks validate the documented path end to end.
 - [x] `microvm.graphics.enable = true` is accepted and lowered into the typed `virtie` manifest for GTK or Cocoa display backends.
 
@@ -43,6 +43,7 @@ Acceptance criteria:
 - [x] Add `agentspace.sandbox.shares` for additional sandbox mounts, using the upstream `microvm.shares` schema and defaults, appended after the built-in Nix store and workspace shares.
 - [x] Opt the generated manifest into XDG runtime socket placement so default `virtiofs` and QMP sockets no longer spill into the launch working directory.
 - [x] Add a guest `virtie-ssh-signal` oneshot that writes `READY` to the named virtio-serial port after `sshd.service` starts.
+- [x] Emit `ssh.autoprovision` when the caller does not provide SSH keys so `virtie` can generate a per-state-dir key, install it into the guest, and retry SSH after an authentication failure.
 - [x] Remove `mkConnect`, `connect-agent`, and `apps.connect` so the repo exposes only the supported launch entrypoint.
 - [x] Remove the dead airlock and bundle/import workflow files so the repo matches the supported launch surface.
 - [x] Restore `agentspace.sandbox.extraModules` support via the `mkSandbox` extension pass.

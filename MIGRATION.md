@@ -4,6 +4,36 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-17: SSH autoprovisioning
+
+### Who Is Affected
+
+- Direct virtie manifest producers that want default SSH key provisioning.
+- Consumers reading default generated manifest `ssh.exec` or `write_files`.
+
+### What Changed
+
+Generated manifests now emit `ssh.autoprovision = true` when no explicit
+identity file or authorized keys are configured. `virtie` generates the default
+key in the state directory only after SSH reaches public-key authentication and
+fails, then appends the public key to the guest user's `authorized_keys`.
+
+Generated manifests no longer add an implicit `.agentspace/id_ed25519` to
+`ssh.exec`, and no longer add an implicit `write_files` entry for
+`authorized_keys`.
+
+### Migration Steps
+
+Direct manifest producers can opt in explicitly:
+
+```toml
+[ssh]
+autoprovision = true
+```
+
+No change is needed when setting explicit `ssh.exec` identity arguments or
+managing `authorized_keys` directly.
+
 ## 2026-05-17: guest forward tunnel command
 
 ### Who Is Affected

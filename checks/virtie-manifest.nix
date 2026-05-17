@@ -13,6 +13,10 @@ let
     persistence.homeImage = null;
   };
 
+  vmDefault = mkSandbox {
+    persistence.homeImage = null;
+  };
+
   vmVirtieFeatureRich = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.identityFile = sshKeys.virtie.identityFile;
@@ -102,28 +106,31 @@ let
   };
 
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
+  defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtieManifestData;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
-  fixedMachineManifest =
-    vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
+  fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
 
   virtiofsMounts = builtins.filter (mount: mount.type == "virtiofs") manifest.mounts;
-  virtiofsDaemonMounts = builtins.filter (mount: mount.type == "virtiofs" && mount ? virtiofsd_exec) manifest.mounts;
+  virtiofsDaemonMounts = builtins.filter (
+    mount: mount.type == "virtiofs" && mount ? virtiofsd_exec
+  ) manifest.mounts;
 
   _ =
     assert builtins.head manifest.qemu.exec != "";
     assert manifest.host_name == "agent-sandbox";
     assert !(manifest ? host);
-    assert manifest.qemu.fwd_tunnel_exec == [
-      "${pkgs.netcat}/bin/nc"
-      "$HOST"
-      "$PORT"
-    ];
+    assert
+      manifest.qemu.fwd_tunnel_exec == [
+        "${pkgs.netcat}/bin/nc"
+        "$HOST"
+        "$PORT"
+      ];
     assert manifest.machine.type == "microvm";
     assert !(manifest.qemu ? machine_options);
     assert manifest.state_dir == ".agentspace";
@@ -145,9 +152,7 @@ let
     assert manifest.ssh.user == "agent";
     assert !(manifest.ssh ? retry_delay_ms);
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.exec;
-    assert builtins.any (
-      volume: volume.image == ".agentspace/nix-store-overlay.img"
-    ) manifest.volumes;
+    assert builtins.any (volume: volume.image == ".agentspace/nix-store-overlay.img") manifest.volumes;
     assert builtins.length virtiofsDaemonMounts > 0;
     assert builtins.all (
       mount: mount.virtiofsd_socket != "" && builtins.head mount.virtiofsd_exec != ""
@@ -159,6 +164,13 @@ let
     assert !(manifest ? microvmRun);
     assert !(manifest ? virtiofsdRun);
     assert !builtins.any (arg: builtins.match ".*@vsock/.*" arg != null) manifest.ssh.exec;
+    true;
+
+  _defaultSSH =
+    assert defaultManifest.ssh.autoprovision == true;
+    assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);
+    assert defaultManifest.write_files == [ ];
+    assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;
     true;
 
   _fixedMachine =
@@ -194,7 +206,8 @@ let
     true;
 
   _extraShares =
-    assert builtins.length (builtins.filter (mount: mount.type == "9p") extraSharesManifest.mounts) == 1;
+    assert
+      builtins.length (builtins.filter (mount: mount.type == "9p") extraSharesManifest.mounts) == 1;
     assert builtins.any (
       mount:
       mount.type == "9p"
@@ -206,7 +219,8 @@ let
     assert builtins.any (
       mount: mount.tag == "tools" && mount.virtiofsd_socket != "" && mount ? virtiofsd_exec
     ) extraSharesManifest.mounts;
-    assert !(builtins.any (mount: mount.tag == "cache" && mount ? virtiofsd_exec) extraSharesManifest.mounts);
+    assert
+      !(builtins.any (mount: mount.tag == "cache" && mount ? virtiofsd_exec) extraSharesManifest.mounts);
     true;
 
   _writeFiles =
@@ -249,6 +263,10 @@ in
   virtie-manifest-contract =
     assert _;
     pkgs.runCommand "virtie-manifest-contract" { } "touch $out";
+
+  virtie-manifest-default-ssh-contract =
+    assert _defaultSSH;
+    pkgs.runCommand "virtie-manifest-default-ssh-contract" { } "touch $out";
 
   virtie-manifest-balloon-contract =
     assert _balloon;

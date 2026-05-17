@@ -31,7 +31,10 @@ in
 
     groups = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ "wheel" "kvm" ];
+      default = [
+        "wheel"
+        "kvm"
+      ];
       description = "Extra groups for the guest user.";
     };
 
@@ -287,6 +290,7 @@ in
         cd "$REPO_DIR"
       '';
 
+      sshAutoprovision = cfg.ssh.identityFile == null && cfg.ssh.authorizedKeys == [ ];
       sshBaseArgv = [
         "${pkgs.openssh}/bin/ssh"
         "-q"
@@ -309,8 +313,7 @@ in
       ninepShares = builtins.filter (share: share.proto == "9p") config.microvm.shares;
       inherit (pkgs.stdenv.hostPlatform) system;
       arch = builtins.head (builtins.split "-" system);
-      canSandbox =
-        builtins.elem "--enable-seccomp" (config.microvm.qemu.package.configureFlags or [ ]);
+      canSandbox = builtins.elem "--enable-seccomp" (config.microvm.qemu.package.configureFlags or [ ]);
 
       mkVirtioFSDaemonCommand =
         {
@@ -404,10 +407,7 @@ in
           share:
           let
             socketPath =
-              if nixStoreShareUsesSocket && isNixStoreShare share then
-                cfg.nixStoreShareSocket
-              else
-                share.socket;
+              if nixStoreShareUsesSocket && isNixStoreShare share then cfg.nixStoreShareSocket else share.socket;
           in
           {
             type = "virtiofs";
@@ -444,7 +444,10 @@ in
         working_dir = ".";
         state_dir = persistenceStateDir;
         qemu = {
-          exec = [ "${config.microvm.qemu.package}/bin/qemu-system-${arch}" ] ++ config.microvm.qemu.extraArgs;
+          exec = [
+            "${config.microvm.qemu.package}/bin/qemu-system-${arch}"
+          ]
+          ++ config.microvm.qemu.extraArgs;
           fwd_tunnel_exec = [
             "${config.microvm.vmHostPackages.netcat}/bin/nc"
             "$HOST"
@@ -460,17 +463,16 @@ in
         // lib.optionalAttrs (config.microvm.qemu.machineOpts != null) {
           machine_options = config.microvm.qemu.machineOpts;
         };
-        machine =
-          {
-            type = config.microvm.qemu.machine;
-            memory = config.microvm.mem;
-            vcpu = cfg.machine.vcpu;
-            id = config.microvm.machineId;
-            kvm = pkgs.stdenv.hostPlatform.isLinux && config.microvm.cpu == null;
-          }
-          // lib.optionalAttrs (config.microvm.cpu != null) {
-            cpu = config.microvm.cpu;
-          };
+        machine = {
+          type = config.microvm.qemu.machine;
+          memory = config.microvm.mem;
+          vcpu = cfg.machine.vcpu;
+          id = config.microvm.machineId;
+          kvm = pkgs.stdenv.hostPlatform.isLinux && config.microvm.cpu == null;
+        }
+        // lib.optionalAttrs (config.microvm.cpu != null) {
+          cpu = config.microvm.cpu;
+        };
         kernel = {
           path = "${config.microvm.kernel.out}/${pkgs.stdenv.hostPlatform.linux-kernel.target}";
           initrd_path = config.microvm.initrdPath;
@@ -484,6 +486,7 @@ in
           exec = sshBaseArgv;
           user = cfg.user;
           ready_socket = "ssh-ready.sock";
+          autoprovision = sshAutoprovision;
         };
         balloon =
           if config.microvm.balloon then
@@ -644,25 +647,26 @@ in
             }
           ];
 
-          shares = lib.optionals (!cfg.persistence.storeDisk) [
-            {
-              proto = "virtiofs";
-              tag = "ro-store";
-              source = "/nix/store";
-              mountPoint = "/nix/.ro-store";
-              readOnly = true;
-            }
-          ]
-          ++ lib.optionals cfg.mountWorkspace [
-            {
-              proto = "virtiofs";
-              tag = "workspace";
-              source = ".";
-              mountPoint = cfg.workspaceMountPoint;
-              securityModel = "mapped";
-            }
-          ]
-          ++ cfg.shares;
+          shares =
+            lib.optionals (!cfg.persistence.storeDisk) [
+              {
+                proto = "virtiofs";
+                tag = "ro-store";
+                source = "/nix/store";
+                mountPoint = "/nix/.ro-store";
+                readOnly = true;
+              }
+            ]
+            ++ lib.optionals cfg.mountWorkspace [
+              {
+                proto = "virtiofs";
+                tag = "workspace";
+                source = ".";
+                mountPoint = cfg.workspaceMountPoint;
+                securityModel = "mapped";
+              }
+            ]
+            ++ cfg.shares;
 
           writableStoreOverlay = "/nix/.rw-store";
 

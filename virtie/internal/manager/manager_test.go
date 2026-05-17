@@ -997,6 +997,108 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchAutoprovisionsSSHKeyAfterAuthFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+	cfg.SSH.Autoprovision = true
+
+	runner := &fakeRunner{
+		authSSHFailures:           1,
+		finishInteractiveSSH:      true,
+		finishInteractiveSSHDelay: 2 * defaultSocketPollInterval,
+	}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            slog.New(slog.DiscardHandler),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	identityFile := filepath.Join(cfg.ResolvedPersistenceStateDir(), "id_ed25519")
+	if got, want := len(runner.sshArgs), 2; got != want {
+		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
+	}
+	if containsString(runner.sshArgs[0], identityFile) {
+		t.Fatalf("first ssh attempt unexpectedly used autoprovisioned identity: %v", runner.sshArgs[0])
+	}
+	if !containsString(runner.sshArgs[1], identityFile) || !containsString(runner.sshArgs[1], "IdentitiesOnly=yes") {
+		t.Fatalf("second ssh attempt did not use autoprovisioned identity: %v", runner.sshArgs[1])
+	}
+	if info, err := os.Stat(identityFile); err != nil {
+		t.Fatalf("stat autoprovisioned identity: %v", err)
+	} else if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("unexpected identity mode: got %v want %v", got, want)
+	}
+	if got := guestAgent.writes["/run/virtie-autoprovision-authorized-key.pub"]; got == "" {
+		t.Fatalf("expected temporary public key write, got writes %#v", guestAgent.writes)
+	}
+	if !containsGuestExec(guestAgent.execs, guestShellPath, "/home/agent/.ssh/authorized_keys") {
+		t.Fatalf("expected authorized_keys append command, got %#v", guestAgent.execs)
+	}
+}
+
+func TestManagerLaunchDoesNotAutoprovisionWhenDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &fakeRunner{authSSHFailures: 1}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestDialer := &fakeGuestAgentDialer{client: &fakeGuestAgentClient{}}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  guestDialer,
+		logger:            slog.New(slog.DiscardHandler),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launch(context.Background(), cfg, nil)
+	if err == nil || !strings.Contains(err.Error(), "active session") {
+		t.Fatalf("expected active session auth failure, got %v", err)
+	}
+	if got, want := len(runner.sshArgs), 1; got != want {
+		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
+	}
+	if guestDialer.attempts != 0 {
+		t.Fatalf("expected no guest agent use without autoprovision, got %d attempts", guestDialer.attempts)
+	}
+}
+
 func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -2910,6 +3012,7 @@ type fakeRunner struct {
 	finishInteractiveSSHDelay time.Duration
 	transientSSHFailures      int
 	transientSSHOutputs       []string
+	authSSHFailures           int
 	qemu                      *fakeProcess
 	onStart                   func(processSpec)
 }
@@ -2937,6 +3040,16 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 	case "ssh":
 		r.sshArgs = append(r.sshArgs, append([]string(nil), spec.Args...))
 		r.interactiveStarts++
+		if r.interactiveStarts <= r.authSSHFailures {
+			if spec.Stderr != nil {
+				_, _ = io.WriteString(spec.Stderr, "agent@vsock/3: Permission denied (publickey).\n")
+			}
+			return &fakeProcess{
+				name:   spec.Name,
+				runner: r,
+				done:   closedErrorChannel(errors.New("exit status 255")),
+			}, nil
+		}
 		if r.interactiveStarts <= r.transientSSHFailures {
 			if spec.Stderr != nil {
 				output := "ssh: connect to host vsock/3 port 22: Connection refused\n"
@@ -3696,6 +3809,20 @@ func containsString(values []string, needle string) bool {
 	for _, value := range values {
 		if strings.Contains(value, needle) {
 			return true
+		}
+	}
+	return false
+}
+
+func containsGuestExec(calls []guestExecCall, path string, argNeedle string) bool {
+	for _, call := range calls {
+		if call.path != path {
+			continue
+		}
+		for _, arg := range call.args {
+			if strings.Contains(arg, argNeedle) {
+				return true
+			}
 		}
 	}
 	return false

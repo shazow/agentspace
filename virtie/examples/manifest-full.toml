@@ -130,6 +130,11 @@ ready_socket = "ssh-ready.sock"  # Default: "" (disabled)
 # with a non-transient error.
 retry_delay = 0.5  # Default: 0.5 seconds
 
+# When enabled, virtie can recover from public-key authentication failure by
+# generating a state-dir key, appending its public key to authorized_keys through
+# the guest agent, and retrying SSH with that identity.
+autoprovision = true  # Default: false
+
 [vsock]
 # virtie allocates a runtime vsock CID to avoid collisions between concurrent
 # VMs. The range exists for hosts or orchestrators that reserve parts of the
