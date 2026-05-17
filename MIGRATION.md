@@ -4,6 +4,30 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-17: SSH retry delay seconds
+
+### Who Is Affected
+
+- Direct virtie manifest producers setting `ssh.retry_delay_ms`.
+- Consumers reading lowered/internal manifests that previously used
+  `ssh.retryDelayMs`.
+
+### What Changed
+
+The public manifest field `ssh.retry_delay_ms` was renamed to
+`ssh.retry_delay`, and the value is now a floating-point delay in seconds. The
+lowered/internal JSON field changed from `ssh.retryDelayMs` to
+`ssh.retryDelay`. The default retry delay is now `0.5` seconds.
+
+### Migration Steps
+
+Rename the field and convert milliseconds to seconds:
+
+```diff
+- retry_delay_ms = 1000
++ retry_delay = 1.0
+```
+
 ## 2026-05-17: snake_case virtie manifest
 
 ### Who Is Affected
