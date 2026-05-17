@@ -10,7 +10,6 @@
 package manager
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,7 +19,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -28,13 +26,13 @@ import (
 	backendfile "github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
 
 const (
-	defaultSSHRetryDelay      = 1 * time.Second
+	defaultSSHRetryDelay      = 500 * time.Millisecond
 	defaultShutdownDelay      = 15 * time.Second
 	defaultMigrationPollDelay = 100 * time.Millisecond
-	sshFailureOutputLimit     = 64 * 1024
 	sshRetryOutputRevealDelay = 250 * time.Millisecond
 )
 
@@ -56,6 +54,7 @@ type LaunchOptions struct {
 
 type manager struct {
 	locker              locker
+	vsockCIDChecker     vsockCIDChecker
 	runner              runner
 	socketWaiter        socketWaiter
 	qmpDialer           qmpDialer
@@ -80,6 +79,7 @@ func newManager() *manager {
 	logWriter := io.Writer(os.Stderr)
 	return &manager{
 		locker:              &fileLocker{},
+		vsockCIDChecker:     newHostVSockCIDChecker(),
 		runner:              &execRunner{},
 		socketWaiter:        &pollingSocketWaiter{},
 		qmpDialer:           &socketMonitorDialer{},
@@ -88,7 +88,7 @@ func newManager() *manager {
 		logger:              logger,
 		logWriter:           logWriter,
 		sshRetryDelay:       defaultSSHRetryDelay,
-		sshReadyTimeout:     defaultSSHReadyTimeout,
+		sshReadyTimeout:     configuredSSHReadyTimeout(),
 		shutdownDelay:       defaultShutdownDelay,
 		qmpRetryDelay:       defaultQMPRetryDelay,
 		qmpConnectTimeout:   defaultQMPConnectTimeout,
@@ -115,6 +115,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	stats := newLaunchStats(time.Now())
 	if err := manifest.Validate(); err != nil {
 		return err
+	}
+	if options.SSH && len(remoteCommand) > 0 && len(manifest.SSH.Argv) == 0 {
+		return &stageError{Stage: "preflight", Err: fmt.Errorf("remote command arguments require manifest.ssh.exec")}
 	}
 	resumeMode, err := normalizeResumeMode(options.Resume)
 	if err != nil {
@@ -230,8 +233,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if err := ensureParentDirectories([]string{sshReadySocketPath}); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+	if sshReadySocketPath != "" {
+		if err := ensureParentDirectories([]string{sshReadySocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
 	}
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -247,8 +252,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if err := removeSocketPaths([]string{sshReadySocketPath}); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+	if sshReadySocketPath != "" {
+		if err := removeSocketPaths([]string{sshReadySocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
 	}
 	if err := ensureVolumeImages(volumes, m.logger); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -271,7 +278,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if guestAgentSocketPath != "" {
 			cleanupPaths = append(cleanupPaths, guestAgentSocketPath)
 		}
-		cleanupPaths = append(cleanupPaths, sshReadySocketPath)
+		if sshReadySocketPath != "" {
+			cleanupPaths = append(cleanupPaths, sshReadySocketPath)
+		}
 		cleanupErr := removeSocketPaths(cleanupPaths)
 		if err == nil {
 			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
@@ -348,30 +357,22 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 		stats.MarkFilesReady(time.Now())
 
-		m.logger.Info("waiting for ssh readiness")
-		if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, qemu); err != nil {
-			return err
+		if sshReadySocketPath != "" {
+			m.logger.Info("waiting for ssh readiness")
+			if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, qemu); err != nil {
+				return err
+			}
 		}
 		stats.MarkSSHReady(time.Now())
 	}
 
-	if options.SSH {
+	if options.SSH && len(manifest.SSH.Argv) > 0 {
 		featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
 			qmpTimeout: m.effectiveQMPCommandTimeout(),
 			notifier:   notifier,
 		}, manifest, qmpClient)
 
-		attemptStarted := time.Now()
-		stats.MarkSSHAttempt(attemptStarted)
-		spec := buildSSHSpec(manifest, cid, remoteCommand)
-		session, err := m.startManagedProcess(spec)
-		if err != nil {
-			return &stageError{Stage: "active session", Err: err}
-		}
-		started = append(started, session)
-		stats.MarkSSHStarted(attemptStarted)
-
-		if err := m.waitForSession(launchCtx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
+		if err := m.runSSHSession(launchCtx, manifest, cid, remoteCommand, stats, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, &started); err != nil {
 			return err
 		}
 		if resumeState != nil {
@@ -399,7 +400,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 	}
 
-	fmt.Fprintf(m.outputWriter(), "connect with: %s\n", buildSSHCommandHint(manifest, cid))
+	if hint := buildSSHCommandHint(manifest, cid); hint != "" {
+		fmt.Fprintf(m.outputWriter(), "connect with: %s\n", hint)
+	}
 	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
 		return err
 	}
@@ -545,7 +548,7 @@ func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 			Path:         daemon.Command.Path,
 			Args:         daemon.Command.Args,
 			Dir:          manifest.Paths.WorkingDir,
-			Env:          []string{fmt.Sprintf("VIRTIE_SOCKET_PATH=%s", daemon.SocketPath)},
+			Env:          []string{fmt.Sprintf("VIRTIOFSD_SOCKET=%s", daemon.SocketPath)},
 			ProcessGroup: true,
 			Stdout:       os.Stderr,
 			Stderr:       os.Stderr,
@@ -565,6 +568,17 @@ func (m *manager) allocateCID(manifest *manifest.Manifest) (int, lock, error) {
 	for cid := manifest.VSock.CIDRange.Start; cid <= manifest.VSock.CIDRange.End; cid++ {
 		lock, err := m.locker.Acquire(manifest.ResolvedVSockLockPath(cid))
 		if err == nil {
+			if m.vsockCIDChecker != nil {
+				available, err := m.vsockCIDChecker.Available(cid)
+				if err != nil {
+					_ = lock.Release()
+					return 0, nil, err
+				}
+				if !available {
+					_ = lock.Release()
+					continue
+				}
+			}
 			return cid, lock, nil
 		}
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
@@ -744,201 +758,143 @@ func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 	return h.err
 }
 
-type cappedBuffer struct {
-	bytes.Buffer
-	limit int
-}
-
-func (b *cappedBuffer) Write(p []byte) (int, error) {
-	n := len(p)
-	if b.limit <= b.Len() {
-		return n, nil
+func (m *manager) runSSHSession(
+	ctx context.Context,
+	launchManifest *manifest.Manifest,
+	cid int,
+	remoteCommand []string,
+	stats *launchStats,
+	suspendRequests <-chan struct{},
+	infoRequests <-chan struct{},
+	suspendHandler *launchSuspendHandler,
+	guestAgentSocketPath string,
+	started *[]*managedProcess,
+) error {
+	argv := append([]string(nil), launchManifest.SSH.Argv...)
+	sessionLogger := m.logger
+	if sessionLogger == nil {
+		sessionLogger = slog.New(slog.DiscardHandler)
 	}
-	remaining := b.limit - b.Len()
-	if len(p) > remaining {
-		p = p[:remaining]
-	}
-	_, _ = b.Buffer.Write(p)
-	return n, nil
-}
+	retryLog := newSSHRetryLogger(sessionLogger)
+	provisioned := false
 
-type sshRetryOutput struct {
-	mu          sync.Mutex
-	output      io.Writer
-	verbose     bool
-	captured    cappedBuffer
-	pending     cappedBuffer
-	timer       *time.Timer
-	revealed    bool
-	suppressed  bool
-	revealDelay time.Duration
-}
-
-func newSSHRetryOutput(output io.Writer, verbose bool) *sshRetryOutput {
-	return &sshRetryOutput{
-		output:      output,
-		verbose:     verbose,
-		captured:    cappedBuffer{limit: sshFailureOutputLimit},
-		pending:     cappedBuffer{limit: sshFailureOutputLimit},
-		revealDelay: sshRetryOutputRevealDelay,
-	}
-}
-
-func (o *sshRetryOutput) Write(p []byte) (int, error) {
-	if o == nil {
-		return len(p), nil
-	}
-
-	o.mu.Lock()
-	_, _ = o.captured.Write(p)
-	if o.verbose || o.revealed {
-		output := o.output
-		o.mu.Unlock()
-		if output != nil {
-			_, _ = output.Write(p)
+	for {
+		stderr := sshtools.NewRetryOutput(m.outputWriter(), false, sshRetryOutputRevealDelay)
+		attemptStarted := time.Now()
+		stats.MarkSSHAttempt(attemptStarted)
+		spec := buildSSHSpecWithArgv(launchManifest, cid, remoteCommand, argv)
+		spec.Stderr = stderr
+		session, err := m.startManagedProcess(spec)
+		if err != nil {
+			return &stageError{Stage: "active session", Err: err}
 		}
-		return len(p), nil
-	}
-	if !o.suppressed {
-		_, _ = o.pending.Write(p)
-		if o.timer == nil {
-			o.timer = time.AfterFunc(o.revealDelay, o.Flush)
+		watchers := append([]*managedProcess(nil), (*started)...)
+		*started = append(*started, session)
+		stats.MarkSSHStarted(attemptStarted)
+
+		err = m.waitForSession(ctx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers...)
+		stderrText := stderr.String()
+		if err == nil {
+			stderr.Flush()
+			return nil
 		}
+		if sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureTransient {
+			stderr.Suppress()
+			retryLog.Log(err, stderrText)
+			removeStartedProcess(started, session)
+			if waitErr := m.waitBeforeSSHRetry(ctx, launchManifest, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers...); waitErr != nil {
+				return waitErr
+			}
+			continue
+		}
+		if launchManifest.SSH.Autoprovision && !provisioned && sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureAuthentication {
+			stderr.Suppress()
+			removeStartedProcess(started, session)
+			sessionLogger.Info("ssh authentication failed; autoprovisioning a key", "state_dir", launchManifest.ResolvedPersistenceStateDir(), "user", launchManifest.SSH.User)
+			key, keyErr := m.ensureSSHAutoprovisionKey(launchManifest)
+			if keyErr != nil {
+				return &stageError{Stage: "ssh autoprovision", Err: keyErr}
+			}
+			if installErr := m.installSSHAutoprovisionKey(ctx, launchManifest, key, watchers...); installErr != nil {
+				return installErr
+			}
+			sessionLogger.Info("installed autoprovisioned ssh key; retrying ssh", "identity_file", key.IdentityFile, "public_key_file", key.PublicKeyFile)
+			argv = (sshtools.Config{Exec: launchManifest.SSH.Argv, User: launchManifest.SSH.User}).WithIdentity(key.IdentityFile).Exec
+			provisioned = true
+			continue
+		}
+		stderr.Flush()
+		return err
 	}
-	o.mu.Unlock()
-	return len(p), nil
 }
 
-func (o *sshRetryOutput) String() string {
-	if o == nil {
-		return ""
-	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.captured.String()
-}
-
-func (o *sshRetryOutput) Suppress() {
-	if o == nil {
+func removeStartedProcess(started *[]*managedProcess, process *managedProcess) {
+	if started == nil || process == nil {
 		return
 	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.timer != nil {
-		o.timer.Stop()
-		o.timer = nil
-	}
-	o.pending.Reset()
-	o.suppressed = true
-}
-
-func (o *sshRetryOutput) Flush() {
-	if o == nil {
-		return
-	}
-	o.mu.Lock()
-	if o.suppressed && !o.verbose {
-		o.mu.Unlock()
-		return
-	}
-	if o.timer != nil {
-		o.timer.Stop()
-		o.timer = nil
-	}
-	o.revealed = true
-	output := o.output
-	pending := append([]byte(nil), o.pending.Bytes()...)
-	o.pending.Reset()
-	o.mu.Unlock()
-
-	if output != nil && len(pending) > 0 {
-		_, _ = output.Write(pending)
-	}
-}
-
-func sshTransientStartupFailure(err error, stderr string) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error() + "\n" + stderr)
-	transientMessages := []string{
-		"connection refused",
-		"connection timed out",
-		"no route to host",
-		"network is unreachable",
-		"connection reset",
-		"connection closed",
-	}
-	for _, transient := range transientMessages {
-		if strings.Contains(message, transient) {
-			return true
+	for i := len(*started) - 1; i >= 0; i-- {
+		if (*started)[i] == process {
+			*started = append((*started)[:i], (*started)[i+1:]...)
+			return
 		}
 	}
-	return false
 }
 
-type sshRetryPhase int
+func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
+	delay := launchManifest.SSHRetryDelay(m.sshRetryDelay)
+	if delay <= 0 {
+		delay = m.sshRetryDelay
+	}
+	if delay <= 0 {
+		return nil
+	}
 
-const (
-	sshRetryPhaseNone sshRetryPhase = iota
-	sshRetryPhaseWaiting
-	sshRetryPhaseConnecting
-)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	ticker := time.NewTicker(defaultSocketPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-timer.C:
+			return nil
+		case <-suspendRequests:
+			return suspendHandler.saveAndExit(ctx)
+		case <-infoRequests:
+			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
+		case <-ticker.C:
+			if err := firstUnexpectedExit("active session", watchers...); err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			return &stageError{Stage: "active session", Err: ctx.Err()}
+		}
+	}
+}
 
 type sshRetryLogger struct {
 	logger *slog.Logger
-	seen   map[sshRetryPhase]bool
+	seen   map[sshtools.RetryPhase]bool
 }
 
 func newSSHRetryLogger(logger *slog.Logger) *sshRetryLogger {
 	return &sshRetryLogger{
 		logger: logger,
-		seen:   make(map[sshRetryPhase]bool),
+		seen:   make(map[sshtools.RetryPhase]bool),
 	}
 }
 
 func (l *sshRetryLogger) Log(err error, stderr string) {
-	phase := sshRetryPhaseForFailure(err, stderr)
-	if phase == sshRetryPhaseNone || l.seen[phase] {
+	phase := sshtools.RetryPhaseForFailure(err, stderr)
+	if phase == sshtools.RetryPhaseNone || l.seen[phase] {
 		return
 	}
 	l.seen[phase] = true
 	switch phase {
-	case sshRetryPhaseWaiting:
+	case sshtools.RetryPhaseWaiting:
 		l.logger.Info("waiting for ssh connection")
-	case sshRetryPhaseConnecting:
+	case sshtools.RetryPhaseConnecting:
 		l.logger.Info("connecting ssh")
 	}
-}
-
-func sshRetryPhaseForFailure(err error, stderr string) sshRetryPhase {
-	message := strings.ToLower("")
-	if err != nil {
-		message = strings.ToLower(err.Error() + "\n" + stderr)
-	} else {
-		message = strings.ToLower(stderr)
-	}
-	connectingMessages := []string{
-		"connection reset",
-		"connection closed",
-	}
-	for _, transient := range connectingMessages {
-		if strings.Contains(message, transient) {
-			return sshRetryPhaseConnecting
-		}
-	}
-	waitingMessages := []string{
-		"connection refused",
-		"connection timed out",
-		"no route to host",
-		"network is unreachable",
-	}
-	for _, transient := range waitingMessages {
-		if strings.Contains(message, transient) {
-			return sshRetryPhaseWaiting
-		}
-	}
-	return sshRetryPhaseNone
 }
 
 func (m *manager) waitForSession(ctx context.Context, session *managedProcess, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
@@ -1202,20 +1158,19 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 }
 
 func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) processSpec {
-	argv := append([]string(nil), manifest.SSH.Argv...)
-	path := argv[0]
-	args := append([]string(nil), argv[1:]...)
+	return buildSSHSpecWithArgv(manifest, cid, remoteCommand, manifest.SSH.Argv)
+}
 
-	args = append([]string{"-tt"}, args...)
-	args = append(args, manifest.SSHDestination(cid))
-	if len(remoteCommand) > 0 {
-		args = append(args, encodeRemoteCommand(remoteCommand))
+func buildSSHSpecWithArgv(manifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) processSpec {
+	command, err := sshtools.NewCommand(sshtools.Config{Exec: argv, User: manifest.SSH.User}, cid, remoteCommand)
+	if err != nil {
+		return processSpec{Name: "ssh"}
 	}
 
 	return processSpec{
 		Name:   "ssh",
-		Path:   path,
-		Args:   args,
+		Path:   command.Path,
+		Args:   command.Args,
 		Dir:    manifest.Paths.WorkingDir,
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
@@ -1224,48 +1179,7 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) 
 }
 
 func buildSSHCommandHint(manifest *manifest.Manifest, cid int) string {
-	args := append([]string(nil), manifest.SSH.Argv...)
-	args = append(args, manifest.SSHDestination(cid))
-	return shellQuoteArgs(args)
-}
-
-func encodeRemoteCommand(args []string) string {
-	if len(args) == 1 {
-		return args[0]
-	}
-	return shellQuoteArgs(args)
-}
-
-func shellQuoteArgs(args []string) string {
-	quoted := make([]string, 0, len(args))
-	for _, arg := range args {
-		quoted = append(quoted, shellQuoteArg(arg))
-	}
-	return strings.Join(quoted, " ")
-}
-
-func shellQuoteArg(arg string) string {
-	if arg == "" {
-		return "''"
-	}
-	if shellSafeArg(arg) {
-		return arg
-	}
-	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
-}
-
-func shellSafeArg(arg string) bool {
-	for _, ch := range arg {
-		switch {
-		case ch >= 'A' && ch <= 'Z':
-		case ch >= 'a' && ch <= 'z':
-		case ch >= '0' && ch <= '9':
-		case strings.ContainsRune("_@%+=:,./-", ch):
-		default:
-			return false
-		}
-	}
-	return true
+	return sshtools.CommandHint(sshtools.Config{Exec: manifest.SSH.Argv, User: manifest.SSH.User}, cid)
 }
 
 func joinDeferredError(target *error, fn func() error) {

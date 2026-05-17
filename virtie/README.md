@@ -22,11 +22,14 @@ virtie suspend --manifest=MANIFEST
 ```
 
 In normal use this is invoked by the generated launch wrapper rather than by
-hand. See the root flake for packaging and launch integration.
+hand. See the root flake for packaging and launch integration. Hand-written
+manifests may be JSON or TOML; the TOML examples in this directory show a
+minimal manifest and a full manifest with default-valued fields included.
 
 ## Features
 
-- Loads and validates the manifest for the supported sandbox launch path.
+- Loads and validates a manifest for the supported sandbox launch path.
+- Accepts JSON and TOML manifests, with Nix-generated manifests remaining JSON.
 - Allocates a runtime vsock CID for each session.
 - Starts `virtiofsd`, launches QEMU, waits for SSH readiness, and either
   prints the SSH command or attaches the active session with `--ssh`.
@@ -44,14 +47,17 @@ hand. See the root flake for packaging and launch integration.
 ## Notes
 
 - The manifest format is owned by this repository and is intentionally narrow.
+  It carries evaluated launch facts while `virtie` derives the concrete
+  host-side QEMU policy.
 - Verbose runtime logs use Go's default `log/slog` handler on stderr, with
   package identity carried as an attribute such as `package=manager`.
 - Suspend/resume uses QEMU migration-to-file for disk-backed restore. The
   `SIGTSTP` signal is an internal control shim used by `virtie suspend`, not a
   terminal/job-control suspend. Live pause/resume and `SIGCONT` resume are not
   supported.
-- `virtie` currently assumes the surrounding Nix flow has already resolved the
-  guest image inputs and host-side launch settings.
+- `virtie` assumes the surrounding Nix flow has already resolved guest image
+  inputs, package paths, and host capability facts when using generated
+  manifests.
 - The project is developed with NixOS as the primary target. Some host
   assumptions, including the current QEMU and `virtiofsd` integration, may need
   extra work for macOS.

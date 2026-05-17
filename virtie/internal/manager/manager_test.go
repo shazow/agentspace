@@ -152,7 +152,7 @@ func TestBuildSSHSpecShellQuotesRemoteCommand(t *testing.T) {
 	}
 
 	session := buildSSHSpec(manifest, 10, []string{"printf", "%s\n", "it's $HOME", ""})
-	want := "printf '%s\n' 'it'\"'\"'s $HOME' ''"
+	want := "printf '%s\n' 'it'\\''s $HOME' ''"
 	if got := session.Args[len(session.Args)-1]; got != want {
 		t.Fatalf("unexpected quoted remote command: got %q want %q", got, want)
 	}
@@ -267,10 +267,10 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	if !containsString(runner.qemuArgs, "vhost-user-fs-pci,chardev=char-fs1,tag=workspace") {
 		t.Fatalf("expected qemu args to contain virtiofs share: %v", runner.qemuArgs)
 	}
-	if !containsString(runner.qemuArgs, "socket,path="+filepath.Join(tmpDir, "ssh-ready.sock")+",server=on,wait=off,id=ssh_ready_char") {
+	if !containsString(runner.qemuArgs, "socket,path="+filepath.Join(tmpDir, "ready.sock")+",server=on,wait=off,id=ready_char") {
 		t.Fatalf("expected qemu args to contain ssh readiness socket: %v", runner.qemuArgs)
 	}
-	if !containsString(runner.qemuArgs, "virtserialport,chardev=ssh_ready_char,name=virtie.ssh.ready") {
+	if !containsString(runner.qemuArgs, "virtserialport,chardev=ready_char,name=virtie.ready") {
 		t.Fatalf("expected qemu args to contain ssh readiness port: %v", runner.qemuArgs)
 	}
 	if containsString(runner.qemuArgs, "balloon") {
@@ -494,6 +494,95 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchWithSSHAndEmptyExecSkipsAutoconnect(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.SSHReady.SocketPath = ""
+	cfg.Volumes[0].AutoCreate = false
+	cfg.SSH.Argv = nil
+
+	runner := &fakeRunner{}
+	qmpClient := &fakeQMPClient{}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	exitReadyQEMU := make(chan struct{})
+	go func() {
+		defer close(exitReadyQEMU)
+		time.Sleep(10 * time.Millisecond)
+		runner.exitQEMU(nil)
+	}()
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true}); err != nil {
+		t.Fatalf("launch with ssh and empty exec: %v", err)
+	}
+	<-exitReadyQEMU
+
+	if got, want := runner.starts, []string{"virtiofsd[workspace]", "qemu"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected start order: got %v want %v", got, want)
+	}
+	if got := len(runner.sshArgs); got != 0 {
+		t.Fatalf("expected no ssh starts, got %d", got)
+	}
+	if strings.Contains(logOutput.String(), "connect with:") {
+		t.Fatalf("expected no ssh hint without ssh argv, got %q", logOutput.String())
+	}
+}
+
+func TestManagerLaunchRejectsRemoteCommandWithoutSSHExec(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.SSHReady.SocketPath = ""
+	cfg.Volumes[0].AutoCreate = false
+	cfg.SSH.Argv = nil
+
+	runner := &fakeRunner{}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launchWithOptions(context.Background(), cfg, []string{"echo", "hi"}, LaunchOptions{Resume: ResumeModeNo, SSH: true})
+	if err == nil || !strings.Contains(err.Error(), "remote command arguments require manifest.ssh.exec") {
+		t.Fatalf("expected missing ssh argv error, got %v", err)
+	}
+	if len(runner.starts) != 0 {
+		t.Fatalf("expected failure before starting processes, got starts %v", runner.starts)
+	}
+	if got := len(runner.sshArgs); got != 0 {
+		t.Fatalf("expected no ssh starts, got %d", got)
+	}
+}
+
 func TestManagerLaunchStartsSSHOnceAfterReadiness(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -575,7 +664,7 @@ func TestWaitForSSHReadyFailsWhenQEMUExitsFirst(t *testing.T) {
 		close(done)
 	}()
 
-	err := manager.waitForSSHReady(context.Background(), "/tmp/ssh-ready.sock", qemu)
+	err := manager.waitForSSHReady(context.Background(), "/tmp/ready.sock", qemu)
 	if err == nil || !strings.Contains(err.Error(), "vm startup") || !strings.Contains(err.Error(), "qemu failed") {
 		t.Fatalf("expected qemu exit startup error, got %v", err)
 	}
@@ -588,9 +677,27 @@ func TestWaitForSSHReadyFailsOnTimeout(t *testing.T) {
 		sshReadyTimeout: 10 * time.Millisecond,
 	}
 
-	err := manager.waitForSSHReady(context.Background(), "/tmp/ssh-ready.sock")
+	err := manager.waitForSSHReady(context.Background(), "/tmp/ready.sock")
 	if err == nil || !strings.Contains(err.Error(), "wait for ssh readiness") || !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Fatalf("expected readiness timeout error, got %v", err)
+	}
+}
+
+func TestNewManagerUsesSSHReadyTimeoutEnv(t *testing.T) {
+	t.Setenv(sshReadyTimeoutEnv, "5m")
+
+	manager := newManager()
+	if got, want := manager.sshReadyTimeout, 5*time.Minute; got != want {
+		t.Fatalf("unexpected ssh readiness timeout: got %s want %s", got, want)
+	}
+}
+
+func TestNewManagerIgnoresInvalidSSHReadyTimeoutEnv(t *testing.T) {
+	t.Setenv(sshReadyTimeoutEnv, "0")
+
+	manager := newManager()
+	if got, want := manager.sshReadyTimeout, defaultSSHReadyTimeout; got != want {
+		t.Fatalf("unexpected ssh readiness timeout: got %s want %s", got, want)
 	}
 }
 
@@ -601,44 +708,9 @@ func TestWaitForSSHReadyRejectsUnexpectedToken(t *testing.T) {
 		sshReadyTimeout: time.Second,
 	}
 
-	err := manager.waitForSSHReady(context.Background(), "/tmp/ssh-ready.sock")
-	if err == nil || !strings.Contains(err.Error(), "unexpected ssh readiness token") || !strings.Contains(err.Error(), "NOT_READY") {
+	err := manager.waitForSSHReady(context.Background(), "/tmp/ready.sock")
+	if err == nil || !strings.Contains(err.Error(), "unexpected readiness token") || !strings.Contains(err.Error(), "NOT_READY") {
 		t.Fatalf("expected unexpected token error, got %v", err)
-	}
-}
-
-func TestSSHRetryOutputSuppressesTransientFailureOutput(t *testing.T) {
-	var output bytes.Buffer
-	stderr := newSSHRetryOutput(&output, false)
-	stderr.revealDelay = time.Hour
-
-	_, _ = stderr.Write([]byte("Failed to connect to vsock:3:22: Connection timed out\n"))
-	if !strings.Contains(stderr.String(), "Connection timed out") {
-		t.Fatalf("expected retry output to be captured, got %q", stderr.String())
-	}
-
-	stderr.Suppress()
-	stderr.Flush()
-	if output.String() != "" {
-		t.Fatalf("expected retry output to stay hidden, got %q", output.String())
-	}
-}
-
-func TestSSHRetryOutputShowsVerboseAndFlushedOutput(t *testing.T) {
-	var verboseOutput bytes.Buffer
-	verboseStderr := newSSHRetryOutput(&verboseOutput, true)
-	_, _ = verboseStderr.Write([]byte("verbose ssh failure\n"))
-	if got, want := verboseOutput.String(), "verbose ssh failure\n"; got != want {
-		t.Fatalf("unexpected verbose output: got %q want %q", got, want)
-	}
-
-	var flushedOutput bytes.Buffer
-	flushedStderr := newSSHRetryOutput(&flushedOutput, false)
-	flushedStderr.revealDelay = time.Hour
-	_, _ = flushedStderr.Write([]byte("non-transient ssh failure\n"))
-	flushedStderr.Flush()
-	if got, want := flushedOutput.String(), "non-transient ssh failure\n"; got != want {
-		t.Fatalf("unexpected flushed output: got %q want %q", got, want)
 	}
 }
 
@@ -881,12 +953,114 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	installHost := indexString(events, "guest-install-dir:/var/lib/virtie")
 	openHost := indexString(events, "guest-open:/var/lib/virtie/host")
 	closeHost := indexString(events, "guest-close:/var/lib/virtie/host")
-	sshReady := indexString(events, "ssh-ready-dial:"+filepath.Join(tmpDir, "ssh-ready.sock"))
+	sshReady := indexString(events, "ssh-ready-dial:"+filepath.Join(tmpDir, "ready.sock"))
 	if firstSSH < 0 || ping < 0 || testInline < 0 || installInline < 0 || openInline < 0 || closeInline < 0 || chownInline < 0 || chmodInline < 0 || testHost < 0 || installHost < 0 || openHost < 0 || closeHost < 0 || sshReady < 0 {
 		t.Fatalf("expected guest agent and ssh events, got %v", events)
 	}
 	if !(ping < testInline && testInline < installInline && installInline < openInline && openInline < closeInline && closeInline < chownInline && chownInline < chmodInline && chmodInline < testHost && testHost < installHost && installHost < openHost && openHost < closeHost && closeHost < sshReady && sshReady < firstSSH) {
 		t.Fatalf("expected guest writes before ssh session, got events %v", events)
+	}
+}
+
+func TestManagerLaunchAutoprovisionsSSHKeyAfterAuthFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+	cfg.SSH.Autoprovision = true
+
+	runner := &fakeRunner{
+		authSSHFailures:           1,
+		finishInteractiveSSH:      true,
+		finishInteractiveSSHDelay: 2 * defaultSocketPollInterval,
+	}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            slog.New(slog.DiscardHandler),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	identityFile := filepath.Join(cfg.ResolvedPersistenceStateDir(), "id_ed25519")
+	if got, want := len(runner.sshArgs), 2; got != want {
+		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
+	}
+	if containsString(runner.sshArgs[0], identityFile) {
+		t.Fatalf("first ssh attempt unexpectedly used autoprovisioned identity: %v", runner.sshArgs[0])
+	}
+	if !containsString(runner.sshArgs[1], identityFile) || !containsString(runner.sshArgs[1], "IdentitiesOnly=yes") {
+		t.Fatalf("second ssh attempt did not use autoprovisioned identity: %v", runner.sshArgs[1])
+	}
+	if info, err := os.Stat(identityFile); err != nil {
+		t.Fatalf("stat autoprovisioned identity: %v", err)
+	} else if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("unexpected identity mode: got %v want %v", got, want)
+	}
+	if got := guestAgent.writes["/run/virtie-autoprovision-authorized-key.pub"]; got == "" {
+		t.Fatalf("expected temporary public key write, got writes %#v", guestAgent.writes)
+	}
+	if !containsGuestExec(guestAgent.execs, guestShellPath, "/home/agent/.ssh/authorized_keys") {
+		t.Fatalf("expected authorized_keys append command, got %#v", guestAgent.execs)
+	}
+}
+
+func TestManagerLaunchDoesNotAutoprovisionWhenDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &fakeRunner{authSSHFailures: 1}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestDialer := &fakeGuestAgentDialer{client: &fakeGuestAgentClient{}}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  guestDialer,
+		logger:            slog.New(slog.DiscardHandler),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launch(context.Background(), cfg, nil)
+	if err == nil || !strings.Contains(err.Error(), "active session") {
+		t.Fatalf("expected active session auth failure, got %v", err)
+	}
+	if got, want := len(runner.sshArgs), 1; got != want {
+		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
+	}
+	if guestDialer.attempts != 0 {
+		t.Fatalf("expected no guest agent use without autoprovision, got %d attempts", guestDialer.attempts)
 	}
 }
 
@@ -1580,7 +1754,7 @@ func TestManagerLaunchSkipsVirtioFSReadinessWhenNoVirtioFSDevices(t *testing.T) 
 		t.Fatalf("unexpected waiter calls: got %d want %d", got, want)
 	}
 	qmpSocket := filepath.Join(tmpDir, "qmp.sock")
-	sshReadySocket := filepath.Join(tmpDir, "ssh-ready.sock")
+	sshReadySocket := filepath.Join(tmpDir, "ready.sock")
 	if got, want := waiter.paths, [][]string{{qmpSocket}, {sshReadySocket}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected socket waits: got %v want %v", got, want)
 	}
@@ -1645,7 +1819,7 @@ func TestManagerLaunchWithOnlyNinePShareDoesNotWaitForVirtioFS(t *testing.T) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
 	qmpSocket := filepath.Join(tmpDir, "qmp.sock")
-	sshReadySocket := filepath.Join(tmpDir, "ssh-ready.sock")
+	sshReadySocket := filepath.Join(tmpDir, "ready.sock")
 	if got, want := waiter.paths, [][]string{{qmpSocket}, {sshReadySocket}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected socket waits: got %v want %v", got, want)
 	}
@@ -2300,6 +2474,81 @@ func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
 	}
 }
 
+func TestAllocateCIDSkipsHostUnavailableIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{
+			WorkingDir: tmpDir,
+			LockPath:   filepath.Join(tmpDir, "virtie.lock"),
+		},
+		VSock: manifest.VSock{
+			CIDRange: manifest.VSockCIDRange{
+				Start: 7,
+				End:   8,
+			},
+		},
+	}
+
+	locker := &fileLocker{}
+	checker := &fakeVSockCIDChecker{unavailable: map[int]bool{7: true}}
+	manager := &manager{
+		locker:          locker,
+		vsockCIDChecker: checker,
+	}
+	cid, lock, err := manager.allocateCID(manifest)
+	if err != nil {
+		t.Fatalf("allocate cid: %v", err)
+	}
+	defer lock.Release()
+
+	if cid != 8 {
+		t.Fatalf("unexpected cid: got %d want 8", cid)
+	}
+	if got := checker.checked; !reflect.DeepEqual(got, []int{7, 8}) {
+		t.Fatalf("unexpected checked cids: got %v want [7 8]", got)
+	}
+
+	reacquired, err := locker.Acquire(manifest.ResolvedVSockLockPath(7))
+	if err != nil {
+		t.Fatalf("expected skipped cid lock to be released: %v", err)
+	}
+	reacquired.Release()
+}
+
+func TestAllocateCIDReleasesLockAfterHostCheckError(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{
+			WorkingDir: tmpDir,
+			LockPath:   filepath.Join(tmpDir, "virtie.lock"),
+		},
+		VSock: manifest.VSock{
+			CIDRange: manifest.VSockCIDRange{
+				Start: 7,
+				End:   7,
+			},
+		},
+	}
+
+	locker := &fileLocker{}
+	manager := &manager{
+		locker: locker,
+		vsockCIDChecker: &fakeVSockCIDChecker{
+			err: errors.New("probe failed"),
+		},
+	}
+	_, _, err := manager.allocateCID(manifest)
+	if err == nil || !strings.Contains(err.Error(), "probe failed") {
+		t.Fatalf("expected probe failure, got %v", err)
+	}
+
+	reacquired, err := locker.Acquire(manifest.ResolvedVSockLockPath(7))
+	if err != nil {
+		t.Fatalf("expected errored cid lock to be released: %v", err)
+	}
+	reacquired.Release()
+}
+
 func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 
@@ -2343,7 +2592,7 @@ func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
 		{
 			name: "gtk",
 			qemu: manifest.QEMUGraphics{Backend: "gtk"},
-			want: []string{"-display", "gtk,gl=on", "virtio-vga-gl", "qemu-xhci", "usb-tablet", "usb-kbd"},
+			want: []string{"-display", "gtk,gl=off", "virtio-vga", "qemu-xhci", "usb-tablet", "usb-kbd"},
 		},
 		{
 			name: "cocoa",
@@ -2417,7 +2666,7 @@ func TestBuildQEMUSpecUsesRuntimeCPUCountWhenOmitted(t *testing.T) {
 func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
-	manifest.QEMU.SSHReady.SocketPath = "ssh-ready.sock"
+	manifest.QEMU.SSHReady.SocketPath = "ready.sock"
 
 	spec, err := buildQEMUSpec(manifest, 42)
 	if err != nil {
@@ -2433,14 +2682,34 @@ func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
 	if !containsString(spec.Args, "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0") {
 		t.Fatalf("expected qemu args to include guest agent port: %v", spec.Args)
 	}
-	if !containsString(spec.Args, "socket,path=/tmp/work/ssh-ready.sock,server=on,wait=off,id=ssh_ready_char") {
+	if !containsString(spec.Args, "socket,path=/tmp/work/ready.sock,server=on,wait=off,id=ready_char") {
 		t.Fatalf("expected qemu args to include ssh readiness chardev: %v", spec.Args)
 	}
-	if !containsString(spec.Args, "virtio-serial-pci,id=ssh-ready-serial") {
+	if !containsString(spec.Args, "virtio-serial-pci,id=ready-serial") {
 		t.Fatalf("expected qemu args to include ssh readiness serial device: %v", spec.Args)
 	}
-	if !containsString(spec.Args, "virtserialport,chardev=ssh_ready_char,name=virtie.ssh.ready") {
+	if !containsString(spec.Args, "virtserialport,chardev=ready_char,name=virtie.ready") {
 		t.Fatalf("expected qemu args to include ssh readiness port: %v", spec.Args)
+	}
+}
+
+func TestBuildQEMUSpecOmitsSSHReadyDeviceWhenSocketEmpty(t *testing.T) {
+	cfg := validManifest("/tmp/work")
+	cfg.QEMU.SSHReady.SocketPath = ""
+
+	spec, err := buildQEMUSpec(cfg, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	if containsString(spec.Args, "ready_char") {
+		t.Fatalf("expected qemu args to omit ssh readiness chardev: %v", spec.Args)
+	}
+	if containsString(spec.Args, "virtio-serial-pci,id=ready-serial") {
+		t.Fatalf("expected qemu args to omit ssh readiness serial device: %v", spec.Args)
+	}
+	if containsString(spec.Args, "virtserialport,chardev=ready_char,name=virtie.ready") {
+		t.Fatalf("expected qemu args to omit ssh readiness port: %v", spec.Args)
 	}
 }
 
@@ -2526,8 +2795,8 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	if !containsString(spec.Args, "socket,path="+wantQGA+",server=on,wait=off,id=qga0") {
 		t.Fatalf("expected qemu args to include runtime guest agent socket %q: %v", wantQGA, spec.Args)
 	}
-	wantReady := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "ssh-ready.sock")
-	if !containsString(spec.Args, "socket,path="+wantReady+",server=on,wait=off,id=ssh_ready_char") {
+	wantReady := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "ready.sock")
+	if !containsString(spec.Args, "socket,path="+wantReady+",server=on,wait=off,id=ready_char") {
 		t.Fatalf("expected qemu args to include runtime ssh readiness socket %q: %v", wantReady, spec.Args)
 	}
 }
@@ -2550,7 +2819,7 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	}
 
 	wantSocket := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "fs.sock")
-	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIE_SOCKET_PATH="+wantSocket) {
+	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIOFSD_SOCKET="+wantSocket) {
 		t.Fatalf("expected virtiofs daemon env to contain resolved socket path %q: %v", wantSocket, got)
 	}
 	if !runner.processGroups["virtiofsd[workspace]"] {
@@ -2624,7 +2893,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 				SocketPath: "qmp.sock",
 			},
 			SSHReady: manifest.QEMUSSHReady{
-				SocketPath: "ssh-ready.sock",
+				SocketPath: "ready.sock",
 			},
 			Devices: manifest.QEMUDevices{
 				RNG: manifest.QEMURNGDevice{
@@ -2708,6 +2977,7 @@ type fakeRunner struct {
 	finishInteractiveSSHDelay time.Duration
 	transientSSHFailures      int
 	transientSSHOutputs       []string
+	authSSHFailures           int
 	qemu                      *fakeProcess
 	onStart                   func(processSpec)
 }
@@ -2735,6 +3005,16 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 	case "ssh":
 		r.sshArgs = append(r.sshArgs, append([]string(nil), spec.Args...))
 		r.interactiveStarts++
+		if r.interactiveStarts <= r.authSSHFailures {
+			if spec.Stderr != nil {
+				_, _ = io.WriteString(spec.Stderr, "agent@vsock/3: Permission denied (publickey).\n")
+			}
+			return &fakeProcess{
+				name:   spec.Name,
+				runner: r,
+				done:   closedErrorChannel(errors.New("exit status 255")),
+			}, nil
+		}
 		if r.interactiveStarts <= r.transientSSHFailures {
 			if spec.Stderr != nil {
 				output := "ssh: connect to host vsock/3 port 22: Connection refused\n"
@@ -2851,7 +3131,7 @@ type fakeSocketWaiter struct {
 func (w *fakeSocketWaiter) Wait(ctx context.Context, socketPaths []string) error {
 	w.calls++
 	w.paths = append(w.paths, append([]string(nil), socketPaths...))
-	if !w.noAutoSSHReady && len(socketPaths) == 1 && filepath.Base(socketPaths[0]) == "ssh-ready.sock" {
+	if !w.noAutoSSHReady && len(socketPaths) == 1 && filepath.Base(socketPaths[0]) == "ready.sock" {
 		return startFakeSSHReadySocket(ctx, socketPaths[0])
 	}
 	return w.callback(socketPaths)
@@ -2873,7 +3153,7 @@ func startFakeSSHReadySocket(_ context.Context, path string) error {
 			return
 		}
 		defer conn.Close()
-		_, _ = io.WriteString(conn, sshReadyToken+"\n")
+		_, _ = io.WriteString(conn, SSHReadyToken+"\n")
 		time.Sleep(100 * time.Millisecond)
 	}()
 	return nil
@@ -2907,6 +3187,20 @@ type fakeSSHReadyDialer struct {
 	block    bool
 }
 
+type fakeVSockCIDChecker struct {
+	unavailable map[int]bool
+	err         error
+	checked     []int
+}
+
+func (c *fakeVSockCIDChecker) Available(cid int) (bool, error) {
+	c.checked = append(c.checked, cid)
+	if c.err != nil {
+		return false, c.err
+	}
+	return !c.unavailable[cid], nil
+}
+
 func (d *fakeSSHReadyDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (io.ReadCloser, error) {
 	d.attempts++
 	if d.record != nil {
@@ -2921,7 +3215,7 @@ func (d *fakeSSHReadyDialer) Dial(ctx context.Context, socketPath string, timeou
 	}
 	data := d.data
 	if data == "" {
-		data = sshReadyToken
+		data = SSHReadyToken
 	}
 	return io.NopCloser(strings.NewReader(data)), nil
 }
@@ -3480,6 +3774,20 @@ func containsString(values []string, needle string) bool {
 	for _, value := range values {
 		if strings.Contains(value, needle) {
 			return true
+		}
+	}
+	return false
+}
+
+func containsGuestExec(calls []guestExecCall, path string, argNeedle string) bool {
+	for _, call := range calls {
+		if call.path != path {
+			continue
+		}
+		for _, arg := range call.args {
+			if strings.Contains(arg, argNeedle) {
+				return true
+			}
 		}
 	}
 	return false

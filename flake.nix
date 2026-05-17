@@ -26,7 +26,7 @@
         pname = "virtie";
         version = "0.1.0";
         src = ./virtie;
-        vendorHash = "sha256-KZwtf49dz0LE+rKc98Ne+2xohmb0s2BpN5puWdhYITk=";
+        vendorHash = "sha256-FOHUyDHCB1nuf5XO5vPHbJhthBbObhZBZ2xzY94O7ts=";
         subPackages = [ "." ];
         env.CGO_ENABLED = 0;
       };
@@ -118,6 +118,14 @@
       vmConfigs = {
         default = mkSandbox { };
       };
+      checkArgs = {
+        inherit
+          mkLaunch
+          mkSandbox
+          pkgs
+          virtiePackage
+          ;
+      };
     in
     {
       nixosConfigurations = vmConfigs;
@@ -131,13 +139,15 @@
       };
 
       checks.${system} = import ./checks {
-        inherit
+        inherit (checkArgs)
           mkLaunch
           mkSandbox
           pkgs
           virtiePackage
           ;
       };
+
+      legacyPackages.${system}.graphicalChecks = import ./checks/graphical.nix checkArgs;
 
       apps.${system} = {
         default = self.apps.${system}.launch;

@@ -41,10 +41,6 @@
         message = "microvm.devices passthrough is unsupported by the direct virtie QEMU launcher.";
       }
       {
-        assertion = config.microvm.storeOnDisk == false;
-        message = "microvm.storeOnDisk is unsupported by the direct virtie QEMU launcher.";
-      }
-      {
         assertion = config.microvm.preStart == "";
         message = "microvm.preStart is unsupported by the direct virtie QEMU launcher.";
       }

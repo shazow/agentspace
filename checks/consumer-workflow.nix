@@ -11,6 +11,10 @@ let
     ssh.authorizedKeys = [ sshKeys.consumer.publicKey ];
     ssh.identityFile = sshKeys.consumer.identityFile;
     ssh.command = "bash -lc pwd";
+    groups = [
+      "wheel"
+      "kvm"
+    ];
     persistence = {
       homeImage = "/var/lib/agentspace/home.img";
       storeOverlay = "/var/lib/agentspace/nix-store-overlay.img";
@@ -74,6 +78,10 @@ let
     assert sandboxCfg.persistence.storeOverlay == "/var/lib/agentspace/nix-store-overlay.img";
     assert sandboxCfg.machine.memory == 512;
     assert sandboxCfg.machine.vcpu == 16;
+    assert sandboxCfg.groups == [
+      "wheel"
+      "kvm"
+    ];
     assert builtins.length sandboxCfg.extraModules == 1;
     assert vmConsumer.config.microvm.vcpu == 16;
     assert vmConsumer.config.microvm.mem == 512;
@@ -81,6 +89,7 @@ let
     assert vmConsumer.config.environment.variables.AGENTSPACE_EXTRA_MODULE == "1";
     assert userCfg.home == "/home/${sandboxCfg.user}";
     assert userCfg.createHome;
+    assert userCfg.extraGroups == sandboxCfg.groups;
     assert userCfg.openssh.authorizedKeys.keys == [ sshKeys.consumer.publicKey ];
     assert homeCfg.home.username == sandboxCfg.user;
     assert homeCfg.home.homeDirectory == "/home/${sandboxCfg.user}";
@@ -89,12 +98,12 @@ let
     assert homeCfg.programs.home-manager.enable;
     assert homeCfg.programs.git.enable;
     assert builtins.elem pkgs.hello homeCfg.home.packages;
-    assert builtins.elem "./id_ed25519" manifest.ssh.argv;
-    assert manifest.qemu.memory.sizeMiB == 512;
-    assert manifest.qemu.smp.cpus == 16;
-    assert builtins.any (volume: volume.imagePath == "/var/lib/agentspace/home.img") manifest.volumes;
+    assert builtins.elem "./id_ed25519" manifest.ssh.exec;
+    assert manifest.machine.memory == 512;
+    assert manifest.machine.vcpu == 16;
+    assert builtins.any (volume: volume.image == "/var/lib/agentspace/home.img") manifest.volumes;
     assert builtins.any (
-      volume: volume.imagePath == "/var/lib/agentspace/nix-store-overlay.img"
+      volume: volume.image == "/var/lib/agentspace/nix-store-overlay.img"
     ) manifest.volumes;
     true;
 in

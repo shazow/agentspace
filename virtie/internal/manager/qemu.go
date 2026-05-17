@@ -138,9 +138,9 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 			return nil, err
 		}
 		args = append(args,
-			"-chardev", fmt.Sprintf("socket,path=%s,server=on,wait=off,id=ssh_ready_char", qemu.SSHReady.SocketPath),
-			"-device", fmt.Sprintf("%s,id=ssh-ready-serial", serialDriver),
-			"-device", "virtserialport,chardev=ssh_ready_char,name=virtie.ssh.ready",
+			"-chardev", fmt.Sprintf("socket,path=%s,server=on,wait=off,id=ready_char", qemu.SSHReady.SocketPath),
+			"-device", fmt.Sprintf("%s,id=ready-serial", serialDriver),
+			"-device", "virtserialport,chardev=ready_char,name=virtie.ready",
 		)
 	}
 
@@ -291,7 +291,7 @@ func qemuGraphicsArgs(graphics manifest.QEMUGraphics) ([]string, error) {
 	args := []string{}
 	switch graphics.Backend {
 	case "gtk":
-		args = append(args, "-display", "gtk,gl=on", "-device", "virtio-vga-gl")
+		args = append(args, "-display", "gtk,gl=off", "-device", "virtio-vga")
 	case "cocoa":
 		args = append(args, "-display", "cocoa", "-device", "virtio-gpu")
 	default:

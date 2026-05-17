@@ -37,7 +37,7 @@ let
                             esac
                           done
                           ;;
-                        socket,*id=ssh_ready_char*|socket,*id=ssh_ready_char)
+                        socket,*id=ready_char*|socket,*id=ready_char)
                           IFS=',' read -r -a chardev_parts <<< "$chardev_spec"
                           for chardev_part in "''${chardev_parts[@]}"; do
                             case "$chardev_part" in
@@ -306,7 +306,7 @@ let
             ready_server.bind(ssh_ready_socket_path)
             ready_server.listen(1)
             conn, _ = ready_server.accept()
-            conn.sendall(b"READY\n")
+            conn.sendall(b"SSH-READY\n")
             conn.close()
             touch("ssh-ready-sent")
 
@@ -342,7 +342,7 @@ let
         set -euo pipefail
 
         mkdir -p "$PWD/state"
-        socket_path="''${VIRTIE_SOCKET_PATH:-$PWD/virtiofs.sock}"
+        socket_path="''${VIRTIOFSD_SOCKET:-$PWD/virtiofs.sock}"
         pid_path="$socket_path.pid"
         mkdir -p "$(dirname "$socket_path")"
         touch "$PWD/state/virtiofsd-started"
@@ -444,124 +444,59 @@ let
 
   manifest = pkgs.writeText "virtie-fake-manifest.json" (
     builtins.toJSON {
-      identity.hostName = "virtie-fake";
-      paths = {
-        workingDir = ".";
-        lockPath = "virtie.lock";
-        runtimeDir = "";
-      };
-      persistence = {
-        directories = [ "state" ];
-        baseDir = ".agentspace";
-        stateDir = ".agentspace";
-      };
+      host_name = "virtie-fake";
+      working_dir = ".";
+      state_dir = ".agentspace";
       ssh = {
-        argv = [ fakeSSH ];
+        exec = [ fakeSSH ];
         user = "agent";
       };
       qemu = {
-        binaryPath = "${fakeTools}/bin/qemu-system-x86_64";
-        name = "virtie-fake";
-        machine = {
-          type = "microvm";
-          options = [ "accel=tcg" ];
-        };
-        cpu = {
-          model = "host";
-        };
-        memory = {
-          sizeMiB = 256;
-          backend = "default";
-        };
-        kernel = {
-          path = "/tmp/vmlinuz";
-          initrdPath = "/tmp/initrd";
-          params = "panic=-1";
-        };
-        smp = {
-          cpus = 2;
-        };
-        console = {
-          stdioChardev = true;
-        };
-        knobs = {
-          noDefaults = true;
-          noUserConfig = true;
-          noReboot = true;
-          noGraphic = true;
-        };
-        qmp = {
-          socketPath = "qmp.sock";
-        };
-        guestAgent = {
-          socketPath = "qga.sock";
-        };
-        devices = {
-          rng = {
-            id = "rng0";
-            transport = "pci";
-          };
-          virtiofs = [
-            {
-              id = "fs0";
-              socketPath = "virtiofs.sock";
-              tag = "workspace";
-              transport = "pci";
-            }
-          ];
-          block = [
-            {
-              id = "vda";
-              imagePath = "overlay.img";
-              aio = "threads";
-              transport = "pci";
-            }
-          ];
-          network = [
-            {
-              id = "net0";
-              backend = "user";
-              macAddress = "02:02:00:00:00:01";
-              transport = "pci";
-            }
-          ];
-          vsock = {
-            id = "vsock0";
-            transport = "pci";
-          };
-        };
+        exec = [ "${fakeTools}/bin/qemu-system-x86_64" ];
+        machine_options.accel = "tcg";
+      };
+      machine = {
+        type = "microvm";
+        vcpu = 2;
+        memory = 256;
+        cpu = "host";
+        kvm = false;
+      };
+      kernel = {
+        path = "/tmp/vmlinuz";
+        initrd_path = "/tmp/initrd";
       };
       volumes = [
         {
-          imagePath = "overlay.img";
-          sizeMiB = 256;
-          fsType = "ext4";
-          autoCreate = true;
+          image = "overlay.img";
+          size = 256;
+          fs = "ext4";
+          create = true;
           label = null;
         }
       ];
-      virtiofs.daemons = [
+      mounts = [
         {
+          type = "virtiofs";
           tag = "workspace";
-          socketPath = "virtiofs.sock";
-          command = {
-            path = "${fakeTools}/bin/virtiofsd-workspace";
-            args = [ ];
-          };
+          virtiofsd_socket = "virtiofs.sock";
+          virtiofsd_exec = [ "${fakeTools}/bin/virtiofsd-workspace" ];
         }
       ];
-      writeFiles = {
-        "/etc/virtie/inline" = {
+      write_files = [
+        {
+          guest_path = "/etc/virtie/inline";
           chown = "agent:users";
           text = "inline-from-manifest";
           mode = "0640";
           overwrite = true;
-        };
-        "/var/lib/virtie/host" = {
+        }
+        {
+          guest_path = "/var/lib/virtie/host";
           overwrite = true;
-          path = "host-write-file";
-        };
-      };
+          source = "host-write-file";
+        }
+      ];
     }
   );
 
@@ -664,7 +599,7 @@ in
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f state/ssh-ready-sent; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock"; test -f "$XDG_RUNTIME_DIR/agentspace/virtie-fake/virtiofs.sock.pid"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qga.sock"; test -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/ssh-ready.sock"; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; test ! -e ssh-ready.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
+    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f state/ssh-ready-sent; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f .agentspace/virtiofs.sock; test -f .agentspace/virtiofs.sock.pid; test -S .agentspace/qmp.sock; test -S .agentspace/qga.sock; test -S .agentspace/ready.sock; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; test ! -e ready.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
       echo "virtie-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1
@@ -673,7 +608,7 @@ in
     grep -F 'AGENTSPACE_VIRTIE_OK' "$launch_log" >/dev/null
     grep -F 'stats:' "$launch_log" >/dev/null
     workspace_real="$(${pkgs.coreutils}/bin/realpath "$workspace_dir")"
-    grep -F '"workingDir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtie-fake.json" >/dev/null
+    grep -F '"working_dir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtie-fake.json" >/dev/null
     grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
     grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
     grep -Fx '/etc/virtie/inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
@@ -717,7 +652,7 @@ in
     launch_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with' "$no_ssh_log" >/dev/null 2>&1; then
+      if [ -S .agentspace/qmp.sock ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with' "$no_ssh_log" >/dev/null 2>&1; then
         break
       fi
       sleep 0.1
@@ -750,7 +685,7 @@ in
     launch_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
+      if [ -S .agentspace/qmp.sock ] && [ -f .agentspace/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
         break
       fi
       sleep 0.1
@@ -860,7 +795,7 @@ in
 
     ${pkgs.jq}/bin/jq \
       --arg ssh ${pkgs.lib.escapeShellArg fakeAuthFailureSSH} \
-      '.ssh.argv = [$ssh, "-i", ".agentspace-test/id_ed25519"]' \
+      '.ssh.exec = [$ssh, "-i", ".agentspace-test/id_ed25519"]' \
       ${manifest} > "$auth_manifest"
 
     export PATH=${fakeTools}/bin:$PATH
@@ -917,14 +852,14 @@ in
 
     ${pkgs.jq}/bin/jq \
       --arg ssh ${pkgs.lib.escapeShellArg fakeAuthFailureSSH} \
-      '.ssh.argv = [$ssh]' \
+      '.ssh.exec = [$ssh]' \
       ${manifest} > "$no_ssh_manifest"
 
     ${virtiePackage}/bin/virtie launch --manifest="$no_ssh_manifest" >"$no_ssh_log" 2>&1 &
     no_ssh_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S "$XDG_RUNTIME_DIR/agentspace/virtie-fake/qmp.sock" ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with' "$no_ssh_log" >/dev/null 2>&1; then
+      if [ -S .agentspace/qmp.sock ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with' "$no_ssh_log" >/dev/null 2>&1; then
         break
       fi
       sleep 0.1

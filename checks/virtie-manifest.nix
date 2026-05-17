@@ -6,14 +6,14 @@
 let
   sshKeys = import ./ssh-keys.nix { inherit pkgs; };
   notificationCommand = "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\"";
-  fakeQemuPackage = pkgs.runCommand "fake-qemu-package" { configureFlags = [ ]; } ''
-    mkdir -p "$out/bin"
-    touch "$out/bin/qemu-system-x86_64"
-  '';
 
   vmVirtie = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.identityFile = sshKeys.virtie.identityFile;
+    persistence.homeImage = null;
+  };
+
+  vmDefault = mkSandbox {
     persistence.homeImage = null;
   };
 
@@ -91,177 +91,165 @@ let
     };
   };
 
+  vmVirtieGraphical = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
+    persistence.homeImage = null;
+    extraModules = [
+      {
+        microvm.graphics = {
+          enable = true;
+          backend = "gtk";
+        };
+      }
+    ];
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
+  defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtieManifestData;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
-  fixedMachineManifest =
-    vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
+  fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
+  graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
 
-  graphicalQemuConfig = import ../agentspace-qemu-config.nix {
-    inherit pkgs;
-    lib = pkgs.lib;
-    config = {
-      networking.hostName = "graphical-contract";
-      microvm = {
-        qemu = {
-          machine = "microvm";
-          machineOpts = null;
-          package = fakeQemuPackage;
-          serialConsole = false;
-          extraArgs = [ ];
-        };
-        graphics = {
-          enable = true;
-          backend = "gtk";
-        };
-        shares = [ ];
-        cpu = "max";
-        kernel = {
-          out = pkgs.emptyDirectory;
-        };
-        initrdPath = "${pkgs.emptyDirectory}/initrd";
-        kernelParams = [ ];
-        forwardPorts = [ ];
-        storeOnDisk = false;
-        volumes = [ ];
-        vcpu = 1;
-        mem = 768;
-        socket = "qmp.sock";
-        machineId = null;
-        user = null;
-        interfaces = [
-          {
-            type = "user";
-            id = "net0";
-            mac = "02:02:00:00:00:01";
-          }
-        ];
-      };
-    };
-  };
+  virtiofsMounts = builtins.filter (mount: mount.type == "virtiofs") manifest.mounts;
+  virtiofsDaemonMounts = builtins.filter (
+    mount: mount.type == "virtiofs" && mount ? virtiofsd_exec
+  ) manifest.mounts;
 
   _ =
-    assert manifest.qemu.binaryPath != "";
-    assert manifest.qemu.name == "agent-sandbox";
-    assert builtins.length manifest.qemu.machine.options > 0;
-    assert manifest.qemu.machine.type == "microvm";
-    assert manifest.paths.runtimeDir == "";
-    assert manifest.persistence.baseDir == ".agentspace";
-    assert manifest.persistence.stateDir == ".agentspace";
-    assert manifest.qemu.qmp.socketPath == "qmp.sock";
-    assert manifest.qemu.guestAgent.socketPath == "qga.sock";
-    assert manifest.qemu.sshReady.socketPath == "ssh-ready.sock";
-    assert manifest.qemu.memory.sizeMiB == 4096;
-    assert !(manifest.qemu.smp ? cpus);
-    assert manifest.qemu.knobs.noGraphic == true;
-    assert !(manifest.qemu ? graphics);
-    assert manifest.writeFiles == { };
+    assert builtins.head manifest.qemu.exec != "";
+    assert manifest.host_name == "agent-sandbox";
+    assert !(manifest ? host);
+    assert
+      manifest.qemu.fwd_tunnel_exec == [
+        "${pkgs.netcat}/bin/nc"
+        "$HOST"
+        "$PORT"
+      ];
+    assert manifest.machine.type == "microvm";
+    assert !(manifest.qemu ? machine_options);
+    assert manifest.state_dir == ".agentspace";
+    assert manifest.qemu.qmp_socket == "qmp.sock";
+    assert manifest.machine.memory == 4096;
+    assert manifest.machine.vcpu == null;
+    assert manifest.graphics.backend == "headless";
+    assert manifest.write_files == [ ];
     assert manifest.notifications.states == [ ];
-    assert !(manifest.notifications ? command);
-    assert manifest.qemu.devices.rng.id == "rng0";
-    assert builtins.length manifest.qemu.devices.virtiofs > 0;
-    assert manifest.qemu.devices."9p" == [ ];
-    assert builtins.length manifest.qemu.devices.block > 0;
-    assert builtins.length manifest.qemu.devices.network > 0;
-    assert manifest.qemu.devices.vsock.id == "vsock0";
+    assert !(manifest.notifications ? exec);
+    assert builtins.length virtiofsMounts > 0;
+    assert !(builtins.any (mount: mount.type == "9p") manifest.mounts);
+    assert builtins.length manifest.volumes > 0;
+    assert builtins.length manifest.networks > 0;
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.after == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
-    assert builtins.head manifest.ssh.argv == "${pkgs.openssh}/bin/ssh";
+    assert builtins.head manifest.ssh.exec == "${pkgs.openssh}/bin/ssh";
     assert manifest.ssh.user == "agent";
-    assert !(manifest.ssh ? retryDelayMs);
-    assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.argv;
-    assert builtins.length manifest.volumes > 0;
-    assert builtins.any (
-      volume: volume.imagePath == ".agentspace/nix-store-overlay.img"
-    ) manifest.volumes;
-    assert builtins.length manifest.virtiofs.daemons > 0;
+    assert manifest.ssh.ready_socket == "ready.sock";
+    assert !(manifest.ssh ? retry_delay_ms);
+    assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.exec;
+    assert builtins.any (volume: volume.image == ".agentspace/nix-store-overlay.img") manifest.volumes;
+    assert builtins.length virtiofsDaemonMounts > 0;
     assert builtins.all (
-      daemon: daemon.socketPath != "" && daemon.command.path != ""
-    ) manifest.virtiofs.daemons;
-    assert builtins.any (daemon: daemon.tag == "workspace") manifest.virtiofs.daemons;
+      mount: mount.virtiofsd_socket != "" && builtins.head mount.virtiofsd_exec != ""
+    ) virtiofsDaemonMounts;
+    assert builtins.any (mount: mount.tag == "workspace") virtiofsDaemonMounts;
     assert !(manifest ? vsock);
     assert !(manifest.ssh ? destination);
-    assert !(manifest.qemu ? argvTemplate);
+    assert !(manifest ? qemuConfig);
     assert !(manifest ? microvmRun);
     assert !(manifest ? virtiofsdRun);
-    assert !builtins.any (arg: builtins.match ".*@vsock/.*" arg != null) manifest.ssh.argv;
+    assert !builtins.any (arg: builtins.match ".*@vsock/.*" arg != null) manifest.ssh.exec;
+    true;
+
+  _defaultSSH =
+    assert defaultManifest.ssh.autoprovision == true;
+    assert defaultManifest.ssh.ready_socket == "ready.sock";
+    assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);
+    assert defaultManifest.write_files == [ ];
+    assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;
     true;
 
   _fixedMachine =
-    assert fixedMachineManifest.qemu.memory.sizeMiB == 512;
-    assert fixedMachineManifest.qemu.smp.cpus == 2;
+    assert fixedMachineManifest.machine.memory == 512;
+    assert fixedMachineManifest.machine.vcpu == 2;
     assert vmVirtieFixedMachine.config.microvm.mem == 512;
     assert vmVirtieFixedMachine.config.microvm.vcpu == 2;
     true;
 
   _balloon =
-    assert featureRichManifest.qemu.devices ? balloon;
-    assert featureRichManifest.qemu.devices.balloon.id == "balloon0";
-    assert !(featureRichManifest.qemu.devices.balloon ? controller);
-    assert !(disabledBalloonManifest.qemu.devices ? balloon);
+    assert featureRichManifest.balloon.enabled == true;
+    assert !(featureRichManifest.balloon ? controller);
+    assert disabledBalloonManifest.balloon.enabled == false;
     true;
 
   _graphical =
-    assert graphicalQemuConfig.knobs.noGraphic == false;
-    assert graphicalQemuConfig.graphics.backend == "gtk";
-    assert builtins.elem "pcie=on" graphicalQemuConfig.machine.options;
-    assert graphicalQemuConfig.devices.rng.transport == "pci";
-    assert graphicalQemuConfig.devices.vsock.transport == "pci";
-    assert builtins.all (network: network.transport == "pci") graphicalQemuConfig.devices.network;
+    assert graphicalManifest.graphics.backend == "gtk";
     true;
 
   _externalStoreSocket =
-    assert builtins.length externalStoreSocketManifest.qemu.devices.virtiofs == 1;
+    assert builtins.length externalStoreSocketManifest.mounts == 1;
     assert
-      builtins.head externalStoreSocketManifest.qemu.devices.virtiofs == {
-        id = "fs0";
-        socketPath = "/var/run/virtiofs-nix-store.sock";
+      builtins.head externalStoreSocketManifest.mounts == {
+        type = "virtiofs";
+        source = "/nix/store";
+        virtiofsd_socket = "/var/run/virtiofs-nix-store.sock";
         tag = "ro-store";
-        transport = "pci";
+        read_only = true;
+        security_model = "none";
+        cache = "auto";
       };
-    assert externalStoreSocketManifest.virtiofs.daemons == [ ];
+    assert !(builtins.head externalStoreSocketManifest.mounts ? virtiofsd_exec);
     true;
 
   _extraShares =
-    assert builtins.length extraSharesManifest.qemu.devices."9p" == 1;
-    assert builtins.head extraSharesManifest.qemu.devices."9p" == {
-      id = "fs9p0";
-      sourcePath = ".agentspace-test/cache";
-      tag = "cache";
-      securityModel = "mapped";
-      readOnly = true;
-      transport = "pci";
-    };
+    assert
+      builtins.length (builtins.filter (mount: mount.type == "9p") extraSharesManifest.mounts) == 1;
     assert builtins.any (
-      share: share.tag == "tools" && share.socketPath != "" && share.transport == "pci"
-    ) extraSharesManifest.qemu.devices.virtiofs;
-    assert builtins.any (daemon: daemon.tag == "tools") extraSharesManifest.virtiofs.daemons;
-    assert !(builtins.any (daemon: daemon.tag == "cache") extraSharesManifest.virtiofs.daemons);
+      mount:
+      mount.type == "9p"
+      && mount.source == ".agentspace-test/cache"
+      && mount.tag == "cache"
+      && mount.security_model == "mapped"
+      && mount.read_only == true
+    ) extraSharesManifest.mounts;
+    assert builtins.any (
+      mount: mount.tag == "tools" && mount.virtiofsd_socket != "" && mount ? virtiofsd_exec
+    ) extraSharesManifest.mounts;
+    assert
+      !(builtins.any (mount: mount.tag == "cache" && mount ? virtiofsd_exec) extraSharesManifest.mounts);
     true;
 
   _writeFiles =
-    assert featureRichManifest.qemu.guestAgent.socketPath == "qga.sock";
-    assert featureRichManifest.writeFiles."/etc/agentspace-inline".chown == "agent:users";
-    assert featureRichManifest.writeFiles."/etc/agentspace-inline".text == "hello";
-    assert featureRichManifest.writeFiles."/etc/agentspace-inline".mode == "0640";
-    assert featureRichManifest.writeFiles."/etc/agentspace-inline".overwrite == true;
-    assert featureRichManifest.writeFiles."/etc/agentspace-inline".path == null;
-    assert featureRichManifest.writeFiles."/etc/agentspace-host".chown == null;
-    assert featureRichManifest.writeFiles."/etc/agentspace-host".text == null;
-    assert featureRichManifest.writeFiles."/etc/agentspace-host".mode == null;
-    assert featureRichManifest.writeFiles."/etc/agentspace-host".overwrite == false;
-    assert featureRichManifest.writeFiles."/etc/agentspace-host".path == ".agentspace-test/host-file";
+    assert builtins.any (
+      file:
+      file.guest_path == "/etc/agentspace-inline"
+      && file.chown == "agent:users"
+      && file.text == "hello"
+      && file.mode == "0640"
+      && file.overwrite == true
+      && !(file ? source)
+    ) featureRichManifest.write_files;
+    assert builtins.any (
+      file:
+      file.guest_path == "/etc/agentspace-host"
+      && file.chown == null
+      && file.text == null
+      && file.mode == null
+      && file.overwrite == false
+      && file.source == ".agentspace-test/host-file"
+    ) featureRichManifest.write_files;
     true;
 
   _notifications =
-    assert featureRichManifest.notifications.command.path == pkgs.runtimeShell;
     assert
-      featureRichManifest.notifications.command.args == [
+      featureRichManifest.notifications.exec == [
+        pkgs.runtimeShell
         "-c"
         notificationCommand
       ];
@@ -277,6 +265,10 @@ in
   virtie-manifest-contract =
     assert _;
     pkgs.runCommand "virtie-manifest-contract" { } "touch $out";
+
+  virtie-manifest-default-ssh-contract =
+    assert _defaultSSH;
+    pkgs.runCommand "virtie-manifest-default-ssh-contract" { } "touch $out";
 
   virtie-manifest-balloon-contract =
     assert _balloon;

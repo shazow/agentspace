@@ -150,103 +150,50 @@ func TestLoadLaunchManifestPersistsAbsoluteWorkingDir(t *testing.T) {
 		t.Fatalf("read updated manifest: %v", err)
 	}
 	var document struct {
-		Paths struct {
-			WorkingDir string `json:"workingDir"`
-		} `json:"paths"`
+		WorkingDir string `json:"working_dir"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("decode updated manifest: %v", err)
 	}
-	if document.Paths.WorkingDir != tmpDir {
-		t.Fatalf("unexpected persisted working dir: got %q want %q", document.Paths.WorkingDir, tmpDir)
+	if document.WorkingDir != tmpDir {
+		t.Fatalf("unexpected persisted working dir: got %q want %q", document.WorkingDir, tmpDir)
 	}
 }
 
 func testManifestJSON(workingDir string) string {
 	return `{
-  "identity": {
-    "hostName": "test-vm"
-  },
-  "paths": {
-    "workingDir": "` + workingDir + `",
-    "lockPath": "virtie.lock"
-  },
-  "persistence": {
-    "directories": ["state"],
-    "baseDir": ".agentspace",
-    "stateDir": ".agentspace"
-  },
+  "host_name": "test-vm",
+  "working_dir": "` + workingDir + `",
+  "state_dir": ".agentspace",
   "ssh": {
-    "argv": ["/bin/ssh"],
+    "exec": ["/bin/ssh"],
     "user": "agent"
   },
   "qemu": {
-    "binaryPath": "/bin/qemu-system-x86_64",
-    "name": "test-vm",
-    "machine": {
-      "type": "microvm"
-    },
-    "cpu": {
-      "model": "host"
-    },
-    "memory": {
-      "sizeMiB": 256
-    },
-    "kernel": {
-      "path": "/tmp/vmlinuz",
-      "initrdPath": "/tmp/initrd"
-    },
-    "smp": {
-      "cpus": 1
-    },
-    "qmp": {
-      "socketPath": "qmp.sock"
-    },
-    "devices": {
-      "rng": {
-        "id": "rng0",
-        "transport": "pci"
-      },
-      "virtiofs": [
-        {
-          "id": "fs0",
-          "socketPath": "virtiofs.sock",
-          "tag": "workspace",
-          "transport": "pci"
-        }
-      ],
-      "block": [
-        {
-          "id": "vda",
-          "imagePath": "overlay.img",
-          "transport": "pci"
-        }
-      ],
-      "network": [
-        {
-          "id": "net0",
-          "backend": "user",
-          "macAddress": "02:02:00:00:00:01",
-          "transport": "pci"
-        }
-      ],
-      "vsock": {
-        "id": "vsock0",
-        "transport": "pci"
-      }
-    }
+    "exec": ["/bin/qemu-system-x86_64"]
   },
-  "virtiofs": {
-    "daemons": [
-      {
-        "tag": "workspace",
-        "socketPath": "virtiofs.sock",
-        "command": {
-          "path": "/bin/virtiofsd"
-        }
-      }
-    ]
-  }
+  "machine": {
+    "type": "microvm",
+    "memory": 256,
+    "vcpu": 1
+  },
+  "kernel": {
+    "path": "/tmp/vmlinuz",
+    "initrd_path": "/tmp/initrd"
+  },
+  "mounts": [
+    {
+      "type": "virtiofs",
+      "tag": "workspace",
+      "virtiofsd_socket": "virtiofs.sock",
+      "virtiofsd_exec": ["/bin/virtiofsd"]
+    }
+  ],
+  "volumes": [
+    {
+      "image": "overlay.img"
+    }
+  ]
 }
 `
 }

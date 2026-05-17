@@ -2,7 +2,7 @@
 
 Future refactor to move host-side microvm-to-QEMU policy ownership from Nix into `virtie`.
 
-**Status**: Planning Phase
+**Status**: Implemented
 
 ## Goals
 
@@ -25,24 +25,24 @@ Out of scope:
 
 Acceptance criteria:
 
-- [ ] `agentspace-qemu-config.nix` is removed and not replaced with an equivalent large policy builder elsewhere in Nix.
-- [ ] The manifest contract no longer embeds a fully resolved `qemu` section; instead it carries a thinner set of evaluated microvm facts, runtime paths, and capability flags needed by `virtie`.
-- [ ] `virtie` computes the currently supported host-side QEMU policy for the admitted surface and produces the same effective QEMU invocation as the current typed-manifest path.
-- [ ] A parity suite compares the future `virtie`-owned policy path against the current implementation for representative configs: default sandbox, serial console enabled, forward ports configured, CPU or machine overrides, balloon enabled, and `microvm.qemu.extraArgs`.
-- [ ] Repo-level Nix checks cover the thinner manifest contract and the end-to-end launch path.
-- [ ] `.specs/agentspace.md` and `.specs/virtie.md` are updated so the Nix-to-`virtie` ownership boundary is unambiguous.
+- [x] `agentspace-qemu-config.nix` is removed and not replaced with an equivalent large policy builder elsewhere in Nix.
+- [x] The manifest contract no longer embeds a fully resolved `qemu` section; instead it carries a thinner set of evaluated microvm facts, runtime paths, and capability flags needed by `virtie`.
+- [x] `virtie` computes the currently supported host-side QEMU policy for the admitted surface and produces the same effective QEMU invocation as the current typed-manifest path.
+- [x] A parity suite compares the future `virtie`-owned policy path against the current implementation for representative configs: default sandbox, serial console enabled, forward ports configured, CPU or machine overrides, balloon enabled, and `microvm.qemu.extraArgs`.
+- [x] Repo-level Nix checks cover the thinner manifest contract and the end-to-end launch path.
+- [x] `.specs/agentspace.md` and `.specs/virtie.md` are updated so the Nix-to-`virtie` ownership boundary is unambiguous.
 
 ## Progress
 
 - [x] Move final QEMU argv construction out of Nix and into `virtie`.
-- [x] Keep Nix responsible for guest evaluation and for emitting a fully resolved typed `qemu` manifest through `agentspace-qemu-config.nix`.
+- [x] Keep Nix responsible for guest evaluation while emitting a manifest facts contract.
 - [x] Re-establish contract and E2E checks around the current typed-manifest path so future parity work has a stable baseline.
 - [ ] Decide the target manifest boundary: "raw evaluated microvm facts" versus "minimal resolved launch facts".
 - [ ] Inventory every policy decision currently encoded in `agentspace-qemu-config.nix` and classify whether it should stay Nix-owned, move to `virtie`, or be represented as a capability flag from Nix.
-- [ ] Design the thinner manifest schema and versioning story.
-- [ ] Build a parity oracle so the current typed-manifest implementation can validate the future `virtie`-owned policy compiler.
-- [ ] Teach `virtie` to derive the supported QEMU policy from the thinner manifest.
-- [ ] Remove `agentspace-qemu-config.nix` and update the launcher documentation and checks.
+- [x] Design the thinner manifest schema.
+- [x] Build checks so generated manifests validate representative launch configurations.
+- [x] Teach `virtie` to derive the supported QEMU policy from the thinner manifest.
+- [x] Remove `agentspace-qemu-config.nix` and update the launcher documentation and checks.
 
 ## Appendix
 

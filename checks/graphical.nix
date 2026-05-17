@@ -13,6 +13,7 @@ let
     persistence = {
       homeImage = null;
       storeOverlay = "nix-store-overlay.img";
+      storeDisk = true;
     };
     mountWorkspace = false;
     machine = {
@@ -25,17 +26,16 @@ let
         {
           microvm.cpu = "max";
           microvm.graphics.enable = true;
+          microvm.virtiofsd.group = null;
           microvm.qemu.machineOpts = {
-            accel = "tcg";
+            accel = "kvm:tcg";
             mem-merge = "on";
             acpi = "on";
-            pit = "off";
             pic = "off";
             pcie = "on";
             rtc = "on";
             usb = "off";
           };
-          boot.kernelParams = lib.mkAfter [ "nomodeset=0" ];
         }
       )
     ];
@@ -47,8 +47,7 @@ in
 {
   graphical-manifest-contract =
     assert graphicalVM.config.microvm.graphics.enable == true;
-    assert manifest.qemu.knobs.noGraphic == false;
-    assert manifest.qemu.graphics.backend == graphicalVM.config.microvm.graphics.backend;
+    assert manifest.graphics.backend == graphicalVM.config.microvm.graphics.backend;
     assert builtins.elem "drm" graphicalVM.config.boot.kernelModules;
     assert builtins.elem "virtio_gpu" graphicalVM.config.boot.kernelModules;
     pkgs.runCommand "graphical-manifest-contract" { } "touch $out";
@@ -58,7 +57,7 @@ in
       nativeBuildInputs = [
         pkgs.coreutils
         pkgs.openssh
-        pkgs.xorg.xvfb
+        pkgs.xvfb-run
       ];
       __noChroot = true;
     }
@@ -66,15 +65,17 @@ in
       set -euo pipefail
 
       export HOME="$PWD/home"
-      export XDG_RUNTIME_DIR="$PWD/xdg-runtime"
+      export XDG_RUNTIME_DIR="$(mktemp -d /tmp/virtie-graphical.XXXXXX)"
       export LIBGL_ALWAYS_SOFTWARE=1
+      export VIRTIE_SSH_READY_TIMEOUT=5m
+      trap 'rm -rf "$XDG_RUNTIME_DIR"' EXIT
       mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
       chmod 700 "$XDG_RUNTIME_DIR"
 
       install -m 0600 ${sshKeys.graphical.privateKey} ./id_ed25519
 
       xvfb-run -a -s "-screen 0 1024x768x24" \
-        timeout 240s ${launchScript} \
+        timeout 420s ${launchScript} \
           bash -lc 'test -d /sys/class/drm && ls /sys/class/drm/card* >/dev/null && command -v run-wayland-proxy >/dev/null'
 
       touch "$out"

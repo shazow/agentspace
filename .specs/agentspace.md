@@ -25,10 +25,10 @@ Acceptance criteria:
 
 - [x] `mkLaunch` execs `virtie launch -v --ssh --manifest=MANIFEST -- "$@"` for autoconnecting SSH sessions and `virtie launch -v --manifest=MANIFEST` when SSH autoconnect is disabled.
 - [x] `mkSandbox` keeps the supported customization hooks required by downstream consumers, especially `extraModules`, `homeModules`, SSH credentials, workspace settings, and persistence settings.
-- [x] The manifest emitted from `sandbox-qemu.nix` carries the current `virtie` inputs: working dir, lock path, ssh argv/user, typed QEMU settings including SSH readiness, volumes, `virtiofs` daemon commands, and opt-in `9p` shares.
+- [x] The manifest emitted from `sandbox-qemu.nix` carries the current `virtie` inputs: working dir, lock path, ssh argv/user, host facts, kernel paths, volumes, mounts with managed `virtiofsd` commands, and opt-in `9p` shares.
 - [x] Unsupported launch configurations fail through explicit assertions rather than hidden fallback behavior.
 - [x] `agentspace.sandbox.extraModules` remains usable through the follow-up evaluation pass in `mkSandbox`.
-- [ ] The default `mkSandbox {}` launch experience provisions a usable out-of-the-box SSH credential story.
+- [x] The default `mkSandbox {}` launch experience provisions a usable out-of-the-box SSH credential story.
 - [x] Repo-level flake outputs and enabled checks validate the documented path end to end.
 - [x] `microvm.graphics.enable = true` is accepted and lowered into the typed `virtie` manifest for GTK or Cocoa display backends.
 
@@ -36,13 +36,14 @@ Acceptance criteria:
 
 - [x] Package `virtie` in the flake and use it from generated launch wrappers.
 - [x] Replace the active launch path with `virtie launch` instead of legacy host orchestration.
-- [x] Move final QEMU argv construction out of Nix and into `virtie`, leaving Nix responsible for guest evaluation plus the resolved typed QEMU launch config.
-- [x] Emit the typed QEMU manifest from `sandbox-qemu.nix` through `agentspace-qemu-config.nix`.
+- [x] Move QEMU policy and final argv construction out of Nix and into `virtie`, leaving Nix responsible for guest evaluation plus evaluated launch facts.
+- [x] Emit the facts manifest from `sandbox-qemu.nix`.
 - [x] Reduce the public balloon surface to `agentspace.sandbox.balloon`, with `virtie` supplying runtime balloon-control defaults when the device is enabled.
 - [x] Generate per-share `virtiofsd` commands and socket paths in the manifest instead of relying on a `virtiofsd-run` helper.
 - [x] Add `agentspace.sandbox.shares` for additional sandbox mounts, using the upstream `microvm.shares` schema and defaults, appended after the built-in Nix store and workspace shares.
 - [x] Opt the generated manifest into XDG runtime socket placement so default `virtiofs` and QMP sockets no longer spill into the launch working directory.
 - [x] Add a guest `virtie-ssh-signal` oneshot that writes `READY` to the named virtio-serial port after `sshd.service` starts.
+- [x] Emit `ssh.autoprovision` when the caller does not provide SSH keys so `virtie` can generate a per-state-dir key, install it into the guest, and retry SSH after an authentication failure.
 - [x] Remove `mkConnect`, `connect-agent`, and `apps.connect` so the repo exposes only the supported launch entrypoint.
 - [x] Remove the dead airlock and bundle/import workflow files so the repo matches the supported launch surface.
 - [x] Restore `agentspace.sandbox.extraModules` support via the `mkSandbox` extension pass.
@@ -59,13 +60,13 @@ Acceptance criteria:
 - Current Nix-to-virtie contract:
   - Nix still owns guest evaluation and image production through `microvm.nix`.
   - Nix consumer-facing APIs should reuse `microvm.nix` option schemas and defaults wherever practical instead of re-declaring parallel shapes.
-  - Nix resolves machine, CPU, memory, kernel, block, network, `virtiofs`, opt-in `9p`, QMP, and SSH readiness settings into the manifest.
-  - The `virtie` manifest is a Nix-agnostic runtime boundary: it should describe the concrete host launch contract without depending on Nix option semantics or microvm.nix internals.
+  - Nix emits evaluated facts for machine, CPU, memory, kernel, volumes, mounts, networking, package paths, and host capabilities.
+  - The `virtie` manifest is a Nix-agnostic runtime boundary: it should describe launch facts without depending on Nix option semantics or microvm.nix internals.
   - Nix exposes only `agentspace.sandbox.balloon` for enabling or disabling the virtio-balloon device.
   - Nix exposes `agentspace.sandbox.notifications` for an optional host-side shell notification command and state allowlist.
-  - When enabled, the generated manifest includes the balloon device but leaves controller defaults to `virtie`.
+  - When enabled, the generated manifest includes balloon facts but leaves transport and controller defaults to `virtie`.
   - The generated manifest sets `paths.runtimeDir = ""`, so relative socket paths, including the SSH readiness socket, resolve under the per-user XDG runtime directory by default.
-  - `virtie` owns final argv compilation, the long-lived QMP lifecycle, optional runtime balloon control, process launch, and teardown ordering.
+  - `virtie` owns QEMU policy derivation, final argv compilation, the long-lived QMP lifecycle, optional runtime balloon control, process launch, and teardown ordering.
 - Current retained public hooks:
   - `extraModules`
   - `homeModules`
@@ -90,6 +91,6 @@ flowchart TD
   D --> F[launch-agent sets REPO_DIR]
   F --> G[Run built-in prelaunch shell]
   G --> H[Exec virtie launch with wrapper SSH policy]
-  H --> I[virtie compiles final QEMU argv]
+  H --> I[virtie derives QEMU policy and compiles argv]
   I --> J[virtie manages virtiofs, QMP, QEMU, and SSH session]
 ```

@@ -4,12 +4,15 @@
 - When testing nix builds, clean up `./result` symlinks after completion with `unlink` command.
 - This project should prioritize working on NixOS, but ideally also support macOS. Surface any concerns that may break macOS compatibility.
 - Backward-incompatible changes are acceptable when justified. When changing the consumer API, document it in `MIGRATION.md`.
+- When launching a VM, ensure we allocate less memory than is available, and choose an available CID (the default may be taken).
+- When debugging QEMU serial console output, add `-serial file:console.log` to pipe the output.
 
 ## Code Style
 
 - Avoid making helpers that are only used once unless the helper code needs to be tested.
 - When taking a string path input for reading/writing, convert it to an `io.Reader` or `io.Writer` in the `main` package early. Helpers and sub-packages and tests should prefer `io` interfaces.
 - Avoid using the real filesystem in tests, prefer `io` or `io/fs` or `testing/fstest` when possible for virtual filesystem (such as `fs.File`, `fs.FS`, `fstest.MapFS`).
+- Avoid using timed sleeps in tests, prefer signal-based control flows whenever possible. If sleep is the only way, then use a module-global constant to have uniform values for slow and fast sleep durations.
 
 ## Commits
 

@@ -8,11 +8,6 @@
 
 let
   cfg = config.agentspace.sandbox;
-  balloonTransport =
-    if (!lib.hasPrefix "microvm" config.microvm.qemu.machine) || config.microvm.shares != [ ] then
-      "pci"
-    else
-      "mmio";
   persistenceBaseDir = cfg.persistence.basedir;
   persistenceStateDir = persistenceBaseDir;
   resolvePersistencePath =
@@ -32,6 +27,15 @@ in
       type = lib.types.str;
       default = "agent";
       description = "Username for the guest.";
+    };
+
+    groups = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [
+        "wheel"
+        "kvm"
+      ];
+      description = "Extra groups for the guest user.";
     };
 
     hostName = lib.mkOption {
@@ -104,6 +108,12 @@ in
         type = lib.types.str;
         default = "nix-store-overlay.img";
         description = "Path for the writable nix store overlay image.";
+      };
+
+      storeDisk = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Whether to boot from a generated read-only Nix store disk instead of a host store share.";
       };
     };
 
@@ -280,6 +290,7 @@ in
         cd "$REPO_DIR"
       '';
 
+      sshAutoprovision = cfg.ssh.identityFile == null && cfg.ssh.authorizedKeys == [ ];
       sshBaseArgv = [
         "${pkgs.openssh}/bin/ssh"
         "-q"
@@ -294,39 +305,15 @@ in
         "-i"
         cfg.ssh.identityFile
       ];
-      virtiofsShares = builtins.filter (share: share.proto == "virtiofs") config.microvm.shares;
-      baseQemuConfig = import ./agentspace-qemu-config.nix {
-        inherit config lib pkgs;
-      };
       nixStoreShareUsesSocket = cfg.nixStoreShareSocket != null;
       isNixStoreShare = share: share.tag == "ro-store";
-      managedVirtioFSShares = builtins.filter (
-        share: !(nixStoreShareUsesSocket && isNixStoreShare share)
-      ) virtiofsShares;
-      qemuConfig = baseQemuConfig // {
-        smp = lib.optionalAttrs (cfg.machine.vcpu != null) {
-          cpus = cfg.machine.vcpu;
-        };
-        devices =
-          baseQemuConfig.devices
-          // {
-            virtiofs = builtins.map (
-              share:
-              if nixStoreShareUsesSocket && isNixStoreShare share then
-                share // { socketPath = cfg.nixStoreShareSocket; }
-              else
-                share
-            ) baseQemuConfig.devices.virtiofs;
-          }
-          // lib.optionalAttrs config.microvm.balloon {
-            balloon = {
-              id = "balloon0";
-              transport = balloonTransport;
-              deflateOnOOM = config.microvm.deflateOnOOM;
-              freePageReporting = true;
-            };
-          };
-      };
+      virtiofsShares = builtins.filter (
+        share: share.proto == "virtiofs" && !(cfg.persistence.storeDisk && isNixStoreShare share)
+      ) config.microvm.shares;
+      ninepShares = builtins.filter (share: share.proto == "9p") config.microvm.shares;
+      inherit (pkgs.stdenv.hostPlatform) system;
+      arch = builtins.head (builtins.split "-" system);
+      canSandbox = builtins.elem "--enable-seccomp" (config.microvm.qemu.package.configureFlags or [ ]);
 
       mkVirtioFSDaemonCommand =
         {
@@ -345,8 +332,8 @@ in
           fi
 
           socket_path=${lib.escapeShellArg socket}
-          if [ -n "''${VIRTIE_SOCKET_PATH-}" ]; then
-            socket_path="$VIRTIE_SOCKET_PATH"
+          if [ -n "''${VIRTIOFSD_SOCKET-}" ]; then
+            socket_path="$VIRTIOFSD_SOCKET"
           fi
 
           exec ${lib.getExe config.microvm.virtiofsd.package} \
@@ -371,57 +358,157 @@ in
             ${lib.escapeShellArgs config.microvm.virtiofsd.extraArgs}
         '';
 
-      virtiofsDaemons = builtins.map (share: {
-        tag = share.tag;
-        socketPath = share.socket;
-        command = {
-          path = mkVirtioFSDaemonCommand share;
-          args = [ ];
-        };
-      }) managedVirtioFSShares;
-
       notificationManifest = {
         states = cfg.notifications.states;
       }
       // lib.optionalAttrs (cfg.notifications.command != "") {
-        command = {
-          path = pkgs.runtimeShell;
-          args = [
-            "-c"
-            cfg.notifications.command
-          ];
-        };
+        exec = [
+          pkgs.runtimeShell
+          "-c"
+          cfg.notifications.command
+        ];
       };
 
-      manifestVolumes = builtins.map (volume: {
-        imagePath = volume.image;
-        sizeMiB = volume.size;
-        fsType = volume.fsType;
-        autoCreate = volume.autoCreate;
+      mkManifestVolume = volume: {
+        image = volume.image;
+        size = volume.size;
+        fs = volume.fsType;
+        create = volume.autoCreate;
         label = volume.label;
-      }) config.microvm.volumes;
+        read_only = volume.readOnly;
+        direct = volume.direct;
+        serial = volume.serial;
+      };
+      manifestVolumes =
+        lib.optionals cfg.persistence.storeDisk [
+          {
+            image = config.microvm.storeDisk;
+            read_only = true;
+          }
+        ]
+        ++ builtins.map mkManifestVolume config.microvm.volumes;
+
+      manifestForwardPorts = builtins.map (
+        {
+          proto,
+          from,
+          host,
+          guest,
+        }:
+        {
+          inherit proto from;
+          host = "${host.address}:${toString host.port}";
+          guest = "${guest.address}:${toString guest.port}";
+        }
+      ) config.microvm.forwardPorts;
+
+      manifestMounts =
+        builtins.map (
+          share:
+          let
+            socketPath =
+              if nixStoreShareUsesSocket && isNixStoreShare share then cfg.nixStoreShareSocket else share.socket;
+          in
+          {
+            type = "virtiofs";
+            tag = share.tag;
+            source = share.source;
+            virtiofsd_socket = socketPath;
+            read_only = share.readOnly;
+            security_model = share.securityModel;
+            cache = share.cache;
+          }
+          // lib.optionalAttrs (!(nixStoreShareUsesSocket && isNixStoreShare share)) {
+            virtiofsd_exec = [ (mkVirtioFSDaemonCommand share) ];
+          }
+        ) virtiofsShares
+        ++ builtins.map (share: {
+          type = "9p";
+          tag = share.tag;
+          source = share.source;
+          read_only = share.readOnly;
+          security_model = share.securityModel;
+        }) ninepShares;
+
+      manifestWriteFiles = lib.mapAttrsToList (
+        guestPath: file:
+        builtins.removeAttrs file [ "path" ]
+        // lib.optionalAttrs (file.path != null) { source = file.path; }
+        // {
+          guest_path = guestPath;
+        }
+      ) cfg.writeFiles;
 
       virtieManifestData = {
-        identity.hostName = cfg.hostName;
-        paths = {
-          workingDir = ".";
-          lockPath = "/tmp/agentspace-${cfg.hostName}.lock";
-          runtimeDir = "";
+        host_name = cfg.hostName;
+        working_dir = ".";
+        state_dir = persistenceStateDir;
+        qemu = {
+          exec = [
+            "${config.microvm.qemu.package}/bin/qemu-system-${arch}"
+          ]
+          ++ config.microvm.qemu.extraArgs;
+          fwd_tunnel_exec = [
+            "${config.microvm.vmHostPackages.netcat}/bin/nc"
+            "$HOST"
+            "$PORT"
+          ];
+          seccomp = canSandbox;
+          qmp_socket = if config.microvm.socket != null then config.microvm.socket else "qmp.sock";
+          guest_agent_socket = "qga.sock";
+        }
+        // lib.optionalAttrs (config.microvm.user != null) {
+          user = config.microvm.user;
+        }
+        // lib.optionalAttrs (config.microvm.qemu.machineOpts != null) {
+          machine_options = config.microvm.qemu.machineOpts;
         };
-        persistence = {
-          directories = initDirs;
-          baseDir = persistenceBaseDir;
-          stateDir = persistenceStateDir;
+        machine = {
+          type = config.microvm.qemu.machine;
+          memory = config.microvm.mem;
+          vcpu = cfg.machine.vcpu;
+          id = config.microvm.machineId;
+          kvm = pkgs.stdenv.hostPlatform.isLinux && config.microvm.cpu == null;
+        }
+        // lib.optionalAttrs (config.microvm.cpu != null) {
+          cpu = config.microvm.cpu;
+        };
+        kernel = {
+          path = "${config.microvm.kernel.out}/${pkgs.stdenv.hostPlatform.linux-kernel.target}";
+          initrd_path = config.microvm.initrdPath;
+          params = config.microvm.kernelParams;
+          serial_console = config.microvm.qemu.serialConsole;
+        };
+        graphics = {
+          backend = if config.microvm.graphics.enable then config.microvm.graphics.backend else "headless";
         };
         ssh = {
-          argv = sshBaseArgv;
+          exec = sshBaseArgv;
           user = cfg.user;
+          ready_socket = "ready.sock";
+          autoprovision = sshAutoprovision;
         };
-        qemu = qemuConfig;
+        balloon =
+          if config.microvm.balloon then
+            {
+              enabled = true;
+              deflate_on_oom = config.microvm.deflateOnOOM;
+              free_page_reporting = true;
+            }
+          else
+            {
+              enabled = false;
+            };
         volumes = manifestVolumes;
-        virtiofs.daemons = virtiofsDaemons;
+        mounts = manifestMounts;
+        networks = builtins.map (interface: {
+          id = interface.id;
+          type = interface.type;
+          mac = interface.mac;
+          forward = manifestForwardPorts;
+        }) config.microvm.interfaces;
         notifications = notificationManifest;
-        writeFiles = cfg.writeFiles;
+        write_files = manifestWriteFiles;
       };
 
       virtieManifestTemplate = pkgs.writeText "virtie-${cfg.hostName}.json" (
@@ -469,7 +556,7 @@ in
           isNormalUser = true;
           createHome = true;
           home = "/home/${cfg.user}";
-          extraGroups = [ "wheel" ];
+          extraGroups = cfg.groups;
           openssh.authorizedKeys.keys = cfg.ssh.authorizedKeys;
         };
 
@@ -502,7 +589,7 @@ in
           after = [ "sshd.service" ];
           serviceConfig.Type = "oneshot";
           script = ''
-            ${pkgs.coreutils}/bin/echo READY > /dev/virtio-ports/virtie.ssh.ready
+            ${pkgs.coreutils}/bin/echo SSH-READY > /dev/virtio-ports/virtie.ready
           '';
         };
         services.qemuGuest.enable = true;
@@ -543,6 +630,7 @@ in
 
         # MicroVM Configuration
         microvm = {
+          storeOnDisk = cfg.persistence.storeDisk;
           mem = cfg.machine.memory;
           vcpu = lib.mkIf (cfg.machine.vcpu != null) cfg.machine.vcpu;
           balloon = lib.mkDefault cfg.balloon;
@@ -559,25 +647,26 @@ in
             }
           ];
 
-          shares = [
-            {
-              proto = "virtiofs";
-              tag = "ro-store";
-              source = "/nix/store";
-              mountPoint = "/nix/.ro-store";
-              readOnly = true;
-            }
-          ]
-          ++ lib.optionals cfg.mountWorkspace [
-            {
-              proto = "virtiofs";
-              tag = "workspace";
-              source = ".";
-              mountPoint = cfg.workspaceMountPoint;
-              securityModel = "mapped";
-            }
-          ]
-          ++ cfg.shares;
+          shares =
+            lib.optionals (!cfg.persistence.storeDisk) [
+              {
+                proto = "virtiofs";
+                tag = "ro-store";
+                source = "/nix/store";
+                mountPoint = "/nix/.ro-store";
+                readOnly = true;
+              }
+            ]
+            ++ lib.optionals cfg.mountWorkspace [
+              {
+                proto = "virtiofs";
+                tag = "workspace";
+                source = ".";
+                mountPoint = cfg.workspaceMountPoint;
+                securityModel = "mapped";
+              }
+            ]
+            ++ cfg.shares;
 
           writableStoreOverlay = "/nix/.rw-store";
 

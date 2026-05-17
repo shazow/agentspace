@@ -4,6 +4,218 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-17: SSH readiness token and socket
+
+### Who Is Affected
+
+- Consumers that inspect generated virtie manifests or QEMU arguments.
+- Custom guests that write the SSH readiness signal themselves.
+
+### What Changed
+
+Generated manifests still use the existing `ssh.ready_socket` field, but the
+default generated value is now `ready.sock` instead of `ssh-ready.sock`. The
+guest signal service now writes `SSH-READY` to the generic `virtie.ready`
+virtio-serial port instead of writing `READY` to `virtie.ssh.ready`.
+
+### Migration Steps
+
+Update custom guest readiness writers and socket assertions:
+
+```diff
+- echo READY > /dev/virtio-ports/virtie.ssh.ready
++ echo SSH-READY > /dev/virtio-ports/virtie.ready
+```
+
+## 2026-05-17: SSH autoprovisioning
+
+### Who Is Affected
+
+- Direct virtie manifest producers that want default SSH key provisioning.
+- Consumers reading default generated manifest `ssh.exec` or `write_files`.
+
+### What Changed
+
+Generated manifests now emit `ssh.autoprovision = true` when no explicit
+identity file or authorized keys are configured. `virtie` generates the default
+key in the state directory only after SSH reaches public-key authentication and
+fails, then appends the public key to the guest user's `authorized_keys`.
+
+Generated manifests no longer add an implicit `.agentspace/id_ed25519` to
+`ssh.exec`, and no longer add an implicit `write_files` entry for
+`authorized_keys`.
+
+### Migration Steps
+
+Direct manifest producers can opt in explicitly:
+
+```toml
+[ssh]
+autoprovision = true
+```
+
+No change is needed when setting explicit `ssh.exec` identity arguments or
+managing `authorized_keys` directly.
+
+## 2026-05-17: guest forward tunnel command
+
+### Who Is Affected
+
+- Direct virtie manifest producers setting `host.netcat`.
+- Consumers reading `agentspace.sandbox.launch.virtieManifestData.host.netcat`.
+
+### What Changed
+
+Guest-to-host `networks[].forward` entries now use `qemu.fwd_tunnel_exec`, an
+argv template expanded into QEMU's `guestfwd ... cmd:` command. The `$HOST` and
+`$PORT` variables are replaced from the forward rule's host endpoint.
+
+Generated manifests no longer emit `host.netcat`; they emit a pinned netcat
+template under `qemu.fwd_tunnel_exec`.
+
+### Migration Steps
+
+Move the command under `qemu` and include endpoint template variables:
+
+```diff
+- [host]
+- netcat = "nc"
++ [qemu]
++ fwd_tunnel_exec = ["nc", "$HOST", "$PORT"]
+```
+
+For socat:
+
+```toml
+[qemu]
+fwd_tunnel_exec = ["socat", "-", "TCP:$HOST:$PORT"]
+```
+
+## 2026-05-17: SSH retry delay seconds
+
+### Who Is Affected
+
+- Direct virtie manifest producers setting `ssh.retry_delay_ms`.
+- Consumers reading lowered/internal manifests that previously used
+  `ssh.retryDelayMs`.
+
+### What Changed
+
+The public manifest field `ssh.retry_delay_ms` was renamed to
+`ssh.retry_delay`, and the value is now a floating-point delay in seconds. The
+lowered/internal JSON field changed from `ssh.retryDelayMs` to
+`ssh.retryDelay`. The default retry delay is now `0.5` seconds.
+
+### Migration Steps
+
+Rename the field and convert milliseconds to seconds:
+
+```diff
+- retry_delay_ms = 1000
++ retry_delay = 1.0
+```
+
+## 2026-05-17: snake_case virtie manifest
+
+### Who Is Affected
+
+- Direct manifest producers using the previous camelCase JSON/TOML keys.
+- Consumers reading `agentspace.sandbox.launch.virtieManifestData` directly.
+- Manifests that relied on relative runtime sockets resolving under
+  `$XDG_RUNTIME_DIR`.
+
+### What Changed
+
+The supported virtie manifest contract now matches the simplified snake_case
+shape documented by `virtie/manifest-proposed.toml`. Generated JSON uses the
+same field names as hand-written TOML.
+
+Historical top-level groups such as `identity`, `paths`, `memory`, and `cpu`
+were flattened into backend-neutral fields where possible. QEMU-specific knobs
+now live under `qemu`, and VM sizing lives under `machine`.
+
+`runtime_dir` is no longer part of the public manifest. Relative QMP, QGA,
+SSH-ready, and virtiofsd socket paths resolve under `state_dir`, which also
+contains PID files and suspend state.
+
+### Migration Steps
+
+Rename direct manifest fields to the new shape:
+
+```diff
+- "identity": { "hostName": "agent-sandbox" },
+- "paths": { "workingDir": ".", "stateDir": ".agentspace" },
+- "qemu": { "binaryPath": "/nix/store/.../qemu-system-x86_64" },
+- "memory": { "sizeMiB": 4096 },
++ "host_name": "agent-sandbox",
++ "working_dir": ".",
++ "state_dir": ".agentspace",
++ "qemu": { "exec": ["/nix/store/.../qemu-system-x86_64"] },
++ "machine": { "memory": 4096 },
+```
+
+Common list-entry renames:
+
+- `volumes[].imagePath -> volumes[].image`
+- `volumes[].sizeMiB -> volumes[].size`
+- `volumes[].fsType -> volumes[].fs`
+- `volumes[].autoCreate -> volumes[].create`
+- `volumes[].readOnly -> volumes[].read_only`
+- `mounts[].sourcePath -> mounts[].source`
+- `mounts[].socketPath -> mounts[].virtiofsd_socket`
+- `mounts[].daemon.path + daemon.args -> mounts[].virtiofsd_exec`
+- `mounts[].readOnly -> mounts[].read_only`
+- `mounts[].securityModel -> mounts[].security_model`
+- `writeFiles[].guestPath -> write_files[].guest_path`
+- `writeFiles[].path -> write_files[].source`
+- `ssh.argv -> ssh.exec`
+- `vsock.cidRange.start/end -> vsock.cid_range.min/max`
+
+Use `virtie/manifest-example-simple.toml`,
+`virtie/manifest-example-full.toml`, or the annotated
+`virtie/manifest-proposed.toml` as references.
+
+## 2026-05-12: simplified virtie manifest
+
+### Who Is Affected
+
+- Direct manifest producers that emit the previous fully resolved `qemu`
+  manifest object.
+- Direct manifest producers using path-keyed `writeFiles`.
+- Consumers reading generated `agentspace.sandbox.launch.virtieManifestData`
+  and expecting resolved QEMU device fields.
+
+### What Changed
+
+The public manifest now carries evaluated launch facts, and `virtie` derives
+the concrete host-side QEMU policy from those facts. Nix-generated manifests
+remain JSON, but `virtie` also accepts TOML for hand-written manifests.
+
+The previous resolved `qemu` contract was removed. Fields such as machine
+options, transport selection, device IDs, block letters, memory backend, QMP and
+SSH-ready defaults, and network lowering are now `virtie` policy. The generated
+Nix manifest no longer includes `virtiofs.daemons`; managed `virtiofsd` commands
+are attached to `mounts[]` entries instead. `writeFiles` is now a list with
+`guestPath`, not an object keyed by guest path.
+
+### Migration Steps
+
+Move required kernel paths to top-level `kernel.path` and `kernel.initrdPath`,
+describe shares under `mounts[]`, describe volumes under `volumes[]`, and
+convert path-keyed write files to list entries:
+
+```diff
+- "writeFiles": {
+-   "/etc/example.conf": { "text": "hello" }
+- }
++ "writeFiles": [
++   { "guestPath": "/etc/example.conf", "text": "hello" }
++ ]
+```
+
+Use `virtie/manifest-example-simple.toml` for the smallest hand-written shape
+and `virtie/manifest-example-full.toml` for the complete field set.
+
 ## 2026-05-12: native ext4 volume image creation
 
 ### Who Is Affected

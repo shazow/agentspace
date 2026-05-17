@@ -1,21 +1,26 @@
 package manager
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"time"
+
+	"github.com/shazow/agentspace/virtie/internal/readiness"
 )
 
 const (
 	defaultSSHReadyTimeout = 2 * time.Minute
-	sshReadyToken          = "READY"
+	sshReadyTimeoutEnv     = "VIRTIE_SSH_READY_TIMEOUT"
+	SSHReadyToken          = "SSH-READY"
 )
 
 type unixSSHReadyDialer struct{}
+
+func configuredSSHReadyTimeout() time.Duration {
+	return readiness.TimeoutFromEnv(sshReadyTimeoutEnv, defaultSSHReadyTimeout)
+}
 
 func (d *unixSSHReadyDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (io.ReadCloser, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -56,7 +61,7 @@ func (m *manager) waitForSSHReady(ctx context.Context, socketPath string, watche
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- readSSHReadyToken(reader)
+		errCh <- readiness.ReadToken(reader, SSHReadyToken)
 	}()
 
 	ticker := time.NewTicker(defaultSocketPollInterval)
@@ -106,43 +111,6 @@ func (m *manager) waitForSocketWithStage(ctx context.Context, stage, socketPath 
 			return &stageError{Stage: stage, Err: ctx.Err()}
 		}
 	}
-}
-
-func readSSHReadyToken(reader io.Reader) error {
-	var data bytes.Buffer
-	buf := make([]byte, 32)
-	for {
-		n, err := reader.Read(buf)
-		if n > 0 {
-			data.Write(buf[:n])
-			token := strings.TrimSpace(data.String())
-			if token == sshReadyToken {
-				return nil
-			}
-			if token != "" && !strings.HasPrefix(sshReadyToken, token) {
-				return fmt.Errorf("unexpected ssh readiness token %q", truncateReadyToken(token))
-			}
-		}
-		if err == nil {
-			continue
-		}
-		if err != io.EOF {
-			return fmt.Errorf("read ssh readiness token: %w", err)
-		}
-		token := strings.TrimSpace(data.String())
-		return fmt.Errorf("unexpected ssh readiness token %q", truncateReadyToken(token))
-	}
-}
-
-func truncateReadyToken(token string) string {
-	const limit = 64
-	if len(token) <= limit {
-		return token
-	}
-	var buf bytes.Buffer
-	buf.WriteString(token[:limit])
-	buf.WriteString("...")
-	return buf.String()
 }
 
 func (m *manager) effectiveSSHReadyTimeout() time.Duration {

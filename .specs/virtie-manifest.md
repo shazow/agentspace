@@ -1,0 +1,199 @@
+# Virtie Manifest
+
+Migration plan for replacing the current virtie manifest contract with the
+new `virtie/manifest-proposed.toml` shape.
+
+**Status**: In-Progress
+
+## Goals
+
+Move `virtie` to the proposed manifest format while preserving every
+consumer-level sandbox feature.
+
+- Make TOML the documented human-facing manifest format and keep JSON as the
+  generated wrapper format with the same field names and structure.
+- Replace camelCase and nested historical names with snake_case keys from
+  `virtie/manifest-proposed.toml`.
+- Remove manifest fields that `virtie` can infer at runtime, such as host
+  system facts and a separate runtime directory.
+- Keep Nix responsible for evaluated build artifacts and consumer options that
+  cannot be rediscovered by `virtie`.
+- Preserve current launch behavior for QEMU, SSH readiness, virtiofs and 9p
+  shares, volumes, networking, graphics, write files, balloon control,
+  notifications, suspend/resume, and generated launch wrappers.
+
+Out of scope:
+
+- Preserving compatibility with the current manifest schema.
+- Changing `virtie launch --manifest=MANIFEST`, suspend/resume CLI behavior, or
+  the generated launch wrapper UX.
+- Adding a non-QEMU backend. The schema should avoid blocking a future backend,
+  but implementation remains QEMU-only.
+- Changing NixOS guest construction, kernel/initrd generation, or microvm.nix
+  option semantics.
+
+Acceptance criteria:
+
+- [x] `virtie/manifest-proposed.toml` is promoted into the supported example
+      set and loads successfully.
+- [x] Nix-generated `manifest.json` uses the same snake_case shape as the new
+      TOML format.
+- [x] Direct manifest loading accepts the new TOML and JSON shapes and rejects
+      the old shape with clear errors.
+- [x] Existing consumer-facing features remain represented in generated
+      manifests and covered by checks.
+- [x] `MIGRATION.md` documents the breaking manifest contract change.
+
+## Progress
+
+- [x] Draft `virtie/manifest-proposed.toml`.
+- [x] Convert the proposal to snake_case, command `exec = [...]` lists, and the
+      inline `{ min, max }` range shape.
+- [x] Restore dropped consumer-level fields in the proposal: read-only volumes
+      and mounts, volume label/direct/serial, mount type/security/cache,
+      machine id, serial console, graphics, QEMU user/sockets, and write-file
+      ownership/source.
+- [x] Move guest-forward tunnel command configuration under `qemu.fwd_tunnel_exec`.
+- [x] Replace the Go public `Document` schema with the new shape.
+- [x] Update Nix manifest generation to emit the new JSON shape.
+- [x] Update examples, migration notes, and checks.
+
+## Implementation Plan
+
+### Schema
+
+Implement a new public document shape matching `virtie/manifest-proposed.toml`.
+Use snake_case `json` and `toml` tags so generated JSON and hand-written TOML
+are structurally identical.
+
+Top-level fields:
+
+- `host_name`, `working_dir`, and `state_dir`.
+- `qemu` with `exec`, optional `fwd_tunnel_exec`, optional `user`, `seccomp`,
+  `machine_options`, `qmp_socket`, and `guest_agent_socket`.
+- `machine` with `type`, optional `id`, `memory`, optional `vcpu`, optional
+  `cpu`, and `kvm`.
+- `kernel` with `path`, `initrd_path`, `params`, and `serial_console`.
+- `graphics` with `backend = "headless" | "gtk" | "cocoa"`.
+- `ssh` with `exec`, `user`, `ready_socket`, and `retry_delay`.
+- `vsock.cid_range = { min, max }`.
+- `volumes[]`, `mounts[]`, `networks[]`, `balloon`, `write_files[]`, and
+  `notifications`.
+
+Lower the new public document into the existing internal `Manifest` and `QEMU`
+runtime structures first. Keep manager and QEMU argv generation behavior stable
+unless a field was intentionally removed from the contract.
+
+### Generated Manifest
+
+Update `sandbox-qemu.nix` so `agentspace.sandbox.launch.virtieManifestData`
+emits the new JSON shape, not the old camelCase shape.
+
+Preserve all current consumer options:
+
+- `agentspace.sandbox.hostName` maps to `host_name`.
+- Persistence paths map to `state_dir` and volume image paths. Do not emit a
+  separate `runtime_dir`; relative sockets resolve under `state_dir`.
+- SSH argv and identity file options map to `ssh.exec`.
+- QEMU package, user, seccomp support, extra args, machine opts, and socket
+  names map under `qemu`.
+- Machine memory/vCPU, CPU override, machine id, kernel paths/params, serial
+  console, graphics backend, balloon options, volumes, shares, write files,
+  notifications, interfaces, and forward ports keep their existing behavior.
+
+Generated JSON must use the same names as TOML, for example `read_only`,
+`security_model`, `write_files`, `guest_path`, `retry_delay`, and
+`cid_range`.
+
+### Feature Preservation Checklist
+
+The migration must preserve:
+
+- Default sandbox launch with SSH attach and non-attach modes.
+- Persistent home/store overlay volumes, auto-created ext4 volumes, read-only
+  store disks, volume labels, direct/cache behavior, and block serials.
+- Workspace share, read-only Nix store share, extra virtiofs shares, external
+  virtiofs sockets, and opt-in 9p shares.
+- QMP, QGA, and SSH-ready socket behavior under the new `state_dir` policy.
+- Host-to-guest forward ports and guest-to-host forward ports using
+  `qemu.fwd_tunnel_exec` for QEMU `guestfwd cmd:` tunnel commands.
+- Graphical GTK/Cocoa manifests and default headless operation.
+- Runtime vsock CID allocation and suspend/resume state.
+- Guest write files using inline text or host source files, with chown, mode,
+  and overwrite behavior.
+- Balloon device defaults, controller thresholds, and notification hooks.
+- QEMU passthrough args and optional QEMU user privilege drop.
+
+## Validation
+
+- Update Go tests that load TOML examples and add new JSON/TOML parity fixtures
+  for the proposed shape.
+- Update `checks/virtie-manifest.nix` assertions for generated JSON names and
+  feature-rich scenarios.
+- Run `CGO_ENABLED=0 go test ./...` from `virtie`.
+- Run relevant Nix checks for manifest contract, fake-tools E2E launch,
+  consumer workflow, graphical checks, suspend/resume, write files,
+  notifications, extra shares, external store socket, and balloon behavior.
+- Clean up any `./result` symlink from Nix builds with `unlink result`.
+
+### Standalone Ergonomics Pass
+
+Added standalone flakes under `examples/manual-*` that do not use
+`agentspace.lib.mkSandbox`; each constructs a NixOS MicroVM directly with
+`microvm.nix`, writes an explicit `manifest.toml`, and launches it with
+`virtie`.
+
+- `examples/manual-nixos-store` boots from a generated read-only Nix store disk.
+  This is the smallest practical NixOS example: 512 MiB memory, one vCPU, no
+  virtiofs mounts, and no writable volume.
+- `examples/manual-nixos-virtiofs` uses a host `/nix/store` virtiofs mount and a
+  512 MiB auto-created writable store overlay volume. This exercises the
+  hand-written `[[mounts]]` and `[[volumes]]` surface.
+- `examples/manual-port-forward` uses a store-disk VM with a
+  `networks[].forward` entry that relies on the documented `proto = "tcp"` and
+  `from = "host"` defaults.
+
+Findings:
+
+- The TOML shape is reasonable once defaults are used aggressively. A
+  standalone boot manifest only needs identity, QEMU binary, machine sizing,
+  kernel/initrd/params, and storage.
+- The least ergonomic part is not the TOML syntax; it is obtaining compatible
+  kernel, initrd, and kernel params for a guest. NixOS examples still need a
+  small flake wrapper to ask `microvm.nix` for those evaluated artifacts.
+- Defaults for `host`, `working_dir`, `state_dir`, QMP/QGA sockets, SSH config,
+  machine type, KVM, graphics, and network backend materially reduce boilerplate.
+- Guest readiness remains an explicit guest-image contract. Standalone examples
+  must provide the `virtie-ssh-signal` service that writes `READY` to
+  `/dev/virtio-ports/virtie.ssh.ready`.
+
+Validation performed during this pass:
+
+- `nix build ./examples/manual-nixos-store#manifest --no-link --print-out-paths`
+- `nix build ./examples/manual-nixos-virtiofs#manifest --no-link --print-out-paths`
+- `nix build ./examples/manual-port-forward#manifest --no-link --print-out-paths`
+- `timeout --signal=INT --kill-after=15s 75s nix run .#` from
+  `examples/manual-nixos-store`, which reached QMP readiness, guest SSH
+  readiness, and NixOS multi-user before the timeout interrupted the launch.
+
+## Appendix
+
+Breaking change policy:
+
+- Do not maintain old-schema compatibility unless a test or migration need
+  proves it is necessary. Direct manifest producers should move to the new
+  snake_case shape.
+- Document the mapping in `MIGRATION.md` with examples for the most visible
+  renames: `identity.hostName -> host_name`, `paths.workingDir -> working_dir`,
+  `qemu.binaryPath + extraArgs -> qemu.exec`, `memory.sizeMiB -> machine.memory`,
+  `volumes[].imagePath -> volumes[].image`, `mounts[].sourcePath ->
+  mounts[].source`, and `writeFiles[].guestPath -> write_files[].guest_path`.
+
+Open design follow-ups:
+
+- Replace guest-to-host `guestfwd cmd:` lowering with QEMU-native forwarding or
+  chardev handling if QEMU grows a better fit for this use case.
+- Decide whether `graphics.backend = "headless"` remains explicit or whether
+  omitting `[graphics]` is the only headless representation.
+- Decide whether `qemu.exec` should include only the executable plus passthrough
+  args, or also generated arguments in any future debugging/export mode.
