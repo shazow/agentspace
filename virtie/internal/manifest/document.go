@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 )
 
@@ -741,7 +742,7 @@ func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex
 			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", proto, hostEndpoint.Address, hostEndpoint.Port, guestEndpoint.Address, guestEndpoint.Port))
 		} else {
 			command := expandFwdTunnelExec(fwdTunnelExec, hostEndpoint)
-			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s", proto, guestEndpoint.Address, guestEndpoint.Port, shellQuoteArgs(command)))
+			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s", proto, guestEndpoint.Address, guestEndpoint.Port, shellquote.Join(command...)))
 		}
 	}
 	return options, nil
@@ -756,38 +757,6 @@ func expandFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) []string {
 		result = append(result, arg)
 	}
 	return result
-}
-
-func shellQuoteArgs(args []string) string {
-	quoted := make([]string, 0, len(args))
-	for _, arg := range args {
-		quoted = append(quoted, shellQuoteArg(arg))
-	}
-	return strings.Join(quoted, " ")
-}
-
-func shellQuoteArg(arg string) string {
-	if arg == "" {
-		return "''"
-	}
-	if shellSafeArg(arg) {
-		return arg
-	}
-	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
-}
-
-func shellSafeArg(arg string) bool {
-	for _, ch := range arg {
-		switch {
-		case ch >= 'A' && ch <= 'Z':
-		case ch >= 'a' && ch <= 'z':
-		case ch >= '0' && ch <= '9':
-		case strings.ContainsRune("_@%+=:,./-", ch):
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func lowerBalloon(facts *BalloonFacts, transport string) *balloon.Device {

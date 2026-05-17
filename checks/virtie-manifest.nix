@@ -150,6 +150,7 @@ let
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
     assert builtins.head manifest.ssh.exec == "${pkgs.openssh}/bin/ssh";
     assert manifest.ssh.user == "agent";
+    assert manifest.ssh.ready_socket == "ready.sock";
     assert !(manifest.ssh ? retry_delay_ms);
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.exec;
     assert builtins.any (volume: volume.image == ".agentspace/nix-store-overlay.img") manifest.volumes;
@@ -168,6 +169,7 @@ let
 
   _defaultSSH =
     assert defaultManifest.ssh.autoprovision == true;
+    assert defaultManifest.ssh.ready_socket == "ready.sock";
     assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);
     assert defaultManifest.write_files == [ ];
     assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;

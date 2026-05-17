@@ -4,6 +4,29 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-17: SSH readiness token and socket
+
+### Who Is Affected
+
+- Consumers that inspect generated virtie manifests or QEMU arguments.
+- Custom guests that write the SSH readiness signal themselves.
+
+### What Changed
+
+Generated manifests still use the existing `ssh.ready_socket` field, but the
+default generated value is now `ready.sock` instead of `ssh-ready.sock`. The
+guest signal service now writes `SSH-READY` to the generic `virtie.ready`
+virtio-serial port instead of writing `READY` to `virtie.ssh.ready`.
+
+### Migration Steps
+
+Update custom guest readiness writers and socket assertions:
+
+```diff
+- echo READY > /dev/virtio-ports/virtie.ssh.ready
++ echo SSH-READY > /dev/virtio-ports/virtie.ready
+```
+
 ## 2026-05-17: SSH autoprovisioning
 
 ### Who Is Affected

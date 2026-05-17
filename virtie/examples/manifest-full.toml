@@ -122,12 +122,12 @@ exec = [
   "-o", "GlobalKnownHostsFile=/dev/null",
 ]
 
-ready_socket = "ssh-ready.sock"  # Default: "" (disabled)
+ready_socket = "ready.sock"  # Default: "" (disabled)
 
 # When ready_socket is set, virtie waits for ssh to start via signaling socket
-# (ssh-ready.sock). When exec is non-empty and SSH attach is requested, virtie
-# retries the host-side SSH command at this interval until it starts or fails
-# with a non-transient error.
+# (ready.sock) carrying the SSH-READY token. When exec is non-empty and SSH
+# attach is requested, virtie retries the host-side SSH command at this
+# interval until it starts or fails with a non-transient error.
 retry_delay = 0.5  # Default: 0.5 seconds
 
 # When enabled, virtie can recover from public-key authentication failure by

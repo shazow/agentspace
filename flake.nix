@@ -26,7 +26,7 @@
         pname = "virtie";
         version = "0.1.0";
         src = ./virtie;
-        vendorHash = "sha256-rgEieFTfMUbS0P79XOmDl3qjNdeE4envLGbhFVK6cIM=";
+        vendorHash = "sha256-FOHUyDHCB1nuf5XO5vPHbJhthBbObhZBZ2xzY94O7ts=";
         subPackages = [ "." ];
         env.CGO_ENABLED = 0;
       };

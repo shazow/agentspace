@@ -10,7 +10,6 @@
 package manager
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,7 +19,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -28,13 +26,13 @@ import (
 	backendfile "github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
 
 const (
 	defaultSSHRetryDelay      = 500 * time.Millisecond
 	defaultShutdownDelay      = 15 * time.Second
 	defaultMigrationPollDelay = 100 * time.Millisecond
-	sshFailureOutputLimit     = 64 * 1024
 	sshRetryOutputRevealDelay = 250 * time.Millisecond
 )
 
@@ -760,118 +758,6 @@ func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 	return h.err
 }
 
-type cappedBuffer struct {
-	bytes.Buffer
-	limit int
-}
-
-func (b *cappedBuffer) Write(p []byte) (int, error) {
-	n := len(p)
-	if b.limit <= b.Len() {
-		return n, nil
-	}
-	remaining := b.limit - b.Len()
-	if len(p) > remaining {
-		p = p[:remaining]
-	}
-	_, _ = b.Buffer.Write(p)
-	return n, nil
-}
-
-type sshRetryOutput struct {
-	mu          sync.Mutex
-	output      io.Writer
-	verbose     bool
-	captured    cappedBuffer
-	pending     cappedBuffer
-	timer       *time.Timer
-	revealed    bool
-	suppressed  bool
-	revealDelay time.Duration
-}
-
-func newSSHRetryOutput(output io.Writer, verbose bool) *sshRetryOutput {
-	return &sshRetryOutput{
-		output:      output,
-		verbose:     verbose,
-		captured:    cappedBuffer{limit: sshFailureOutputLimit},
-		pending:     cappedBuffer{limit: sshFailureOutputLimit},
-		revealDelay: sshRetryOutputRevealDelay,
-	}
-}
-
-func (o *sshRetryOutput) Write(p []byte) (int, error) {
-	if o == nil {
-		return len(p), nil
-	}
-
-	o.mu.Lock()
-	_, _ = o.captured.Write(p)
-	if o.verbose || o.revealed {
-		output := o.output
-		o.mu.Unlock()
-		if output != nil {
-			_, _ = output.Write(p)
-		}
-		return len(p), nil
-	}
-	if !o.suppressed {
-		_, _ = o.pending.Write(p)
-		if o.timer == nil {
-			o.timer = time.AfterFunc(o.revealDelay, o.Flush)
-		}
-	}
-	o.mu.Unlock()
-	return len(p), nil
-}
-
-func (o *sshRetryOutput) String() string {
-	if o == nil {
-		return ""
-	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.captured.String()
-}
-
-func (o *sshRetryOutput) Suppress() {
-	if o == nil {
-		return
-	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.timer != nil {
-		o.timer.Stop()
-		o.timer = nil
-	}
-	o.pending.Reset()
-	o.suppressed = true
-}
-
-func (o *sshRetryOutput) Flush() {
-	if o == nil {
-		return
-	}
-	o.mu.Lock()
-	if o.suppressed && !o.verbose {
-		o.mu.Unlock()
-		return
-	}
-	if o.timer != nil {
-		o.timer.Stop()
-		o.timer = nil
-	}
-	o.revealed = true
-	output := o.output
-	pending := append([]byte(nil), o.pending.Bytes()...)
-	o.pending.Reset()
-	o.mu.Unlock()
-
-	if output != nil && len(pending) > 0 {
-		_, _ = output.Write(pending)
-	}
-}
-
 func (m *manager) runSSHSession(
 	ctx context.Context,
 	launchManifest *manifest.Manifest,
@@ -893,7 +779,7 @@ func (m *manager) runSSHSession(
 	provisioned := false
 
 	for {
-		stderr := newSSHRetryOutput(m.outputWriter(), false)
+		stderr := sshtools.NewRetryOutput(m.outputWriter(), false, sshRetryOutputRevealDelay)
 		attemptStarted := time.Now()
 		stats.MarkSSHAttempt(attemptStarted)
 		spec := buildSSHSpecWithArgv(launchManifest, cid, remoteCommand, argv)
@@ -912,7 +798,7 @@ func (m *manager) runSSHSession(
 			stderr.Flush()
 			return nil
 		}
-		if sshTransientStartupFailure(err, stderrText) {
+		if sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureTransient {
 			stderr.Suppress()
 			retryLog.Log(err, stderrText)
 			removeStartedProcess(started, session)
@@ -921,7 +807,7 @@ func (m *manager) runSSHSession(
 			}
 			continue
 		}
-		if launchManifest.SSH.Autoprovision && !provisioned && sshAuthenticationFailure(err, stderrText) {
+		if launchManifest.SSH.Autoprovision && !provisioned && sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureAuthentication {
 			stderr.Suppress()
 			removeStartedProcess(started, session)
 			sessionLogger.Info("ssh authentication failed; autoprovisioning a key", "state_dir", launchManifest.ResolvedPersistenceStateDir(), "user", launchManifest.SSH.User)
@@ -933,7 +819,7 @@ func (m *manager) runSSHSession(
 				return installErr
 			}
 			sessionLogger.Info("installed autoprovisioned ssh key; retrying ssh", "identity_file", key.IdentityFile, "public_key_file", key.PublicKeyFile)
-			argv = sshArgvWithIdentity(launchManifest.SSH.Argv, key.IdentityFile)
+			argv = (sshtools.Config{Exec: launchManifest.SSH.Argv, User: launchManifest.SSH.User}).WithIdentity(key.IdentityFile).Exec
 			provisioned = true
 			continue
 		}
@@ -985,113 +871,30 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 	}
 }
 
-func sshTransientStartupFailure(err error, stderr string) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error() + "\n" + stderr)
-	transientMessages := []string{
-		"connection refused",
-		"connection timed out",
-		"no route to host",
-		"network is unreachable",
-		"connection reset",
-		"connection closed",
-	}
-	for _, transient := range transientMessages {
-		if strings.Contains(message, transient) {
-			return true
-		}
-	}
-	return false
-}
-
-func sshAuthenticationFailure(err error, stderr string) bool {
-	if err == nil && stderr == "" {
-		return false
-	}
-	message := strings.ToLower("")
-	if err != nil {
-		message = strings.ToLower(err.Error() + "\n" + stderr)
-	} else {
-		message = strings.ToLower(stderr)
-	}
-	authMessages := []string{
-		"permission denied (publickey",
-		"permission denied, please try again",
-		"no more authentication methods to try",
-		"publickey,password",
-	}
-	for _, authMessage := range authMessages {
-		if strings.Contains(message, authMessage) {
-			return true
-		}
-	}
-	return false
-}
-
-type sshRetryPhase int
-
-const (
-	sshRetryPhaseNone sshRetryPhase = iota
-	sshRetryPhaseWaiting
-	sshRetryPhaseConnecting
-)
-
 type sshRetryLogger struct {
 	logger *slog.Logger
-	seen   map[sshRetryPhase]bool
+	seen   map[sshtools.RetryPhase]bool
 }
 
 func newSSHRetryLogger(logger *slog.Logger) *sshRetryLogger {
 	return &sshRetryLogger{
 		logger: logger,
-		seen:   make(map[sshRetryPhase]bool),
+		seen:   make(map[sshtools.RetryPhase]bool),
 	}
 }
 
 func (l *sshRetryLogger) Log(err error, stderr string) {
-	phase := sshRetryPhaseForFailure(err, stderr)
-	if phase == sshRetryPhaseNone || l.seen[phase] {
+	phase := sshtools.RetryPhaseForFailure(err, stderr)
+	if phase == sshtools.RetryPhaseNone || l.seen[phase] {
 		return
 	}
 	l.seen[phase] = true
 	switch phase {
-	case sshRetryPhaseWaiting:
+	case sshtools.RetryPhaseWaiting:
 		l.logger.Info("waiting for ssh connection")
-	case sshRetryPhaseConnecting:
+	case sshtools.RetryPhaseConnecting:
 		l.logger.Info("connecting ssh")
 	}
-}
-
-func sshRetryPhaseForFailure(err error, stderr string) sshRetryPhase {
-	message := strings.ToLower("")
-	if err != nil {
-		message = strings.ToLower(err.Error() + "\n" + stderr)
-	} else {
-		message = strings.ToLower(stderr)
-	}
-	connectingMessages := []string{
-		"connection reset",
-		"connection closed",
-	}
-	for _, transient := range connectingMessages {
-		if strings.Contains(message, transient) {
-			return sshRetryPhaseConnecting
-		}
-	}
-	waitingMessages := []string{
-		"connection refused",
-		"connection timed out",
-		"no route to host",
-		"network is unreachable",
-	}
-	for _, transient := range waitingMessages {
-		if strings.Contains(message, transient) {
-			return sshRetryPhaseWaiting
-		}
-	}
-	return sshRetryPhaseNone
 }
 
 func (m *manager) waitForSession(ctx context.Context, session *managedProcess, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
@@ -1359,20 +1162,15 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) 
 }
 
 func buildSSHSpecWithArgv(manifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) processSpec {
-	argv = append([]string(nil), argv...)
-	path := argv[0]
-	args := append([]string(nil), argv[1:]...)
-
-	args = append([]string{"-tt"}, args...)
-	args = append(args, manifest.SSHDestination(cid))
-	if len(remoteCommand) > 0 {
-		args = append(args, encodeRemoteCommand(remoteCommand))
+	command, err := sshtools.NewCommand(sshtools.Config{Exec: argv, User: manifest.SSH.User}, cid, remoteCommand)
+	if err != nil {
+		return processSpec{Name: "ssh"}
 	}
 
 	return processSpec{
 		Name:   "ssh",
-		Path:   path,
-		Args:   args,
+		Path:   command.Path,
+		Args:   command.Args,
 		Dir:    manifest.Paths.WorkingDir,
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
@@ -1380,57 +1178,8 @@ func buildSSHSpecWithArgv(manifest *manifest.Manifest, cid int, remoteCommand []
 	}
 }
 
-func sshArgvWithIdentity(argv []string, identityFile string) []string {
-	withIdentity := append([]string(nil), argv...)
-	return append(withIdentity, "-i", identityFile, "-o", "IdentitiesOnly=yes")
-}
-
 func buildSSHCommandHint(manifest *manifest.Manifest, cid int) string {
-	if len(manifest.SSH.Argv) == 0 {
-		return ""
-	}
-	args := append([]string(nil), manifest.SSH.Argv...)
-	args = append(args, manifest.SSHDestination(cid))
-	return shellQuoteArgs(args)
-}
-
-func encodeRemoteCommand(args []string) string {
-	if len(args) == 1 {
-		return args[0]
-	}
-	return shellQuoteArgs(args)
-}
-
-func shellQuoteArgs(args []string) string {
-	quoted := make([]string, 0, len(args))
-	for _, arg := range args {
-		quoted = append(quoted, shellQuoteArg(arg))
-	}
-	return strings.Join(quoted, " ")
-}
-
-func shellQuoteArg(arg string) string {
-	if arg == "" {
-		return "''"
-	}
-	if shellSafeArg(arg) {
-		return arg
-	}
-	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
-}
-
-func shellSafeArg(arg string) bool {
-	for _, ch := range arg {
-		switch {
-		case ch >= 'A' && ch <= 'Z':
-		case ch >= 'a' && ch <= 'z':
-		case ch >= '0' && ch <= '9':
-		case strings.ContainsRune("_@%+=:,./-", ch):
-		default:
-			return false
-		}
-	}
-	return true
+	return sshtools.CommandHint(sshtools.Config{Exec: manifest.SSH.Argv, User: manifest.SSH.User}, cid)
 }
 
 func joinDeferredError(target *error, fn func() error) {

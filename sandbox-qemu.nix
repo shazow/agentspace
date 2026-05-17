@@ -485,7 +485,7 @@ in
         ssh = {
           exec = sshBaseArgv;
           user = cfg.user;
-          ready_socket = "ssh-ready.sock";
+          ready_socket = "ready.sock";
           autoprovision = sshAutoprovision;
         };
         balloon =
@@ -589,7 +589,7 @@ in
           after = [ "sshd.service" ];
           serviceConfig.Type = "oneshot";
           script = ''
-            ${pkgs.coreutils}/bin/echo READY > /dev/virtio-ports/virtie.ssh.ready
+            ${pkgs.coreutils}/bin/echo SSH-READY > /dev/virtio-ports/virtie.ready
           '';
         };
         services.qemuGuest.enable = true;

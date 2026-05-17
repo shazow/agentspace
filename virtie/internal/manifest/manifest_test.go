@@ -881,6 +881,11 @@ func TestLoadGuestForwardUsesTunnelExecTemplate(t *testing.T) {
 			fwdTunnelExec: []string{"socat", "-", "TCP:$HOST:$PORT"},
 			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:socat - TCP:127.0.0.1:22"},
 		},
+		{
+			name:          "quotes shell-sensitive args",
+			fwdTunnelExec: []string{"~/bin/nc", "$HOST", "$PORT"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:\\~/bin/nc 127.0.0.1 22"},
+		},
 	}
 
 	for _, tt := range tests {

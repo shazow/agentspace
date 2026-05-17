@@ -37,7 +37,7 @@ let
                             esac
                           done
                           ;;
-                        socket,*id=ssh_ready_char*|socket,*id=ssh_ready_char)
+                        socket,*id=ready_char*|socket,*id=ready_char)
                           IFS=',' read -r -a chardev_parts <<< "$chardev_spec"
                           for chardev_part in "''${chardev_parts[@]}"; do
                             case "$chardev_part" in
@@ -306,7 +306,7 @@ let
             ready_server.bind(ssh_ready_socket_path)
             ready_server.listen(1)
             conn, _ = ready_server.accept()
-            conn.sendall(b"READY\n")
+            conn.sendall(b"SSH-READY\n")
             conn.close()
             touch("ssh-ready-sent")
 
@@ -599,7 +599,7 @@ in
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f state/ssh-ready-sent; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f .agentspace/virtiofs.sock; test -f .agentspace/virtiofs.sock.pid; test -S .agentspace/qmp.sock; test -S .agentspace/qga.sock; test -S .agentspace/ssh-ready.sock; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; test ! -e ssh-ready.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
+    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f state/ssh-ready-sent; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f .agentspace/virtiofs.sock; test -f .agentspace/virtiofs.sock.pid; test -S .agentspace/qmp.sock; test -S .agentspace/qga.sock; test -S .agentspace/ready.sock; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; test ! -e ready.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
       echo "virtie-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1
