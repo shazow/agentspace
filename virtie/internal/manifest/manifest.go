@@ -10,6 +10,7 @@ package manifest
 import (
 	"fmt"
 	"io"
+	"math"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -20,12 +21,12 @@ import (
 )
 
 const (
-	defaultSSHRetryDelayMS = 1000
-	defaultSSHReadySocket  = "ssh-ready.sock"
-	defaultVSockCIDStart   = 3
-	defaultVSockCIDEnd     = 65535
-	defaultVolumeFSType    = "ext4"
-	minAutoVolumeSizeMiB   = 256
+	defaultSSHRetryDelaySeconds = 0.5
+	defaultSSHReadySocket       = ""
+	defaultVSockCIDStart        = 3
+	defaultVSockCIDEnd          = 65535
+	defaultVolumeFSType         = "ext4"
+	minAutoVolumeSizeMiB        = 256
 )
 
 var writeFileModePattern = regexp.MustCompile(`^0?[0-7]{3}$`)
@@ -60,9 +61,9 @@ type Persistence struct {
 }
 
 type SSH struct {
-	Argv         []string `json:"argv"`
-	User         string   `json:"user"`
-	RetryDelayMS *int     `json:"retryDelayMs,omitempty"`
+	Argv       []string `json:"argv"`
+	User       string   `json:"user"`
+	RetryDelay *float64 `json:"retryDelay,omitempty"`
 }
 
 type VSockCIDRange struct {
@@ -266,8 +267,8 @@ func (m *Manifest) applyDefaults() {
 		return
 	}
 
-	if m.SSH.RetryDelayMS == nil {
-		m.SSH.RetryDelayMS = intPtr(defaultSSHRetryDelayMS)
+	if m.SSH.RetryDelay == nil {
+		m.SSH.RetryDelay = float64Ptr(defaultSSHRetryDelaySeconds)
 	}
 	if m.QEMU.SSHReady.SocketPath == "" {
 		m.QEMU.SSHReady.SocketPath = defaultSSHReadySocket
@@ -304,12 +305,10 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.paths.workingDir is required")
 	case m.Paths.LockPath == "":
 		return fmt.Errorf("manifest.paths.lockPath is required")
-	case len(m.SSH.Argv) == 0:
-		return fmt.Errorf("manifest.ssh.argv must contain at least the ssh executable")
 	case m.SSH.User == "":
 		return fmt.Errorf("manifest.ssh.user is required")
-	case m.SSH.RetryDelayMS != nil && *m.SSH.RetryDelayMS < 0:
-		return fmt.Errorf("manifest.ssh.retryDelayMs must be greater than or equal to zero")
+	case m.SSH.RetryDelay != nil && (math.IsNaN(*m.SSH.RetryDelay) || math.IsInf(*m.SSH.RetryDelay, 0) || *m.SSH.RetryDelay < 0):
+		return fmt.Errorf("manifest.ssh.retryDelay must be a finite number greater than or equal to zero")
 	case m.QEMU.BinaryPath == "":
 		return fmt.Errorf("manifest.qemu.binaryPath is required")
 	case m.QEMU.QMP.SocketPath == "":
@@ -405,10 +404,10 @@ func (m *Manifest) Validate() error {
 }
 
 func (m *Manifest) SSHRetryDelay(fallback time.Duration) time.Duration {
-	if m == nil || m.SSH.RetryDelayMS == nil {
+	if m == nil || m.SSH.RetryDelay == nil {
 		return fallback
 	}
-	return time.Duration(*m.SSH.RetryDelayMS) * time.Millisecond
+	return time.Duration(*m.SSH.RetryDelay * float64(time.Second))
 }
 
 func validateWriteFiles(files WriteFiles) error {
@@ -704,6 +703,10 @@ func (m *Manifest) SSHDestination(cid int) string {
 }
 
 func intPtr(value int) *int {
+	return &value
+}
+
+func float64Ptr(value float64) *float64 {
 	return &value
 }
 

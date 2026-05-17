@@ -136,24 +136,32 @@ func TestLoadTOMLExamples(t *testing.T) {
 
 func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
 	manifest := validManifest()
-	if manifest.SSH.RetryDelayMS != nil {
-		t.Fatalf("test fixture should leave retry delay unset before validation, got %d", *manifest.SSH.RetryDelayMS)
+	if manifest.SSH.RetryDelay != nil {
+		t.Fatalf("test fixture should leave retry delay unset before validation, got %g", *manifest.SSH.RetryDelay)
 	}
 	if err := manifest.Validate(); err != nil {
 		t.Fatalf("validate manifest: %v", err)
 	}
-	if got, want := manifest.SSHRetryDelay(25*time.Millisecond), time.Second; got != want {
+	if got, want := manifest.SSHRetryDelay(25*time.Millisecond), 500*time.Millisecond; got != want {
 		t.Fatalf("unexpected default ssh retry delay: got %s want %s", got, want)
 	}
-	if got, want := manifest.QEMU.SSHReady.SocketPath, "ssh-ready.sock"; got != want {
+	if got, want := manifest.QEMU.SSHReady.SocketPath, ""; got != want {
 		t.Fatalf("unexpected default ssh readiness socket: got %q want %q", got, want)
+	}
+	emptySSH := validManifest()
+	emptySSH.SSH.Argv = nil
+	if err := emptySSH.Validate(); err != nil {
+		t.Fatalf("validate manifest with omitted ssh argv: %v", err)
+	}
+	if len(emptySSH.SSH.Argv) != 0 {
+		t.Fatalf("expected omitted ssh argv to remain empty, got %#v", emptySSH.SSH.Argv)
 	}
 	if !manifest.QEMU.NoGraphicEnabled() {
 		t.Fatalf("expected manifest without graphics to default to noGraphic")
 	}
 
 	custom := validManifest()
-	custom.SSH.RetryDelayMS = intPtr(250)
+	custom.SSH.RetryDelay = float64Ptr(0.25)
 	if err := custom.Validate(); err != nil {
 		t.Fatalf("validate custom retry delay: %v", err)
 	}
@@ -162,10 +170,52 @@ func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
 	}
 
 	invalid := validManifest()
-	invalid.SSH.RetryDelayMS = intPtr(-1)
+	invalid.SSH.RetryDelay = float64Ptr(-1)
 	err := invalid.Validate()
-	if err == nil || !strings.Contains(err.Error(), "manifest.ssh.retryDelayMs must be greater than or equal to zero") {
+	if err == nil || !strings.Contains(err.Error(), "manifest.ssh.retryDelay must be a finite number greater than or equal to zero") {
 		t.Fatalf("expected retry delay validation error, got %v", err)
+	}
+}
+
+func TestDocumentSSHReadySocketDefaultAndEnable(t *testing.T) {
+	omitted := validDocument()
+	omitted.SSH.ReadySocket = ""
+	omittedManifest, err := omitted.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest with omitted readiness socket: %v", err)
+	}
+	if got, want := omittedManifest.QEMU.SSHReady.SocketPath, ""; got != want {
+		t.Fatalf("unexpected default ssh readiness socket: got %q want %q", got, want)
+	}
+
+	enabled := validDocument()
+	enabled.SSH.ReadySocket = "ssh-ready.sock"
+	enabledManifest, err := enabled.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest with enabled readiness socket: %v", err)
+	}
+	if got, want := enabledManifest.QEMU.SSHReady.SocketPath, "ssh-ready.sock"; got != want {
+		t.Fatalf("unexpected enabled ssh readiness socket: got %q want %q", got, want)
+	}
+	sshReadySocketPath, err := omittedManifest.ResolvedSSHReadySocketPath()
+	if err != nil {
+		t.Fatalf("resolve default ssh readiness socket: %v", err)
+	}
+	if sshReadySocketPath != "" {
+		t.Fatalf("expected default ssh readiness socket to resolve to empty path, got %q", sshReadySocketPath)
+	}
+}
+
+func TestDocumentSSHExecDefaultsToEmpty(t *testing.T) {
+	document := validDocument()
+	document.SSH.Exec = nil
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest with omitted ssh exec: %v", err)
+	}
+	if len(manifest.SSH.Argv) != 0 {
+		t.Fatalf("expected omitted ssh exec to lower to empty argv, got %#v", manifest.SSH.Argv)
 	}
 }
 

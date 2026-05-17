@@ -494,6 +494,95 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchWithSSHAndEmptyExecSkipsAutoconnect(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.SSHReady.SocketPath = ""
+	cfg.Volumes[0].AutoCreate = false
+	cfg.SSH.Argv = nil
+
+	runner := &fakeRunner{}
+	qmpClient := &fakeQMPClient{}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	exitReadyQEMU := make(chan struct{})
+	go func() {
+		defer close(exitReadyQEMU)
+		time.Sleep(10 * time.Millisecond)
+		runner.exitQEMU(nil)
+	}()
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true}); err != nil {
+		t.Fatalf("launch with ssh and empty exec: %v", err)
+	}
+	<-exitReadyQEMU
+
+	if got, want := runner.starts, []string{"virtiofsd[workspace]", "qemu"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected start order: got %v want %v", got, want)
+	}
+	if got := len(runner.sshArgs); got != 0 {
+		t.Fatalf("expected no ssh starts, got %d", got)
+	}
+	if strings.Contains(logOutput.String(), "connect with:") {
+		t.Fatalf("expected no ssh hint without ssh argv, got %q", logOutput.String())
+	}
+}
+
+func TestManagerLaunchRejectsRemoteCommandWithoutSSHExec(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.SSHReady.SocketPath = ""
+	cfg.Volumes[0].AutoCreate = false
+	cfg.SSH.Argv = nil
+
+	runner := &fakeRunner{}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launchWithOptions(context.Background(), cfg, []string{"echo", "hi"}, LaunchOptions{Resume: ResumeModeNo, SSH: true})
+	if err == nil || !strings.Contains(err.Error(), "remote command arguments require manifest.ssh.exec") {
+		t.Fatalf("expected missing ssh argv error, got %v", err)
+	}
+	if len(runner.starts) != 0 {
+		t.Fatalf("expected failure before starting processes, got starts %v", runner.starts)
+	}
+	if got := len(runner.sshArgs); got != 0 {
+		t.Fatalf("expected no ssh starts, got %d", got)
+	}
+}
+
 func TestManagerLaunchStartsSSHOnceAfterReadiness(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -2534,6 +2623,26 @@ func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
 	}
 	if !containsString(spec.Args, "virtserialport,chardev=ssh_ready_char,name=virtie.ssh.ready") {
 		t.Fatalf("expected qemu args to include ssh readiness port: %v", spec.Args)
+	}
+}
+
+func TestBuildQEMUSpecOmitsSSHReadyDeviceWhenSocketEmpty(t *testing.T) {
+	cfg := validManifest("/tmp/work")
+	cfg.QEMU.SSHReady.SocketPath = ""
+
+	spec, err := buildQEMUSpec(cfg, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	if containsString(spec.Args, "ssh_ready_char") {
+		t.Fatalf("expected qemu args to omit ssh readiness chardev: %v", spec.Args)
+	}
+	if containsString(spec.Args, "virtio-serial-pci,id=ssh-ready-serial") {
+		t.Fatalf("expected qemu args to omit ssh readiness serial device: %v", spec.Args)
+	}
+	if containsString(spec.Args, "virtserialport,chardev=ssh_ready_char,name=virtie.ssh.ready") {
+		t.Fatalf("expected qemu args to omit ssh readiness port: %v", spec.Args)
 	}
 }
 

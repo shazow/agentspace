@@ -46,7 +46,7 @@ exec = [
   "GlobalKnownHostsFile=/dev/null",
 ]
 ready_socket = "ssh-ready.sock"
-retry_delay_ms = 1000
+retry_delay = 0.5
 
 [vsock]
 cid_range = { min = 3, max = 65535 }

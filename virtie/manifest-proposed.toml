@@ -116,9 +116,9 @@ backend = "headless"  # Options: headless, gtk, cocoa (default: headless)
 # inside the VM.
 user = "agent"  # Default: "agent"
 
-# The SSH executable and fixed arguments are configurable so generated manifests
-# can pin OpenSSH and identity options. Bad options can make readiness succeed
-# while the interactive connection still fails.
+# The SSH executable and fixed arguments are configurable. Default: [] (no
+# automatic SSH attach or command hint). Generated manifests can pin OpenSSH and
+# identity options.
 exec = [
   "ssh",
   "-q",
@@ -127,11 +127,13 @@ exec = [
   "-o", "GlobalKnownHostsFile=/dev/null",
 ]
 
-ready_socket = "ssh-ready.sock"  # Default: "ssh-ready.sock"
+ready_socket = "ssh-ready.sock"  # Default: "" (disabled)
 
-# Virtie waits for ssh to start via signaling socket (ssh-ready.sock), but will
-# retry if it fails anyway.
-retry_delay_ms = 1000  # Default: 1000
+# When ready_socket is set, virtie waits for ssh to start via signaling socket
+# (ssh-ready.sock). When exec is non-empty and SSH attach is requested, virtie
+# retries the host-side SSH command at this interval until it starts or fails
+# with a non-transient error.
+retry_delay = 0.5  # Default: 0.5 seconds
 
 [vsock]
 # virtie allocates a runtime vsock CID to avoid collisions between concurrent

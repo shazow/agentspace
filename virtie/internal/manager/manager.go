@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	defaultSSHRetryDelay      = 1 * time.Second
+	defaultSSHRetryDelay      = 500 * time.Millisecond
 	defaultShutdownDelay      = 15 * time.Second
 	defaultMigrationPollDelay = 100 * time.Millisecond
 	sshFailureOutputLimit     = 64 * 1024
@@ -117,6 +117,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	stats := newLaunchStats(time.Now())
 	if err := manifest.Validate(); err != nil {
 		return err
+	}
+	if options.SSH && len(remoteCommand) > 0 && len(manifest.SSH.Argv) == 0 {
+		return &stageError{Stage: "preflight", Err: fmt.Errorf("remote command arguments require manifest.ssh.exec")}
 	}
 	resumeMode, err := normalizeResumeMode(options.Resume)
 	if err != nil {
@@ -232,8 +235,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if err := ensureParentDirectories([]string{sshReadySocketPath}); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+	if sshReadySocketPath != "" {
+		if err := ensureParentDirectories([]string{sshReadySocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
 	}
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -249,8 +254,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if err := removeSocketPaths([]string{sshReadySocketPath}); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+	if sshReadySocketPath != "" {
+		if err := removeSocketPaths([]string{sshReadySocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
 	}
 	if err := ensureVolumeImages(volumes, m.logger); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -273,7 +280,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if guestAgentSocketPath != "" {
 			cleanupPaths = append(cleanupPaths, guestAgentSocketPath)
 		}
-		cleanupPaths = append(cleanupPaths, sshReadySocketPath)
+		if sshReadySocketPath != "" {
+			cleanupPaths = append(cleanupPaths, sshReadySocketPath)
+		}
 		cleanupErr := removeSocketPaths(cleanupPaths)
 		if err == nil {
 			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
@@ -350,14 +359,16 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 		stats.MarkFilesReady(time.Now())
 
-		m.logger.Info("waiting for ssh readiness")
-		if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, qemu); err != nil {
-			return err
+		if sshReadySocketPath != "" {
+			m.logger.Info("waiting for ssh readiness")
+			if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, qemu); err != nil {
+				return err
+			}
 		}
 		stats.MarkSSHReady(time.Now())
 	}
 
-	if options.SSH {
+	if options.SSH && len(manifest.SSH.Argv) > 0 {
 		featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
 			qmpTimeout: m.effectiveQMPCommandTimeout(),
 			notifier:   notifier,
@@ -401,7 +412,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 	}
 
-	fmt.Fprintf(m.outputWriter(), "connect with: %s\n", buildSSHCommandHint(manifest, cid))
+	if hint := buildSSHCommandHint(manifest, cid); hint != "" {
+		fmt.Fprintf(m.outputWriter(), "connect with: %s\n", hint)
+	}
 	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
 		return err
 	}
@@ -1237,6 +1250,9 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) 
 }
 
 func buildSSHCommandHint(manifest *manifest.Manifest, cid int) string {
+	if len(manifest.SSH.Argv) == 0 {
+		return ""
+	}
 	args := append([]string(nil), manifest.SSH.Argv...)
 	args = append(args, manifest.SSHDestination(cid))
 	return shellQuoteArgs(args)

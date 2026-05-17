@@ -28,17 +28,6 @@ const (
 	defaultNetworkMAC    = "02:02:00:00:00:01"
 )
 
-var defaultSSHArgv = []string{
-	"ssh",
-	"-q",
-	"-o",
-	"StrictHostKeyChecking=no",
-	"-o",
-	"UserKnownHostsFile=/dev/null",
-	"-o",
-	"GlobalKnownHostsFile=/dev/null",
-}
-
 type Document struct {
 	HostName      string             `json:"host_name,omitempty" toml:"host_name"`
 	WorkingDir    string             `json:"working_dir,omitempty" toml:"working_dir"`
@@ -153,10 +142,10 @@ type BalloonControllerFacts struct {
 }
 
 type SSHFacts struct {
-	Exec         []string `json:"exec,omitempty" toml:"exec"`
-	User         string   `json:"user,omitempty" toml:"user"`
-	ReadySocket  string   `json:"ready_socket,omitempty" toml:"ready_socket"`
-	RetryDelayMS *int     `json:"retry_delay_ms,omitempty" toml:"retry_delay_ms"`
+	Exec        []string `json:"exec,omitempty" toml:"exec"`
+	User        string   `json:"user,omitempty" toml:"user"`
+	ReadySocket string   `json:"ready_socket,omitempty" toml:"ready_socket"`
+	RetryDelay  *float64 `json:"retry_delay,omitempty" toml:"retry_delay"`
 }
 
 type VSockFacts struct {
@@ -281,9 +270,9 @@ func (d Document) Manifest() (*Manifest, error) {
 			StateDir: d.StateDir,
 		},
 		SSH: SSH{
-			Argv:         append([]string(nil), d.SSH.Exec...),
-			User:         d.SSH.User,
-			RetryDelayMS: d.SSH.RetryDelayMS,
+			Argv:       append([]string(nil), d.SSH.Exec...),
+			User:       d.SSH.User,
+			RetryDelay: d.SSH.RetryDelay,
 		},
 		VSock: VSock{
 			CIDRange: VSockCIDRange{
@@ -311,9 +300,6 @@ func (d Document) Manifest() (*Manifest, error) {
 	}
 	if m.Paths.RuntimeDir == nil {
 		m.Paths.RuntimeDir = stringPtr(m.Persistence.StateDir)
-	}
-	if len(m.SSH.Argv) == 0 {
-		m.SSH.Argv = append([]string(nil), defaultSSHArgv...)
 	}
 	if m.SSH.User == "" {
 		m.SSH.User = defaultSSHUser
