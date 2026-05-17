@@ -728,6 +728,20 @@ func lowerForwardPorts(ports []ForwardPort, host HostFacts, networkIndex int) ([
 		netcat = "nc"
 	}
 	for i, port := range ports {
+		proto := port.Proto
+		if proto == "" {
+			proto = "tcp"
+		}
+		if proto != "tcp" && proto != "udp" {
+			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].proto must be one of tcp or udp", networkIndex, i)
+		}
+		from := port.From
+		if from == "" {
+			from = "host"
+		}
+		if from != "host" && from != "guest" {
+			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].from must be one of host or guest", networkIndex, i)
+		}
 		hostEndpoint, err := parsePortEndpoint(port.Host)
 		if err != nil {
 			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].host %s", networkIndex, i, err)
@@ -736,10 +750,10 @@ func lowerForwardPorts(ports []ForwardPort, host HostFacts, networkIndex int) ([
 		if err != nil {
 			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].guest %s", networkIndex, i, err)
 		}
-		if port.From == "host" {
-			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", port.Proto, hostEndpoint.Address, hostEndpoint.Port, guestEndpoint.Address, guestEndpoint.Port))
+		if from == "host" {
+			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", proto, hostEndpoint.Address, hostEndpoint.Port, guestEndpoint.Address, guestEndpoint.Port))
 		} else {
-			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s %s %d", port.Proto, guestEndpoint.Address, guestEndpoint.Port, netcat, hostEndpoint.Address, hostEndpoint.Port))
+			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s %s %d", proto, guestEndpoint.Address, guestEndpoint.Port, netcat, hostEndpoint.Address, hostEndpoint.Port))
 		}
 	}
 	return options, nil
