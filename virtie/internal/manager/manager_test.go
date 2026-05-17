@@ -2752,7 +2752,7 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	}
 
 	wantSocket := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "fs.sock")
-	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIE_SOCKET_PATH="+wantSocket) {
+	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIOFSD_SOCKET="+wantSocket) {
 		t.Fatalf("expected virtiofs daemon env to contain resolved socket path %q: %v", wantSocket, got)
 	}
 	if !runner.processGroups["virtiofsd[workspace]"] {

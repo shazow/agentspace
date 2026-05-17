@@ -342,7 +342,7 @@ let
         set -euo pipefail
 
         mkdir -p "$PWD/state"
-        socket_path="''${VIRTIE_SOCKET_PATH:-$PWD/virtiofs.sock}"
+        socket_path="''${VIRTIOFSD_SOCKET:-$PWD/virtiofs.sock}"
         pid_path="$socket_path.pid"
         mkdir -p "$(dirname "$socket_path")"
         touch "$PWD/state/virtiofsd-started"
@@ -454,9 +454,6 @@ let
       qemu = {
         exec = [ "${fakeTools}/bin/qemu-system-x86_64" ];
         machine_options.accel = "tcg";
-      };
-      host = {
-        system = "x86_64-linux";
       };
       machine = {
         type = "microvm";

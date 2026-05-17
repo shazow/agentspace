@@ -48,10 +48,10 @@ type Document struct {
 }
 
 type HostFacts struct {
-	System     string `json:"system,omitempty" toml:"system"`
 	NetcatPath string `json:"netcat,omitempty" toml:"netcat"`
 	OS         string `json:"-" toml:"-"`
 	Arch       string `json:"-" toml:"-"`
+	System     string `json:"-" toml:"-"`
 }
 
 type QEMUFacts struct {

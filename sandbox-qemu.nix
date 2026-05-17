@@ -329,8 +329,8 @@ in
           fi
 
           socket_path=${lib.escapeShellArg socket}
-          if [ -n "''${VIRTIE_SOCKET_PATH-}" ]; then
-            socket_path="$VIRTIE_SOCKET_PATH"
+          if [ -n "''${VIRTIOFSD_SOCKET-}" ]; then
+            socket_path="$VIRTIOFSD_SOCKET"
           fi
 
           exec ${lib.getExe config.microvm.virtiofsd.package} \
@@ -444,7 +444,6 @@ in
         working_dir = ".";
         state_dir = persistenceStateDir;
         host = {
-          inherit system;
           netcat = "${config.microvm.vmHostPackages.netcat}/bin/nc";
         };
         qemu = {

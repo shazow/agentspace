@@ -118,7 +118,8 @@ let
   _ =
     assert builtins.head manifest.qemu.exec != "";
     assert manifest.host_name == "agent-sandbox";
-    assert manifest.host.system == pkgs.stdenv.hostPlatform.system;
+    assert !(manifest.host ? system);
+    assert manifest.host.netcat != "";
     assert manifest.machine.type == "microvm";
     assert !(manifest.qemu ? machine_options);
     assert manifest.state_dir == ".agentspace";

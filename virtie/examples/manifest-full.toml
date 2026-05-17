@@ -9,26 +9,19 @@ host_name = "virtie"  # Default: "virtie"
 # Relative host paths need a stable root. Keeping this explicit lets generated
 # manifests point at the repository checkout while hand-written manifests can
 # opt into another base directory without changing every path below.
-# TODO: Get rid of this, infer during runtime
-working_dir = "."  # Default: Current manifest directory
+# During launch, virtie resolves a relative working_dir from the directory
+# where virtie was run and persists the absolute path back into the manifest.
+working_dir = "."  # Default: "." (launch CWD)
 
 # virtie needs one host-side directory for files it owns: lock files, active
 # PID files, saved suspend state, and derived runtime sockets. Put volume images
 # under this directory too when they should move with the VM's local state.
 state_dir = ".virtie"  # Default: ".virtie"
 
-[host]
-# virtie needs host platform facts before the backend starts so it can choose
-# defaults such as acceleration, device transport, memory backend, and binaries.
-# A single system string avoids asking manifest producers to repeat os/arch.
-# TODO: Get rid of this, we can infer it during runtime with runtime.GOOS + runtime.GOARCH
-system = "x86_64-linux"  # Default: Current host system
-
 # Guest-to-host port forwarding shells out through netcat for guestfwd rules.
 # This knob exists because netcat's executable path varies across Nix, Linux
 # distributions, and macOS; a wrong value breaks those forwarded connections.
-# TODO: Explore replacing guestfwd cmd:netcat with QEMU backend-native
-# forwarding/chardev so this host dependency can be removed.
+[host]
 netcat = "nc"  # Default: "nc"
 
 [qemu]
@@ -172,8 +165,8 @@ virtiofsd_socket = "workspace.sock"
 
 # The daemon command is needed when virtie owns the host-side virtiofsd
 # lifecycle. Omit it for externally managed sockets; setting it means virtie
-# will start and stop the daemon with the VM.
-# TODO: Expose $VIRTIOFSD_SOCKET path variable in the exec command env
+# will start and stop the daemon with the VM. virtie injects the resolved socket
+# path into the daemon environment as VIRTIOFSD_SOCKET.
 virtiofsd_exec = ["virtiofsd"]
 
 # Filesystem security and cache policy are backend-specific share behavior. The

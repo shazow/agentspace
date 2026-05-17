@@ -75,7 +75,7 @@ Acceptance criteria:
   - `paths.lockPath`
   - optional `paths.runtimeDir`
   - `persistence.directories`
-  - optional `host.system`, `host.os`, `host.arch`, `host.netcatPath`, and `host.qemuSeccomp`
+  - optional `host.netcatPath` and `host.qemuSeccomp`; host platform facts are inferred at runtime
   - `ssh.argv`
   - `ssh.user`
   - optional `ssh.retryDelay`
@@ -105,7 +105,7 @@ Acceptance criteria:
 - Runtime socket policy:
   - If `paths.runtimeDir` is omitted, relative socket paths still resolve from `paths.workingDir`.
   - If `paths.runtimeDir` is the empty string, `virtie` resolves relative socket paths under the per-user XDG runtime location at `agentspace/<hostName>/...`.
-  - `virtie` injects `VIRTIE_SOCKET_PATH` for each `virtiofsd` daemon process so launch scripts can consume the resolved socket path.
+  - `virtie` injects `VIRTIOFSD_SOCKET` for each `virtiofsd` daemon process so launch scripts can consume the resolved socket path.
   - `virtie launch` records its PID at `<workingDir>/.virtie/<hostName>.pid` after acquiring the sandbox lock and removes that file during teardown.
 - Implementation notes:
   - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.

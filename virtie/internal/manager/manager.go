@@ -560,7 +560,7 @@ func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 			Path:         daemon.Command.Path,
 			Args:         daemon.Command.Args,
 			Dir:          manifest.Paths.WorkingDir,
-			Env:          []string{fmt.Sprintf("VIRTIE_SOCKET_PATH=%s", daemon.SocketPath)},
+			Env:          []string{fmt.Sprintf("VIRTIOFSD_SOCKET=%s", daemon.SocketPath)},
 			ProcessGroup: true,
 			Stdout:       os.Stderr,
 			Stderr:       os.Stderr,

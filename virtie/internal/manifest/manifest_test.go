@@ -118,9 +118,8 @@ func TestLoadRejectsLegacyWriteFileContent(t *testing.T) {
 
 func TestLoadTOMLExamples(t *testing.T) {
 	for _, path := range []string{
-		"../../manifest-example-simple.toml",
-		"../../manifest-example-full.toml",
-		"../../manifest-proposed.toml",
+		"../../examples/manifest-simple.toml",
+		"../../examples/manifest-full.toml",
 	} {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			data, err := os.ReadFile(path)
@@ -1096,9 +1095,6 @@ func validDocument() Document {
 		HostName:   "agent-sandbox",
 		WorkingDir: "/tmp/work",
 		StateDir:   ".virtie",
-		Host: HostFacts{
-			System: "x86_64-linux",
-		},
 		QEMU: QEMUFacts{
 			Exec:           []string{"/bin/qemu-system-x86_64"},
 			Seccomp:        true,

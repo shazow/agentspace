@@ -53,8 +53,8 @@ Acceptance criteria:
       and mounts, volume label/direct/serial, mount type/security/cache,
       machine id, serial console, graphics, QEMU user/sockets, and write-file
       ownership/source.
-- [x] Finalize the proposed manifest field names while keeping explicit TODOs
-      for future host/netcat removal work.
+- [x] Finalize the proposed manifest field names while keeping `host.netcat`
+      until guest-to-host forwarding no longer shells out through netcat.
 - [x] Replace the Go public `Document` schema with the new shape.
 - [x] Update Nix manifest generation to emit the new JSON shape.
 - [x] Update examples, migration notes, and checks.
@@ -70,9 +70,8 @@ are structurally identical.
 Top-level fields:
 
 - `host_name`, `working_dir`, and `state_dir`.
-- `host` should be temporary or removed before final implementation if host
-  facts are fully inferred at runtime. `host.netcat` should remain only until
-  guest-to-host forwarding no longer shells out through `cmd:netcat`.
+- `host.netcat` remains only until guest-to-host forwarding no longer shells
+  out through `cmd:netcat`; host platform facts are inferred at runtime.
 - `qemu` with `exec`, optional `user`, `seccomp`, `machine_options`,
   `qmp_socket`, and `guest_agent_socket`.
 - `machine` with `type`, optional `id`, `memory`, optional `vcpu`, optional
@@ -195,8 +194,6 @@ Breaking change policy:
 
 Open design follow-ups:
 
-- Remove `host.system` from the final schema if runtime detection via
-  `runtime.GOOS` and `runtime.GOARCH` covers all current policy branches.
 - Replace guest-to-host `guestfwd cmd:netcat` lowering with QEMU-native
   forwarding or chardev handling, then remove `host.netcat`.
 - Decide whether `graphics.backend = "headless"` remains explicit or whether
