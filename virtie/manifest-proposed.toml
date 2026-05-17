@@ -1,5 +1,5 @@
 # Proposed simplified virtie manifest.
-# This file is a design draft; current virtie code does not load it yet.
+# This annotated manifest documents the supported snake_case schema.
 
 # This names the guest and is also used to derive default lock/state names.
 # It must be configurable because multiple manifests may run from the same host
@@ -108,7 +108,7 @@ serial_console = false  # Default: no serial console params
 [graphics]
 # Graphics switches QEMU out of headless mode and selects the host display
 # backend. Omit this section for the normal terminal/SSH workflow.
-backend = "headless"  # Options: gtk, cocoa (default: headless)
+backend = "headless"  # Options: headless, gtk, cocoa (default: headless)
 
 [ssh]
 # virtie connects through SSH after the guest signals readiness. The user is

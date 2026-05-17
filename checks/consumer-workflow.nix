@@ -98,12 +98,12 @@ let
     assert homeCfg.programs.home-manager.enable;
     assert homeCfg.programs.git.enable;
     assert builtins.elem pkgs.hello homeCfg.home.packages;
-    assert builtins.elem "./id_ed25519" manifest.ssh.argv;
-    assert manifest.memory.sizeMiB == 512;
+    assert builtins.elem "./id_ed25519" manifest.ssh.exec;
+    assert manifest.machine.memory == 512;
     assert manifest.machine.vcpu == 16;
-    assert builtins.any (volume: volume.imagePath == "/var/lib/agentspace/home.img") manifest.volumes;
+    assert builtins.any (volume: volume.image == "/var/lib/agentspace/home.img") manifest.volumes;
     assert builtins.any (
-      volume: volume.imagePath == "/var/lib/agentspace/nix-store-overlay.img"
+      volume: volume.image == "/var/lib/agentspace/nix-store-overlay.img"
     ) manifest.volumes;
     true;
 in

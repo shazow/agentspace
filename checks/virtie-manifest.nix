@@ -113,41 +113,39 @@ let
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
 
   virtiofsMounts = builtins.filter (mount: mount.type == "virtiofs") manifest.mounts;
-  virtiofsDaemonMounts = builtins.filter (mount: mount.type == "virtiofs" && mount ? daemon) manifest.mounts;
+  virtiofsDaemonMounts = builtins.filter (mount: mount.type == "virtiofs" && mount ? virtiofsd_exec) manifest.mounts;
 
   _ =
-    assert manifest.qemu.binaryPath != "";
-    assert manifest.identity.hostName == "agent-sandbox";
+    assert builtins.head manifest.qemu.exec != "";
+    assert manifest.host_name == "agent-sandbox";
     assert manifest.host.system == pkgs.stdenv.hostPlatform.system;
     assert manifest.machine.type == "microvm";
-    assert !(manifest.machine ? options);
-    assert manifest.paths.runtimeDir == "";
-    assert manifest.persistence.baseDir == ".agentspace";
-    assert manifest.persistence.stateDir == ".agentspace";
-    assert manifest.sockets.qmp == "qmp.sock";
-    assert manifest.memory.sizeMiB == 4096;
+    assert !(manifest.qemu ? machine_options);
+    assert manifest.state_dir == ".agentspace";
+    assert manifest.qemu.qmp_socket == "qmp.sock";
+    assert manifest.machine.memory == 4096;
     assert manifest.machine.vcpu == null;
-    assert manifest.graphics == null;
-    assert manifest.writeFiles == [ ];
+    assert manifest.graphics.backend == "headless";
+    assert manifest.write_files == [ ];
     assert manifest.notifications.states == [ ];
-    assert !(manifest.notifications ? command);
+    assert !(manifest.notifications ? exec);
     assert builtins.length virtiofsMounts > 0;
     assert !(builtins.any (mount: mount.type == "9p") manifest.mounts);
     assert builtins.length manifest.volumes > 0;
-    assert builtins.length manifest.network > 0;
+    assert builtins.length manifest.networks > 0;
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.after == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
-    assert builtins.head manifest.ssh.argv == "${pkgs.openssh}/bin/ssh";
+    assert builtins.head manifest.ssh.exec == "${pkgs.openssh}/bin/ssh";
     assert manifest.ssh.user == "agent";
-    assert !(manifest.ssh ? retryDelayMs);
-    assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.argv;
+    assert !(manifest.ssh ? retry_delay_ms);
+    assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.exec;
     assert builtins.any (
-      volume: volume.imagePath == ".agentspace/nix-store-overlay.img"
+      volume: volume.image == ".agentspace/nix-store-overlay.img"
     ) manifest.volumes;
     assert builtins.length virtiofsDaemonMounts > 0;
     assert builtins.all (
-      mount: mount.socketPath != "" && mount.daemon.path != ""
+      mount: mount.virtiofsd_socket != "" && builtins.head mount.virtiofsd_exec != ""
     ) virtiofsDaemonMounts;
     assert builtins.any (mount: mount.tag == "workspace") virtiofsDaemonMounts;
     assert !(manifest ? vsock);
@@ -155,20 +153,20 @@ let
     assert !(manifest ? qemuConfig);
     assert !(manifest ? microvmRun);
     assert !(manifest ? virtiofsdRun);
-    assert !builtins.any (arg: builtins.match ".*@vsock/.*" arg != null) manifest.ssh.argv;
+    assert !builtins.any (arg: builtins.match ".*@vsock/.*" arg != null) manifest.ssh.exec;
     true;
 
   _fixedMachine =
-    assert fixedMachineManifest.memory.sizeMiB == 512;
+    assert fixedMachineManifest.machine.memory == 512;
     assert fixedMachineManifest.machine.vcpu == 2;
     assert vmVirtieFixedMachine.config.microvm.mem == 512;
     assert vmVirtieFixedMachine.config.microvm.vcpu == 2;
     true;
 
   _balloon =
-    assert featureRichManifest.balloon.id == "balloon0";
+    assert featureRichManifest.balloon.enabled == true;
     assert !(featureRichManifest.balloon ? controller);
-    assert disabledBalloonManifest.balloon == null;
+    assert disabledBalloonManifest.balloon.enabled == false;
     true;
 
   _graphical =
@@ -180,14 +178,14 @@ let
     assert
       builtins.head externalStoreSocketManifest.mounts == {
         type = "virtiofs";
-        sourcePath = "/nix/store";
-        socketPath = "/var/run/virtiofs-nix-store.sock";
+        source = "/nix/store";
+        virtiofsd_socket = "/var/run/virtiofs-nix-store.sock";
         tag = "ro-store";
-        readOnly = true;
-        securityModel = "none";
+        read_only = true;
+        security_model = "none";
         cache = "auto";
       };
-    assert !(builtins.head externalStoreSocketManifest.mounts ? daemon);
+    assert !(builtins.head externalStoreSocketManifest.mounts ? virtiofsd_exec);
     true;
 
   _extraShares =
@@ -195,42 +193,42 @@ let
     assert builtins.any (
       mount:
       mount.type == "9p"
-      && mount.sourcePath == ".agentspace-test/cache"
+      && mount.source == ".agentspace-test/cache"
       && mount.tag == "cache"
-      && mount.securityModel == "mapped"
-      && mount.readOnly == true
+      && mount.security_model == "mapped"
+      && mount.read_only == true
     ) extraSharesManifest.mounts;
     assert builtins.any (
-      mount: mount.tag == "tools" && mount.socketPath != "" && mount ? daemon
+      mount: mount.tag == "tools" && mount.virtiofsd_socket != "" && mount ? virtiofsd_exec
     ) extraSharesManifest.mounts;
-    assert !(builtins.any (mount: mount.tag == "cache" && mount ? daemon) extraSharesManifest.mounts);
+    assert !(builtins.any (mount: mount.tag == "cache" && mount ? virtiofsd_exec) extraSharesManifest.mounts);
     true;
 
   _writeFiles =
     assert builtins.any (
       file:
-      file.guestPath == "/etc/agentspace-inline"
+      file.guest_path == "/etc/agentspace-inline"
       && file.chown == "agent:users"
       && file.text == "hello"
       && file.mode == "0640"
       && file.overwrite == true
-      && file.path == null
-    ) featureRichManifest.writeFiles;
+      && !(file ? source)
+    ) featureRichManifest.write_files;
     assert builtins.any (
       file:
-      file.guestPath == "/etc/agentspace-host"
+      file.guest_path == "/etc/agentspace-host"
       && file.chown == null
       && file.text == null
       && file.mode == null
       && file.overwrite == false
-      && file.path == ".agentspace-test/host-file"
-    ) featureRichManifest.writeFiles;
+      && file.source == ".agentspace-test/host-file"
+    ) featureRichManifest.write_files;
     true;
 
   _notifications =
-    assert featureRichManifest.notifications.command.path == pkgs.runtimeShell;
     assert
-      featureRichManifest.notifications.command.args == [
+      featureRichManifest.notifications.exec == [
+        pkgs.runtimeShell
         "-c"
         notificationCommand
       ];

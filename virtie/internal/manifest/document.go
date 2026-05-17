@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -39,104 +40,94 @@ var defaultSSHArgv = []string{
 }
 
 type Document struct {
-	Identity      Identity         `json:"identity,omitempty" toml:"identity"`
-	Paths         Paths            `json:"paths,omitempty" toml:"paths"`
-	Persistence   Persistence      `json:"persistence,omitempty" toml:"persistence"`
-	Host          HostFacts        `json:"host,omitempty" toml:"host"`
-	QEMU          QEMUFacts        `json:"qemu,omitempty" toml:"qemu"`
-	Machine       MachineFacts     `json:"machine,omitempty" toml:"machine"`
-	CPU           CPUFacts         `json:"cpu,omitempty" toml:"cpu"`
-	Memory        MemoryFacts      `json:"memory,omitempty" toml:"memory"`
-	Kernel        KernelFacts      `json:"kernel" toml:"kernel"`
-	Graphics      *QEMUGraphics    `json:"graphics,omitempty" toml:"graphics"`
-	Sockets       SocketFacts      `json:"sockets,omitempty" toml:"sockets"`
-	Volumes       []VolumeFacts    `json:"volumes,omitempty" toml:"volumes"`
-	Mounts        []MountFacts     `json:"mounts,omitempty" toml:"mounts"`
-	Network       []NetworkFacts   `json:"network,omitempty" toml:"network"`
-	Balloon       *balloon.Device  `json:"balloon,omitempty" toml:"balloon"`
-	SSH           SSH              `json:"ssh,omitempty" toml:"ssh"`
-	VSock         VSock            `json:"vsock,omitempty" toml:"vsock"`
-	WriteFiles    []WriteFileFacts `json:"writeFiles,omitempty" toml:"writeFiles"`
-	Notifications Notifications    `json:"notifications,omitempty" toml:"notifications"`
+	HostName      string             `json:"host_name,omitempty" toml:"host_name"`
+	WorkingDir    string             `json:"working_dir,omitempty" toml:"working_dir"`
+	StateDir      string             `json:"state_dir,omitempty" toml:"state_dir"`
+	Host          HostFacts          `json:"host,omitempty" toml:"host"`
+	QEMU          QEMUFacts          `json:"qemu,omitempty" toml:"qemu"`
+	Machine       MachineFacts       `json:"machine,omitempty" toml:"machine"`
+	Kernel        KernelFacts        `json:"kernel" toml:"kernel"`
+	Graphics      *GraphicsFacts     `json:"graphics,omitempty" toml:"graphics"`
+	Volumes       []VolumeFacts      `json:"volumes,omitempty" toml:"volumes"`
+	Mounts        []MountFacts       `json:"mounts,omitempty" toml:"mounts"`
+	Networks      []NetworkFacts     `json:"networks,omitempty" toml:"networks"`
+	Balloon       *BalloonFacts      `json:"balloon,omitempty" toml:"balloon"`
+	SSH           SSHFacts           `json:"ssh,omitempty" toml:"ssh"`
+	VSock         VSockFacts         `json:"vsock,omitempty" toml:"vsock"`
+	WriteFiles    []WriteFileFacts   `json:"write_files,omitempty" toml:"write_files"`
+	Notifications NotificationsFacts `json:"notifications,omitempty" toml:"notifications"`
 }
 
 type HostFacts struct {
-	System      string `json:"system,omitempty" toml:"system"`
-	OS          string `json:"os,omitempty" toml:"os"`
-	Arch        string `json:"arch,omitempty" toml:"arch"`
-	NetcatPath  string `json:"netcatPath,omitempty" toml:"netcatPath"`
-	QEMUSeccomp bool   `json:"qemuSeccomp,omitempty" toml:"qemuSeccomp"`
+	System     string `json:"system,omitempty" toml:"system"`
+	NetcatPath string `json:"netcat,omitempty" toml:"netcat"`
+	OS         string `json:"-" toml:"-"`
+	Arch       string `json:"-" toml:"-"`
 }
 
 type QEMUFacts struct {
-	BinaryPath string   `json:"binaryPath,omitempty" toml:"binaryPath"`
-	User       *string  `json:"user,omitempty" toml:"user"`
-	ExtraArgs  []string `json:"extraArgs,omitempty" toml:"extraArgs"`
+	Exec             []string          `json:"exec,omitempty" toml:"exec"`
+	User             *string           `json:"user,omitempty" toml:"user"`
+	Seccomp          bool              `json:"seccomp,omitempty" toml:"seccomp"`
+	MachineOptions   map[string]string `json:"machine_options,omitempty" toml:"machine_options"`
+	QMPSocket        string            `json:"qmp_socket,omitempty" toml:"qmp_socket"`
+	GuestAgentSocket string            `json:"guest_agent_socket,omitempty" toml:"guest_agent_socket"`
 }
 
 type MachineFacts struct {
-	Type    string            `json:"type,omitempty" toml:"type"`
-	VCPU    *int              `json:"vcpu,omitempty" toml:"vcpu"`
-	ID      *string           `json:"id,omitempty" toml:"id"`
-	Options map[string]string `json:"options,omitempty" toml:"options"`
-}
-
-type CPUFacts struct {
-	Model     string `json:"model,omitempty" toml:"model"`
-	EnableKVM *bool  `json:"enableKvm,omitempty" toml:"enableKvm"`
-}
-
-type MemoryFacts struct {
-	SizeMiB int `json:"sizeMiB,omitempty" toml:"sizeMiB"`
+	Type   string  `json:"type,omitempty" toml:"type"`
+	VCPU   *int    `json:"vcpu,omitempty" toml:"vcpu"`
+	ID     *string `json:"id,omitempty" toml:"id"`
+	Memory int     `json:"memory,omitempty" toml:"memory"`
+	CPU    string  `json:"cpu,omitempty" toml:"cpu"`
+	KVM    *bool   `json:"kvm,omitempty" toml:"kvm"`
 }
 
 type KernelFacts struct {
 	Path          string   `json:"path" toml:"path"`
-	InitrdPath    string   `json:"initrdPath" toml:"initrdPath"`
+	InitrdPath    string   `json:"initrd_path" toml:"initrd_path"`
 	Params        []string `json:"params,omitempty" toml:"params"`
-	SerialConsole bool     `json:"serialConsole,omitempty" toml:"serialConsole"`
+	SerialConsole bool     `json:"serial_console,omitempty" toml:"serial_console"`
 }
 
-type SocketFacts struct {
-	QMP        string `json:"qmp,omitempty" toml:"qmp"`
-	GuestAgent string `json:"guestAgent,omitempty" toml:"guestAgent"`
-	SSHReady   string `json:"sshReady,omitempty" toml:"sshReady"`
+type GraphicsFacts struct {
+	Backend string `json:"backend,omitempty" toml:"backend"`
 }
 
 type VolumeFacts struct {
-	ImagePath  string  `json:"imagePath" toml:"imagePath"`
-	SizeMiB    int     `json:"sizeMiB,omitempty" toml:"sizeMiB"`
-	FSType     string  `json:"fsType,omitempty" toml:"fsType"`
-	AutoCreate bool    `json:"autoCreate,omitempty" toml:"autoCreate"`
+	ImagePath  string  `json:"image" toml:"image"`
+	SizeMiB    int     `json:"size,omitempty" toml:"size"`
+	FSType     string  `json:"fs,omitempty" toml:"fs"`
+	AutoCreate bool    `json:"create,omitempty" toml:"create"`
 	Label      *string `json:"label,omitempty" toml:"label"`
-	ReadOnly   bool    `json:"readOnly,omitempty" toml:"readOnly"`
-	Direct     *bool   `json:"direct,omitempty" toml:"direct"`
+	ReadOnly   bool    `json:"read_only,omitempty" toml:"read_only"`
+	Direct     bool    `json:"direct,omitempty" toml:"direct"`
 	Serial     *string `json:"serial,omitempty" toml:"serial"`
 }
 
 type MountFacts struct {
-	Type          string   `json:"type" toml:"type"`
+	Type          string   `json:"type,omitempty" toml:"type"`
 	Tag           string   `json:"tag" toml:"tag"`
-	SourcePath    string   `json:"sourcePath,omitempty" toml:"sourcePath"`
-	SocketPath    string   `json:"socketPath,omitempty" toml:"socketPath"`
-	ReadOnly      bool     `json:"readOnly,omitempty" toml:"readOnly"`
-	SecurityModel string   `json:"securityModel,omitempty" toml:"securityModel"`
+	SourcePath    string   `json:"source,omitempty" toml:"source"`
+	SocketPath    string   `json:"virtiofsd_socket,omitempty" toml:"virtiofsd_socket"`
+	ReadOnly      bool     `json:"read_only,omitempty" toml:"read_only"`
+	SecurityModel string   `json:"security_model,omitempty" toml:"security_model"`
 	Cache         string   `json:"cache,omitempty" toml:"cache"`
-	Daemon        *Command `json:"daemon,omitempty" toml:"daemon"`
+	VirtioFSDExec []string `json:"virtiofsd_exec,omitempty" toml:"virtiofsd_exec"`
 }
 
 type NetworkFacts struct {
-	ID           string        `json:"id,omitempty" toml:"id"`
-	Type         string        `json:"type,omitempty" toml:"type"`
-	MACAddress   string        `json:"macAddress,omitempty" toml:"macAddress"`
-	ForwardPorts []ForwardPort `json:"forwardPorts,omitempty" toml:"forwardPorts"`
+	ID      string        `json:"id,omitempty" toml:"id"`
+	Type    string        `json:"type,omitempty" toml:"type"`
+	MAC     string        `json:"mac,omitempty" toml:"mac"`
+	Forward []ForwardPort `json:"forward,omitempty" toml:"forward"`
 }
 
 type ForwardPort struct {
-	Proto string       `json:"proto" toml:"proto"`
-	From  string       `json:"from" toml:"from"`
-	Host  PortEndpoint `json:"host" toml:"host"`
-	Guest PortEndpoint `json:"guest" toml:"guest"`
+	Proto string `json:"proto" toml:"proto"`
+	From  string `json:"from" toml:"from"`
+	Host  string `json:"host" toml:"host"`
+	Guest string `json:"guest" toml:"guest"`
 }
 
 type PortEndpoint struct {
@@ -144,13 +135,51 @@ type PortEndpoint struct {
 	Port    int    `json:"port" toml:"port"`
 }
 
+type BalloonFacts struct {
+	Enabled           bool                    `json:"enabled,omitempty" toml:"enabled"`
+	DeflateOnOOM      bool                    `json:"deflate_on_oom,omitempty" toml:"deflate_on_oom"`
+	FreePageReporting bool                    `json:"free_page_reporting,omitempty" toml:"free_page_reporting"`
+	Controller        *BalloonControllerFacts `json:"controller,omitempty" toml:"controller"`
+}
+
+type BalloonControllerFacts struct {
+	MinActualMiB             int `json:"min_actual,omitempty" toml:"min_actual"`
+	MaxActualMiB             int `json:"max_actual,omitempty" toml:"max_actual"`
+	GrowBelowAvailableMiB    int `json:"grow_below_available,omitempty" toml:"grow_below_available"`
+	ReclaimAboveAvailableMiB int `json:"reclaim_above_available,omitempty" toml:"reclaim_above_available"`
+	StepMiB                  int `json:"step,omitempty" toml:"step"`
+	PollIntervalSeconds      int `json:"poll_interval_seconds,omitempty" toml:"poll_interval_seconds"`
+	ReclaimHoldoffSeconds    int `json:"reclaim_holdoff_seconds,omitempty" toml:"reclaim_holdoff_seconds"`
+}
+
+type SSHFacts struct {
+	Exec         []string `json:"exec,omitempty" toml:"exec"`
+	User         string   `json:"user,omitempty" toml:"user"`
+	ReadySocket  string   `json:"ready_socket,omitempty" toml:"ready_socket"`
+	RetryDelayMS *int     `json:"retry_delay_ms,omitempty" toml:"retry_delay_ms"`
+}
+
+type VSockFacts struct {
+	CIDRange RangeFacts `json:"cid_range,omitempty" toml:"cid_range"`
+}
+
+type RangeFacts struct {
+	Min int `json:"min,omitempty" toml:"min"`
+	Max int `json:"max,omitempty" toml:"max"`
+}
+
 type WriteFileFacts struct {
-	GuestPath string  `json:"guestPath" toml:"guestPath"`
+	GuestPath string  `json:"guest_path" toml:"guest_path"`
 	Chown     *string `json:"chown,omitempty" toml:"chown"`
 	Text      *string `json:"text,omitempty" toml:"text"`
 	Mode      *string `json:"mode,omitempty" toml:"mode"`
 	Overwrite *bool   `json:"overwrite,omitempty" toml:"overwrite"`
-	Path      *string `json:"path,omitempty" toml:"path"`
+	Path      *string `json:"source,omitempty" toml:"source"`
+}
+
+type NotificationsFacts struct {
+	Exec   []string `json:"exec,omitempty" toml:"exec"`
+	States []string `json:"states,omitempty" toml:"states"`
 }
 
 func LoadBytes(data []byte, name string) (*Manifest, error) {
@@ -179,7 +208,7 @@ func UpdateWorkingDirBytes(data []byte, name string, workingDir string) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	doc.Paths.WorkingDir = workingDir
+	doc.WorkingDir = workingDir
 	if isTOML {
 		var out bytes.Buffer
 		if err := toml.NewEncoder(&out).Encode(doc); err != nil {
@@ -196,6 +225,7 @@ func UpdateWorkingDirBytes(data []byte, name string, workingDir string) ([]byte,
 
 func decodeJSON(data []byte, doc *Document) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(doc); err != nil {
 		return fmt.Errorf("decode manifest: %w", err)
 	}
@@ -235,17 +265,33 @@ func (d Document) Manifest() (*Manifest, error) {
 		return nil, fmt.Errorf("manifest.kernel.path is required")
 	}
 	if d.Kernel.InitrdPath == "" {
-		return nil, fmt.Errorf("manifest.kernel.initrdPath is required")
+		return nil, fmt.Errorf("manifest.kernel.initrd_path is required")
 	}
 
 	host := d.Host.withDefaults()
 	m := &Manifest{
-		Identity:      d.Identity,
-		Paths:         d.Paths,
-		Persistence:   d.Persistence,
-		SSH:           d.SSH,
-		VSock:         d.VSock,
-		Notifications: d.Notifications,
+		Identity: Identity{
+			HostName: d.HostName,
+		},
+		Paths: Paths{
+			WorkingDir: d.WorkingDir,
+		},
+		Persistence: Persistence{
+			BaseDir:  d.StateDir,
+			StateDir: d.StateDir,
+		},
+		SSH: SSH{
+			Argv:         append([]string(nil), d.SSH.Exec...),
+			User:         d.SSH.User,
+			RetryDelayMS: d.SSH.RetryDelayMS,
+		},
+		VSock: VSock{
+			CIDRange: VSockCIDRange{
+				Start: d.VSock.CIDRange.Min,
+				End:   d.VSock.CIDRange.Max,
+			},
+		},
+		Notifications: lowerNotifications(d.Notifications),
 	}
 	if m.Identity.HostName == "" {
 		m.Identity.HostName = defaultHostName
@@ -259,11 +305,12 @@ func (d Document) Manifest() (*Manifest, error) {
 	if m.Persistence.StateDir == "" {
 		m.Persistence.StateDir = m.Persistence.BaseDir
 	}
+	m.Persistence.Directories = persistenceDirectories(d.Volumes, m.Persistence.StateDir)
 	if m.Paths.LockPath == "" {
 		m.Paths.LockPath = filepath.Join(m.Persistence.StateDir, m.Identity.HostName+".lock")
 	}
 	if m.Paths.RuntimeDir == nil {
-		m.Paths.RuntimeDir = stringPtr("")
+		m.Paths.RuntimeDir = stringPtr(m.Persistence.StateDir)
 	}
 	if len(m.SSH.Argv) == 0 {
 		m.SSH.Argv = append([]string(nil), defaultSSHArgv...)
@@ -305,44 +352,52 @@ func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
 	if machineType == "" {
 		machineType = defaultMachineType
 	}
-	transport := qemuTransport(machineType, d.Mounts, d.Graphics)
+	graphics := lowerGraphics(d.Graphics)
+	transport := qemuTransport(machineType, d.Mounts, graphics)
 	virtiofsMounts := filterMounts(d.Mounts, "virtiofs")
-	memorySize := d.Memory.SizeMiB
+	memorySize := d.Machine.Memory
 	if memorySize == 0 {
 		memorySize = defaultMemorySizeMiB
 	}
-	cpuModel := d.CPU.Model
+	cpuModel := d.Machine.CPU
 	if cpuModel == "" {
 		cpuModel = defaultCPUModel(host)
 	}
-	enableKVM := host.OS == "linux" && d.CPU.Model == ""
-	if d.CPU.EnableKVM != nil {
-		enableKVM = *d.CPU.EnableKVM
+	enableKVM := host.OS == "linux" && d.Machine.CPU == ""
+	if d.Machine.KVM != nil {
+		enableKVM = *d.Machine.KVM
 	}
-	binaryPath := d.QEMU.BinaryPath
+	binaryPath := ""
+	if len(d.QEMU.Exec) > 0 {
+		binaryPath = d.QEMU.Exec[0]
+	}
 	if binaryPath == "" {
 		binaryPath = "qemu-system-" + host.Arch
 	}
-	qmpSocket := d.Sockets.QMP
+	qmpSocket := d.QEMU.QMPSocket
 	if qmpSocket == "" {
 		qmpSocket = defaultQMP
 	}
-	guestAgentSocket := d.Sockets.GuestAgent
+	guestAgentSocket := d.QEMU.GuestAgentSocket
 	if guestAgentSocket == "" {
 		guestAgentSocket = defaultGuestAgent
 	}
-	sshReadySocket := d.Sockets.SSHReady
+	sshReadySocket := d.SSH.ReadySocket
 	if sshReadySocket == "" {
 		sshReadySocket = defaultSSHReadySocket
 	}
-	noGraphic := d.Graphics == nil
+	noGraphic := graphics == nil
+	networks, err := lowerNetwork(d.Networks, host, transport, d.Machine.VCPU)
+	if err != nil {
+		return QEMU{}, err
+	}
 
 	qemu := QEMU{
 		BinaryPath: binaryPath,
 		Name:       hostName,
 		Machine: QEMUMachine{
 			Type:    machineType,
-			Options: lowerMachineOptions(host, machineType, d.Machine.Options, transport == "pci"),
+			Options: lowerMachineOptions(host, machineType, d.QEMU.MachineOptions, transport == "pci"),
 		},
 		CPU: QEMUCPU{
 			Model:     cpuModel,
@@ -370,9 +425,9 @@ func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
 			NoUserConfig:   true,
 			NoReboot:       true,
 			NoGraphic:      &noGraphic,
-			SeccompSandbox: host.QEMUSeccomp,
+			SeccompSandbox: d.QEMU.Seccomp,
 		},
-		Graphics: d.Graphics,
+		Graphics: graphics,
 		QMP: QEMUQMP{
 			SocketPath: qmpSocket,
 		},
@@ -392,7 +447,7 @@ func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
 			VirtioFS: lowerVirtioFSMounts(virtiofsMounts, transport),
 			NineP:    lowerNinePMounts(filterMounts(d.Mounts, "9p"), transport),
 			Block:    lowerBlocks(d.Volumes, host, transport),
-			Network:  lowerNetwork(d.Network, host, transport, d.Machine.VCPU),
+			Network:  networks,
 			VSOCK: QEMUVSOCKDevice{
 				ID:        "vsock0",
 				Transport: transport,
@@ -518,7 +573,7 @@ func lowerBlocks(volumes []VolumeFacts, host HostFacts, transport string) []QEMU
 			Serial:    volume.Serial,
 			Transport: transport,
 		}
-		if volume.Direct != nil {
+		if volume.Direct {
 			cache := "none"
 			block.Cache = &cache
 		}
@@ -537,11 +592,18 @@ func aioEngine(host HostFacts) string {
 func filterMounts(mounts []MountFacts, mountType string) []MountFacts {
 	result := make([]MountFacts, 0, len(mounts))
 	for _, mount := range mounts {
-		if mount.Type == mountType {
+		if mount.effectiveType() == mountType {
 			result = append(result, mount)
 		}
 	}
 	return result
+}
+
+func (m MountFacts) effectiveType() string {
+	if m.Type == "" {
+		return "virtiofs"
+	}
+	return m.Type
 }
 
 func lowerVirtioFSMounts(mounts []MountFacts, transport string) []QEMUVirtioFSShare {
@@ -579,24 +641,25 @@ func lowerNinePMounts(mounts []MountFacts, transport string) []QEMUNinePShare {
 func lowerVirtioFSDaemons(mounts []MountFacts) []VirtioFSDaemon {
 	daemons := make([]VirtioFSDaemon, 0, len(mounts))
 	for _, mount := range mounts {
-		if mount.Type != "virtiofs" || mount.Daemon == nil {
+		if mount.effectiveType() != "virtiofs" || len(mount.VirtioFSDExec) == 0 {
 			continue
 		}
+		command := commandFromExec(mount.VirtioFSDExec)
 		daemons = append(daemons, VirtioFSDaemon{
 			Tag:        mount.Tag,
 			SocketPath: mount.SocketPath,
-			Command:    *mount.Daemon,
+			Command:    command,
 		})
 	}
 	return daemons
 }
 
-func lowerNetwork(networks []NetworkFacts, host HostFacts, transport string, vcpu *int) []QEMUNetDevice {
+func lowerNetwork(networks []NetworkFacts, host HostFacts, transport string, vcpu *int) ([]QEMUNetDevice, error) {
 	if networks == nil {
 		networks = []NetworkFacts{{}}
 	}
 	devices := make([]QEMUNetDevice, 0, len(networks))
-	for _, network := range networks {
+	for i, network := range networks {
 		id := network.ID
 		if id == "" {
 			id = defaultNetworkID
@@ -605,7 +668,7 @@ func lowerNetwork(networks []NetworkFacts, host HostFacts, transport string, vcp
 		if backend == "" {
 			backend = "user"
 		}
-		mac := network.MACAddress
+		mac := network.MAC
 		if mac == "" {
 			mac = defaultNetworkMAC
 		}
@@ -618,36 +681,89 @@ func lowerNetwork(networks []NetworkFacts, host HostFacts, transport string, vcp
 		if vcpu != nil && *vcpu > 1 && transport == "pci" {
 			mqVectors = 2**vcpu + 2
 		}
+		forwardOptions, err := lowerForwardPorts(network.Forward, host, i)
+		if err != nil {
+			return nil, err
+		}
 		devices = append(devices, QEMUNetDevice{
 			ID:            id,
 			Backend:       backend,
 			MacAddress:    mac,
 			Transport:     transport,
 			RomFile:       romFile,
-			NetdevOptions: lowerForwardPorts(network.ForwardPorts, host),
+			NetdevOptions: forwardOptions,
 			MQVectors:     mqVectors,
 		})
 	}
-	return devices
+	return devices, nil
 }
 
-func lowerForwardPorts(ports []ForwardPort, host HostFacts) []string {
+func parsePortEndpoint(value string) (PortEndpoint, error) {
+	host, port, err := net.SplitHostPort(value)
+	if err != nil {
+		index := strings.LastIndex(value, ":")
+		if index < 0 {
+			return PortEndpoint{}, fmt.Errorf("missing :port")
+		}
+		host = value[:index]
+		port = value[index+1:]
+	}
+	if port == "" {
+		return PortEndpoint{}, fmt.Errorf("missing port")
+	}
+	parsedPort, err := strconv.Atoi(port)
+	if err != nil {
+		return PortEndpoint{}, fmt.Errorf("port must be an integer")
+	}
+	if parsedPort <= 0 || parsedPort > 65535 {
+		return PortEndpoint{}, fmt.Errorf("port must be between 1 and 65535")
+	}
+	return PortEndpoint{Address: host, Port: parsedPort}, nil
+}
+
+func lowerForwardPorts(ports []ForwardPort, host HostFacts, networkIndex int) ([]string, error) {
 	options := make([]string, 0, len(ports))
 	netcat := host.NetcatPath
 	if netcat == "" {
 		netcat = "nc"
 	}
-	for _, port := range ports {
+	for i, port := range ports {
+		hostEndpoint, err := parsePortEndpoint(port.Host)
+		if err != nil {
+			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].host %s", networkIndex, i, err)
+		}
+		guestEndpoint, err := parsePortEndpoint(port.Guest)
+		if err != nil {
+			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].guest %s", networkIndex, i, err)
+		}
 		if port.From == "host" {
-			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", port.Proto, port.Host.Address, port.Host.Port, port.Guest.Address, port.Guest.Port))
+			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", port.Proto, hostEndpoint.Address, hostEndpoint.Port, guestEndpoint.Address, guestEndpoint.Port))
 		} else {
-			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s %s %d", port.Proto, port.Guest.Address, port.Guest.Port, netcat, port.Host.Address, port.Host.Port))
+			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s %s %d", port.Proto, guestEndpoint.Address, guestEndpoint.Port, netcat, hostEndpoint.Address, hostEndpoint.Port))
 		}
 	}
-	return options
+	return options, nil
 }
 
-func lowerBalloon(device *balloon.Device, transport string) *balloon.Device {
+func lowerBalloon(facts *BalloonFacts, transport string) *balloon.Device {
+	if facts == nil || !facts.Enabled {
+		return nil
+	}
+	device := &balloon.Device{
+		DeflateOnOOM:      facts.DeflateOnOOM,
+		FreePageReporting: facts.FreePageReporting,
+	}
+	if facts.Controller != nil {
+		device.Controller = &balloon.ControllerConfig{
+			MinActualMiB:             facts.Controller.MinActualMiB,
+			MaxActualMiB:             facts.Controller.MaxActualMiB,
+			GrowBelowAvailableMiB:    facts.Controller.GrowBelowAvailableMiB,
+			ReclaimAboveAvailableMiB: facts.Controller.ReclaimAboveAvailableMiB,
+			StepMiB:                  facts.Controller.StepMiB,
+			PollIntervalSeconds:      facts.Controller.PollIntervalSeconds,
+			ReclaimHoldoffSeconds:    facts.Controller.ReclaimHoldoffSeconds,
+		}
+	}
 	if device == nil {
 		return nil
 	}
@@ -678,12 +794,75 @@ func lowerWriteFiles(files []WriteFileFacts) WriteFiles {
 	return result
 }
 
+func lowerGraphics(graphics *GraphicsFacts) *QEMUGraphics {
+	if graphics == nil || graphics.Backend == "" || graphics.Backend == "headless" {
+		return nil
+	}
+	return &QEMUGraphics{Backend: graphics.Backend}
+}
+
+func lowerNotifications(notifications NotificationsFacts) Notifications {
+	result := Notifications{
+		States: append([]string(nil), notifications.States...),
+	}
+	if len(notifications.Exec) > 0 {
+		command := commandFromExec(notifications.Exec)
+		result.Command = &command
+	}
+	return result
+}
+
+func commandFromExec(exec []string) Command {
+	if len(exec) == 0 {
+		return Command{}
+	}
+	return Command{
+		Path: exec[0],
+		Args: append([]string(nil), exec[1:]...),
+	}
+}
+
+func persistenceDirectories(volumes []VolumeFacts, stateDir string) []string {
+	dirs := []string{stateDir}
+	for _, volume := range volumes {
+		if volume.ImagePath == "" {
+			continue
+		}
+		dir := filepath.Dir(volume.ImagePath)
+		if dir == "." {
+			continue
+		}
+		dirs = append(dirs, dir)
+	}
+	return uniqueStrings(dirs)
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
 func qemuPassthroughArgs(qemu QEMUFacts) []string {
-	args := make([]string, 0, len(qemu.ExtraArgs)+2)
-	if qemu.User != nil {
+	extraArgs := []string(nil)
+	if len(qemu.Exec) > 1 {
+		extraArgs = qemu.Exec[1:]
+	}
+	args := make([]string, 0, len(extraArgs)+2)
+	if qemu.User != nil && *qemu.User != "" {
 		args = append(args, "-user", *qemu.User)
 	}
-	args = append(args, qemu.ExtraArgs...)
+	args = append(args, extraArgs...)
 	return args
 }
 

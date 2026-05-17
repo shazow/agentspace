@@ -15,7 +15,7 @@ import (
 
 func TestLoadReadsFromReader(t *testing.T) {
 	document := validDocument()
-	document.QEMU.BinaryPath = "bin/qemu-system-x86_64"
+	document.QEMU.Exec = []string{"bin/qemu-system-x86_64"}
 	document.Kernel.Path = "boot/vmlinuz"
 	document.Kernel.InitrdPath = "boot/initrd"
 	document.Mounts = append(document.Mounts, MountFacts{
@@ -25,7 +25,7 @@ func TestLoadReadsFromReader(t *testing.T) {
 		SecurityModel: "none",
 	})
 	document.Volumes[0].ImagePath = "images/root.img"
-	document.Mounts[0].Daemon.Path = "bin/virtiofsd-workspace"
+	document.Mounts[0].VirtioFSDExec = []string{"bin/virtiofsd-workspace"}
 
 	data, err := json.Marshal(document)
 	if err != nil {
@@ -111,7 +111,7 @@ func TestLoadRejectsLegacyWriteFileContent(t *testing.T) {
 	}
 
 	_, err = Load(bytes.NewReader(encoded))
-	if err == nil || !strings.Contains(err.Error(), "cannot unmarshal object") {
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("expected legacy writeFiles shape decode error, got %v", err)
 	}
 }
@@ -120,6 +120,7 @@ func TestLoadTOMLExamples(t *testing.T) {
 	for _, path := range []string{
 		"../../manifest-example-simple.toml",
 		"../../manifest-example-full.toml",
+		"../../manifest-proposed.toml",
 	} {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			data, err := os.ReadFile(path)
@@ -536,15 +537,16 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 
 	t.Run("accepts args without path", func(t *testing.T) {
 		data := []byte(`{
-			"identity": {"hostName": "agent-sandbox"},
-			"paths": {"workingDir": "/tmp/work", "lockPath": "/tmp/virtie.lock"},
-			"ssh": {"argv": ["/bin/ssh"], "user": "agent"},
-			"qemu": {"binaryPath": "/bin/qemu-system-x86_64"},
-			"memory": {"sizeMiB": 1024},
-			"kernel": {"path": "/tmp/vmlinuz", "initrdPath": "/tmp/initrd"},
-			"mounts": [{"type": "virtiofs", "tag": "workspace", "socketPath": "fs.sock", "daemon": {"path": "/tmp/virtiofsd-workspace"}}],
-			"volumes": [{"imagePath": "root.img", "sizeMiB": 256, "autoCreate": true}],
-			"notifications": {"command": {"args": ["--verbose"]}}
+			"host_name": "agent-sandbox",
+			"working_dir": "/tmp/work",
+			"state_dir": ".virtie",
+			"ssh": {"exec": ["/bin/ssh"], "user": "agent"},
+			"qemu": {"exec": ["/bin/qemu-system-x86_64"]},
+			"machine": {"memory": 1024},
+			"kernel": {"path": "/tmp/vmlinuz", "initrd_path": "/tmp/initrd"},
+			"mounts": [{"type": "virtiofs", "tag": "workspace", "virtiofsd_socket": "fs.sock", "virtiofsd_exec": ["/tmp/virtiofsd-workspace"]}],
+			"volumes": [{"image": "root.img", "size": 256, "create": true}],
+			"notifications": {"exec": ["--verbose"]}
 		}`)
 		loaded, err := Load(bytes.NewReader(data))
 		if err != nil {
@@ -553,18 +555,15 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 		if loaded.Notifications.Command == nil {
 			t.Fatal("expected notification command after load")
 		}
-		if got := loaded.Notifications.Command.Path; got != "" {
-			t.Fatalf("unexpected notification command path: got %q want empty", got)
+		if got := loaded.Notifications.Command.Path; got != "--verbose" {
+			t.Fatalf("unexpected notification command path: got %q want --verbose", got)
 		}
 	})
 
 	t.Run("preserves through load", func(t *testing.T) {
 		document := validDocument()
-		document.Notifications = Notifications{
-			Command: &Command{
-				Path: "/bin/notify",
-				Args: []string{"--state"},
-			},
+		document.Notifications = NotificationsFacts{
+			Exec:   []string{"/bin/notify", "--state"},
 			States: []string{"runtime:suspend"},
 		}
 		data, err := json.Marshal(document)
@@ -579,7 +578,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 		if loaded.Notifications.Command == nil {
 			t.Fatal("expected notification command after load")
 		}
-		if got, want := *loaded.Notifications.Command, *document.Notifications.Command; !reflect.DeepEqual(got, want) {
+		if got, want := *loaded.Notifications.Command, (Command{Path: "/bin/notify", Args: []string{"--state"}}); !reflect.DeepEqual(got, want) {
 			t.Fatalf("unexpected loaded command: got %#v want %#v", got, want)
 		}
 		if got, want := loaded.Notifications.States, document.Notifications.States; !reflect.DeepEqual(got, want) {
@@ -717,6 +716,98 @@ func TestManifestValidatesQEMUGraphicsBackend(t *testing.T) {
 	})
 }
 
+func TestLoadRejectsMalformedForwardEndpoints(t *testing.T) {
+	tests := []struct {
+		name      string
+		host      string
+		guest     string
+		wantError string
+	}{
+		{
+			name:      "host missing port",
+			host:      "127.0.0.1",
+			guest:     "10.0.2.15:22",
+			wantError: "manifest.networks[0].forward[0].host missing :port",
+		},
+		{
+			name:      "host non integer port",
+			host:      "127.0.0.1:http",
+			guest:     "10.0.2.15:22",
+			wantError: "manifest.networks[0].forward[0].host port must be an integer",
+		},
+		{
+			name:      "guest out of range port",
+			host:      "127.0.0.1:2222",
+			guest:     "10.0.2.15:70000",
+			wantError: "manifest.networks[0].forward[0].guest port must be between 1 and 65535",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.Networks = []NetworkFacts{
+				{
+					Forward: []ForwardPort{
+						{
+							Proto: "tcp",
+							From:  "host",
+							Host:  tt.host,
+							Guest: tt.guest,
+						},
+					},
+				},
+			}
+
+			data, err := json.Marshal(document)
+			if err != nil {
+				t.Fatalf("marshal manifest: %v", err)
+			}
+
+			_, err = Load(bytes.NewReader(data))
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantError, err)
+			}
+		})
+	}
+}
+
+func TestLoadTreatsHeadlessGraphicsAsAbsentForTransport(t *testing.T) {
+	for _, graphics := range []*GraphicsFacts{
+		nil,
+		{Backend: "headless"},
+	} {
+		name := "omitted"
+		if graphics != nil {
+			name = "explicit headless"
+		}
+		t.Run(name, func(t *testing.T) {
+			document := validDocument()
+			document.Mounts = nil
+			document.Graphics = graphics
+
+			data, err := json.Marshal(document)
+			if err != nil {
+				t.Fatalf("marshal manifest: %v", err)
+			}
+
+			loaded, err := Load(bytes.NewReader(data))
+			if err != nil {
+				t.Fatalf("load manifest: %v", err)
+			}
+			if got, want := loaded.QEMU.Devices.RNG.Transport, "mmio"; got != want {
+				t.Fatalf("unexpected rng transport: got %q want %q", got, want)
+			}
+			if got, want := loaded.QEMU.Devices.Network[0].Transport, "mmio"; got != want {
+				t.Fatalf("unexpected network transport: got %q want %q", got, want)
+			}
+			if loaded.QEMU.Graphics != nil {
+				t.Fatalf("expected no qemu graphics for headless manifest, got %#v", loaded.QEMU.Graphics)
+			}
+		})
+	}
+}
+
 func TestManifestNoGraphicDefaultsPreserveExplicitFalse(t *testing.T) {
 	t.Run("defaults omitted headless manifest to noGraphic", func(t *testing.T) {
 		manifest := validManifest()
@@ -732,7 +823,7 @@ func TestManifestNoGraphicDefaultsPreserveExplicitFalse(t *testing.T) {
 
 	t.Run("preserves explicit false without typed graphics", func(t *testing.T) {
 		document := validDocument()
-		document.Graphics = &QEMUGraphics{Backend: "gtk"}
+		document.Graphics = &GraphicsFacts{Backend: "gtk"}
 
 		data, err := json.Marshal(document)
 		if err != nil {
@@ -875,32 +966,22 @@ func TestManifestAllowsRuntimeAndQEMUPassedCPUs(t *testing.T) {
 
 func validDocument() Document {
 	return Document{
-		Identity: Identity{
-			HostName: "agent-sandbox",
-		},
-		Paths: Paths{
-			WorkingDir: "/tmp/work",
-			LockPath:   "/tmp/virtie.lock",
-		},
+		HostName:   "agent-sandbox",
+		WorkingDir: "/tmp/work",
+		StateDir:   ".virtie",
 		Host: HostFacts{
-			System:      "x86_64-linux",
-			OS:          "linux",
-			Arch:        "x86_64",
-			QEMUSeccomp: true,
+			System: "x86_64-linux",
 		},
 		QEMU: QEMUFacts{
-			BinaryPath: "/bin/qemu-system-x86_64",
+			Exec:           []string{"/bin/qemu-system-x86_64"},
+			Seccomp:        true,
+			MachineOptions: map[string]string{"accel": "kvm:tcg"},
 		},
 		Machine: MachineFacts{
-			Type:    "microvm",
-			VCPU:    intPtr(2),
-			Options: map[string]string{"accel": "kvm:tcg"},
-		},
-		CPU: CPUFacts{
-			Model: "host",
-		},
-		Memory: MemoryFacts{
-			SizeMiB: 1024,
+			Type:   "microvm",
+			VCPU:   intPtr(2),
+			CPU:    "host",
+			Memory: 1024,
 		},
 		Kernel: KernelFacts{
 			Path:       "/tmp/vmlinuz",
@@ -908,12 +989,10 @@ func validDocument() Document {
 		},
 		Mounts: []MountFacts{
 			{
-				Type:       "virtiofs",
-				Tag:        "workspace",
-				SocketPath: "fs.sock",
-				Daemon: &Command{
-					Path: "/tmp/virtiofsd-workspace",
-				},
+				Type:          "virtiofs",
+				Tag:           "workspace",
+				SocketPath:    "fs.sock",
+				VirtioFSDExec: []string{"/tmp/virtiofsd-workspace"},
 			},
 		},
 		Volumes: []VolumeFacts{
@@ -924,15 +1003,15 @@ func validDocument() Document {
 				AutoCreate: true,
 			},
 		},
-		Network: []NetworkFacts{
+		Networks: []NetworkFacts{
 			{
-				ID:         "net0",
-				Type:       "user",
-				MACAddress: "02:02:00:00:00:01",
+				ID:   "net0",
+				Type: "user",
+				MAC:  "02:02:00:00:00:01",
 			},
 		},
-		SSH: SSH{
-			Argv: []string{"/bin/ssh"},
+		SSH: SSHFacts{
+			Exec: []string{"/bin/ssh"},
 			User: "agent",
 		},
 	}

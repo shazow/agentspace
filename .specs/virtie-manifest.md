@@ -34,15 +34,15 @@ Out of scope:
 
 Acceptance criteria:
 
-- [ ] `virtie/manifest-proposed.toml` is promoted into the supported example
+- [x] `virtie/manifest-proposed.toml` is promoted into the supported example
       set and loads successfully.
-- [ ] Nix-generated `manifest.json` uses the same snake_case shape as the new
+- [x] Nix-generated `manifest.json` uses the same snake_case shape as the new
       TOML format.
-- [ ] Direct manifest loading accepts the new TOML and JSON shapes and rejects
+- [x] Direct manifest loading accepts the new TOML and JSON shapes and rejects
       the old shape with clear errors.
-- [ ] Existing consumer-facing features remain represented in generated
+- [x] Existing consumer-facing features remain represented in generated
       manifests and covered by checks.
-- [ ] `MIGRATION.md` documents the breaking manifest contract change.
+- [x] `MIGRATION.md` documents the breaking manifest contract change.
 
 ## Progress
 
@@ -53,10 +53,11 @@ Acceptance criteria:
       and mounts, volume label/direct/serial, mount type/security/cache,
       machine id, serial console, graphics, QEMU user/sockets, and write-file
       ownership/source.
-- [ ] Finalize the proposed manifest field names and remove remaining TODOs.
-- [ ] Replace the Go public `Document` schema with the new shape.
-- [ ] Update Nix manifest generation to emit the new JSON shape.
-- [ ] Update examples, migration notes, and checks.
+- [x] Finalize the proposed manifest field names while keeping explicit TODOs
+      for future host/netcat removal work.
+- [x] Replace the Go public `Document` schema with the new shape.
+- [x] Update Nix manifest generation to emit the new JSON shape.
+- [x] Update examples, migration notes, and checks.
 
 ## Implementation Plan
 

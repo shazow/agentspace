@@ -1,61 +1,41 @@
-[identity]
-hostName = "virtie"
+# Full virtie manifest example using the supported snake_case schema.
 
-[paths]
-workingDir = "."
-lockPath = ".virtie/virtie.lock"
-runtimeDir = ""
-
-[persistence]
-directories = [".virtie"]
-baseDir = ".virtie"
-stateDir = ".virtie"
+host_name = "virtie"
+working_dir = "."
+state_dir = ".virtie"
 
 [host]
 system = "x86_64-linux"
-os = "linux"
-arch = "x86_64"
-netcatPath = "nc"
-qemuSeccomp = false
+netcat = "nc"
 
 [qemu]
-binaryPath = "qemu-system-x86_64"
-extraArgs = []
+exec = ["qemu-system-x86_64"]
+user = ""
+seccomp = false
+machine_options = { accel = "kvm:tcg", pcie = "on" }
+qmp_socket = "qmp.sock"
+guest_agent_socket = "qga.sock"
 
 [machine]
 type = "microvm"
+id = "virtie"
+memory = 1024
 vcpu = 2
-
-[machine.options]
-accel = "kvm:tcg"
-acpi = "on"
-mem-merge = "on"
-pic = "off"
-pit = "off"
-pcie = "on"
-rtc = "on"
-usb = "off"
-
-[cpu]
-model = "host,+x2apic,-sgx"
-enableKvm = true
-
-[memory]
-sizeMiB = 1024
+cpu = "host,+x2apic,-sgx"
+kvm = true
 
 [kernel]
 path = "/tmp/vmlinuz"
-initrdPath = "/tmp/initrd"
+initrd_path = "/tmp/initrd"
 params = []
-serialConsole = false
+serial_console = false
 
-[sockets]
-qmp = "qmp.sock"
-guestAgent = "qga.sock"
-sshReady = "ssh-ready.sock"
+[graphics]
+backend = "headless"
 
 [ssh]
-argv = [
+user = "agent"
+exec = [
   "ssh",
   "-q",
   "-o",
@@ -65,73 +45,66 @@ argv = [
   "-o",
   "GlobalKnownHostsFile=/dev/null",
 ]
-user = "agent"
-retryDelayMs = 1000
+ready_socket = "ssh-ready.sock"
+retry_delay_ms = 1000
 
-[vsock.cidRange]
-start = 3
-end = 65535
+[vsock]
+cid_range = { min = 3, max = 65535 }
 
 [[volumes]]
-imagePath = ".virtie/root.img"
-sizeMiB = 256
-fsType = "ext4"
-autoCreate = true
-readOnly = false
+image = ".virtie/root.img"
+size = 4096
+fs = "ext4"
+create = true
+read_only = false
+label = "root"
+direct = false
+serial = "root"
 
 [[mounts]]
 type = "virtiofs"
 tag = "workspace"
-sourcePath = "."
-socketPath = "workspace.sock"
-readOnly = false
-securityModel = "mapped"
+source = "."
+read_only = false
+virtiofsd_socket = "workspace.sock"
+virtiofsd_exec = ["/usr/libexec/virtiofsd"]
+security_model = "mapped"
 cache = "auto"
 
-[mounts.daemon]
-path = "/usr/libexec/virtiofsd"
-args = []
-
-[[network]]
+[[networks]]
 id = "microvm1"
 type = "user"
-macAddress = "02:02:00:00:00:01"
-
-[[network.forwardPorts]]
-proto = "tcp"
-from = "host"
-
-[network.forwardPorts.host]
-address = "127.0.0.1"
-port = 2222
-
-[network.forwardPorts.guest]
-address = "10.0.2.15"
-port = 22
+mac = "02:02:00:00:00:01"
+forward = [
+  { proto = "tcp", from = "host", host = "127.0.0.1:2222", guest = "10.0.2.15:22" },
+]
 
 [balloon]
-id = "balloon0"
-deflateOnOOM = false
-freePageReporting = true
+enabled = true
+deflate_on_oom = false
+free_page_reporting = true
 
 [balloon.controller]
-minActualMiB = 512
-maxActualMiB = 1024
-growBelowAvailableMiB = 256
-reclaimAboveAvailableMiB = 512
-stepMiB = 256
-pollIntervalSeconds = 5
-reclaimHoldoffSeconds = 30
+min_actual = 512
+max_actual = 1024
+grow_below_available = 256
+reclaim_above_available = 512
+step = 256
+poll_interval_seconds = 5
+reclaim_holdoff_seconds = 30
 
-[[writeFiles]]
-guestPath = "/etc/example.conf"
+[[write_files]]
+guest_path = "/etc/example.conf"
+chown = "agent:users"
 text = "example"
 mode = "0644"
 overwrite = false
 
-[notifications.command]
-path = "/bin/sh"
-args = ["-c", "printf '%s\\n' \"$VIRTIE_NOTIFY_STATE\""]
+[[write_files]]
+guest_path = "/var/lib/virtie/host"
+source = "host-file"
+overwrite = true
 
 [notifications]
+exec = ["/bin/sh", "-c", "printf '%s\n' \"$VIRTIE_NOTIFY_STATE\""]
 states = []

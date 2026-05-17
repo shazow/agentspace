@@ -359,30 +359,28 @@ in
         states = cfg.notifications.states;
       }
       // lib.optionalAttrs (cfg.notifications.command != "") {
-        command = {
-          path = pkgs.runtimeShell;
-          args = [
-            "-c"
-            cfg.notifications.command
-          ];
-        };
+        exec = [
+          pkgs.runtimeShell
+          "-c"
+          cfg.notifications.command
+        ];
       };
 
       mkManifestVolume = volume: {
-        imagePath = volume.image;
-        sizeMiB = volume.size;
-        fsType = volume.fsType;
-        autoCreate = volume.autoCreate;
+        image = volume.image;
+        size = volume.size;
+        fs = volume.fsType;
+        create = volume.autoCreate;
         label = volume.label;
-        readOnly = volume.readOnly;
+        read_only = volume.readOnly;
         direct = volume.direct;
         serial = volume.serial;
       };
       manifestVolumes =
         lib.optionals cfg.persistence.storeDisk [
           {
-            imagePath = config.microvm.storeDisk;
-            readOnly = true;
+            image = config.microvm.storeDisk;
+            read_only = true;
           }
         ]
         ++ builtins.map mkManifestVolume config.microvm.volumes;
@@ -395,7 +393,9 @@ in
           guest,
         }:
         {
-          inherit proto from host guest;
+          inherit proto from;
+          host = "${host.address}:${toString host.port}";
+          guest = "${guest.address}:${toString guest.port}";
         }
       ) config.microvm.forwardPorts;
 
@@ -412,116 +412,99 @@ in
           {
             type = "virtiofs";
             tag = share.tag;
-            sourcePath = share.source;
-            inherit socketPath;
-            readOnly = share.readOnly;
-            securityModel = share.securityModel;
+            source = share.source;
+            virtiofsd_socket = socketPath;
+            read_only = share.readOnly;
+            security_model = share.securityModel;
             cache = share.cache;
           }
           // lib.optionalAttrs (!(nixStoreShareUsesSocket && isNixStoreShare share)) {
-            daemon = {
-              path = mkVirtioFSDaemonCommand share;
-              args = [ ];
-            };
+            virtiofsd_exec = [ (mkVirtioFSDaemonCommand share) ];
           }
         ) virtiofsShares
         ++ builtins.map (share: {
           type = "9p";
           tag = share.tag;
-          sourcePath = share.source;
-          readOnly = share.readOnly;
-          securityModel = share.securityModel;
+          source = share.source;
+          read_only = share.readOnly;
+          security_model = share.securityModel;
         }) ninepShares;
 
       manifestWriteFiles = lib.mapAttrsToList (
         guestPath: file:
-        file
+        builtins.removeAttrs file [ "path" ]
+        // lib.optionalAttrs (file.path != null) { source = file.path; }
         // {
-          inherit guestPath;
+          guest_path = guestPath;
         }
       ) cfg.writeFiles;
 
       virtieManifestData = {
-        identity.hostName = cfg.hostName;
-        paths = {
-          workingDir = ".";
-          lockPath = "/tmp/agentspace-${cfg.hostName}.lock";
-          runtimeDir = "";
-        };
-        persistence = {
-          directories = initDirs;
-          baseDir = persistenceBaseDir;
-          stateDir = persistenceStateDir;
-        };
+        host_name = cfg.hostName;
+        working_dir = ".";
+        state_dir = persistenceStateDir;
         host = {
-          inherit system arch;
-          os =
-            if pkgs.stdenv.hostPlatform.isLinux then
-              "linux"
-            else if pkgs.stdenv.hostPlatform.isDarwin then
-              "darwin"
-            else
-              pkgs.stdenv.hostPlatform.parsed.kernel.name;
-          netcatPath = "${config.microvm.vmHostPackages.netcat}/bin/nc";
-          qemuSeccomp = canSandbox;
-        };
-        ssh = {
-          argv = sshBaseArgv;
-          user = cfg.user;
+          inherit system;
+          netcat = "${config.microvm.vmHostPackages.netcat}/bin/nc";
         };
         qemu = {
-          binaryPath = "${config.microvm.qemu.package}/bin/qemu-system-${arch}";
+          exec = [ "${config.microvm.qemu.package}/bin/qemu-system-${arch}" ] ++ config.microvm.qemu.extraArgs;
+          seccomp = canSandbox;
+          qmp_socket = if config.microvm.socket != null then config.microvm.socket else "qmp.sock";
+          guest_agent_socket = "qga.sock";
+        }
+        // lib.optionalAttrs (config.microvm.user != null) {
           user = config.microvm.user;
-          extraArgs = config.microvm.qemu.extraArgs;
+        }
+        // lib.optionalAttrs (config.microvm.qemu.machineOpts != null) {
+          machine_options = config.microvm.qemu.machineOpts;
         };
         machine =
           {
             type = config.microvm.qemu.machine;
+            memory = config.microvm.mem;
             vcpu = cfg.machine.vcpu;
             id = config.microvm.machineId;
+            kvm = pkgs.stdenv.hostPlatform.isLinux && config.microvm.cpu == null;
           }
-          // lib.optionalAttrs (config.microvm.qemu.machineOpts != null) {
-            options = config.microvm.qemu.machineOpts;
+          // lib.optionalAttrs (config.microvm.cpu != null) {
+            cpu = config.microvm.cpu;
           };
-        cpu = lib.optionalAttrs (config.microvm.cpu != null) {
-          model = config.microvm.cpu;
-        };
-        memory.sizeMiB = config.microvm.mem;
         kernel = {
           path = "${config.microvm.kernel.out}/${pkgs.stdenv.hostPlatform.linux-kernel.target}";
-          initrdPath = config.microvm.initrdPath;
+          initrd_path = config.microvm.initrdPath;
           params = config.microvm.kernelParams;
-          serialConsole = config.microvm.qemu.serialConsole;
+          serial_console = config.microvm.qemu.serialConsole;
         };
-        sockets = {
-          qmp = if config.microvm.socket != null then config.microvm.socket else "qmp.sock";
+        graphics = {
+          backend = if config.microvm.graphics.enable then config.microvm.graphics.backend else "headless";
         };
-        graphics =
-          if config.microvm.graphics.enable then
-            {
-              backend = config.microvm.graphics.backend;
-            }
-          else
-            null;
+        ssh = {
+          exec = sshBaseArgv;
+          user = cfg.user;
+          ready_socket = "ssh-ready.sock";
+        };
         balloon =
           if config.microvm.balloon then
             {
-              id = "balloon0";
-              deflateOnOOM = config.microvm.deflateOnOOM;
-              freePageReporting = true;
+              enabled = true;
+              deflate_on_oom = config.microvm.deflateOnOOM;
+              free_page_reporting = true;
             }
           else
-            null;
+            {
+              enabled = false;
+            };
         volumes = manifestVolumes;
         mounts = manifestMounts;
-        network = builtins.map (interface: {
+        networks = builtins.map (interface: {
           id = interface.id;
           type = interface.type;
-          macAddress = interface.mac;
-          forwardPorts = manifestForwardPorts;
+          mac = interface.mac;
+          forward = manifestForwardPorts;
         }) config.microvm.interfaces;
         notifications = notificationManifest;
-        writeFiles = manifestWriteFiles;
+        write_files = manifestWriteFiles;
       };
 
       virtieManifestTemplate = pkgs.writeText "virtie-${cfg.hostName}.json" (

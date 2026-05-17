@@ -4,6 +4,66 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-17: snake_case virtie manifest
+
+### Who Is Affected
+
+- Direct manifest producers using the previous camelCase JSON/TOML keys.
+- Consumers reading `agentspace.sandbox.launch.virtieManifestData` directly.
+- Manifests that relied on relative runtime sockets resolving under
+  `$XDG_RUNTIME_DIR`.
+
+### What Changed
+
+The supported virtie manifest contract now matches the simplified snake_case
+shape documented by `virtie/manifest-proposed.toml`. Generated JSON uses the
+same field names as hand-written TOML.
+
+Historical top-level groups such as `identity`, `paths`, `memory`, and `cpu`
+were flattened into backend-neutral fields where possible. QEMU-specific knobs
+now live under `qemu`, and VM sizing lives under `machine`.
+
+`runtime_dir` is no longer part of the public manifest. Relative QMP, QGA,
+SSH-ready, and virtiofsd socket paths resolve under `state_dir`, which also
+contains PID files and suspend state.
+
+### Migration Steps
+
+Rename direct manifest fields to the new shape:
+
+```diff
+- "identity": { "hostName": "agent-sandbox" },
+- "paths": { "workingDir": ".", "stateDir": ".agentspace" },
+- "qemu": { "binaryPath": "/nix/store/.../qemu-system-x86_64" },
+- "memory": { "sizeMiB": 4096 },
++ "host_name": "agent-sandbox",
++ "working_dir": ".",
++ "state_dir": ".agentspace",
++ "qemu": { "exec": ["/nix/store/.../qemu-system-x86_64"] },
++ "machine": { "memory": 4096 },
+```
+
+Common list-entry renames:
+
+- `volumes[].imagePath -> volumes[].image`
+- `volumes[].sizeMiB -> volumes[].size`
+- `volumes[].fsType -> volumes[].fs`
+- `volumes[].autoCreate -> volumes[].create`
+- `volumes[].readOnly -> volumes[].read_only`
+- `mounts[].sourcePath -> mounts[].source`
+- `mounts[].socketPath -> mounts[].virtiofsd_socket`
+- `mounts[].daemon.path + daemon.args -> mounts[].virtiofsd_exec`
+- `mounts[].readOnly -> mounts[].read_only`
+- `mounts[].securityModel -> mounts[].security_model`
+- `writeFiles[].guestPath -> write_files[].guest_path`
+- `writeFiles[].path -> write_files[].source`
+- `ssh.argv -> ssh.exec`
+- `vsock.cidRange.start/end -> vsock.cid_range.min/max`
+
+Use `virtie/manifest-example-simple.toml`,
+`virtie/manifest-example-full.toml`, or the annotated
+`virtie/manifest-proposed.toml` as references.
+
 ## 2026-05-12: simplified virtie manifest
 
 ### Who Is Affected
