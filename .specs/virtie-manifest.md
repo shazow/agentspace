@@ -79,7 +79,7 @@ Top-level fields:
   `cpu`, and `kvm`.
 - `kernel` with `path`, `initrd_path`, `params`, and `serial_console`.
 - `graphics` with `backend = "headless" | "gtk" | "cocoa"`.
-- `ssh` with `exec`, `user`, `ready_socket`, and `retry_delay_ms`.
+- `ssh` with `exec`, `user`, `ready_socket`, and `retry_delay`.
 - `vsock.cid_range = { min, max }`.
 - `volumes[]`, `mounts[]`, `networks[]`, `balloon`, `write_files[]`, and
   `notifications`.
@@ -106,7 +106,7 @@ Preserve all current consumer options:
   notifications, interfaces, and forward ports keep their existing behavior.
 
 Generated JSON must use the same names as TOML, for example `read_only`,
-`security_model`, `write_files`, `guest_path`, `retry_delay_ms`, and
+`security_model`, `write_files`, `guest_path`, `retry_delay`, and
 `cid_range`.
 
 ### Feature Preservation Checklist
@@ -139,6 +139,46 @@ The migration must preserve:
   consumer workflow, graphical checks, suspend/resume, write files,
   notifications, extra shares, external store socket, and balloon behavior.
 - Clean up any `./result` symlink from Nix builds with `unlink result`.
+
+### Standalone Ergonomics Pass
+
+Added standalone flakes under `examples/manual-*` that do not use
+`agentspace.lib.mkSandbox`; each constructs a NixOS MicroVM directly with
+`microvm.nix`, writes an explicit `manifest.toml`, and launches it with
+`virtie`.
+
+- `examples/manual-nixos-store` boots from a generated read-only Nix store disk.
+  This is the smallest practical NixOS example: 512 MiB memory, one vCPU, no
+  virtiofs mounts, and no writable volume.
+- `examples/manual-nixos-virtiofs` uses a host `/nix/store` virtiofs mount and a
+  512 MiB auto-created writable store overlay volume. This exercises the
+  hand-written `[[mounts]]` and `[[volumes]]` surface.
+- `examples/manual-port-forward` uses a store-disk VM with a
+  `networks[].forward` entry that relies on the documented `proto = "tcp"` and
+  `from = "host"` defaults.
+
+Findings:
+
+- The TOML shape is reasonable once defaults are used aggressively. A
+  standalone boot manifest only needs identity, QEMU binary, machine sizing,
+  kernel/initrd/params, and storage.
+- The least ergonomic part is not the TOML syntax; it is obtaining compatible
+  kernel, initrd, and kernel params for a guest. NixOS examples still need a
+  small flake wrapper to ask `microvm.nix` for those evaluated artifacts.
+- Defaults for `host`, `working_dir`, `state_dir`, QMP/QGA sockets, SSH config,
+  machine type, KVM, graphics, and network backend materially reduce boilerplate.
+- Guest readiness remains an explicit guest-image contract. Standalone examples
+  must provide the `virtie-ssh-signal` service that writes `READY` to
+  `/dev/virtio-ports/virtie.ssh.ready`.
+
+Validation performed during this pass:
+
+- `nix build ./examples/manual-nixos-store#manifest --no-link --print-out-paths`
+- `nix build ./examples/manual-nixos-virtiofs#manifest --no-link --print-out-paths`
+- `nix build ./examples/manual-port-forward#manifest --no-link --print-out-paths`
+- `timeout --signal=INT --kill-after=15s 75s nix run .#` from
+  `examples/manual-nixos-store`, which reached QMP readiness, guest SSH
+  readiness, and NixOS multi-user before the timeout interrupted the launch.
 
 ## Appendix
 

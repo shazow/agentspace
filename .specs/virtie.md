@@ -78,7 +78,7 @@ Acceptance criteria:
   - optional `host.system`, `host.os`, `host.arch`, `host.netcatPath`, and `host.qemuSeccomp`
   - `ssh.argv`
   - `ssh.user`
-  - optional `ssh.retryDelayMs`
+  - optional `ssh.retryDelay`
   - `qemu.binaryPath`, optional `qemu.user`, and optional `qemu.extraArgs`
   - `machine.type`, optional `machine.vcpu`, optional `machine.id`, and optional `machine.options`
   - optional `cpu.model` and `cpu.enableKvm`
