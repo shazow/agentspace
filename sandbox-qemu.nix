@@ -443,11 +443,13 @@ in
         host_name = cfg.hostName;
         working_dir = ".";
         state_dir = persistenceStateDir;
-        host = {
-          netcat = "${config.microvm.vmHostPackages.netcat}/bin/nc";
-        };
         qemu = {
           exec = [ "${config.microvm.qemu.package}/bin/qemu-system-${arch}" ] ++ config.microvm.qemu.extraArgs;
+          fwd_tunnel_exec = [
+            "${config.microvm.vmHostPackages.netcat}/bin/nc"
+            "$HOST"
+            "$PORT"
+          ];
           seccomp = canSandbox;
           qmp_socket = if config.microvm.socket != null then config.microvm.socket else "qmp.sock";
           guest_agent_socket = "qga.sock";

@@ -53,8 +53,7 @@ Acceptance criteria:
       and mounts, volume label/direct/serial, mount type/security/cache,
       machine id, serial console, graphics, QEMU user/sockets, and write-file
       ownership/source.
-- [x] Finalize the proposed manifest field names while keeping `host.netcat`
-      until guest-to-host forwarding no longer shells out through netcat.
+- [x] Move guest-forward tunnel command configuration under `qemu.fwd_tunnel_exec`.
 - [x] Replace the Go public `Document` schema with the new shape.
 - [x] Update Nix manifest generation to emit the new JSON shape.
 - [x] Update examples, migration notes, and checks.
@@ -70,10 +69,8 @@ are structurally identical.
 Top-level fields:
 
 - `host_name`, `working_dir`, and `state_dir`.
-- `host.netcat` remains only until guest-to-host forwarding no longer shells
-  out through `cmd:netcat`; host platform facts are inferred at runtime.
-- `qemu` with `exec`, optional `user`, `seccomp`, `machine_options`,
-  `qmp_socket`, and `guest_agent_socket`.
+- `qemu` with `exec`, optional `fwd_tunnel_exec`, optional `user`, `seccomp`,
+  `machine_options`, `qmp_socket`, and `guest_agent_socket`.
 - `machine` with `type`, optional `id`, `memory`, optional `vcpu`, optional
   `cpu`, and `kvm`.
 - `kernel` with `path`, `initrd_path`, `params`, and `serial_console`.
@@ -118,8 +115,8 @@ The migration must preserve:
 - Workspace share, read-only Nix store share, extra virtiofs shares, external
   virtiofs sockets, and opt-in 9p shares.
 - QMP, QGA, and SSH-ready socket behavior under the new `state_dir` policy.
-- Host-to-guest forward ports and guest-to-host forward ports until the netcat
-  TODO is resolved.
+- Host-to-guest forward ports and guest-to-host forward ports using
+  `qemu.fwd_tunnel_exec` for QEMU `guestfwd cmd:` tunnel commands.
 - Graphical GTK/Cocoa manifests and default headless operation.
 - Runtime vsock CID allocation and suspend/resume state.
 - Guest write files using inline text or host source files, with chown, mode,
@@ -194,8 +191,8 @@ Breaking change policy:
 
 Open design follow-ups:
 
-- Replace guest-to-host `guestfwd cmd:netcat` lowering with QEMU-native
-  forwarding or chardev handling, then remove `host.netcat`.
+- Replace guest-to-host `guestfwd cmd:` lowering with QEMU-native forwarding or
+  chardev handling if QEMU grows a better fit for this use case.
 - Decide whether `graphics.backend = "headless"` remains explicit or whether
   omitting `[graphics]` is the only headless representation.
 - Decide whether `qemu.exec` should include only the executable plus passthrough

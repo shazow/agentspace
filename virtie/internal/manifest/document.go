@@ -48,14 +48,14 @@ type Document struct {
 }
 
 type HostFacts struct {
-	NetcatPath string `json:"netcat,omitempty" toml:"netcat"`
-	OS         string `json:"-" toml:"-"`
-	Arch       string `json:"-" toml:"-"`
-	System     string `json:"-" toml:"-"`
+	OS     string `json:"-" toml:"-"`
+	Arch   string `json:"-" toml:"-"`
+	System string `json:"-" toml:"-"`
 }
 
 type QEMUFacts struct {
 	Exec             []string          `json:"exec,omitempty" toml:"exec"`
+	FwdTunnelExec    []string          `json:"fwd_tunnel_exec,omitempty" toml:"fwd_tunnel_exec"`
 	User             *string           `json:"user,omitempty" toml:"user"`
 	Seccomp          bool              `json:"seccomp,omitempty" toml:"seccomp"`
 	MachineOptions   map[string]string `json:"machine_options,omitempty" toml:"machine_options"`
@@ -373,7 +373,7 @@ func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
 		sshReadySocket = defaultSSHReadySocket
 	}
 	noGraphic := graphics == nil
-	networks, err := lowerNetwork(d.Networks, host, transport, d.Machine.VCPU)
+	networks, err := lowerNetwork(d.Networks, d.QEMU.FwdTunnelExec, host, transport, d.Machine.VCPU)
 	if err != nil {
 		return QEMU{}, err
 	}
@@ -640,7 +640,7 @@ func lowerVirtioFSDaemons(mounts []MountFacts) []VirtioFSDaemon {
 	return daemons
 }
 
-func lowerNetwork(networks []NetworkFacts, host HostFacts, transport string, vcpu *int) ([]QEMUNetDevice, error) {
+func lowerNetwork(networks []NetworkFacts, fwdTunnelExec []string, host HostFacts, transport string, vcpu *int) ([]QEMUNetDevice, error) {
 	if networks == nil {
 		networks = []NetworkFacts{{}}
 	}
@@ -667,7 +667,7 @@ func lowerNetwork(networks []NetworkFacts, host HostFacts, transport string, vcp
 		if vcpu != nil && *vcpu > 1 && transport == "pci" {
 			mqVectors = 2**vcpu + 2
 		}
-		forwardOptions, err := lowerForwardPorts(network.Forward, host, i)
+		forwardOptions, err := lowerForwardPorts(network.Forward, fwdTunnelExec, i)
 		if err != nil {
 			return nil, err
 		}
@@ -707,11 +707,10 @@ func parsePortEndpoint(value string) (PortEndpoint, error) {
 	return PortEndpoint{Address: host, Port: parsedPort}, nil
 }
 
-func lowerForwardPorts(ports []ForwardPort, host HostFacts, networkIndex int) ([]string, error) {
+func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex int) ([]string, error) {
 	options := make([]string, 0, len(ports))
-	netcat := host.NetcatPath
-	if netcat == "" {
-		netcat = "nc"
+	if len(fwdTunnelExec) == 0 {
+		fwdTunnelExec = []string{"nc", "$HOST", "$PORT"}
 	}
 	for i, port := range ports {
 		proto := port.Proto
@@ -739,10 +738,54 @@ func lowerForwardPorts(ports []ForwardPort, host HostFacts, networkIndex int) ([
 		if from == "host" {
 			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", proto, hostEndpoint.Address, hostEndpoint.Port, guestEndpoint.Address, guestEndpoint.Port))
 		} else {
-			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s %s %d", proto, guestEndpoint.Address, guestEndpoint.Port, netcat, hostEndpoint.Address, hostEndpoint.Port))
+			command := expandFwdTunnelExec(fwdTunnelExec, hostEndpoint)
+			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s", proto, guestEndpoint.Address, guestEndpoint.Port, shellQuoteArgs(command)))
 		}
 	}
 	return options, nil
+}
+
+func expandFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) []string {
+	result := make([]string, 0, len(exec))
+	port := strconv.Itoa(hostEndpoint.Port)
+	for _, arg := range exec {
+		arg = strings.ReplaceAll(arg, "$HOST", hostEndpoint.Address)
+		arg = strings.ReplaceAll(arg, "$PORT", port)
+		result = append(result, arg)
+	}
+	return result
+}
+
+func shellQuoteArgs(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuoteArg(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuoteArg(arg string) string {
+	if arg == "" {
+		return "''"
+	}
+	if shellSafeArg(arg) {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
+}
+
+func shellSafeArg(arg string) bool {
+	for _, ch := range arg {
+		switch {
+		case ch >= 'A' && ch <= 'Z':
+		case ch >= 'a' && ch <= 'z':
+		case ch >= '0' && ch <= '9':
+		case strings.ContainsRune("_@%+=:,./-", ch):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func lowerBalloon(facts *BalloonFacts, transport string) *balloon.Device {

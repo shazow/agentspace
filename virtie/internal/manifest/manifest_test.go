@@ -848,6 +848,61 @@ func TestLoadDefaultsForwardPortProtoAndFrom(t *testing.T) {
 	}
 }
 
+func TestLoadGuestForwardUsesTunnelExecTemplate(t *testing.T) {
+	tests := []struct {
+		name          string
+		fwdTunnelExec []string
+		want          []string
+	}{
+		{
+			name: "default netcat",
+			want: []string{"guestfwd=tcp:10.0.2.15:2222-cmd:nc 127.0.0.1 22"},
+		},
+		{
+			name:          "explicit netcat",
+			fwdTunnelExec: []string{"/bin/nc", "$HOST", "$PORT"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:/bin/nc 127.0.0.1 22"},
+		},
+		{
+			name:          "socat",
+			fwdTunnelExec: []string{"socat", "-", "TCP:$HOST:$PORT"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:socat - TCP:127.0.0.1:22"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.QEMU.FwdTunnelExec = tt.fwdTunnelExec
+			document.Networks = []NetworkFacts{
+				{
+					Forward: []ForwardPort{
+						{
+							Proto: "tcp",
+							From:  "guest",
+							Host:  "127.0.0.1:22",
+							Guest: "10.0.2.15:2222",
+						},
+					},
+				},
+			}
+
+			data, err := json.Marshal(document)
+			if err != nil {
+				t.Fatalf("marshal manifest: %v", err)
+			}
+
+			loaded, err := Load(bytes.NewReader(data))
+			if err != nil {
+				t.Fatalf("load manifest: %v", err)
+			}
+			if got := loaded.QEMU.Devices.Network[0].NetdevOptions; !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("unexpected network forward options: got %#v want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsInvalidForwardOptions(t *testing.T) {
 	tests := []struct {
 		name      string

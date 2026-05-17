@@ -4,6 +4,40 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-17: guest forward tunnel command
+
+### Who Is Affected
+
+- Direct virtie manifest producers setting `host.netcat`.
+- Consumers reading `agentspace.sandbox.launch.virtieManifestData.host.netcat`.
+
+### What Changed
+
+Guest-to-host `networks[].forward` entries now use `qemu.fwd_tunnel_exec`, an
+argv template expanded into QEMU's `guestfwd ... cmd:` command. The `$HOST` and
+`$PORT` variables are replaced from the forward rule's host endpoint.
+
+Generated manifests no longer emit `host.netcat`; they emit a pinned netcat
+template under `qemu.fwd_tunnel_exec`.
+
+### Migration Steps
+
+Move the command under `qemu` and include endpoint template variables:
+
+```diff
+- [host]
+- netcat = "nc"
++ [qemu]
++ fwd_tunnel_exec = ["nc", "$HOST", "$PORT"]
+```
+
+For socat:
+
+```toml
+[qemu]
+fwd_tunnel_exec = ["socat", "-", "TCP:$HOST:$PORT"]
+```
+
 ## 2026-05-17: SSH retry delay seconds
 
 ### Who Is Affected

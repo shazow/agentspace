@@ -75,7 +75,7 @@ Acceptance criteria:
   - `paths.lockPath`
   - optional `paths.runtimeDir`
   - `persistence.directories`
-  - optional `host.netcatPath` and `host.qemuSeccomp`; host platform facts are inferred at runtime
+  - optional `qemu.fwd_tunnel_exec`; host platform facts are inferred at runtime
   - `ssh.argv`
   - `ssh.user`
   - optional `ssh.retryDelay`
