@@ -127,8 +127,8 @@ Rename the field and convert milliseconds to seconds:
 ### What Changed
 
 The supported virtie manifest contract now matches the simplified snake_case
-shape documented by `virtie/manifest-proposed.toml`. Generated JSON uses the
-same field names as hand-written TOML.
+shape documented by `virtie/examples/manifest-full.toml`. Generated JSON uses
+the same field names as hand-written TOML.
 
 Historical top-level groups such as `identity`, `paths`, `memory`, and `cpu`
 were flattened into backend-neutral fields where possible. QEMU-specific knobs
@@ -171,9 +171,8 @@ Common list-entry renames:
 - `ssh.argv -> ssh.exec`
 - `vsock.cidRange.start/end -> vsock.cid_range.min/max`
 
-Use `virtie/manifest-example-simple.toml`,
-`virtie/manifest-example-full.toml`, or the annotated
-`virtie/manifest-proposed.toml` as references.
+Use `virtie/examples/manifest-simple.toml` or the annotated
+`virtie/examples/manifest-full.toml` as references.
 
 ## 2026-05-12: simplified virtie manifest
 

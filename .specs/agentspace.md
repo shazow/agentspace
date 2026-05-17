@@ -2,7 +2,7 @@
 
 Nix-managed sandbox launch workflow for the currently supported `virtie` path.
 
-**Status**: In-Progress
+**Status**: Completed
 
 ## Goals
 
@@ -60,13 +60,15 @@ Acceptance criteria:
 - Current Nix-to-virtie contract:
   - Nix still owns guest evaluation and image production through `microvm.nix`.
   - Nix consumer-facing APIs should reuse `microvm.nix` option schemas and defaults wherever practical instead of re-declaring parallel shapes.
-  - Nix emits evaluated facts for machine, CPU, memory, kernel, volumes, mounts, networking, package paths, and host capabilities.
+  - Nix emits evaluated launch facts for machine, CPU, memory, kernel, volumes, mounts, networking, package paths, and package or host capabilities that `virtie` cannot rediscover locally.
   - The `virtie` manifest is a Nix-agnostic runtime boundary: it should describe launch facts without depending on Nix option semantics or microvm.nix internals.
+  - `virtie` owns host-side QEMU policy derivation from those facts, including transport selection, machine defaults, CPU defaults, kernel console parameters, memory backend selection, device IDs, block letters, network forwarding lowering, graphics display args, final argv compilation, the long-lived QMP lifecycle, optional runtime balloon control, process launch, and teardown ordering.
   - Nix exposes only `agentspace.sandbox.balloon` for enabling or disabling the virtio-balloon device.
   - Nix exposes `agentspace.sandbox.notifications` for an optional host-side shell notification command and state allowlist.
   - When enabled, the generated manifest includes balloon facts but leaves transport and controller defaults to `virtie`.
   - The generated manifest sets `paths.runtimeDir = ""`, so relative socket paths, including the SSH readiness socket, resolve under the per-user XDG runtime directory by default.
-  - `virtie` owns QEMU policy derivation, final argv compilation, the long-lived QMP lifecycle, optional runtime balloon control, process launch, and teardown ordering.
+  - Graphical launches reuse the upstream `microvm.graphics` option schema. `microvm.graphics.enable = true` lowers to a typed `graphics.backend`, with `gtk` supported on Linux and `cocoa` supported on Darwin; the sandbox remains headless by default.
+  - Real graphical boot coverage is opt-in through `.#legacyPackages.x86_64-linux.graphicalChecks.graphical-real-boot-smoke`, not part of the default `nix flake check` surface.
 - Current retained public hooks:
   - `extraModules`
   - `homeModules`
