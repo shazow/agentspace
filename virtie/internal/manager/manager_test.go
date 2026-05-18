@@ -2445,7 +2445,7 @@ func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
 	manifest := &manifest.Manifest{
 		Paths: manifest.Paths{
 			WorkingDir: tmpDir,
-			LockPath:   filepath.Join(tmpDir, "virtie.lock"),
+			LockPath:   filepath.Join(tmpDir, "agent-sandbox.lock"),
 		},
 		VSock: manifest.VSock{
 			CIDRange: manifest.VSockCIDRange{
@@ -2471,6 +2471,9 @@ func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
 
 	if cid != 8 {
 		t.Fatalf("unexpected cid: got %d want 8", cid)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "agent-sandbox-vsock-8.lock")); err != nil {
+		t.Fatalf("expected flat cid lock file beside launch lock: %v", err)
 	}
 }
 

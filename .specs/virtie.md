@@ -2,7 +2,7 @@
 
 Host-side process manager for the supported agentspace sandbox launch path.
 
-**Status**: In-Progress
+**Status**: Completed
 
 ## Goals
 
@@ -69,35 +69,22 @@ Acceptance criteria:
 
 ## Appendix
 
-- Current manifest contract:
-  - `identity.hostName`
-  - `paths.workingDir`
-  - `paths.lockPath`
-  - optional `paths.runtimeDir`
-  - `persistence.directories`
-  - optional `qemu.fwd_tunnel_exec`; host platform facts are inferred at runtime
-  - `ssh.argv`
-  - `ssh.user`
-  - optional `ssh.retryDelay`
-  - `qemu.binaryPath`, optional `qemu.user`, and optional `qemu.extraArgs`
-  - `machine.type`, optional `machine.vcpu`, optional `machine.id`, and optional `machine.options`
-  - optional `cpu.model` and `cpu.enableKvm`
-  - `memory.sizeMiB`
-  - `kernel.path`, `kernel.initrdPath`, optional `kernel.params`, and optional `kernel.serialConsole`
-  - optional `graphics.backend`, one of `gtk` or `cocoa`
-  - optional `sockets.qmp`, `sockets.guestAgent`, and `sockets.sshReady`
-  - `volumes[].imagePath`, `sizeMiB`, `fsType`, `autoCreate`, optional `label`, `readOnly`, `direct`, and optional `serial`
-  - auto-created volumes are ext4 only and require `sizeMiB >= 256`; this is a conservative contract minimum for persistence volumes and formatter headroom, even though the current native ext4 codepath works for whole-MiB sizes greater than `128 MiB`
-  - `mounts[]` entries for `virtiofs` and `9p`; managed `virtiofsd` commands live under `mounts[].daemon`
-  - optional `network[]` entries with structured `forwardPorts[]`
-  - optional `balloon` device facts and controller configuration
-  - optional `writeFiles[]`, with `guestPath`, exactly one of plaintext `text` or host `path`, optional `chown`, optional three- or four-digit octal `mode`, and optional `overwrite` defaulting to false
-  - optional `notifications.command` with `{ path, args }`; notification command execution is best-effort
-  - optional `notifications.states` allowlist; empty or omitted means all states
-  - optional `vsock.cidRange`, defaulting to `3..65535`
+- Current public manifest contract:
+  - `virtie` accepts the supported snake_case manifest shape as TOML for human-authored manifests and JSON for generated wrappers.
+  - Top-level identity and path fields are `host_name`, `working_dir`, and `state_dir`.
+  - `qemu` contains `exec`, optional `fwd_tunnel_exec`, optional `user`, `seccomp`, `machine_options`, `qmp_socket`, and `guest_agent_socket`; QEMU is the only implemented backend.
+  - `machine` contains `type`, optional `id`, `memory`, optional `vcpu`, optional `cpu`, and `kvm`; `kernel` contains `path`, `initrd_path`, optional `params`, and `serial_console`.
+  - Optional `graphics.backend` supports `headless`, `gtk`, and `cocoa`. Graphical GTK launches emit `-display gtk,gl=off`, `virtio-vga`, `qemu-xhci`, `usb-tablet`, and `usb-kbd`; Cocoa launches emit `-display cocoa`, `virtio-gpu`, `qemu-xhci`, `usb-tablet`, and `usb-kbd`.
+  - `ssh` contains `exec`, `user`, optional `ready_socket`, optional `retry_delay`, and optional `autoprovision`.
+  - Optional `vsock.cid_range` defaults to the allocatable CID range `3..65535`.
+  - `volumes[]` use `image`, `size`, `fs`, `create`, `read_only`, optional `label`, `direct`, and optional `serial`; auto-created volumes are ext4 only and require `size >= 256`.
+  - `mounts[]` describe `virtiofs` or `9p` shares; managed `virtiofsd` commands use `virtiofsd_exec`, and `virtie` injects the resolved socket path as `VIRTIOFSD_SOCKET`.
+  - `networks[]` describe user networking and `forward[]` host-to-guest or guest-to-host port forwards.
+  - Optional `balloon` contains device facts and controller policy; optional `write_files[]` contains `guest_path`, exactly one of `text` or `source`, optional `chown`, optional mode, and `overwrite`; optional `notifications.exec` and `notifications.states` define best-effort host hooks.
 - Runtime assumptions:
   - An upstream producer has already produced the guest image inputs, package paths, host facts, and manifest.
   - `virtie` treats the manifest as a Nix-agnostic runtime contract; Nix and microvm.nix option semantics must be lowered into launch facts before this boundary.
+  - An omitted `[graphics]` section and `graphics.backend = "headless"` both represent the normal headless SSH workflow.
   - QEMU fields are validated only when `virtie` must interpret them before launch, such as transport selection or virtiofs socket waits. Values passed directly into QEMU args are allowed through so QEMU reports invalid inputs.
   - `ssh` is available on the host.
   - The guest writes `READY` to `/dev/virtio-ports/virtie.ssh.ready` after `sshd.service` is started.
@@ -126,6 +113,7 @@ Acceptance criteria:
   - Notification commands receive `VIRTIE_NOTIFY_STATE`, `VIRTIE_NOTIFY_MESSAGE`, and `VIRTIE_NOTIFY_CONTEXT_<UPPER_SNAKE_KEY>` environment variables. Command args are passed unchanged.
   - The old Nix-owned argv-template path has been removed from the active contract.
   - When `qemu.knobs.noGraphic` is false and `qemu.graphics.backend` is set, `virtie` emits the local QEMU display device set for `gtk` or `cocoa` instead of `-nographic`.
+  - Future manifest/runtime improvements to keep visible: replace guest-to-host `guestfwd cmd:` lowering with QEMU-native forwarding or chardev handling if QEMU grows a better fit, and revisit whether headless graphics should remain both explicit and representable by omission.
 - Current verification note: the Go package tests pass, and `checks/default.nix` keeps the launch-contract and fake-tools E2E coverage enabled alongside repo-level hook-compatibility checks.
 
 ```mermaid

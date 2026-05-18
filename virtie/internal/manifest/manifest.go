@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/adrg/xdg"
@@ -532,12 +533,10 @@ func (m *Manifest) ResolvedLockPath() string {
 	return m.resolvePath(m.Paths.LockPath)
 }
 
-func (m *Manifest) resolvedVSockLockDir() string {
-	return filepath.Join(filepath.Dir(m.ResolvedLockPath()), "agentspace-vsock")
-}
-
 func (m *Manifest) ResolvedVSockLockPath(cid int) string {
-	return filepath.Join(m.resolvedVSockLockDir(), fmt.Sprintf("%d.lock", cid))
+	lockPath := m.ResolvedLockPath()
+	lockName := strings.TrimSuffix(filepath.Base(lockPath), ".lock")
+	return filepath.Join(filepath.Dir(lockPath), fmt.Sprintf("%s-vsock-%d.lock", lockName, cid))
 }
 
 func (m *Manifest) ResolvedQMPSocketPath() (string, error) {
