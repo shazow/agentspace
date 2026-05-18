@@ -879,8 +879,10 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 }
 
 type sshRetryLogger struct {
-	logger *slog.Logger
-	seen   map[sshtools.RetryPhase]bool
+	logger            *slog.Logger
+	seen              map[sshtools.RetryPhase]bool
+	transientFailures int
+	warned            bool
 }
 
 func newSSHRetryLogger(logger *slog.Logger) *sshRetryLogger {
@@ -892,15 +894,26 @@ func newSSHRetryLogger(logger *slog.Logger) *sshRetryLogger {
 
 func (l *sshRetryLogger) Log(err error, stderr string) {
 	phase := sshtools.RetryPhaseForFailure(err, stderr)
-	if phase == sshtools.RetryPhaseNone || l.seen[phase] {
+	if phase == sshtools.RetryPhaseNone {
 		return
 	}
-	l.seen[phase] = true
-	switch phase {
-	case sshtools.RetryPhaseWaiting:
-		l.logger.Info("waiting for ssh connection")
-	case sshtools.RetryPhaseConnecting:
-		l.logger.Info("connecting ssh")
+	l.transientFailures++
+	if l.transientFailures == 5 && !l.warned {
+		l.warned = true
+		l.logger.Warn(
+			"ssh exec failed 5 times; ensure the guest is reachable and credentials are configured",
+			"ssh_failures",
+			l.transientFailures,
+		)
+	}
+	if !l.seen[phase] {
+		l.seen[phase] = true
+		switch phase {
+		case sshtools.RetryPhaseWaiting:
+			l.logger.Info("waiting for ssh connection")
+		case sshtools.RetryPhaseConnecting:
+			l.logger.Info("connecting ssh")
+		}
 	}
 }
 

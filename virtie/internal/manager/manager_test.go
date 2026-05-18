@@ -641,6 +641,52 @@ func TestManagerLaunchStartsSSHOnceAfterReadiness(t *testing.T) {
 	}, []string{})
 }
 
+func TestManagerLaunchWarnsAfterFiveSSHRetryFailures(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &fakeRunner{
+		transientSSHFailures: 5,
+		finishInteractiveSSH: true,
+	}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		sshReadyDialer:    &fakeSSHReadyDialer{},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true}); err != nil {
+		t.Fatalf("launch with ssh retries: %v", err)
+	}
+	if got, want := len(runner.sshArgs), 6; got != want {
+		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
+	}
+	logs := logOutput.String()
+	if !strings.Contains(logs, "ssh exec failed 5 times") {
+		t.Fatalf("expected five-retry warning, got %q", logs)
+	}
+	if !strings.Contains(logs, "ssh_failures=5") {
+		t.Fatalf("expected ssh failure count, got %q", logs)
+	}
+}
+
 func TestWaitForSSHReadyFailsWhenQEMUExitsFirst(t *testing.T) {
 	done := make(chan error, 1)
 	qemu := &managedProcess{name: "qemu", done: done}
