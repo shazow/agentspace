@@ -92,6 +92,36 @@ func TestLoadRejectsTrailingData(t *testing.T) {
 	}
 }
 
+func TestDocumentWriteFilesFollowLinksLowersToManifest(t *testing.T) {
+	followLinks := false
+	document := validDocument()
+	document.WriteFiles = []WriteFileFacts{
+		{
+			GuestPath:   "/etc/source.conf",
+			Path:        stringPtr("source.conf"),
+			FollowLinks: &followLinks,
+		},
+	}
+
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+
+	loaded, err := Load(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+
+	files := loaded.ResolvedWriteFiles()
+	if len(files) != 1 {
+		t.Fatalf("expected one write file, got %#v", files)
+	}
+	if got := files[0].FollowLinks; got != false {
+		t.Fatalf("unexpected followLinks default: got %v want false", got)
+	}
+}
+
 func TestLoadTOMLExamples(t *testing.T) {
 	for _, path := range []string{
 		"../../examples/manifest-simple.toml",
@@ -515,19 +545,20 @@ func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
 	mode := "0640"
 	overwrite := false
 	overwriteTrue := true
+	followLinksFalse := false
 	relativeHostPath := "files/agent.conf"
 	absoluteHostPath := "/tmp/host.conf"
 	manifest.WriteFiles = WriteFiles{
-		"/etc/a.conf": {Path: &relativeHostPath, Overwrite: &overwrite},
+		"/etc/a.conf": {Path: &relativeHostPath, Overwrite: &overwrite, FollowLinks: &followLinksFalse},
 		"/etc/b.conf": {Text: &text, Chown: &chown, Mode: &mode, Overwrite: &overwriteTrue},
 		"/etc/c.conf": {Path: &absoluteHostPath},
 	}
 
 	got := manifest.ResolvedWriteFiles()
 	want := []ResolvedWriteFile{
-		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf"), Overwrite: false},
-		{GuestPath: "/etc/b.conf", Chown: &chown, Text: &text, Mode: &mode, Overwrite: true},
-		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath, Overwrite: false},
+		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf"), Overwrite: false, FollowLinks: false},
+		{GuestPath: "/etc/b.conf", Chown: &chown, Text: &text, Mode: &mode, Overwrite: true, FollowLinks: true},
+		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath, Overwrite: false, FollowLinks: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected resolved write files: got %#v want %#v", got, want)

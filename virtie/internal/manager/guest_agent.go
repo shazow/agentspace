@@ -283,11 +283,31 @@ func guestFilePayloadBase64(file manifest.ResolvedWriteFile) (string, error) {
 		return "", fmt.Errorf("guest file %q has no text or host path", file.GuestPath)
 	}
 
-	data, err := os.ReadFile(*file.HostPath)
+	data, err := readHostFileForGuest(file)
 	if err != nil {
-		return "", fmt.Errorf("read host file %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+func readHostFileForGuest(file manifest.ResolvedWriteFile) ([]byte, error) {
+	if file.HostPath == nil {
+		return nil, fmt.Errorf("guest file %q has no host path", file.GuestPath)
+	}
+	if !file.FollowLinks {
+		info, err := os.Lstat(*file.HostPath)
+		if err != nil {
+			return nil, fmt.Errorf("stat host file %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("host file %q for guest path %q is a symlink and followLinks is false", *file.HostPath, file.GuestPath)
+		}
+	}
+	data, err := os.ReadFile(*file.HostPath)
+	if err != nil {
+		return nil, fmt.Errorf("read host file %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+	}
+	return data, nil
 }
 
 func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, payloadBase64 string) error {

@@ -238,22 +238,24 @@ type VirtioFS struct {
 }
 
 type WriteFile struct {
-	Chown     *string `json:"chown,omitempty"`
-	Text      *string `json:"text,omitempty"`
-	Mode      *string `json:"mode,omitempty"`
-	Overwrite *bool   `json:"overwrite,omitempty"`
-	Path      *string `json:"path,omitempty"`
+	Chown       *string `json:"chown,omitempty"`
+	Text        *string `json:"text,omitempty"`
+	Mode        *string `json:"mode,omitempty"`
+	Overwrite   *bool   `json:"overwrite,omitempty"`
+	FollowLinks *bool   `json:"followLinks,omitempty"`
+	Path        *string `json:"path,omitempty"`
 }
 
 type WriteFiles map[string]WriteFile
 
 type ResolvedWriteFile struct {
-	GuestPath string
-	Chown     *string
-	Text      *string
-	Mode      *string
-	Overwrite bool
-	HostPath  *string
+	GuestPath   string
+	Chown       *string
+	Text        *string
+	Mode        *string
+	Overwrite   bool
+	FollowLinks bool
+	HostPath    *string
 }
 
 func Load(r io.Reader) (*Manifest, error) {
@@ -699,11 +701,12 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 	for _, guestPath := range paths {
 		entry := m.WriteFiles[guestPath]
 		resolved := ResolvedWriteFile{
-			GuestPath: guestPath,
-			Chown:     entry.Chown,
-			Text:      entry.Text,
-			Mode:      entry.Mode,
-			Overwrite: writeFileOverwrite(entry),
+			GuestPath:   guestPath,
+			Chown:       entry.Chown,
+			Text:        entry.Text,
+			Mode:        entry.Mode,
+			Overwrite:   writeFileOverwrite(entry),
+			FollowLinks: writeFileFollowLinks(entry),
 		}
 		if entry.Path != nil {
 			hostPath := m.resolvePath(*entry.Path)
@@ -716,6 +719,10 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 
 func writeFileOverwrite(file WriteFile) bool {
 	return file.Overwrite != nil && *file.Overwrite
+}
+
+func writeFileFollowLinks(file WriteFile) bool {
+	return file.FollowLinks == nil || *file.FollowLinks
 }
 
 func (m *Manifest) SSHDestination(cid int) string {

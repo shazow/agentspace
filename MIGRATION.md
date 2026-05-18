@@ -4,6 +4,34 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-18: writeFiles source symlink control
+
+### Who Is Affected
+
+- Consumers setting `agentspace.sandbox.writeFiles.*.path` to a symlink.
+- Direct manifest producers setting `write_files[].source` to a symlink.
+
+### What Changed
+
+Host source file reads for `writeFiles` now expose explicit symlink behavior.
+`agentspace.sandbox.writeFiles.*.followLinks` lowers to
+`write_files[].follow_links` in direct manifests. The default is `true`, which
+preserves the previous behavior of reading through symlinks.
+
+Set `followLinks = false` in Nix or `follow_links = false` in direct manifests
+to reject symlink source paths before copying bytes into the guest.
+
+### Migration Steps
+
+No change is needed unless you want symlink source paths to fail closed:
+
+```nix
+agentspace.sandbox.writeFiles."/etc/example.conf" = {
+  path = "./example.conf";
+  followLinks = false;
+};
+```
+
 ## 2026-05-18: Launch wrapper closure size output
 
 ### Who Is Affected

@@ -1008,6 +1008,39 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	}
 }
 
+func TestGuestFilePayloadRejectsHostSymlinkWhenFollowLinksFalse(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "target")
+	if err := os.WriteFile(targetPath, []byte("target content"), 0o644); err != nil {
+		t.Fatalf("write target fixture: %v", err)
+	}
+	linkPath := filepath.Join(tmpDir, "link")
+	if err := os.Symlink(targetPath, linkPath); err != nil {
+		t.Fatalf("create symlink fixture: %v", err)
+	}
+
+	_, err := guestFilePayloadBase64(manifest.ResolvedWriteFile{
+		GuestPath:   "/etc/from-link",
+		HostPath:    &linkPath,
+		FollowLinks: false,
+	})
+	if err == nil || !strings.Contains(err.Error(), "followLinks is false") {
+		t.Fatalf("expected followLinks symlink error, got %v", err)
+	}
+
+	payload, err := guestFilePayloadBase64(manifest.ResolvedWriteFile{
+		GuestPath:   "/etc/from-link",
+		HostPath:    &linkPath,
+		FollowLinks: true,
+	})
+	if err != nil {
+		t.Fatalf("expected followLinks=true to read symlink target: %v", err)
+	}
+	if got, want := payload, "dGFyZ2V0IGNvbnRlbnQ="; got != want {
+		t.Fatalf("unexpected symlink target payload: got %q want %q", got, want)
+	}
+}
+
 func TestManagerLaunchAutoprovisionsSSHKeyAfterAuthFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)

@@ -160,12 +160,13 @@ type RangeFacts struct {
 }
 
 type WriteFileFacts struct {
-	GuestPath string  `json:"guest_path" toml:"guest_path"`
-	Chown     *string `json:"chown,omitempty" toml:"chown"`
-	Text      *string `json:"text,omitempty" toml:"text"`
-	Mode      *string `json:"mode,omitempty" toml:"mode"`
-	Overwrite *bool   `json:"overwrite,omitempty" toml:"overwrite"`
-	Path      *string `json:"source,omitempty" toml:"source"`
+	GuestPath   string  `json:"guest_path" toml:"guest_path"`
+	Chown       *string `json:"chown,omitempty" toml:"chown"`
+	Text        *string `json:"text,omitempty" toml:"text"`
+	Mode        *string `json:"mode,omitempty" toml:"mode"`
+	Overwrite   *bool   `json:"overwrite,omitempty" toml:"overwrite"`
+	FollowLinks *bool   `json:"follow_links,omitempty" toml:"follow_links"`
+	Path        *string `json:"source,omitempty" toml:"source"`
 }
 
 type NotificationsFacts struct {
@@ -798,11 +799,12 @@ func lowerWriteFiles(files []WriteFileFacts) WriteFiles {
 	result := make(WriteFiles, len(files))
 	for _, file := range files {
 		result[file.GuestPath] = WriteFile{
-			Chown:     file.Chown,
-			Text:      file.Text,
-			Mode:      file.Mode,
-			Overwrite: file.Overwrite,
-			Path:      file.Path,
+			Chown:       file.Chown,
+			Text:        file.Text,
+			Mode:        file.Mode,
+			Overwrite:   file.Overwrite,
+			FollowLinks: file.FollowLinks,
+			Path:        file.Path,
 		}
 	}
 	return result

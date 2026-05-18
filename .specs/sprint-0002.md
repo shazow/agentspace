@@ -24,9 +24,9 @@ Out of scope:
 
 Acceptance criteria:
 
-- [ ] `agentspace.sandbox.writeFiles.*.followLinks` exists, defaults to `true`, and lowers into the `write_files[]` manifest.
-- [ ] Direct manifests accept `write_files[].follow_links`, defaulting to `true`.
-- [ ] Host source reads preserve current behavior by default and can opt out of following symlinks.
+- [x] `agentspace.sandbox.writeFiles.*.followLinks` exists, defaults to `true`, and lowers into the `write_files[]` manifest.
+- [x] Direct manifests accept `write_files[].follow_links`, defaulting to `true`.
+- [x] Host source reads preserve current behavior by default and can opt out of following symlinks.
 - [ ] `agentspace.sandbox.writeFiles.*.writeBack` exists, defaults to `false`, and lowers into the `write_files[]` manifest.
 - [ ] Direct manifests accept `write_files[].write_back`, defaulting to `false`.
 - [ ] `writeBack` requires a host source path and writes guest file contents back to that host path on shutdown and suspend.
@@ -38,6 +38,7 @@ Acceptance criteria:
 - [x] Reviewed the open `good for autocoding` issue list from GitHub.
 - [x] Compared each issue against current local sprint 0001 changes and code surfaces.
 - [x] Selected a coherent second sprint bundle.
+- [x] Implemented `#78` followLinks manifest/Nix fields and symlink read behavior.
 - [ ] Implement the selected issues.
 - [ ] Update `MIGRATION.md` for the public Nix and direct manifest fields.
 - [ ] Run validation and remove any `./result` symlinks created by Nix builds.
