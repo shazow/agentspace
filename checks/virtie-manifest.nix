@@ -58,6 +58,14 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
+  invalidRelativeStoreSocket = builtins.tryEval (
+    (mkSandbox {
+      persistence.homeImage = null;
+      mountWorkspace = false;
+      nixStoreShareSocket = "virtiofs-nix-store.sock";
+    }).config.system.build.toplevel.drvPath
+  );
+
   vmVirtieCustomSSHExec = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.identityFile = sshKeys.virtie.identityFile;
@@ -223,6 +231,10 @@ let
         cache = "auto";
       };
     assert !(builtins.head externalStoreSocketManifest.mounts ? virtiofsd_exec);
+    assert
+      pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
+        vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
+    assert !invalidRelativeStoreSocket.success;
     true;
 
   _customSSHExec =

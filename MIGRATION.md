@@ -4,6 +4,33 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-18: External virtiofs socket preflight
+
+### Who Is Affected
+
+- Consumers setting `agentspace.sandbox.nixStoreShareSocket`.
+- Direct virtie manifest producers using virtiofs mounts with
+  `virtiofsd_socket` but no managed `virtiofsd_exec`.
+
+### What Changed
+
+`agentspace.sandbox.nixStoreShareSocket` must now be an absolute socket path
+when set, and the generated launch wrapper checks that the path exists as a Unix
+socket before starting `virtie`.
+
+`virtie` also preflights external virtiofs sockets and fails before QEMU starts
+when a socket path is missing or is not a socket.
+
+### Migration Steps
+
+Ensure external virtiofs socket producers are started before launching the
+sandbox, and pass an absolute socket path:
+
+```diff
+- agentspace.sandbox.nixStoreShareSocket = "virtiofs-nix-store.sock";
++ agentspace.sandbox.nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
+```
+
 ## 2026-05-18: Explicit default SSH vsock proxy
 
 ### Who Is Affected

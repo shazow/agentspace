@@ -673,6 +673,14 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	if got, want := virtioFSSocketPaths, []string{"/var/run/virtiofs-nix-store.sock"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected virtiofs socket paths: got %v want %v", got, want)
 	}
+
+	externalSocketPaths, err := manifest.ResolvedExternalVirtioFSSocketPaths()
+	if err != nil {
+		t.Fatalf("resolve external virtiofs socket paths: %v", err)
+	}
+	if got, want := externalSocketPaths, []string{"/var/run/virtiofs-nix-store.sock"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected external virtiofs socket paths: got %v want %v", got, want)
+	}
 }
 
 func TestManifestValidatesQEMUDeviceTransports(t *testing.T) {

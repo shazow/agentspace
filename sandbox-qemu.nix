@@ -300,6 +300,12 @@ in
       commonInit = ''
         echo "🚀 Preparing Agent QEMU Sandbox..."
       ''
+      + lib.optionalString nixStoreShareUsesSocket ''
+        if [ ! -S ${lib.escapeShellArg cfg.nixStoreShareSocket} ]; then
+          echo "agentspace: nixStoreShareSocket does not exist or is not a socket: ${cfg.nixStoreShareSocket}" >&2
+          exit 1
+        fi
+      ''
       + lib.optionalString cfg.mountWorkspace ''
         echo "📂 Mounting current directory at ~/workspace"
         cd "$REPO_DIR"
@@ -541,6 +547,15 @@ in
     in
     lib.mkMerge [
       {
+        assertions = [
+          {
+            assertion =
+              cfg.nixStoreShareSocket == null
+              || (cfg.nixStoreShareSocket != "" && lib.hasPrefix "/" cfg.nixStoreShareSocket);
+            message = "agentspace.sandbox.nixStoreShareSocket must be an absolute socket path when set.";
+          }
+        ];
+
         agentspace.sandbox.launch = {
           inherit commonInit;
           inherit virtieManifestData;

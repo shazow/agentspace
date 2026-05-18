@@ -173,6 +173,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	externalVirtioFSSocketPaths, err := manifest.ResolvedExternalVirtioFSSocketPaths()
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
 	qmpSocketPath, err := manifest.ResolvedQMPSocketPath()
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -237,6 +241,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if err := ensureParentDirectories([]string{sshReadySocketPath}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
+	}
+	if err := ensureExistingSocketPaths(externalVirtioFSSocketPaths); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -1303,6 +1310,22 @@ func removeSocketPaths(paths []string) error {
 	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove socket %q: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func ensureExistingSocketPaths(paths []string) error {
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("external virtiofs socket %q does not exist", path)
+			}
+			return fmt.Errorf("stat external virtiofs socket %q: %w", path, err)
+		}
+		if info.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("external virtiofs socket %q is not a socket", path)
 		}
 	}
 	return nil
