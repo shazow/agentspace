@@ -3,6 +3,7 @@
   lib,
   options,
   pkgs,
+  hostPkgs ? pkgs,
   ...
 }:
 
@@ -324,26 +325,34 @@ in
       '';
 
       sshAutoprovision = cfg.ssh.identityFile == null && cfg.ssh.authorizedKeys == [ ];
-      defaultSSHExec =
-        [
-          "${pkgs.openssh}/bin/ssh"
-          "-o"
-          "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
-          "-o"
-          "ProxyUseFdpass=yes"
-          "-o"
-          "CheckHostIP=no"
-          "-o"
-          "StrictHostKeyChecking=no"
-          "-o"
-          "UserKnownHostsFile=/dev/null"
-          "-o"
-          "GlobalKnownHostsFile=/dev/null"
-        ]
-        ++ lib.optionals (cfg.ssh.identityFile != null) [
-          "-i"
-          cfg.ssh.identityFile
-        ];
+      hostSystem = hostPkgs.stdenv.hostPlatform.system;
+      hostArch = builtins.head (builtins.split "-" hostSystem);
+      hostSupportsVirtiofsd = hostPkgs.stdenv.hostPlatform.isLinux;
+      defaultShareProto = if hostSupportsVirtiofsd then "virtiofs" else "9p";
+      hostQemuPackage =
+        if hostPkgs.stdenv.hostPlatform.isLinux && hostPkgs ? qemu_kvm then
+          hostPkgs.qemu_kvm
+        else
+          hostPkgs.qemu;
+      hostVirtiofsdPackage = hostPkgs.virtiofsd;
+      hostSocatProxyCommand = "${hostPkgs.runtimeShell} -c 'cid=\${1#vsock/}; exec ${hostPkgs.socat}/bin/socat - VSOCK-CONNECT:$cid:$2' -- %h %p";
+      defaultSSHExec = [
+        "${hostPkgs.openssh}/bin/ssh"
+        "-o"
+        "ProxyCommand=${hostSocatProxyCommand}"
+        "-o"
+        "CheckHostIP=no"
+        "-o"
+        "StrictHostKeyChecking=no"
+        "-o"
+        "UserKnownHostsFile=/dev/null"
+        "-o"
+        "GlobalKnownHostsFile=/dev/null"
+      ]
+      ++ lib.optionals (cfg.ssh.identityFile != null) [
+        "-i"
+        cfg.ssh.identityFile
+      ];
       sshExec = if cfg.ssh.exec != null then cfg.ssh.exec else defaultSSHExec;
       nixStoreShareUsesSocket = cfg.nixStoreShareSocket != null;
       isNixStoreShare = share: share.tag == "ro-store";
@@ -351,9 +360,7 @@ in
         share: share.proto == "virtiofs" && !(cfg.persistence.storeDisk && isNixStoreShare share)
       ) config.microvm.shares;
       ninepShares = builtins.filter (share: share.proto == "9p") config.microvm.shares;
-      inherit (pkgs.stdenv.hostPlatform) system;
-      arch = builtins.head (builtins.split "-" system);
-      canSandbox = builtins.elem "--enable-seccomp" (config.microvm.qemu.package.configureFlags or [ ]);
+      canSandbox = builtins.elem "--enable-seccomp" (hostQemuPackage.configureFlags or [ ]);
 
       mkVirtioFSDaemonCommand =
         {
@@ -376,7 +383,7 @@ in
             socket_path="$VIRTIOFSD_SOCKET"
           fi
 
-          exec ${lib.getExe config.microvm.virtiofsd.package} \
+          exec ${lib.getExe hostVirtiofsdPackage} \
             --socket-path="$socket_path" \
             ${
               lib.optionalString (
@@ -491,11 +498,11 @@ in
         state_dir = persistenceStateDir;
         qemu = {
           exec = [
-            "${config.microvm.qemu.package}/bin/qemu-system-${arch}"
+            "${hostQemuPackage}/bin/qemu-system-${hostArch}"
           ]
           ++ config.microvm.qemu.extraArgs;
           fwd_tunnel_exec = [
-            "${config.microvm.vmHostPackages.netcat}/bin/nc"
+            "${hostPkgs.netcat}/bin/nc"
             "$HOST"
             "$PORT"
           ];
@@ -514,7 +521,7 @@ in
           memory = config.microvm.mem;
           vcpu = cfg.machine.vcpu;
           id = config.microvm.machineId;
-          kvm = pkgs.stdenv.hostPlatform.isLinux && config.microvm.cpu == null;
+          kvm = hostPkgs.stdenv.hostPlatform.isLinux && config.microvm.cpu == null;
         }
         // lib.optionalAttrs (config.microvm.cpu != null) {
           cpu = config.microvm.cpu;
@@ -711,7 +718,7 @@ in
           shares =
             lib.optionals (!cfg.persistence.storeDisk) [
               {
-                proto = "virtiofs";
+                proto = defaultShareProto;
                 tag = "ro-store";
                 source = "/nix/store";
                 mountPoint = "/nix/.ro-store";
@@ -720,7 +727,7 @@ in
             ]
             ++ lib.optionals cfg.mountWorkspace [
               {
-                proto = "virtiofs";
+                proto = defaultShareProto;
                 tag = "workspace";
                 source = ".";
                 mountPoint = cfg.workspaceMountPoint;

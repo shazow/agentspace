@@ -19,23 +19,39 @@
       microvm,
     }:
     let
-      system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
       lib = nixpkgs.lib;
-      virtiePackage = pkgs.buildGoModule {
-        pname = "virtie";
-        version = "0.1.0";
-        src = ./virtie;
-        vendorHash = "sha256-FOHUyDHCB1nuf5XO5vPHbJhthBbObhZBZ2xzY94O7ts=";
-        subPackages = [ "." ];
-        env.CGO_ENABLED = 0;
-      };
+      defaultHostSystem = "x86_64-linux";
+      supportedHostSystems = [
+        "x86_64-linux"
+        "aarch64-darwin"
+      ];
+      defaultGuestSystemFor =
+        hostSystem: if hostSystem == "aarch64-darwin" then "aarch64-linux" else "x86_64-linux";
+      forHostSystems = lib.genAttrs supportedHostSystems;
+      pkgsFor = system: nixpkgs.legacyPackages.${system};
+      mkVirtiePackage =
+        pkgs:
+        pkgs.buildGoModule {
+          pname = "virtie";
+          version = "0.1.0";
+          src = ./virtie;
+          vendorHash = "sha256-FOHUyDHCB1nuf5XO5vPHbJhthBbObhZBZ2xzY94O7ts=";
+          subPackages = [ "." ];
+          env.CGO_ENABLED = 0;
+        };
 
       mkSandbox =
         cfg:
         let
+          hostSystem = cfg.hostSystem or defaultHostSystem;
+          guestSystem = cfg.guestSystem or defaultGuestSystemFor hostSystem;
+          hostPkgs = pkgsFor hostSystem;
           extraModules = cfg.extraModules or [ ];
-          sandboxCfg = builtins.removeAttrs cfg [ "extraModules" ];
+          sandboxCfg = builtins.removeAttrs cfg [
+            "extraModules"
+            "hostSystem"
+            "guestSystem"
+          ];
           baseModules = [
             microvm.nixosModules.microvm
             home-manager.nixosModules.home-manager
@@ -61,7 +77,10 @@
             }
           ];
           baseSystem = nixpkgs.lib.nixosSystem {
-            inherit system;
+            system = guestSystem;
+            specialArgs = {
+              inherit hostPkgs hostSystem guestSystem;
+            };
             modules = baseModules;
           };
           sandboxExtraModules = baseSystem.config.agentspace.sandbox.extraModules;
@@ -73,15 +92,19 @@
             modules = sandboxExtraModules;
           };
 
-      mkLaunch =
-        nixosConfig:
+      mkLaunch = nixosConfig: mkLaunchFor defaultHostSystem nixosConfig;
+
+      mkLaunchFor =
+        hostSystem: nixosConfig:
         let
+          pkgs = pkgsFor hostSystem;
+          virtiePackage = mkVirtiePackage pkgs;
           vmConfig = nixosConfig.config;
           launchCfg = vmConfig.agentspace.sandbox.launch;
           sshCfg = vmConfig.agentspace.sandbox.ssh or { };
           remoteCommand = sshCfg.command or "";
           sshAutoconnect = sshCfg.autoconnect or true;
-          systemClosure = vmConfig.system.build.toplevel;
+          systemClosure = vmConfig.system.build.toplevel or "";
           script = pkgs.writeShellScriptBin "launch-agent" ''
             set -euo pipefail
 
@@ -95,7 +118,7 @@
             ${pkgs.coreutils}/bin/install -m 0644 ${lib.escapeShellArg launchCfg.virtieManifestTemplate} "$MANIFEST_PATH"
 
             SYSTEM_CLOSURE=${lib.escapeShellArg systemClosure}
-            if closure_info="$(${pkgs.nix}/bin/nix path-info --closure-size --human-readable "$SYSTEM_CLOSURE" 2>/dev/null)"; then
+            if [ -n "$SYSTEM_CLOSURE" ] && closure_info="$(${pkgs.nix}/bin/nix path-info --closure-size --human-readable "$SYSTEM_CLOSURE" 2>/dev/null)"; then
               closure_path=
               closure_size=
               closure_unit=
@@ -106,7 +129,7 @@
                 fi
                 echo "📦 mkSandbox closure size: $closure_size"
               fi
-            else
+            elif [ -n "$SYSTEM_CLOSURE" ]; then
               echo "mkSandbox closure size unavailable for $SYSTEM_CLOSURE" >&2
             fi
 
@@ -135,27 +158,31 @@
       vmConfigs = {
         default = mkSandbox { };
       };
+      defaultPkgs = pkgsFor defaultHostSystem;
+      defaultVirtiePackage = mkVirtiePackage defaultPkgs;
       checkArgs = {
-        inherit
-          mkLaunch
-          mkSandbox
-          pkgs
-          virtiePackage
-          ;
+        inherit mkLaunch mkSandbox;
+        pkgs = defaultPkgs;
+        virtiePackage = defaultVirtiePackage;
       };
     in
     {
       nixosConfigurations = vmConfigs;
 
-      packages.${system} = {
-        virtie = virtiePackage;
-      };
+      packages = forHostSystems (hostSystem: {
+        virtie = mkVirtiePackage (pkgsFor hostSystem);
+      });
 
       lib = {
-        inherit mkSandbox mkLaunch;
+        inherit
+          mkSandbox
+          mkLaunch
+          mkLaunchFor
+          defaultGuestSystemFor
+          ;
       };
 
-      checks.${system} = import ./checks {
+      checks.${defaultHostSystem} = import ./checks {
         inherit (checkArgs)
           mkLaunch
           mkSandbox
@@ -164,14 +191,16 @@
           ;
       };
 
-      legacyPackages.${system}.graphicalChecks = import ./checks/graphical.nix checkArgs;
+      legacyPackages.${defaultHostSystem}.graphicalChecks = import ./checks/graphical.nix checkArgs;
 
-      apps.${system} = {
-        default = self.apps.${system}.launch;
+      apps = forHostSystems (hostSystem: {
+        default = self.apps.${hostSystem}.launch;
         launch = {
           type = "app";
-          program = mkLaunch vmConfigs.default;
+          program = mkLaunchFor hostSystem (mkSandbox {
+            inherit hostSystem;
+          });
         };
-      };
+      });
     };
 }
