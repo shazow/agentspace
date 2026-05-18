@@ -205,6 +205,12 @@ in
                 description = "Whether to follow symlinks when reading the host path.";
               };
 
+              writeBack = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Whether to write guest file contents back to the host path on shutdown or suspend.";
+              };
+
               mode = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
@@ -470,11 +476,13 @@ in
         builtins.removeAttrs file [
           "path"
           "followLinks"
+          "writeBack"
         ]
         // lib.optionalAttrs (file.path != null) { source = file.path; }
         // {
           guest_path = guestPath;
           follow_links = file.followLinks;
+          write_back = file.writeBack;
         }
       ) cfg.writeFiles;
 

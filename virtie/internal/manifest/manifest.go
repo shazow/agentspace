@@ -243,6 +243,7 @@ type WriteFile struct {
 	Mode        *string `json:"mode,omitempty"`
 	Overwrite   *bool   `json:"overwrite,omitempty"`
 	FollowLinks *bool   `json:"followLinks,omitempty"`
+	WriteBack   *bool   `json:"writeBack,omitempty"`
 	Path        *string `json:"path,omitempty"`
 }
 
@@ -255,6 +256,7 @@ type ResolvedWriteFile struct {
 	Mode        *string
 	Overwrite   bool
 	FollowLinks bool
+	WriteBack   bool
 	HostPath    *string
 }
 
@@ -432,6 +434,8 @@ func validateWriteFiles(files WriteFiles) error {
 			return fmt.Errorf("manifest.writeFiles[%q] must set exactly one of text or path", guestPath)
 		case entry.Path != nil && *entry.Path == "":
 			return fmt.Errorf("manifest.writeFiles[%q].path must not be empty", guestPath)
+		case writeFileWriteBack(entry) && entry.Path == nil:
+			return fmt.Errorf("manifest.writeFiles[%q].writeBack requires path", guestPath)
 		case entry.Mode != nil && !writeFileModePattern.MatchString(*entry.Mode):
 			return fmt.Errorf("manifest.writeFiles[%q].mode must match ^0?[0-7]{3}$", guestPath)
 		}
@@ -707,6 +711,7 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 			Mode:        entry.Mode,
 			Overwrite:   writeFileOverwrite(entry),
 			FollowLinks: writeFileFollowLinks(entry),
+			WriteBack:   writeFileWriteBack(entry),
 		}
 		if entry.Path != nil {
 			hostPath := m.resolvePath(*entry.Path)
@@ -723,6 +728,10 @@ func writeFileOverwrite(file WriteFile) bool {
 
 func writeFileFollowLinks(file WriteFile) bool {
 	return file.FollowLinks == nil || *file.FollowLinks
+}
+
+func writeFileWriteBack(file WriteFile) bool {
+	return file.WriteBack != nil && *file.WriteBack
 }
 
 func (m *Manifest) SSHDestination(cid int) string {

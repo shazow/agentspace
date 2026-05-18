@@ -1041,6 +1041,199 @@ func TestGuestFilePayloadRejectsHostSymlinkWhenFollowLinksFalse(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchWritesBackGuestFilesOnShutdown(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	hostPath := filepath.Join(tmpDir, "host-file")
+	if err := os.WriteFile(hostPath, []byte("from host"), 0o644); err != nil {
+		t.Fatalf("write host fixture: %v", err)
+	}
+	overwrite := true
+	writeBack := true
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/var/lib/virtie/host": {Path: &hostPath, Overwrite: &overwrite, WriteBack: &writeBack},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		readPayloads: map[string][]string{
+			"/var/lib/virtie/host": {"ZnJvbSBndWVzdA=="},
+		},
+		execStatuses: []guestExecStatus{{Exited: true}},
+	}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		sshReadyDialer:    &fakeSSHReadyDialer{},
+		logger:            slog.New(slog.DiscardHandler),
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	data, err := os.ReadFile(hostPath)
+	if err != nil {
+		t.Fatalf("read host file: %v", err)
+	}
+	if got, want := string(data), "from guest"; got != want {
+		t.Fatalf("unexpected write-back content: got %q want %q", got, want)
+	}
+}
+
+func TestLaunchSuspendHandlerWritesBackGuestFilesBeforeSuspend(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	hostPath := filepath.Join(tmpDir, "host-file")
+	if err := os.WriteFile(hostPath, []byte("from host"), 0o644); err != nil {
+		t.Fatalf("write host fixture: %v", err)
+	}
+	writeBack := true
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/var/lib/virtie/host": {Path: &hostPath, WriteBack: &writeBack},
+	}
+
+	guestAgent := &fakeGuestAgentClient{
+		readPayloads: map[string][]string{
+			"/var/lib/virtie/host": {"ZnJvbSBzdXNwZW5k"},
+		},
+	}
+	qmpClient := &fakeQMPClient{status: "running"}
+	manager := &manager{
+		guestAgentDialer:    &fakeGuestAgentDialer{client: guestAgent},
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		logger:              slog.New(slog.DiscardHandler),
+		qmpConnectTimeout:   time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+	}
+	writeBackEnabled := true
+	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7, nil, &writeBackEnabled)
+
+	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
+		t.Fatalf("suspend returned %v, want errSavedSuspendExit", err)
+	}
+
+	data, err := os.ReadFile(hostPath)
+	if err != nil {
+		t.Fatalf("read host file: %v", err)
+	}
+	if got, want := string(data), "from suspend"; got != want {
+		t.Fatalf("unexpected write-back content: got %q want %q", got, want)
+	}
+	qmpClient.mu.Lock()
+	migrateCalls := qmpClient.migrateCalls
+	qmpClient.mu.Unlock()
+	if migrateCalls != 1 {
+		t.Fatalf("expected suspend migration after write-back, got %d migrate calls", migrateCalls)
+	}
+}
+
+func TestWriteBackGuestFilesDoesNotReplaceHostOnGuestReadError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	hostPath := filepath.Join(tmpDir, "host-file")
+	if err := os.WriteFile(hostPath, []byte("original"), 0o644); err != nil {
+		t.Fatalf("write host fixture: %v", err)
+	}
+	writeBack := true
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/var/lib/virtie/host": {Path: &hostPath, WriteBack: &writeBack},
+	}
+
+	guestAgent := &fakeGuestAgentClient{
+		readPayloads: map[string][]string{
+			"/var/lib/virtie/host": {"not base64"},
+		},
+	}
+	manager := &manager{
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		logger:            slog.New(slog.DiscardHandler),
+		qmpConnectTimeout: time.Millisecond,
+	}
+
+	err := manager.writeBackGuestFiles(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "guest file write-back") {
+		t.Fatalf("expected staged write-back error, got %v", err)
+	}
+	data, readErr := os.ReadFile(hostPath)
+	if readErr != nil {
+		t.Fatalf("read host file: %v", readErr)
+	}
+	if got, want := string(data), "original"; got != want {
+		t.Fatalf("host file changed after failed write-back: got %q want %q", got, want)
+	}
+}
+
+func TestWriteBackGuestFilesFollowsHostSymlinkWhenFollowLinksEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	targetPath := filepath.Join(tmpDir, "target-file")
+	if err := os.WriteFile(targetPath, []byte("original"), 0o644); err != nil {
+		t.Fatalf("write target fixture: %v", err)
+	}
+	linkPath := filepath.Join(tmpDir, "host-link")
+	if err := os.Symlink(targetPath, linkPath); err != nil {
+		t.Fatalf("create symlink fixture: %v", err)
+	}
+	writeBack := true
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/var/lib/virtie/host": {Path: &linkPath, WriteBack: &writeBack},
+	}
+
+	guestAgent := &fakeGuestAgentClient{
+		readPayloads: map[string][]string{
+			"/var/lib/virtie/host": {"ZnJvbSBndWVzdA=="},
+		},
+	}
+	manager := &manager{
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		logger:            slog.New(slog.DiscardHandler),
+		qmpConnectTimeout: time.Millisecond,
+	}
+
+	if err := manager.writeBackGuestFiles(context.Background(), cfg); err != nil {
+		t.Fatalf("write back guest files: %v", err)
+	}
+	targetData, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read target file: %v", err)
+	}
+	if got, want := string(targetData), "from guest"; got != want {
+		t.Fatalf("unexpected target content: got %q want %q", got, want)
+	}
+	info, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatalf("stat symlink: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected write-back path to remain a symlink, got mode %s", info.Mode())
+	}
+}
+
 func TestManagerLaunchAutoprovisionsSSHKeyAfterAuthFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -2016,7 +2209,7 @@ func TestLaunchSuspendHandlerSaveAndExitIsIdempotent(t *testing.T) {
 		qmpConnectTimeout:   time.Millisecond,
 		qmpMigrationTimeout: time.Second,
 	}
-	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7, nil)
+	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7, nil, nil)
 
 	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
 		t.Fatalf("first suspend returned %v, want errSavedSuspendExit", err)
@@ -3335,10 +3528,13 @@ type fakeGuestAgentClient struct {
 	nextHandle      int
 	handles         map[int]string
 	writes          map[string]string
+	readPayloads    map[string][]string
+	readIndexes     map[string]int
 	closes          []string
 	execs           []guestExecCall
 	execStatuses    []guestExecStatus
 	execStatusCalls int
+	readErr         error
 	writeErr        error
 	closeErr        error
 	execErr         error
@@ -3378,6 +3574,49 @@ func (c *fakeGuestAgentClient) OpenFile(timeout time.Duration, path string) (int
 	c.nextHandle++
 	c.handles[c.nextHandle] = path
 	return c.nextHandle, nil
+}
+
+func (c *fakeGuestAgentClient) OpenFileRead(timeout time.Duration, path string) (int, error) {
+	if c.record != nil {
+		c.record("guest-open-read:" + path)
+	}
+	if c.openErr != nil {
+		return 0, c.openErr
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.handles == nil {
+		c.handles = make(map[int]string)
+	}
+	c.nextHandle++
+	c.handles[c.nextHandle] = path
+	return c.nextHandle, nil
+}
+
+func (c *fakeGuestAgentClient) ReadFile(timeout time.Duration, handle int, count int) (string, bool, error) {
+	c.mu.Lock()
+	path := c.handles[handle]
+	index := c.readIndexes[path]
+	payloads := c.readPayloads[path]
+	if c.readIndexes == nil {
+		c.readIndexes = make(map[string]int)
+	}
+	if index < len(payloads) {
+		c.readIndexes[path] = index + 1
+	}
+	c.mu.Unlock()
+
+	if c.record != nil {
+		c.record("guest-read:" + path)
+	}
+	if c.readErr != nil {
+		return "", false, c.readErr
+	}
+	if index >= len(payloads) {
+		return "", true, nil
+	}
+	return payloads[index], index == len(payloads)-1, nil
 }
 
 func (c *fakeGuestAgentClient) WriteFile(timeout time.Duration, handle int, payloadBase64 string) error {

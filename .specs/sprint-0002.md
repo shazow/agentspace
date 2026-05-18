@@ -27,11 +27,11 @@ Acceptance criteria:
 - [x] `agentspace.sandbox.writeFiles.*.followLinks` exists, defaults to `true`, and lowers into the `write_files[]` manifest.
 - [x] Direct manifests accept `write_files[].follow_links`, defaulting to `true`.
 - [x] Host source reads preserve current behavior by default and can opt out of following symlinks.
-- [ ] `agentspace.sandbox.writeFiles.*.writeBack` exists, defaults to `false`, and lowers into the `write_files[]` manifest.
-- [ ] Direct manifests accept `write_files[].write_back`, defaulting to `false`.
-- [ ] `writeBack` requires a host source path and writes guest file contents back to that host path on shutdown and suspend.
-- [ ] Write-back errors are stage-aware and do not silently corrupt host files.
-- [ ] Focused Go and Nix checks cover manifest validation, Nix lowering, host-source symlink behavior, shutdown write-back, and suspend write-back.
+- [x] `agentspace.sandbox.writeFiles.*.writeBack` exists, defaults to `false`, and lowers into the `write_files[]` manifest.
+- [x] Direct manifests accept `write_files[].write_back`, defaulting to `false`.
+- [x] `writeBack` requires a host source path and writes guest file contents back to that host path on shutdown and suspend.
+- [x] Write-back errors are stage-aware and do not silently corrupt host files.
+- [x] Focused Go and Nix checks cover manifest validation, Nix lowering, host-source symlink behavior, shutdown write-back, and suspend write-back.
 
 ## Progress
 
@@ -39,9 +39,10 @@ Acceptance criteria:
 - [x] Compared each issue against current local sprint 0001 changes and code surfaces.
 - [x] Selected a coherent second sprint bundle.
 - [x] Implemented `#78` followLinks manifest/Nix fields and symlink read behavior.
-- [ ] Implement the selected issues.
-- [ ] Update `MIGRATION.md` for the public Nix and direct manifest fields.
-- [ ] Run validation and remove any `./result` symlinks created by Nix builds.
+- [x] Implemented `#72` writeBack manifest/Nix fields, QGA read support, shutdown write-back, and suspend write-back.
+- [x] Implement the selected issues.
+- [x] Update `MIGRATION.md` for the public Nix and direct manifest fields.
+- [x] Run validation and remove any `./result` symlinks created by Nix builds.
 
 ## Issue Review
 

@@ -166,6 +166,7 @@ type WriteFileFacts struct {
 	Mode        *string `json:"mode,omitempty" toml:"mode"`
 	Overwrite   *bool   `json:"overwrite,omitempty" toml:"overwrite"`
 	FollowLinks *bool   `json:"follow_links,omitempty" toml:"follow_links"`
+	WriteBack   *bool   `json:"write_back,omitempty" toml:"write_back"`
 	Path        *string `json:"source,omitempty" toml:"source"`
 }
 
@@ -804,6 +805,7 @@ func lowerWriteFiles(files []WriteFileFacts) WriteFiles {
 			Mode:        file.Mode,
 			Overwrite:   file.Overwrite,
 			FollowLinks: file.FollowLinks,
+			WriteBack:   file.WriteBack,
 			Path:        file.Path,
 		}
 	}
