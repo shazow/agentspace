@@ -4,6 +4,23 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-18: Launch wrapper closure size output
+
+### Who Is Affected
+
+- Consumers that parse generated launch wrapper stdout or stderr exactly.
+
+### What Changed
+
+The generated `mkLaunch` wrapper now prints a best-effort
+`mkSandbox closure size` line before starting `virtie`. If the closure size
+query is unavailable, the wrapper prints a warning to stderr and continues.
+
+### Migration Steps
+
+No change is needed for interactive users. Automation that expects exact wrapper
+output should tolerate the new closure size line.
+
 ## 2026-05-18: External virtiofs socket preflight
 
 ### Who Is Affected

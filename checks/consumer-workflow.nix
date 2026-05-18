@@ -117,6 +117,8 @@ in
       grep -F 'mkdir -p "$(' ${launchScript}
       grep -F 'rm -f "$MANIFEST_PATH"' ${launchScript}
       grep -F 'install -m 0644 ${pkgs.lib.escapeShellArg manifestTemplate} "$MANIFEST_PATH"' ${launchScript}
+      grep -F 'nix path-info --closure-size --human-readable "$SYSTEM_CLOSURE"' ${launchScript}
+      grep -F 'mkSandbox closure size:' ${launchScript}
       test ${pkgs.lib.escapeShellArg manifestPath} = '.agentspace/virtie-agent-sandbox.json'
       grep -F "bash -lc pwd" ${launchScript}
       grep -F 'launch -v --ssh --manifest="$MANIFEST_PATH" -- "$@"' ${launchScript}
