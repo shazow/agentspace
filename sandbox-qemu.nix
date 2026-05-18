@@ -302,7 +302,7 @@ in
       ''
       + lib.optionalString nixStoreShareUsesSocket ''
         if [ ! -S ${lib.escapeShellArg cfg.nixStoreShareSocket} ]; then
-          echo "agentspace: nixStoreShareSocket does not exist or is not a socket: ${cfg.nixStoreShareSocket}" >&2
+          echo "agentspace: nixStoreShareSocket does not exist or is not a socket: ${lib.escapeShellArg cfg.nixStoreShareSocket}" >&2
           exit 1
         fi
       ''

@@ -58,6 +58,12 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
+  vmVirtieEscapedExternalStoreSocket = mkSandbox {
+    persistence.homeImage = null;
+    mountWorkspace = false;
+    nixStoreShareSocket = "/tmp/$(touch injected).sock";
+  };
+
   invalidRelativeStoreSocket = builtins.tryEval (
     (mkSandbox {
       persistence.homeImage = null;
@@ -234,6 +240,14 @@ let
     assert
       pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
         vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
+    assert
+      pkgs.lib.hasInfix
+        "nixStoreShareSocket does not exist or is not a socket: '/tmp/$(touch injected).sock'"
+        vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
+    assert
+      !(pkgs.lib.hasInfix
+        ''nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock''
+        vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
     assert !invalidRelativeStoreSocket.success;
     true;
 
