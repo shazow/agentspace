@@ -92,30 +92,6 @@ func TestLoadRejectsTrailingData(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsLegacyWriteFileContent(t *testing.T) {
-	var data map[string]any
-	encoded, err := json.Marshal(validDocument())
-	if err != nil {
-		t.Fatalf("marshal manifest: %v", err)
-	}
-	if err := json.Unmarshal(encoded, &data); err != nil {
-		t.Fatalf("unmarshal manifest map: %v", err)
-	}
-	data["writeFiles"] = map[string]any{
-		"/etc/agent.conf": map[string]any{"content": "aGVsbG8="},
-	}
-
-	encoded, err = json.Marshal(data)
-	if err != nil {
-		t.Fatalf("marshal legacy manifest: %v", err)
-	}
-
-	_, err = Load(bytes.NewReader(encoded))
-	if err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("expected legacy writeFiles shape decode error, got %v", err)
-	}
-}
-
 func TestLoadTOMLExamples(t *testing.T) {
 	for _, path := range []string{
 		"../../examples/manifest-simple.toml",

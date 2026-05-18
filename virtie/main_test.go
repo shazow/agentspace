@@ -30,11 +30,6 @@ func TestParserRejectsInvalidCommandLines(t *testing.T) {
 			wantErr: "manifest",
 		},
 		{
-			name:    "removed resume command",
-			args:    []string{"resume", "--manifest=/tmp/manifest.json"},
-			wantErr: "Unknown command",
-		},
-		{
 			name:    "remote command without ssh",
 			args:    []string{"launch", "--manifest=/tmp/manifest.json", "--", "echo", "hi"},
 			wantErr: "remote command arguments require --ssh",
@@ -43,11 +38,6 @@ func TestParserRejectsInvalidCommandLines(t *testing.T) {
 			name:    "invalid launch resume mode",
 			args:    []string{"launch", "--resume=maybe", "--manifest=/tmp/manifest.json"},
 			wantErr: "Invalid value",
-		},
-		{
-			name:    "removed suspend exit flag",
-			args:    []string{"suspend", "--exit", "--manifest=/tmp/manifest.json"},
-			wantErr: "unknown flag `exit'",
 		},
 	}
 

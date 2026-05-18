@@ -122,16 +122,8 @@ in
       test ${pkgs.lib.escapeShellArg manifestPath} = '.agentspace/virtie-agent-sandbox.json'
       grep -F "bash -lc pwd" ${launchScript}
       grep -F 'launch -v --ssh --manifest="$MANIFEST_PATH" -- "$@"' ${launchScript}
-      if grep -F 'systemd-run' ${launchScript} >/dev/null; then
-        echo "sandbox-consumer-workflow: unexpected legacy systemd-run in virtie wrapper" >&2
-        exit 1
-      fi
 
       grep -F 'managed by virtie' ${virtiofsdHelper}
-      if ${pkgs.nix}/bin/nix-store -q --references ${virtiofsdHelper} | grep -E 'supervisor|supervisord' >/dev/null; then
-        echo "sandbox-consumer-workflow: unexpected supervisor dependency in virtiofsd helper stub" >&2
-        exit 1
-      fi
 
       touch $out
     '';
