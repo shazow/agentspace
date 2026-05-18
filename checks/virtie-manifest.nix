@@ -58,6 +58,17 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
+  vmVirtieCustomSSHExec = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
+    ssh.exec = [
+      "/custom/ssh"
+      "-F"
+      "custom-config"
+    ];
+    persistence.homeImage = null;
+  };
+
   vmVirtieExtraShares = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.identityFile = sshKeys.virtie.identityFile;
@@ -112,6 +123,8 @@ let
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
+  customSSHExecManifest =
+    vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
   fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
@@ -207,6 +220,15 @@ let
     assert !(builtins.head externalStoreSocketManifest.mounts ? virtiofsd_exec);
     true;
 
+  _customSSHExec =
+    assert customSSHExecManifest.ssh.exec == [
+      "/custom/ssh"
+      "-F"
+      "custom-config"
+    ];
+    assert !(builtins.elem ".agentspace-test/id_ed25519" customSSHExecManifest.ssh.exec);
+    true;
+
   _extraShares =
     assert
       builtins.length (builtins.filter (mount: mount.type == "9p") extraSharesManifest.mounts) == 1;
@@ -285,6 +307,10 @@ in
   virtie-manifest-external-store-socket-contract =
     assert _externalStoreSocket;
     pkgs.runCommand "virtie-manifest-external-store-socket-contract" { } "touch $out";
+
+  virtie-manifest-custom-ssh-exec-contract =
+    assert _customSSHExec;
+    pkgs.runCommand "virtie-manifest-custom-ssh-exec-contract" { } "touch $out";
 
   virtie-manifest-extra-shares-contract =
     assert _extraShares;

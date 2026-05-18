@@ -4,6 +4,34 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-18: Configurable sandbox SSH exec
+
+### Who Is Affected
+
+- Consumers that need to replace the generated host-side SSH command.
+
+### What Changed
+
+`agentspace.sandbox.ssh.exec` now accepts a complete host-side SSH argv override.
+When unset, agentspace keeps generating the default OpenSSH command and appends
+`agentspace.sandbox.ssh.identityFile` when configured.
+
+When `ssh.exec` is set, the override is used as-is; `ssh.identityFile` is not
+appended automatically.
+
+### Migration Steps
+
+No change is needed for existing consumers. To override SSH execution, set the
+complete argv:
+
+```nix
+agentspace.sandbox.ssh.exec = [
+  "/usr/bin/ssh"
+  "-F"
+  "ssh_config"
+];
+```
+
 ## 2026-05-17: SSH readiness token and socket
 
 ### Who Is Affected

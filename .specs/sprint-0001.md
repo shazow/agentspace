@@ -24,7 +24,7 @@ Out of scope:
 
 Acceptance criteria:
 
-- [ ] `agentspace.sandbox.ssh.exec` exists, defaults to the generated OpenSSH argv, and can be overridden by consumers.
+- [x] `agentspace.sandbox.ssh.exec` exists, defaults to the generated OpenSSH argv, and can be overridden by consumers.
 - [ ] The default generated SSH argv includes an explicit `systemd-ssh-proxy` `ProxyCommand` for vsock hosts, plus fd-pass and host-key-checking options that do not depend on host SSH config.
 - [ ] Invalid `agentspace.sandbox.nixStoreShareSocket` values produce a useful Nix-side assertion or launch-time error before QEMU is started.
 - [ ] `virtie` validates externally supplied `mounts[].virtiofsd_socket` paths when no managed `mounts[].virtiofsd_exec` is present.
@@ -40,6 +40,7 @@ Acceptance criteria:
 - [ ] Implement the selected issues.
 - [ ] Update documentation or migration notes if the public consumer API changes.
 - [ ] Run validation and remove any `./result` symlinks created by Nix builds.
+- [x] Completed [#86](https://github.com/shazow/agentspace/issues/86): added `agentspace.sandbox.ssh.exec` override support.
 
 ## Issue Review
 

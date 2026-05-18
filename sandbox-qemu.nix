@@ -77,6 +77,21 @@ in
         description = "Optional SSH identity file passed to host-side launch/connect helpers.";
       };
 
+      exec = lib.mkOption {
+        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+        default = null;
+        example = [
+          "/usr/bin/ssh"
+          "-F"
+          "ssh_config"
+        ];
+        description = ''
+          Complete host-side SSH argv used by virtie. When unset, agentspace
+          generates a default OpenSSH command and appends ssh.identityFile when
+          configured.
+        '';
+      };
+
       autoconnect = lib.mkOption {
         type = lib.types.bool;
         default = true;
@@ -291,20 +306,22 @@ in
       '';
 
       sshAutoprovision = cfg.ssh.identityFile == null && cfg.ssh.authorizedKeys == [ ];
-      sshBaseArgv = [
-        "${pkgs.openssh}/bin/ssh"
-        "-q"
-        "-o"
-        "StrictHostKeyChecking=no"
-        "-o"
-        "UserKnownHostsFile=/dev/null"
-        "-o"
-        "GlobalKnownHostsFile=/dev/null"
-      ]
-      ++ lib.optionals (cfg.ssh.identityFile != null) [
-        "-i"
-        cfg.ssh.identityFile
-      ];
+      defaultSSHExec =
+        [
+          "${pkgs.openssh}/bin/ssh"
+          "-q"
+          "-o"
+          "StrictHostKeyChecking=no"
+          "-o"
+          "UserKnownHostsFile=/dev/null"
+          "-o"
+          "GlobalKnownHostsFile=/dev/null"
+        ]
+        ++ lib.optionals (cfg.ssh.identityFile != null) [
+          "-i"
+          cfg.ssh.identityFile
+        ];
+      sshExec = if cfg.ssh.exec != null then cfg.ssh.exec else defaultSSHExec;
       nixStoreShareUsesSocket = cfg.nixStoreShareSocket != null;
       isNixStoreShare = share: share.tag == "ro-store";
       virtiofsShares = builtins.filter (
@@ -483,7 +500,7 @@ in
           backend = if config.microvm.graphics.enable then config.microvm.graphics.backend else "headless";
         };
         ssh = {
-          exec = sshBaseArgv;
+          exec = sshExec;
           user = cfg.user;
           ready_socket = "ready.sock";
           autoprovision = sshAutoprovision;
