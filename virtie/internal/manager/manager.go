@@ -173,6 +173,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	externalVirtioFSSocketPaths, err := manifest.ResolvedExternalVirtioFSSocketPaths()
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
 	qmpSocketPath, err := manifest.ResolvedQMPSocketPath()
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -237,6 +241,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if err := ensureParentDirectories([]string{sshReadySocketPath}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
+	}
+	if err := ensureExistingSocketPaths(externalVirtioFSSocketPaths); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -872,8 +879,10 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 }
 
 type sshRetryLogger struct {
-	logger *slog.Logger
-	seen   map[sshtools.RetryPhase]bool
+	logger            *slog.Logger
+	seen              map[sshtools.RetryPhase]bool
+	transientFailures int
+	warned            bool
 }
 
 func newSSHRetryLogger(logger *slog.Logger) *sshRetryLogger {
@@ -885,15 +894,26 @@ func newSSHRetryLogger(logger *slog.Logger) *sshRetryLogger {
 
 func (l *sshRetryLogger) Log(err error, stderr string) {
 	phase := sshtools.RetryPhaseForFailure(err, stderr)
-	if phase == sshtools.RetryPhaseNone || l.seen[phase] {
+	if phase == sshtools.RetryPhaseNone {
 		return
 	}
-	l.seen[phase] = true
-	switch phase {
-	case sshtools.RetryPhaseWaiting:
-		l.logger.Info("waiting for ssh connection")
-	case sshtools.RetryPhaseConnecting:
-		l.logger.Info("connecting ssh")
+	l.transientFailures++
+	if l.transientFailures == 5 && !l.warned {
+		l.warned = true
+		l.logger.Warn(
+			"ssh exec failed 5 times; ensure the guest is reachable and credentials are configured",
+			"ssh_failures",
+			l.transientFailures,
+		)
+	}
+	if !l.seen[phase] {
+		l.seen[phase] = true
+		switch phase {
+		case sshtools.RetryPhaseWaiting:
+			l.logger.Info("waiting for ssh connection")
+		case sshtools.RetryPhaseConnecting:
+			l.logger.Info("connecting ssh")
+		}
 	}
 }
 
@@ -1303,6 +1323,22 @@ func removeSocketPaths(paths []string) error {
 	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove socket %q: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func ensureExistingSocketPaths(paths []string) error {
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("external virtiofs socket %q does not exist", path)
+			}
+			return fmt.Errorf("stat external virtiofs socket %q: %w", path, err)
+		}
+		if info.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("external virtiofs socket %q is not a socket", path)
 		}
 	}
 	return nil

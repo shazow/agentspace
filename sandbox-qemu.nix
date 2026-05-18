@@ -77,6 +77,21 @@ in
         description = "Optional SSH identity file passed to host-side launch/connect helpers.";
       };
 
+      exec = lib.mkOption {
+        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+        default = null;
+        example = [
+          "/usr/bin/ssh"
+          "-F"
+          "ssh_config"
+        ];
+        description = ''
+          Complete host-side SSH argv used by virtie. When unset, agentspace
+          generates a default OpenSSH command and appends ssh.identityFile when
+          configured.
+        '';
+      };
+
       autoconnect = lib.mkOption {
         type = lib.types.bool;
         default = true;
@@ -285,26 +300,40 @@ in
       commonInit = ''
         echo "🚀 Preparing Agent QEMU Sandbox..."
       ''
+      + lib.optionalString nixStoreShareUsesSocket ''
+        if [ ! -S ${lib.escapeShellArg cfg.nixStoreShareSocket} ]; then
+          echo "agentspace: nixStoreShareSocket does not exist or is not a socket: ${lib.escapeShellArg cfg.nixStoreShareSocket}" >&2
+          exit 1
+        fi
+      ''
       + lib.optionalString cfg.mountWorkspace ''
         echo "📂 Mounting current directory at ~/workspace"
         cd "$REPO_DIR"
       '';
 
       sshAutoprovision = cfg.ssh.identityFile == null && cfg.ssh.authorizedKeys == [ ];
-      sshBaseArgv = [
-        "${pkgs.openssh}/bin/ssh"
-        "-q"
-        "-o"
-        "StrictHostKeyChecking=no"
-        "-o"
-        "UserKnownHostsFile=/dev/null"
-        "-o"
-        "GlobalKnownHostsFile=/dev/null"
-      ]
-      ++ lib.optionals (cfg.ssh.identityFile != null) [
-        "-i"
-        cfg.ssh.identityFile
-      ];
+      defaultSSHExec =
+        [
+          "${pkgs.openssh}/bin/ssh"
+          "-q"
+          "-o"
+          "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
+          "-o"
+          "ProxyUseFdpass=yes"
+          "-o"
+          "CheckHostIP=no"
+          "-o"
+          "StrictHostKeyChecking=no"
+          "-o"
+          "UserKnownHostsFile=/dev/null"
+          "-o"
+          "GlobalKnownHostsFile=/dev/null"
+        ]
+        ++ lib.optionals (cfg.ssh.identityFile != null) [
+          "-i"
+          cfg.ssh.identityFile
+        ];
+      sshExec = if cfg.ssh.exec != null then cfg.ssh.exec else defaultSSHExec;
       nixStoreShareUsesSocket = cfg.nixStoreShareSocket != null;
       isNixStoreShare = share: share.tag == "ro-store";
       virtiofsShares = builtins.filter (
@@ -483,7 +512,7 @@ in
           backend = if config.microvm.graphics.enable then config.microvm.graphics.backend else "headless";
         };
         ssh = {
-          exec = sshBaseArgv;
+          exec = sshExec;
           user = cfg.user;
           ready_socket = "ready.sock";
           autoprovision = sshAutoprovision;
@@ -518,6 +547,15 @@ in
     in
     lib.mkMerge [
       {
+        assertions = [
+          {
+            assertion =
+              cfg.nixStoreShareSocket == null
+              || (cfg.nixStoreShareSocket != "" && lib.hasPrefix "/" cfg.nixStoreShareSocket);
+            message = "agentspace.sandbox.nixStoreShareSocket must be an absolute socket path when set.";
+          }
+        ];
+
         agentspace.sandbox.launch = {
           inherit commonInit;
           inherit virtieManifestData;

@@ -529,6 +529,26 @@ func (m *Manifest) ResolvedVirtioFSSocketPaths() ([]string, error) {
 	return paths, nil
 }
 
+func (m *Manifest) ResolvedExternalVirtioFSSocketPaths() ([]string, error) {
+	managedTags := make(map[string]struct{}, len(m.VirtioFS.Daemons))
+	for _, daemon := range m.VirtioFS.Daemons {
+		managedTags[daemon.Tag] = struct{}{}
+	}
+
+	paths := make([]string, 0, len(m.QEMU.Devices.VirtioFS))
+	for _, share := range m.QEMU.Devices.VirtioFS {
+		if _, managed := managedTags[share.Tag]; managed {
+			continue
+		}
+		resolved, err := m.resolveSocketPath(share.SocketPath)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, resolved)
+	}
+	return paths, nil
+}
+
 func (m *Manifest) ResolvedLockPath() string {
 	return m.resolvePath(m.Paths.LockPath)
 }
