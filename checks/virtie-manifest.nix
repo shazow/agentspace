@@ -162,6 +162,9 @@ let
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
     assert builtins.head manifest.ssh.exec == "${pkgs.openssh}/bin/ssh";
+    assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" manifest.ssh.exec;
+    assert builtins.elem "ProxyUseFdpass=yes" manifest.ssh.exec;
+    assert builtins.elem "CheckHostIP=no" manifest.ssh.exec;
     assert manifest.ssh.user == "agent";
     assert manifest.ssh.ready_socket == "ready.sock";
     assert !(manifest.ssh ? retry_delay_ms);
@@ -183,6 +186,8 @@ let
   _defaultSSH =
     assert defaultManifest.ssh.autoprovision == true;
     assert defaultManifest.ssh.ready_socket == "ready.sock";
+    assert
+      builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" defaultManifest.ssh.exec;
     assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);
     assert defaultManifest.write_files == [ ];
     assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;
@@ -226,6 +231,7 @@ let
       "-F"
       "custom-config"
     ];
+    assert !(builtins.elem "ProxyUseFdpass=yes" customSSHExecManifest.ssh.exec);
     assert !(builtins.elem ".agentspace-test/id_ed25519" customSSHExecManifest.ssh.exec);
     true;
 

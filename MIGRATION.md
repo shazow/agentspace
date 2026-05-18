@@ -4,6 +4,30 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-18: Explicit default SSH vsock proxy
+
+### Who Is Affected
+
+- Consumers that inspect generated manifest `ssh.exec`.
+- Consumers relying on host SSH config to supply vsock proxy settings.
+
+### What Changed
+
+The default generated `ssh.exec` now includes an explicit
+`systemd-ssh-proxy` `ProxyCommand`, fd-pass support, and ephemeral-host
+checking options for vsock destinations. The default no longer depends on
+matching entries in the user's SSH config.
+
+Consumers that set `agentspace.sandbox.ssh.exec` keep full control and do not
+receive these default proxy arguments automatically.
+
+### Migration Steps
+
+No change is needed for normal `mkSandbox` users. Consumers that assert the
+exact generated `ssh.exec` list should update their expectations to include the
+new `-o ProxyCommand=...`, `-o ProxyUseFdpass=yes`, and `-o CheckHostIP=no`
+arguments.
+
 ## 2026-05-18: Configurable sandbox SSH exec
 
 ### Who Is Affected
