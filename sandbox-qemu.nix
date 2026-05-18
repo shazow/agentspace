@@ -327,7 +327,6 @@ in
       defaultSSHExec =
         [
           "${pkgs.openssh}/bin/ssh"
-          "-q"
           "-o"
           "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
           "-o"
@@ -594,6 +593,12 @@ in
         boot.consoleLogLevel = 0;
         boot.initrd.verbose = false;
         boot.tmp.useTmpfs = false;
+
+        # Some workspace-backed filesystems (like FUSE) reject chgrp/chown on
+        # the virtiofsd socket path with EINVAL when --socket-group is used.
+        # virtie starts QEMU and virtiofsd as the same user, so managed
+        # sockets do not need a group override.
+        microvm.virtiofsd.group = lib.mkDefault null;
 
         # Need this to fix running out of fd's, but requires root (or CAP_DAC_READ_SEARCH)
         #   microvm.virtiofsd.inodeFileHandles = "mandatory";

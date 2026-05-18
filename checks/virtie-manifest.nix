@@ -202,6 +202,8 @@ let
   _defaultSSH =
     assert defaultManifest.ssh.autoprovision == true;
     assert defaultManifest.ssh.ready_socket == "ready.sock";
+    assert vmDefault.config.microvm.virtiofsd.group == null;
+    assert !(builtins.elem "-q" defaultManifest.ssh.exec);
     assert
       builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" defaultManifest.ssh.exec;
     assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);

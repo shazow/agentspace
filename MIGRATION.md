@@ -4,6 +4,25 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-18: Default launch SSH is no longer quiet
+
+### Who Is Affected
+
+- Consumers that inspect generated manifest `ssh.exec`.
+- Consumers that expect the default SSH command to include `-q`.
+
+### What Changed
+
+The generated default `ssh.exec` no longer includes `-q`. This lets `virtie`
+see SSH authentication failures and trigger default key autoprovisioning.
+
+Custom `agentspace.sandbox.ssh.exec` values are still used as-is.
+
+### Migration Steps
+
+No change is needed for normal launches. If you provide a custom SSH command and
+also rely on autoprovisioning, avoid suppressing authentication diagnostics.
+
 ## 2026-05-18: writeFiles write-back
 
 ### Who Is Affected

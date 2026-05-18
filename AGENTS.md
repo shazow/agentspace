@@ -16,7 +16,7 @@
 
 - Tests should be evergreen and focus on exercising affirmative functionality.
 - When writing a test to validate the removal of some functionality, note that it is temporary. Mention the tested scenario in the validation report but remove temporary tests before committing.
-- Name temporary tests clearly or add a short comment with the condition for removing them.
+- Name temporary tests clearly or add a short `XXX` comment with the condition for removing them.
 - Avoid using the real filesystem in tests, prefer `io` or `io/fs` or `testing/fstest` when possible for virtual filesystem (such as `fs.File`, `fs.FS`, `fstest.MapFS`).
 - Avoid using timed sleeps in tests, prefer signal-based control flows whenever possible. If sleep is the only way, then use a module-global constant to have uniform values for slow and fast sleep durations.
 
