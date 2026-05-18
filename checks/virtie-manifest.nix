@@ -31,6 +31,8 @@ let
       };
       "/etc/agentspace-host" = {
         path = ".agentspace-test/host-file";
+        followLinks = false;
+        writeBack = true;
       };
     };
     notifications = {
@@ -296,6 +298,8 @@ let
       && file.text == null
       && file.mode == null
       && file.overwrite == false
+      && file.follow_links == false
+      && file.write_back == true
       && file.source == ".agentspace-test/host-file"
     ) featureRichManifest.write_files;
     true;

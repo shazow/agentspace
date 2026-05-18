@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,8 @@ import (
 type guestAgentClient interface {
 	Ping(timeout time.Duration) error
 	OpenFile(timeout time.Duration, path string) (int, error)
+	OpenFileRead(timeout time.Duration, path string) (int, error)
+	ReadFile(timeout time.Duration, handle int, count int) (string, bool, error)
 	WriteFile(timeout time.Duration, handle int, payloadBase64 string) error
 	CloseFile(timeout time.Duration, handle int) error
 	Exec(timeout time.Duration, path string, args []string, captureOutput bool) (int, error)
@@ -77,9 +80,17 @@ func (c *socketGuestAgentClient) Ping(timeout time.Duration) error {
 }
 
 func (c *socketGuestAgentClient) OpenFile(timeout time.Duration, path string) (int, error) {
+	return c.openFile(timeout, path, "w")
+}
+
+func (c *socketGuestAgentClient) OpenFileRead(timeout time.Duration, path string) (int, error) {
+	return c.openFile(timeout, path, "r")
+}
+
+func (c *socketGuestAgentClient) openFile(timeout time.Duration, path string, mode string) (int, error) {
 	response, err := c.run(timeout, "guest-file-open", map[string]any{
 		"path": path,
-		"mode": "w",
+		"mode": mode,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("guest agent open %q: %w", path, err)
@@ -90,6 +101,25 @@ func (c *socketGuestAgentClient) OpenFile(timeout time.Duration, path string) (i
 		return 0, fmt.Errorf("guest agent open %q returned invalid handle: %w", path, err)
 	}
 	return handle, nil
+}
+
+func (c *socketGuestAgentClient) ReadFile(timeout time.Duration, handle int, count int) (string, bool, error) {
+	response, err := c.run(timeout, "guest-file-read", map[string]any{
+		"handle": handle,
+		"count":  count,
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("guest agent read handle %d: %w", handle, err)
+	}
+
+	var result struct {
+		BufB64 string `json:"buf-b64"`
+		EOF    bool   `json:"eof"`
+	}
+	if err := json.Unmarshal(response, &result); err != nil {
+		return "", false, fmt.Errorf("guest agent read handle %d returned invalid payload: %w", handle, err)
+	}
+	return result.BufB64, result.EOF, nil
 }
 
 func (c *socketGuestAgentClient) WriteFile(timeout time.Duration, handle int, payloadBase64 string) error {
@@ -275,6 +305,52 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 	return nil
 }
 
+const guestFileReadChunkSize = 1024 * 1024
+
+func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, watchers ...*managedProcess) error {
+	files := launchManifest.ResolvedWriteFiles()
+	writeBackFiles := make([]manifest.ResolvedWriteFile, 0, len(files))
+	for _, file := range files {
+		if file.WriteBack {
+			writeBackFiles = append(writeBackFiles, file)
+		}
+	}
+	if len(writeBackFiles) == 0 {
+		return nil
+	}
+
+	socketPath, err := launchManifest.ResolvedGuestAgentSocketPath()
+	if err != nil {
+		return &stageError{Stage: "guest file write-back", Err: err}
+	}
+
+	m.logger.Info("waiting for guest agent readiness for write-back")
+	client, err := m.waitForGuestAgent(ctx, socketPath, watchers...)
+	if err != nil {
+		return &stageError{Stage: "guest file write-back", Err: err}
+	}
+	defer client.Disconnect()
+
+	for _, file := range writeBackFiles {
+		data, err := m.readGuestFile(client, file.GuestPath)
+		if err != nil {
+			return &stageError{Stage: "guest file write-back", Err: err}
+		}
+		if file.HostPath == nil {
+			return &stageError{Stage: "guest file write-back", Err: fmt.Errorf("guest file %q has no host path", file.GuestPath)}
+		}
+		hostPath, err := writeBackHostPath(file)
+		if err != nil {
+			return &stageError{Stage: "guest file write-back", Err: err}
+		}
+		if err := writeHostFileAtomic(hostPath, data); err != nil {
+			return &stageError{Stage: "guest file write-back", Err: fmt.Errorf("write host file %q from guest path %q: %w", hostPath, file.GuestPath, err)}
+		}
+		m.logger.Info("wrote guest file back to host", "guest_path", file.GuestPath, "host_path", hostPath)
+	}
+	return nil
+}
+
 func guestFilePayloadBase64(file manifest.ResolvedWriteFile) (string, error) {
 	if file.Text != nil {
 		return base64.StdEncoding.EncodeToString([]byte(*file.Text)), nil
@@ -283,11 +359,55 @@ func guestFilePayloadBase64(file manifest.ResolvedWriteFile) (string, error) {
 		return "", fmt.Errorf("guest file %q has no text or host path", file.GuestPath)
 	}
 
-	data, err := os.ReadFile(*file.HostPath)
+	data, err := readHostFileForGuest(file)
 	if err != nil {
-		return "", fmt.Errorf("read host file %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+func readHostFileForGuest(file manifest.ResolvedWriteFile) ([]byte, error) {
+	if file.HostPath == nil {
+		return nil, fmt.Errorf("guest file %q has no host path", file.GuestPath)
+	}
+	if !file.FollowLinks {
+		info, err := os.Lstat(*file.HostPath)
+		if err != nil {
+			return nil, fmt.Errorf("stat host file %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("host file %q for guest path %q is a symlink and followLinks is false", *file.HostPath, file.GuestPath)
+		}
+	}
+	data, err := os.ReadFile(*file.HostPath)
+	if err != nil {
+		return nil, fmt.Errorf("read host file %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+	}
+	return data, nil
+}
+
+func writeBackHostPath(file manifest.ResolvedWriteFile) (string, error) {
+	if file.HostPath == nil {
+		return "", fmt.Errorf("guest file %q has no host path", file.GuestPath)
+	}
+	info, err := os.Lstat(*file.HostPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return *file.HostPath, nil
+		}
+		return "", fmt.Errorf("stat host file %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return *file.HostPath, nil
+	}
+	if !file.FollowLinks {
+		return "", fmt.Errorf("host file %q for guest path %q is a symlink and followLinks is false", *file.HostPath, file.GuestPath)
+	}
+	resolvedPath, err := filepath.EvalSymlinks(*file.HostPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve host symlink %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+	}
+	return resolvedPath, nil
 }
 
 func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, payloadBase64 string) error {
@@ -306,6 +426,79 @@ func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, payl
 		return writeErr
 	}
 	return closeErr
+}
+
+func (m *manager) readGuestFile(client guestAgentClient, guestPath string) ([]byte, error) {
+	timeout := m.effectiveQMPCommandTimeout()
+	handle, err := client.OpenFileRead(timeout, guestPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []byte
+	for {
+		payloadBase64, eof, readErr := client.ReadFile(timeout, handle, guestFileReadChunkSize)
+		if readErr == nil && payloadBase64 != "" {
+			chunk, decodeErr := base64.StdEncoding.DecodeString(payloadBase64)
+			if decodeErr != nil {
+				readErr = fmt.Errorf("decode guest file %q chunk: %w", guestPath, decodeErr)
+			} else {
+				result = append(result, chunk...)
+			}
+		}
+		if readErr != nil {
+			closeErr := client.CloseFile(timeout, handle)
+			if closeErr != nil {
+				return nil, errors.Join(readErr, closeErr)
+			}
+			return nil, readErr
+		}
+		if eof {
+			break
+		}
+	}
+
+	closeErr := client.CloseFile(timeout, handle)
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return result, nil
+}
+
+func writeHostFileAtomic(hostPath string, data []byte) error {
+	dir := filepath.Dir(hostPath)
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(hostPath); err == nil {
+		mode = info.Mode().Perm()
+	}
+	temp, err := os.CreateTemp(dir, ".virtie-writeback-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Chmod(mode); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, hostPath); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
 }
 
 const (

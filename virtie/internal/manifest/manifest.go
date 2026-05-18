@@ -238,22 +238,26 @@ type VirtioFS struct {
 }
 
 type WriteFile struct {
-	Chown     *string `json:"chown,omitempty"`
-	Text      *string `json:"text,omitempty"`
-	Mode      *string `json:"mode,omitempty"`
-	Overwrite *bool   `json:"overwrite,omitempty"`
-	Path      *string `json:"path,omitempty"`
+	Chown       *string `json:"chown,omitempty"`
+	Text        *string `json:"text,omitempty"`
+	Mode        *string `json:"mode,omitempty"`
+	Overwrite   *bool   `json:"overwrite,omitempty"`
+	FollowLinks *bool   `json:"followLinks,omitempty"`
+	WriteBack   *bool   `json:"writeBack,omitempty"`
+	Path        *string `json:"path,omitempty"`
 }
 
 type WriteFiles map[string]WriteFile
 
 type ResolvedWriteFile struct {
-	GuestPath string
-	Chown     *string
-	Text      *string
-	Mode      *string
-	Overwrite bool
-	HostPath  *string
+	GuestPath   string
+	Chown       *string
+	Text        *string
+	Mode        *string
+	Overwrite   bool
+	FollowLinks bool
+	WriteBack   bool
+	HostPath    *string
 }
 
 func Load(r io.Reader) (*Manifest, error) {
@@ -430,6 +434,8 @@ func validateWriteFiles(files WriteFiles) error {
 			return fmt.Errorf("manifest.writeFiles[%q] must set exactly one of text or path", guestPath)
 		case entry.Path != nil && *entry.Path == "":
 			return fmt.Errorf("manifest.writeFiles[%q].path must not be empty", guestPath)
+		case writeFileWriteBack(entry) && entry.Path == nil:
+			return fmt.Errorf("manifest.writeFiles[%q].writeBack requires path", guestPath)
 		case entry.Mode != nil && !writeFileModePattern.MatchString(*entry.Mode):
 			return fmt.Errorf("manifest.writeFiles[%q].mode must match ^0?[0-7]{3}$", guestPath)
 		}
@@ -699,11 +705,13 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 	for _, guestPath := range paths {
 		entry := m.WriteFiles[guestPath]
 		resolved := ResolvedWriteFile{
-			GuestPath: guestPath,
-			Chown:     entry.Chown,
-			Text:      entry.Text,
-			Mode:      entry.Mode,
-			Overwrite: writeFileOverwrite(entry),
+			GuestPath:   guestPath,
+			Chown:       entry.Chown,
+			Text:        entry.Text,
+			Mode:        entry.Mode,
+			Overwrite:   writeFileOverwrite(entry),
+			FollowLinks: writeFileFollowLinks(entry),
+			WriteBack:   writeFileWriteBack(entry),
 		}
 		if entry.Path != nil {
 			hostPath := m.resolvePath(*entry.Path)
@@ -716,6 +724,14 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 
 func writeFileOverwrite(file WriteFile) bool {
 	return file.Overwrite != nil && *file.Overwrite
+}
+
+func writeFileFollowLinks(file WriteFile) bool {
+	return file.FollowLinks == nil || *file.FollowLinks
+}
+
+func writeFileWriteBack(file WriteFile) bool {
+	return file.WriteBack != nil && *file.WriteBack
 }
 
 func (m *Manifest) SSHDestination(cid int) string {

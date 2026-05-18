@@ -4,6 +4,63 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-18: writeFiles write-back
+
+### Who Is Affected
+
+- Consumers that want files injected with `writeFiles` to persist guest-side
+  changes back to the host.
+- Direct manifest producers using `write_files[].source`.
+
+### What Changed
+
+`writeFiles` entries with a host source path can now opt into guest-to-host
+write-back. In Nix, set `agentspace.sandbox.writeFiles.*.writeBack = true`.
+In direct manifests, set `write_files[].write_back = true`.
+
+The default is `false`, so existing `writeFiles` entries remain one-way
+host-to-guest writes. `writeBack` requires a host source path because inline
+`text` entries do not have a host destination.
+
+### Migration Steps
+
+No change is needed unless you want guest changes to persist back to the host:
+
+```nix
+agentspace.sandbox.writeFiles."/etc/example.conf" = {
+  path = "./example.conf";
+  writeBack = true;
+};
+```
+
+## 2026-05-18: writeFiles source symlink control
+
+### Who Is Affected
+
+- Consumers setting `agentspace.sandbox.writeFiles.*.path` to a symlink.
+- Direct manifest producers setting `write_files[].source` to a symlink.
+
+### What Changed
+
+Host source file reads for `writeFiles` now expose explicit symlink behavior.
+`agentspace.sandbox.writeFiles.*.followLinks` lowers to
+`write_files[].follow_links` in direct manifests. The default is `true`, which
+preserves the previous behavior of reading through symlinks.
+
+Set `followLinks = false` in Nix or `follow_links = false` in direct manifests
+to reject symlink source paths before copying bytes into the guest.
+
+### Migration Steps
+
+No change is needed unless you want symlink source paths to fail closed:
+
+```nix
+agentspace.sandbox.writeFiles."/etc/example.conf" = {
+  path = "./example.conf";
+  followLinks = false;
+};
+```
+
 ## 2026-05-18: Launch wrapper closure size output
 
 ### Who Is Affected

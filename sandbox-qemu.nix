@@ -199,6 +199,18 @@ in
                 description = "Host path whose bytes are written into the guest file.";
               };
 
+              followLinks = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "Whether to follow symlinks when reading the host path.";
+              };
+
+              writeBack = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Whether to write guest file contents back to the host path on shutdown or suspend.";
+              };
+
               mode = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
@@ -461,10 +473,16 @@ in
 
       manifestWriteFiles = lib.mapAttrsToList (
         guestPath: file:
-        builtins.removeAttrs file [ "path" ]
+        builtins.removeAttrs file [
+          "path"
+          "followLinks"
+          "writeBack"
+        ]
         // lib.optionalAttrs (file.path != null) { source = file.path; }
         // {
           guest_path = guestPath;
+          follow_links = file.followLinks;
+          write_back = file.writeBack;
         }
       ) cfg.writeFiles;
 

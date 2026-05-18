@@ -271,9 +271,19 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	var started []*managedProcess
 	var qmpClient qmpClient
 	var featureTasks managedTaskGroup
+	writeBackOnExit := false
 	defer func() {
-		if errors.Is(err, errSavedSuspendExit) {
+		savedSuspend := errors.Is(err, errSavedSuspendExit)
+		if savedSuspend {
 			err = nil
+		}
+		if writeBackOnExit && !savedSuspend {
+			writeBackCtx, cancelWriteBack := context.WithTimeout(context.Background(), m.effectiveQMPCommandTimeout())
+			writeBackErr := m.writeBackGuestFiles(writeBackCtx, manifest)
+			cancelWriteBack()
+			if writeBackErr != nil {
+				err = errors.Join(err, writeBackErr)
+			}
 		}
 		featureErr := featureTasks.Stop()
 		stopErr := m.stopAll(started)
@@ -347,13 +357,14 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if err := qmpClient.Cont(m.effectiveQMPCommandTimeout()); err != nil {
 			return &stageError{Stage: "restore", Err: err}
 		}
+		writeBackOnExit = true
 		notifier.Notify(launchCtx, notifyStateRuntimeResume, "Restored saved VM state", map[string]string{
 			"host_name":     manifest.Identity.HostName,
 			"vm_state_path": resumeState.VMStatePath,
 			"cid":           fmt.Sprintf("%d", cid),
 		})
 	}
-	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid, notifier)
+	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid, notifier, &writeBackOnExit)
 	if err := m.handlePendingSuspendRequest(launchCtx, suspendRequests, suspendHandler); err != nil {
 		return err
 	}
@@ -362,6 +373,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if err := m.writeGuestFiles(launchCtx, manifest, stats, qemu); err != nil {
 			return err
 		}
+		writeBackOnExit = true
 		stats.MarkFilesReady(time.Now())
 
 		if sshReadySocketPath != "" {
@@ -739,11 +751,12 @@ type launchSuspendHandler struct {
 	client        qmpClient
 	cid           int
 	notifier      notificationSink
+	writeBack     *bool
 	once          sync.Once
 	err           error
 }
 
-func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink) *launchSuspendHandler {
+func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink, writeBack *bool) *launchSuspendHandler {
 	return &launchSuspendHandler{
 		manager:       manager,
 		manifest:      manifest,
@@ -751,11 +764,18 @@ func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpS
 		client:        client,
 		cid:           cid,
 		notifier:      notifier,
+		writeBack:     writeBack,
 	}
 }
 
 func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 	h.once.Do(func() {
+		if h.writeBack != nil && *h.writeBack {
+			if err := h.manager.writeBackGuestFiles(ctx, h.manifest); err != nil {
+				h.err = err
+				return
+			}
+		}
 		if err := h.manager.saveSuspendStateConnected(ctx, h.manifest, h.qmpSocketPath, h.client, h.cid, h.notifier); err != nil {
 			h.err = err
 			return

@@ -92,6 +92,41 @@ func TestLoadRejectsTrailingData(t *testing.T) {
 	}
 }
 
+func TestDocumentWriteFilesFollowLinksLowersToManifest(t *testing.T) {
+	followLinks := false
+	writeBack := true
+	document := validDocument()
+	document.WriteFiles = []WriteFileFacts{
+		{
+			GuestPath:   "/etc/source.conf",
+			Path:        stringPtr("source.conf"),
+			FollowLinks: &followLinks,
+			WriteBack:   &writeBack,
+		},
+	}
+
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+
+	loaded, err := Load(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+
+	files := loaded.ResolvedWriteFiles()
+	if len(files) != 1 {
+		t.Fatalf("expected one write file, got %#v", files)
+	}
+	if got := files[0].FollowLinks; got != false {
+		t.Fatalf("unexpected followLinks default: got %v want false", got)
+	}
+	if got := files[0].WriteBack; got != true {
+		t.Fatalf("unexpected writeBack value: got %v want true", got)
+	}
+}
+
 func TestLoadTOMLExamples(t *testing.T) {
 	for _, path := range []string{
 		"../../examples/manifest-simple.toml",
@@ -394,6 +429,17 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			},
 		},
 		{
+			name: "valid write back host path",
+			configure: func(manifest *Manifest) {
+				hostPath := "agent.conf"
+				writeBack := true
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Path: &hostPath, WriteBack: &writeBack},
+				}
+			},
+		},
+		{
 			name: "requires guest agent socket",
 			configure: func(manifest *Manifest) {
 				manifest.WriteFiles = WriteFiles{
@@ -443,6 +489,17 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 				}
 			},
 			wantError: "path must not be empty",
+		},
+		{
+			name: "rejects write back without host path",
+			configure: func(manifest *Manifest) {
+				writeBack := true
+				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+				manifest.WriteFiles = WriteFiles{
+					"/etc/agent.conf": {Text: &validText, WriteBack: &writeBack},
+				}
+			},
+			wantError: "writeBack requires path",
 		},
 		{
 			name: "allows mode without leading zero",
@@ -515,19 +572,21 @@ func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
 	mode := "0640"
 	overwrite := false
 	overwriteTrue := true
+	followLinksFalse := false
+	writeBackTrue := true
 	relativeHostPath := "files/agent.conf"
 	absoluteHostPath := "/tmp/host.conf"
 	manifest.WriteFiles = WriteFiles{
-		"/etc/a.conf": {Path: &relativeHostPath, Overwrite: &overwrite},
+		"/etc/a.conf": {Path: &relativeHostPath, Overwrite: &overwrite, FollowLinks: &followLinksFalse, WriteBack: &writeBackTrue},
 		"/etc/b.conf": {Text: &text, Chown: &chown, Mode: &mode, Overwrite: &overwriteTrue},
 		"/etc/c.conf": {Path: &absoluteHostPath},
 	}
 
 	got := manifest.ResolvedWriteFiles()
 	want := []ResolvedWriteFile{
-		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf"), Overwrite: false},
-		{GuestPath: "/etc/b.conf", Chown: &chown, Text: &text, Mode: &mode, Overwrite: true},
-		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath, Overwrite: false},
+		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf"), Overwrite: false, FollowLinks: false, WriteBack: true},
+		{GuestPath: "/etc/b.conf", Chown: &chown, Text: &text, Mode: &mode, Overwrite: true, FollowLinks: true},
+		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath, Overwrite: false, FollowLinks: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected resolved write files: got %#v want %#v", got, want)
