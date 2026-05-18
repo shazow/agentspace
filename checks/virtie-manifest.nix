@@ -5,6 +5,7 @@
 }:
 let
   sshKeys = import ./ssh-keys.nix { inherit pkgs; };
+  socatProxyCommand = "ProxyCommand=${pkgs.runtimeShell} -c 'cid=\${1#vsock/}; exec ${pkgs.socat}/bin/socat - VSOCK-CONNECT:$cid:$2' -- %h %p";
   notificationCommand = "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\"";
 
   vmVirtie = mkSandbox {
@@ -139,8 +140,7 @@ let
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
-  customSSHExecManifest =
-    vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
+  customSSHExecManifest = vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
   fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
@@ -178,8 +178,8 @@ let
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
     assert builtins.head manifest.ssh.exec == "${pkgs.openssh}/bin/ssh";
-    assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" manifest.ssh.exec;
-    assert builtins.elem "ProxyUseFdpass=yes" manifest.ssh.exec;
+    assert builtins.elem socatProxyCommand manifest.ssh.exec;
+    assert !(builtins.elem "ProxyUseFdpass=yes" manifest.ssh.exec);
     assert builtins.elem "CheckHostIP=no" manifest.ssh.exec;
     assert manifest.ssh.user == "agent";
     assert manifest.ssh.ready_socket == "ready.sock";
@@ -204,8 +204,7 @@ let
     assert defaultManifest.ssh.ready_socket == "ready.sock";
     assert vmDefault.config.microvm.virtiofsd.group == null;
     assert !(builtins.elem "-q" defaultManifest.ssh.exec);
-    assert
-      builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" defaultManifest.ssh.exec;
+    assert builtins.elem socatProxyCommand defaultManifest.ssh.exec;
     assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);
     assert defaultManifest.write_files == [ ];
     assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;
@@ -241,26 +240,23 @@ let
         cache = "auto";
       };
     assert !(builtins.head externalStoreSocketManifest.mounts ? virtiofsd_exec);
+    assert pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
+      vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
+    assert pkgs.lib.hasInfix
+      "nixStoreShareSocket does not exist or is not a socket: '/tmp/$(touch injected).sock'"
+      vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
     assert
-      pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
-        vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
-    assert
-      pkgs.lib.hasInfix
-        "nixStoreShareSocket does not exist or is not a socket: '/tmp/$(touch injected).sock'"
-        vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
-    assert
-      !(pkgs.lib.hasInfix
-        ''nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock''
-        vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
+      !(pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock" vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
     assert !invalidRelativeStoreSocket.success;
     true;
 
   _customSSHExec =
-    assert customSSHExecManifest.ssh.exec == [
-      "/custom/ssh"
-      "-F"
-      "custom-config"
-    ];
+    assert
+      customSSHExecManifest.ssh.exec == [
+        "/custom/ssh"
+        "-F"
+        "custom-config"
+      ];
     assert !(builtins.elem "ProxyUseFdpass=yes" customSSHExecManifest.ssh.exec);
     assert !(builtins.elem ".agentspace-test/id_ed25519" customSSHExecManifest.ssh.exec);
     true;

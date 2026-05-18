@@ -36,7 +36,10 @@ But to recap, here's a flake you can make to give it a try:
       ...
     }:
     let
+      hostSystem = "x86_64-linux"; # Use "aarch64-darwin" on Apple Silicon Macs.
       sandbox = agentspace.lib.mkSandbox {
+        inherit hostSystem;
+
         # Where should the VM images and filesystem overlays live? Defaults to $PWD if empty, but that's messy
         persistence.basedir = "/home/shazow/vms/agentspace";
 
@@ -59,10 +62,10 @@ But to recap, here's a flake you can make to give it a try:
     {
       nixosConfigurations.agentspace = sandbox;
 
-      apps."x86_64-linux" = {
+      apps.${hostSystem} = {
         default = {
           type = "app";
-          program = agentspace.lib.mkLaunch sandbox;
+          program = agentspace.lib.mkLaunchFor hostSystem sandbox;
         };
       };
     };

@@ -31,6 +31,7 @@ Acceptance criteria:
 - [x] The default `mkSandbox {}` launch experience provisions a usable out-of-the-box SSH credential story.
 - [x] Repo-level flake outputs and enabled checks validate the documented path end to end.
 - [x] `microvm.graphics.enable = true` is accepted and lowered into the typed `virtie` manifest for GTK or Cocoa display backends.
+- [x] `mkSandbox` can separate the host launcher system from the guest NixOS system so Apple Silicon hosts can use `aarch64-darwin` launcher tools with an `aarch64-linux` guest.
 
 ## Progress
 
@@ -52,10 +53,12 @@ Acceptance criteria:
 - [x] Keep the launch-contract and `virtie` fake-tools E2E checks enabled in `checks/default.nix`, alongside retained-hook checks for `extraModules`, `homeModules`, and a downstream-style consumer config.
 - [x] Fix `nix flake check` evaluation by removing broken non-derivation package shims.
 - [x] Add graphical-mode spec and typed `virtie` manifest lowering for `microvm.graphics`.
+- [x] Add `aarch64-darwin` host outputs and switch the default SSH proxy from Linux-only `systemd-ssh-proxy` to a host-packaged `socat` proxy.
 
 ## Appendix
 
 - Current supported selection rule: built-in SSH attach, built-in `virtiofs` shares, optional additional `virtiofs` or `9p` shares, QEMU hypervisor, dynamic vsock allocation, and user-mode networking.
+- `mkSandbox { hostSystem = "aarch64-darwin"; }` defaults the guest to `aarch64-linux`; callers can override `guestSystem` explicitly when they have a suitable builder and QEMU target.
 - Current launcher shape: set `REPO_DIR`, run the default prelaunch shell, then exec `virtie launch -v` with `--ssh` when `agentspace.sandbox.ssh.autoconnect` is true or wrapper args are supplied.
 - Current Nix-to-virtie contract:
   - Nix still owns guest evaluation and image production through `microvm.nix`.

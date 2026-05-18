@@ -15,8 +15,10 @@
       ...
     }:
     let
-      system = "x86_64-linux";
+      hostSystem = "x86_64-linux";
       sandbox = agentspace.lib.mkSandbox {
+        inherit hostSystem;
+
         extraModules = [
           {
             # Keep the example launchable without requiring permission to chgrp
@@ -35,12 +37,12 @@
         # Keep the example ephemeral aside from the writable nix store overlay.
         persistence.homeImage = null;
       };
-      launch = agentspace.lib.mkLaunch sandbox;
+      launch = agentspace.lib.mkLaunchFor hostSystem sandbox;
     in
     {
       nixosConfigurations.agentspace = sandbox;
 
-      apps.${system} = {
+      apps.${hostSystem} = {
         default = {
           type = "app";
           program = launch;
