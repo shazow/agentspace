@@ -4,6 +4,33 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-20: mkExecSSH helper replaces SSH path options
+
+### Who Is Affected
+
+- Consumers setting `agentspace.sandbox.ssh.identityFile` or
+  `agentspace.sandbox.ssh.configFile`.
+- Consumers that want the common OpenSSH command built for them.
+
+### What Changed
+
+`agentspace.sandbox.ssh.identityFile` and `agentspace.sandbox.ssh.configFile`
+were removed. Use `agentspace.lib.mkExecSSH` to build `ssh.exec` instead.
+
+### Migration Steps
+
+Replace option fragments with the helper:
+
+```nix
+ssh.exec = agentspace.lib.mkExecSSH {
+  identityFile = "./id_ed25519";
+  configFile = "ssh_config";
+};
+```
+
+If you were only using the old options for the generated default launcher,
+just drop them and keep `ssh.authorizedKeys` / `ssh.exec` as needed.
+
 ## 2026-05-20: mkSandbox manifest output switched to TOML
 
 ### Who Is Affected

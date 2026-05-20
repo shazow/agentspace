@@ -3,6 +3,7 @@
   lib,
   options,
   pkgs,
+  mkExecSSH ? import ./lib/mkExecSSH.nix { inherit pkgs lib; },
   ...
 }:
 
@@ -71,12 +72,6 @@ in
         description = "Default remote shell command passed to the sandbox SSH session.";
       };
 
-      identityFile = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Optional SSH identity file passed to host-side launch/connect helpers.";
-      };
-
       exec = lib.mkOption {
         type = lib.types.nullOr (lib.types.listOf lib.types.str);
         default = null;
@@ -87,8 +82,8 @@ in
         ];
         description = ''
           Complete host-side SSH argv used by virtie. When unset, agentspace
-          generates a default OpenSSH command and appends ssh.identityFile when
-          configured.
+          generates a default OpenSSH command. Use `lib.mkExecSSH` to build the
+          common OpenSSH argv with optional config and identity arguments.
         '';
       };
 
@@ -323,27 +318,8 @@ in
         cd "$REPO_DIR"
       '';
 
-      sshAutoprovision = cfg.ssh.identityFile == null && cfg.ssh.authorizedKeys == [ ];
-      defaultSSHExec =
-        [
-          "${pkgs.openssh}/bin/ssh"
-          "-o"
-          "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
-          "-o"
-          "ProxyUseFdpass=yes"
-          "-o"
-          "CheckHostIP=no"
-          "-o"
-          "StrictHostKeyChecking=no"
-          "-o"
-          "UserKnownHostsFile=/dev/null"
-          "-o"
-          "GlobalKnownHostsFile=/dev/null"
-        ]
-        ++ lib.optionals (cfg.ssh.identityFile != null) [
-          "-i"
-          cfg.ssh.identityFile
-        ];
+      sshAutoprovision = cfg.ssh.exec == null && cfg.ssh.authorizedKeys == [ ];
+      defaultSSHExec = mkExecSSH { };
       sshExec = if cfg.ssh.exec != null then cfg.ssh.exec else defaultSSHExec;
       nixStoreShareUsesSocket = cfg.nixStoreShareSocket != null;
       isNixStoreShare = share: share.tag == "ro-store";

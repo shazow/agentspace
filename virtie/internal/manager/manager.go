@@ -25,6 +25,7 @@ import (
 
 	backendfile "github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
+	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
@@ -810,6 +811,7 @@ func (m *manager) runSSHSession(
 		attemptStarted := time.Now()
 		stats.MarkSSHAttempt(attemptStarted)
 		spec := buildSSHSpecWithArgv(launchManifest, cid, remoteCommand, argv)
+		sessionLogger.Info("ssh command", "command", shellquote.Join(append([]string{spec.Path}, spec.Args...)...))
 		spec.Stderr = stderr
 		session, err := m.startManagedProcess(spec)
 		if err != nil {

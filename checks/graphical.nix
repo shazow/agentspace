@@ -1,6 +1,7 @@
 {
   mkLaunch,
   mkSandbox,
+  mkExecSSH,
   pkgs,
   ...
 }:
@@ -9,7 +10,9 @@ let
 
   graphicalVM = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.graphical.publicKey ];
-    ssh.identityFile = sshKeys.graphical.identityFile;
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.graphical.identityFile;
+    };
     persistence = {
       homeImage = null;
       storeOverlay = "nix-store-overlay.img";
