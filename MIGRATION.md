@@ -4,6 +4,25 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-20: mkSandbox manifest output switched to TOML
+
+### Who Is Affected
+
+- Consumers that inspect `agentspace.sandbox.launch.virtieManifest` or
+  `virtieManifestTemplate` paths.
+- Consumers that assume the generated manifest file is JSON.
+
+### What Changed
+
+`mkSandbox` now writes the launch manifest as TOML instead of JSON. The
+runtime manifest path now ends in `.toml`, and the copied template is a TOML
+file generated from the same manifest data.
+
+### Migration Steps
+
+Update any path assertions, file globs, or tooling that expects
+`virtie-<host>.json` to use `virtie-<host>.toml` instead.
+
 ## 2026-05-18: Default launch SSH is no longer quiet
 
 ### Who Is Affected
