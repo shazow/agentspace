@@ -1,6 +1,7 @@
 {
   mkLaunch,
   mkSandbox,
+  mkExecSSH,
   pkgs,
   ...
 }:
@@ -9,7 +10,9 @@ let
 
   vmConsumer = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.consumer.publicKey ];
-    ssh.identityFile = sshKeys.consumer.identityFile;
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.consumer.identityFile;
+    };
     ssh.command = "bash -lc pwd";
     groups = [
       "wheel"
@@ -71,7 +74,9 @@ let
   virtiofsdHelper = "${runner}/bin/virtiofsd-run";
 
   consumerWorkflow =
-    assert sandboxCfg.ssh.identityFile == sshKeys.consumer.identityFile;
+    assert sandboxCfg.ssh.exec == mkExecSSH {
+      identityFile = sshKeys.consumer.identityFile;
+    };
     assert sandboxCfg.ssh.command == "bash -lc pwd";
     assert sandboxCfg.ssh.autoconnect == true;
     assert sandboxCfg.persistence.homeImage == "/var/lib/agentspace/home.img";

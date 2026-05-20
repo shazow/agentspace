@@ -472,8 +472,8 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	if got := len(runner.sshArgs); got != 0 {
 		t.Fatalf("expected no ssh starts, got %d", got)
 	}
-	if strings.Contains(logOutput.String(), "starting ssh session") {
-		t.Fatalf("unexpected interactive ssh session log: %q", logOutput.String())
+	if strings.Contains(logOutput.String(), "msg=\"ssh command\"") {
+		t.Fatalf("unexpected interactive ssh command log, got %q", logOutput.String())
 	}
 	if !strings.Contains(logOutput.String(), "connect with: /bin/ssh agent@vsock/3") {
 		t.Fatalf("expected out-of-band ssh hint, got %q", logOutput.String())
@@ -632,8 +632,8 @@ func TestManagerLaunchStartsSSHOnceAfterReadiness(t *testing.T) {
 	if !strings.Contains(logs, "waiting for ssh readiness") {
 		t.Fatalf("expected ssh readiness log, got %q", logs)
 	}
-	if strings.Contains(logs, "starting ssh session") {
-		t.Fatalf("unexpected per-attempt ssh start log: %q", logs)
+	if !strings.Contains(logs, "msg=\"ssh command\"") {
+		t.Fatalf("expected per-attempt ssh command log, got %q", logs)
 	}
 	assertLaunchStatsLog(t, logs, []string{
 		"ssh_attempts=1",

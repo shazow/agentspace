@@ -1,12 +1,13 @@
 {
   mkSandbox,
   mkLaunch,
+  mkExecSSH,
   pkgs,
   virtiePackage,
 }:
 let
   args = {
-    inherit mkLaunch mkSandbox pkgs virtiePackage;
+    inherit mkLaunch mkSandbox mkExecSSH pkgs virtiePackage;
   };
 in
 import ./virtie-manifest.nix args

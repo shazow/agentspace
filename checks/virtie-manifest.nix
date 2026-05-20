@@ -1,5 +1,6 @@
 {
   mkSandbox,
+  mkExecSSH,
   pkgs,
   ...
 }:
@@ -9,7 +10,9 @@ let
 
   vmVirtie = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
-    ssh.identityFile = sshKeys.virtie.identityFile;
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
     persistence.homeImage = null;
   };
 
@@ -19,7 +22,9 @@ let
 
   vmVirtieFeatureRich = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
-    ssh.identityFile = sshKeys.virtie.identityFile;
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
     persistence.homeImage = null;
     balloon = true;
     writeFiles = {
@@ -47,14 +52,18 @@ let
 
   vmVirtieBalloonDisabled = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
-    ssh.identityFile = sshKeys.virtie.identityFile;
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
     persistence.homeImage = null;
     balloon = false;
   };
 
   vmVirtieExternalStoreSocket = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
-    ssh.identityFile = sshKeys.virtie.identityFile;
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
     persistence.homeImage = null;
     mountWorkspace = false;
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
@@ -76,7 +85,6 @@ let
 
   vmVirtieCustomSSHExec = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
-    ssh.identityFile = sshKeys.virtie.identityFile;
     ssh.exec = [
       "/custom/ssh"
       "-F"
@@ -85,9 +93,30 @@ let
     persistence.homeImage = null;
   };
 
+  vmVirtieConfigFile = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+      configFile = ".agentspace-test/ssh_config";
+    };
+    persistence.homeImage = null;
+  };
+
+  vmVirtieHomeSSHPaths = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.exec = mkExecSSH {
+      homeDir = "/home/test";
+      identityFile = "~/.ssh/id_ed25519";
+      configFile = "~/.ssh/config";
+    };
+    persistence.homeImage = null;
+  };
+
   vmVirtieExtraShares = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
-    ssh.identityFile = sshKeys.virtie.identityFile;
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
     persistence.homeImage = null;
     shares = [
       {
@@ -110,7 +139,9 @@ let
 
   vmVirtieFixedMachine = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
-    ssh.identityFile = sshKeys.virtie.identityFile;
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
     persistence.homeImage = null;
     machine = {
       memory = 512;
@@ -120,7 +151,9 @@ let
 
   vmVirtieGraphical = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
-    ssh.identityFile = sshKeys.virtie.identityFile;
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
     persistence.homeImage = null;
     extraModules = [
       {
@@ -141,6 +174,8 @@ let
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
   customSSHExecManifest =
     vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
+  configFileManifest = vmVirtieConfigFile.config.agentspace.sandbox.launch.virtieManifestData;
+  homeSSHPathsManifest = vmVirtieHomeSSHPaths.config.agentspace.sandbox.launch.virtieManifestData;
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
   fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
@@ -177,6 +212,9 @@ let
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.after == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
+    assert vmVirtie.config.agentspace.sandbox.ssh.exec == mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
     assert builtins.head manifest.ssh.exec == "${pkgs.openssh}/bin/ssh";
     assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" manifest.ssh.exec;
     assert builtins.elem "ProxyUseFdpass=yes" manifest.ssh.exec;
@@ -197,7 +235,7 @@ let
     assert !(manifest ? microvmRun);
     assert !(manifest ? virtiofsdRun);
     assert !builtins.any (arg: builtins.match ".*@vsock/.*" arg != null) manifest.ssh.exec;
-    true;
+    _configFile;
 
   _defaultSSH =
     assert defaultManifest.ssh.autoprovision == true;
@@ -263,6 +301,18 @@ let
     ];
     assert !(builtins.elem "ProxyUseFdpass=yes" customSSHExecManifest.ssh.exec);
     assert !(builtins.elem ".agentspace-test/id_ed25519" customSSHExecManifest.ssh.exec);
+    true;
+
+  _configFile =
+    assert builtins.elem "-F" configFileManifest.ssh.exec;
+    assert builtins.elem ".agentspace-test/ssh_config" configFileManifest.ssh.exec;
+    assert builtins.elem ".agentspace-test/id_ed25519" configFileManifest.ssh.exec;
+    true;
+
+  _homeSSHPaths =
+    assert builtins.elem "-F" homeSSHPathsManifest.ssh.exec;
+    assert builtins.elem "/home/test/.ssh/config" homeSSHPathsManifest.ssh.exec;
+    assert builtins.elem "/home/test/.ssh/id_ed25519" homeSSHPathsManifest.ssh.exec;
     true;
 
   _extraShares =

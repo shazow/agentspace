@@ -31,6 +31,8 @@
         env.CGO_ENABLED = 0;
       };
 
+      mkExecSSH = import ./lib/mkExecSSH.nix { inherit pkgs lib; };
+
       mkSandbox =
         cfg:
         let
@@ -63,6 +65,7 @@
           baseSystem = nixpkgs.lib.nixosSystem {
             inherit system;
             modules = baseModules;
+            specialArgs = { inherit mkExecSSH; };
           };
           sandboxExtraModules = baseSystem.config.agentspace.sandbox.extraModules;
         in
@@ -71,6 +74,7 @@
         else
           baseSystem.extendModules {
             modules = sandboxExtraModules;
+            specialArgs = { inherit mkExecSSH; };
           };
 
       mkLaunch =
@@ -143,6 +147,7 @@
         inherit
           mkLaunch
           mkSandbox
+          mkExecSSH
           pkgs
           virtiePackage
           ;
@@ -159,13 +164,14 @@
       nixosModules.default = ./sandbox-qemu.nix;
 
       lib = {
-        inherit mkSandbox mkLaunch;
+        inherit mkSandbox mkLaunch mkExecSSH;
       };
 
       checks.${system} = import ./checks {
         inherit (checkArgs)
           mkLaunch
           mkSandbox
+          mkExecSSH
           pkgs
           virtiePackage
           ;
