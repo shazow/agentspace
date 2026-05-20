@@ -15,7 +15,7 @@ let
       storeOverlay = "nix-store-overlay.img";
       storeDisk = true;
     };
-    mountWorkspace = false;
+    workspace.enableMount = false;
     machine = {
       memory = 768;
       vcpu = 1;

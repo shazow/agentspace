@@ -92,6 +92,9 @@ func loadLaunchManifest(path string) (*manifest.Manifest, error) {
 		return nil, fmt.Errorf("resolve manifest working directory %q: %w", manifest.Paths.WorkingDir, err)
 	}
 	manifest.Paths.WorkingDir = workingDir
+	if manifest.Workspace.Mode == "passthrough" {
+		manifest.Workspace.MountPoint = workingDir
+	}
 
 	if err := writeManifestWorkingDir(resolvedPath, data, workingDir); err != nil {
 		return nil, err

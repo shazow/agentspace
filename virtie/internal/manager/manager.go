@@ -557,10 +557,24 @@ func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 		name := "virtiofsd"
 		if daemon.Tag != "" {
 			name = fmt.Sprintf("virtiofsd[%s]", daemon.Tag)
-			m.logger.Info("starting virtiofsd", "tag", daemon.Tag)
-		} else {
-			m.logger.Info("starting virtiofsd")
 		}
+		attrs := []any{}
+		if daemon.Tag != "" {
+			attrs = append(attrs, "tag", daemon.Tag)
+		}
+		if daemon.SourcePath != "" {
+			attrs = append(attrs, "source", daemon.SourcePath)
+		}
+		if daemon.SocketPath != "" {
+			attrs = append(attrs, "socket", daemon.SocketPath)
+		}
+		if daemon.Tag == "workspace" {
+			if mountPoint := workspaceGuestMountPoint(manifest); mountPoint != "" {
+				attrs = append(attrs, "guest_mount_point", mountPoint)
+			}
+		}
+		attrs = append(attrs, "command", daemon.Command.String())
+		m.logger.Info("starting virtiofsd", attrs...)
 
 		process, err := m.startManagedProcess(processSpec{
 			Name:         name,
@@ -1198,7 +1212,7 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 }
 
 func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) processSpec {
-	return buildSSHSpecWithArgv(manifest, cid, remoteCommand, manifest.SSH.Argv)
+	return buildSSHSpecWithArgv(manifest, cid, remoteCommand, expandedSSHExec(manifest))
 }
 
 func buildSSHSpecWithArgv(manifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) processSpec {
@@ -1219,7 +1233,45 @@ func buildSSHSpecWithArgv(manifest *manifest.Manifest, cid int, remoteCommand []
 }
 
 func buildSSHCommandHint(manifest *manifest.Manifest, cid int) string {
-	return sshtools.CommandHint(sshtools.Config{Exec: manifest.SSH.Argv, User: manifest.SSH.User}, cid)
+	return sshtools.CommandHint(sshtools.Config{Exec: expandedSSHExec(manifest), User: manifest.SSH.User}, cid)
+}
+
+func expandedSSHExec(manifest *manifest.Manifest) []string {
+	return expandSSHConfigPaths(manifest.Paths.WorkingDir, manifest.SSH.Argv)
+}
+
+func workspaceGuestMountPoint(manifest *manifest.Manifest) string {
+	if manifest == nil {
+		return ""
+	}
+	if manifest.Workspace.MountPoint != "" {
+		return manifest.Workspace.MountPoint
+	}
+	if manifest.Workspace.Mode == "passthrough" {
+		return manifest.Paths.WorkingDir
+	}
+	return ""
+}
+
+func expandSSHConfigPaths(baseDir string, argv []string) []string {
+	if len(argv) == 0 {
+		return nil
+	}
+	resolved := append([]string(nil), argv...)
+	for i := 0; i < len(resolved)-1; i++ {
+		switch resolved[i] {
+		case "-F", "-i":
+			resolved[i+1] = resolveHostPath(baseDir, resolved[i+1])
+		}
+	}
+	return resolved
+}
+
+func resolveHostPath(baseDir string, path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(baseDir, path)
 }
 
 func joinDeferredError(target *error, fn func() error) {

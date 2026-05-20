@@ -1041,6 +1041,46 @@ func TestGuestFilePayloadRejectsHostSymlinkWhenFollowLinksFalse(t *testing.T) {
 	}
 }
 
+func TestWriteGuestFilesMountsPassthroughWorkspace(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Workspace.Mode = "passthrough"
+	cfg.Workspace.MountPoint = "/home/agent/project"
+	cfg.WriteFiles = nil
+
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{
+			{Exited: true},
+			{Exited: true, ExitCode: 1},
+			{Exited: true},
+		},
+	}
+	manager := &manager{
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            slog.New(slog.DiscardHandler),
+		qmpConnectTimeout: time.Second,
+	}
+
+	if err := manager.writeGuestFiles(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("mount passthrough workspace: %v", err)
+	}
+
+	if got, want := len(guestAgent.execs), 3; got != want {
+		t.Fatalf("unexpected guest exec count: got %d want %d", got, want)
+	}
+	if got := guestAgent.execs[0]; got.path != guestInstallPath || !reflect.DeepEqual(got.args, []string{"-d", "/home/agent/project"}) {
+		t.Fatalf("unexpected workspace mkdir exec: %#v", got)
+	}
+	if got := guestAgent.execs[1]; got.path != guestMountpointPath || !reflect.DeepEqual(got.args, []string{"-q", "/home/agent/project"}) {
+		t.Fatalf("unexpected workspace mountpoint exec: %#v", got)
+	}
+	if got := guestAgent.execs[2]; got.path != guestMountPath || !reflect.DeepEqual(got.args, []string{"--bind", passthroughWorkspaceSource, "/home/agent/project"}) {
+		t.Fatalf("unexpected workspace mount exec: %#v", got)
+	}
+}
+
 func TestManagerLaunchWritesBackGuestFilesOnShutdown(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -3110,10 +3150,12 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 
 	manifest := validManifest(t.TempDir())
 	manifest.Paths.RuntimeDir = stringPtr("")
+	manifest.Workspace.MountPoint = "/home/agent/workspace"
 
 	runner := &fakeRunner{}
+	var logOutput bytes.Buffer
 	manager := &manager{
-		logger: slog.New(slog.DiscardHandler),
+		logger: slog.New(slog.NewTextHandler(&logOutput, nil)),
 		runner: runner,
 	}
 
@@ -3127,6 +3169,16 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	}
 	if !runner.processGroups["virtiofsd[workspace]"] {
 		t.Fatal("expected virtiofs daemon to run in its own process group")
+	}
+	logs := logOutput.String()
+	if !strings.Contains(logs, "starting virtiofsd") {
+		t.Fatalf("expected virtiofsd start log, got %q", logs)
+	}
+	if !strings.Contains(logs, "source=") || !strings.Contains(logs, filepath.Join("shares", "workspace")) {
+		t.Fatalf("expected virtiofsd source path in logs, got %q", logs)
+	}
+	if !strings.Contains(logs, "guest_mount_point=/home/agent/workspace") {
+		t.Fatalf("expected workspace guest mount point in logs, got %q", logs)
 	}
 }
 
@@ -3245,6 +3297,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 			{
 				Tag:        "workspace",
 				SocketPath: "fs.sock",
+				SourcePath: "shares/workspace",
 				Command: manifest.Command{
 					Path: "/tmp/virtiofsd-workspace",
 				},

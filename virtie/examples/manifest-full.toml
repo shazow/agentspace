@@ -135,6 +135,12 @@ retry_delay = 0.5  # Default: 0.5 seconds
 # the guest agent, and retrying SSH with that identity.
 autoprovision = true  # Default: false
 
+[workspace]
+# Static keeps a dedicated guest mount path. Passthrough reuses the host
+# working directory as the guest mount point and is filled in at launch time.
+mode = "static"  # Options: static (default), passthrough
+mount_point = "/home/agent/workspace"  # Default: "/home/agent/workspace" when mode is static
+
 [vsock]
 # virtie allocates a runtime vsock CID to avoid collisions between concurrent
 # VMs. The range exists for hosts or orchestrators that reserve parts of the

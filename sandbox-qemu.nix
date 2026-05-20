@@ -132,10 +132,27 @@ in
       };
     };
 
-    mountWorkspace = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Mount the current working directory into the VM as the workspace share.";
+    workspace = {
+      enableMount = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Mount the current working directory into the VM as the workspace share.";
+      };
+
+      mode = lib.mkOption {
+        type = lib.types.enum [
+          "static"
+          "passthrough"
+        ];
+        default = "static";
+        description = "Workspace mount mode. Static uses workspace.mountPoint; passthrough reuses the launch working directory as the guest mount path.";
+      };
+
+      mountPoint = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Where to mount the current working directory inside the VM when workspace.mode is static. Ignored in passthrough mode.";
+      };
     };
 
     shares = lib.mkOption {
@@ -231,12 +248,6 @@ in
       description = "Files to write into the guest during fresh VM launch, keyed by absolute guest path.";
     };
 
-    workspaceMountPoint = lib.mkOption {
-      type = lib.types.str;
-      default = "/home/${cfg.user}/workspace";
-      description = "Where to mount the current working directory inside the VM.";
-    };
-
     nixStoreShareSocket = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -318,32 +329,49 @@ in
           exit 1
         fi
       ''
-      + lib.optionalString cfg.mountWorkspace ''
-        echo "📂 Mounting current directory at ~/workspace"
-        cd "$REPO_DIR"
-      '';
+      + lib.optionalString cfg.workspace.enableMount (
+        if cfg.workspace.mode == "passthrough" then
+          ''
+            echo "📂 Using passthrough workspace at $REPO_DIR"
+            cd "$REPO_DIR"
+          ''
+        else
+          ''
+            echo "📂 Mounting current directory at ~/workspace"
+            cd "$REPO_DIR"
+          ''
+      );
 
+      resolvedWorkspaceMountPoint =
+        if cfg.workspace.mountPoint != null then
+          cfg.workspace.mountPoint
+        else
+          "/home/${cfg.user}/workspace";
+      passthroughWorkspaceStagingMountPoint = "/run/agentspace/workspace";
       sshAutoprovision = cfg.ssh.identityFile == null && cfg.ssh.authorizedKeys == [ ];
-      defaultSSHExec =
-        [
-          "${pkgs.openssh}/bin/ssh"
-          "-o"
-          "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
-          "-o"
-          "ProxyUseFdpass=yes"
-          "-o"
-          "CheckHostIP=no"
-          "-o"
-          "StrictHostKeyChecking=no"
-          "-o"
-          "UserKnownHostsFile=/dev/null"
-          "-o"
-          "GlobalKnownHostsFile=/dev/null"
-        ]
-        ++ lib.optionals (cfg.ssh.identityFile != null) [
-          "-i"
-          cfg.ssh.identityFile
-        ];
+      defaultSSHExec = [
+        "${pkgs.openssh}/bin/ssh"
+        "-o"
+        "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
+        "-o"
+        "ProxyUseFdpass=yes"
+        "-o"
+        "CheckHostIP=no"
+        "-o"
+        "StrictHostKeyChecking=no"
+        "-o"
+        "UserKnownHostsFile=/dev/null"
+        "-o"
+        "GlobalKnownHostsFile=/dev/null"
+      ]
+      ++ lib.optionals (cfg.ssh.configFile != null) [
+        "-F"
+        cfg.ssh.configFile
+      ]
+      ++ lib.optionals (cfg.ssh.identityFile != null) [
+        "-i"
+        cfg.ssh.identityFile
+      ];
       sshExec = if cfg.ssh.exec != null then cfg.ssh.exec else defaultSSHExec;
       nixStoreShareUsesSocket = cfg.nixStoreShareSocket != null;
       isNixStoreShare = share: share.tag == "ro-store";
@@ -409,16 +437,18 @@ in
         ];
       };
 
-      mkManifestVolume = volume: {
-        image = volume.image;
-        size = volume.size;
-        fs = volume.fsType;
-        create = volume.autoCreate;
-        label = volume.label;
-        read_only = volume.readOnly;
-        direct = volume.direct;
-        serial = volume.serial;
-      };
+      mkManifestVolume =
+        volume:
+        {
+          image = volume.image;
+          size = volume.size;
+          fs = volume.fsType;
+          create = volume.autoCreate;
+          read_only = volume.readOnly;
+          direct = volume.direct;
+        }
+        // lib.optionalAttrs (volume.label != null) { label = volume.label; }
+        // lib.optionalAttrs (volume.serial != null) { serial = volume.serial; };
       manifestVolumes =
         lib.optionals cfg.persistence.storeDisk [
           {
@@ -553,6 +583,12 @@ in
           mac = interface.mac;
           forward = manifestForwardPorts;
         }) config.microvm.interfaces;
+        workspace = {
+          mode = cfg.workspace.mode;
+        }
+        // lib.optionalAttrs (cfg.workspace.mode != "passthrough") {
+          mount_point = resolvedWorkspaceMountPoint;
+        };
         notifications = notificationManifest;
         write_files = manifestWriteFiles;
       };
@@ -570,6 +606,10 @@ in
               cfg.nixStoreShareSocket == null
               || (cfg.nixStoreShareSocket != "" && lib.hasPrefix "/" cfg.nixStoreShareSocket);
             message = "agentspace.sandbox.nixStoreShareSocket must be an absolute socket path when set.";
+          }
+          {
+            assertion = cfg.workspace.mode != "passthrough" || cfg.workspace.mountPoint == null;
+            message = "agentspace.sandbox.workspace.mode=passthrough is mutually exclusive with agentspace.sandbox.workspace.mountPoint.";
           }
         ];
 
@@ -718,12 +758,16 @@ in
                 readOnly = true;
               }
             ]
-            ++ lib.optionals cfg.mountWorkspace [
+            ++ lib.optionals cfg.workspace.enableMount [
               {
                 proto = "virtiofs";
                 tag = "workspace";
                 source = ".";
-                mountPoint = cfg.workspaceMountPoint;
+                mountPoint =
+                  if cfg.workspace.mode == "passthrough" then
+                    passthroughWorkspaceStagingMountPoint
+                  else
+                    resolvedWorkspaceMountPoint;
                 securityModel = "mapped";
               }
             ]

@@ -18,12 +18,14 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
+	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 )
 
 const (
 	defaultSSHRetryDelaySeconds = 0.5
 	defaultSSHReadySocket       = ""
+	defaultWorkspaceMode        = "static"
 	defaultVSockCIDStart        = 3
 	defaultVSockCIDEnd          = 65535
 	defaultVolumeFSType         = "ext4"
@@ -40,6 +42,7 @@ type Manifest struct {
 	QEMU          QEMU          `json:"qemu"`
 	Volumes       []Volume      `json:"volumes,omitempty"`
 	VSock         VSock         `json:"vsock"`
+	Workspace     Workspace     `json:"workspace,omitempty"`
 	VirtioFS      VirtioFS      `json:"virtiofs"`
 	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
 	Notifications Notifications `json:"notifications,omitempty"`
@@ -75,6 +78,11 @@ type VSockCIDRange struct {
 
 type VSock struct {
 	CIDRange VSockCIDRange `json:"cidRange"`
+}
+
+type Workspace struct {
+	Mode       string `json:"mode"`
+	MountPoint string `json:"mountPoint,omitempty"`
 }
 
 type QEMU struct {
@@ -170,6 +178,7 @@ type QEMURNGDevice struct {
 type QEMUVirtioFSShare struct {
 	ID         string `json:"id"`
 	SocketPath string `json:"socketPath"`
+	SourcePath string `json:"sourcePath,omitempty"`
 	Tag        string `json:"tag"`
 	Transport  string `json:"transport"`
 }
@@ -222,6 +231,13 @@ type Command struct {
 	Args []string `json:"args,omitempty"`
 }
 
+func (c Command) String() string {
+	if c.Path == "" {
+		return ""
+	}
+	return shellquote.Join(append([]string{c.Path}, c.Args...)...)
+}
+
 type Notifications struct {
 	Command *Command `json:"command,omitempty"`
 	States  []string `json:"states,omitempty"`
@@ -230,6 +246,7 @@ type Notifications struct {
 type VirtioFSDaemon struct {
 	Tag        string  `json:"tag"`
 	SocketPath string  `json:"socketPath"`
+	SourcePath string  `json:"sourcePath,omitempty"`
 	Command    Command `json:"command"`
 }
 
@@ -279,6 +296,9 @@ func (m *Manifest) applyDefaults() {
 	if m.QEMU.SSHReady.SocketPath == "" {
 		m.QEMU.SSHReady.SocketPath = defaultSSHReadySocket
 	}
+	if m.Workspace.Mode == "" {
+		m.Workspace.Mode = defaultWorkspaceMode
+	}
 	if m.QEMU.Knobs.NoGraphic == nil {
 		m.QEMU.Knobs.NoGraphic = boolPtr(m.QEMU.Graphics == nil)
 	}
@@ -319,6 +339,8 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.binaryPath is required")
 	case m.QEMU.QMP.SocketPath == "":
 		return fmt.Errorf("manifest.qemu.qmp.socketPath is required")
+	case !validWorkspaceMode(m.Workspace.Mode):
+		return fmt.Errorf("manifest.workspace.mode must be one of static or passthrough")
 	case len(m.WriteFiles) > 0 && m.QEMU.GuestAgent.SocketPath == "":
 		return fmt.Errorf("manifest.qemu.guestAgent.socketPath is required when manifest.writeFiles is set")
 	case m.VSock.CIDRange.Start < defaultVSockCIDStart:
@@ -414,6 +436,15 @@ func (m *Manifest) SSHRetryDelay(fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return time.Duration(*m.SSH.RetryDelay * float64(time.Second))
+}
+
+func validWorkspaceMode(mode string) bool {
+	switch mode {
+	case "static", "passthrough":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateWriteFiles(files WriteFiles) error {
@@ -620,6 +651,7 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 			return QEMU{}, err
 		}
 		resolved.Devices.VirtioFS[i].SocketPath = socketPath
+		resolved.Devices.VirtioFS[i].SourcePath = m.resolvePath(resolved.Devices.VirtioFS[i].SourcePath)
 	}
 
 	resolved.Devices.NineP = append([]QEMUNinePShare(nil), resolved.Devices.NineP...)
@@ -663,6 +695,7 @@ func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
 			return nil, err
 		}
 		resolved.SocketPath = socketPath
+		resolved.SourcePath = m.resolvePath(daemon.SourcePath)
 		resolved.Command.Path = m.resolvePath(daemon.Command.Path)
 		resolved.Command.Args = append([]string(nil), daemon.Command.Args...)
 		daemons = append(daemons, resolved)

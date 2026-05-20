@@ -4,6 +4,31 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-20: Workspace options moved under `workspace`
+
+### Who Is Affected
+
+- Consumers setting `agentspace.sandbox.workspaceMountPoint`.
+- Consumers setting `agentspace.sandbox.mountWorkspace`.
+- Consumers preparing for future workspace passthrough support.
+
+### What Changed
+
+`agentspace.sandbox.workspace.enableMount`, `workspace.mode`, and
+`workspace.mountPoint` now live under a single `workspace` namespace.
+
+### Migration Steps
+
+Replace:
+
+- `mountWorkspace` → `workspace.enableMount`
+- `workspaceMountPoint` → `workspace.mountPoint`
+
+If you rely on the default workspace mount path, leave `workspace.mode` at
+`static` or set `workspace.mountPoint` explicitly. Set `workspace.mode =
+"passthrough"` to have virtie reuse the launch working directory as the guest
+mount path.
+
 ## 2026-05-18: Default launch SSH is no longer quiet
 
 ### Who Is Affected

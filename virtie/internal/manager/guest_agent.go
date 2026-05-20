@@ -250,7 +250,8 @@ func (c *socketGuestAgentClient) run(timeout time.Duration, execute string, argu
 
 func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *launchStats, watchers ...*managedProcess) error {
 	files := launchManifest.ResolvedWriteFiles()
-	if len(files) == 0 {
+	mountWorkspace := requiresPassthroughWorkspaceMount(launchManifest)
+	if len(files) == 0 && !mountWorkspace {
 		return nil
 	}
 
@@ -268,6 +269,12 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		stats.MarkGuestAgentReady(time.Now())
 	}
 	defer client.Disconnect()
+
+	if mountWorkspace {
+		if err := m.mountPassthroughWorkspace(ctx, client, launchManifest.Workspace.MountPoint); err != nil {
+			return &stageError{Stage: "workspace mount", Err: err}
+		}
+	}
 
 	for _, file := range files {
 		if !file.Overwrite {
@@ -306,6 +313,34 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 }
 
 const guestFileReadChunkSize = 1024 * 1024
+
+const passthroughWorkspaceSource = "/run/agentspace/workspace"
+
+func requiresPassthroughWorkspaceMount(launchManifest *manifest.Manifest) bool {
+	return launchManifest != nil && launchManifest.Workspace.Mode == "passthrough" && launchManifest.Workspace.MountPoint != ""
+}
+
+func (m *manager) mountPassthroughWorkspace(ctx context.Context, client guestAgentClient, mountPoint string) error {
+	if mountPoint == "" || mountPoint == "/" || !path.IsAbs(mountPoint) {
+		return fmt.Errorf("refusing invalid workspace mount target %q", mountPoint)
+	}
+	if err := m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, []string{"-d", mountPoint}, mountPoint); err != nil {
+		return err
+	}
+	status, err := m.runGuestFileCommandStatus(ctx, client, "mountpoint -q", guestMountpointPath, []string{"-q", mountPoint}, mountPoint)
+	if err != nil {
+		return err
+	}
+	if status.ExitCode == 0 {
+		m.logger.Info("passthrough workspace already mounted", "target", mountPoint)
+		return nil
+	}
+	if err := m.runGuestFileCommand(ctx, client, "mount --bind", guestMountPath, []string{"--bind", passthroughWorkspaceSource, mountPoint}, mountPoint); err != nil {
+		return err
+	}
+	m.logger.Info("mounted passthrough workspace", "source", passthroughWorkspaceSource, "target", mountPoint)
+	return nil
+}
 
 func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, watchers ...*managedProcess) error {
 	files := launchManifest.ResolvedWriteFiles()
@@ -502,11 +537,13 @@ func writeHostFileAtomic(hostPath string, data []byte) error {
 }
 
 const (
-	guestChmodPath   = "/run/current-system/sw/bin/chmod"
-	guestChownPath   = "/run/current-system/sw/bin/chown"
-	guestInstallPath = "/run/current-system/sw/bin/install"
-	guestPSPath      = "/run/current-system/sw/bin/ps"
-	guestTestPath    = "/run/current-system/sw/bin/test"
+	guestChmodPath      = "/run/current-system/sw/bin/chmod"
+	guestChownPath      = "/run/current-system/sw/bin/chown"
+	guestInstallPath    = "/run/current-system/sw/bin/install"
+	guestMountPath      = "/run/current-system/sw/bin/mount"
+	guestMountpointPath = "/run/current-system/sw/bin/mountpoint"
+	guestPSPath         = "/run/current-system/sw/bin/ps"
+	guestTestPath       = "/run/current-system/sw/bin/test"
 )
 
 func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAgentClient, guestPath string, owner *string) error {

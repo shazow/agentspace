@@ -13,6 +13,13 @@ let
     persistence.homeImage = null;
   };
 
+  vmVirtiePassthroughWorkspace = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.identityFile = sshKeys.virtie.identityFile;
+    persistence.homeImage = null;
+    workspace.mode = "passthrough";
+  };
+
   vmDefault = mkSandbox {
     persistence.homeImage = null;
   };
@@ -56,20 +63,20 @@ let
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.identityFile = sshKeys.virtie.identityFile;
     persistence.homeImage = null;
-    mountWorkspace = false;
+    workspace.enableMount = false;
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
   vmVirtieEscapedExternalStoreSocket = mkSandbox {
     persistence.homeImage = null;
-    mountWorkspace = false;
+    workspace.enableMount = false;
     nixStoreShareSocket = "/tmp/$(touch injected).sock";
   };
 
   invalidRelativeStoreSocket = builtins.tryEval (
     (mkSandbox {
       persistence.homeImage = null;
-      mountWorkspace = false;
+      workspace.enableMount = false;
       nixStoreShareSocket = "virtiofs-nix-store.sock";
     }).config.system.build.toplevel.drvPath
   );
@@ -133,14 +140,15 @@ let
   };
 
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
+  passthroughWorkspaceManifest =
+    vmVirtiePassthroughWorkspace.config.agentspace.sandbox.launch.virtieManifestData;
   defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtieManifestData;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
-  customSSHExecManifest =
-    vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
+  customSSHExecManifest = vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
   fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
@@ -149,6 +157,9 @@ let
   virtiofsDaemonMounts = builtins.filter (
     mount: mount.type == "virtiofs" && mount ? virtiofsd_exec
   ) manifest.mounts;
+  passthroughWorkspaceShares = builtins.filter (
+    share: share.tag == "workspace"
+  ) vmVirtiePassthroughWorkspace.config.microvm.shares;
 
   _ =
     assert builtins.head manifest.qemu.exec != "";
@@ -178,7 +189,8 @@ let
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
     assert builtins.head manifest.ssh.exec == "${pkgs.openssh}/bin/ssh";
-    assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" manifest.ssh.exec;
+    assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
+      manifest.ssh.exec;
     assert builtins.elem "ProxyUseFdpass=yes" manifest.ssh.exec;
     assert builtins.elem "CheckHostIP=no" manifest.ssh.exec;
     assert manifest.ssh.user == "agent";
@@ -191,6 +203,13 @@ let
       mount: mount.virtiofsd_socket != "" && builtins.head mount.virtiofsd_exec != ""
     ) virtiofsDaemonMounts;
     assert builtins.any (mount: mount.tag == "workspace") virtiofsDaemonMounts;
+    assert manifest.workspace.mode == "static";
+    assert
+      manifest.workspace.mount_point == "/home/${vmVirtie.config.agentspace.sandbox.user}/workspace";
+    assert passthroughWorkspaceManifest.workspace.mode == "passthrough";
+    assert !(passthroughWorkspaceManifest.workspace ? mount_point);
+    assert builtins.length passthroughWorkspaceShares == 1;
+    assert (builtins.head passthroughWorkspaceShares).mountPoint == "/run/agentspace/workspace";
     assert !(manifest ? vsock);
     assert !(manifest.ssh ? destination);
     assert !(manifest ? qemuConfig);
@@ -204,8 +223,8 @@ let
     assert defaultManifest.ssh.ready_socket == "ready.sock";
     assert vmDefault.config.microvm.virtiofsd.group == null;
     assert !(builtins.elem "-q" defaultManifest.ssh.exec);
-    assert
-      builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" defaultManifest.ssh.exec;
+    assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
+      defaultManifest.ssh.exec;
     assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);
     assert defaultManifest.write_files == [ ];
     assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;
@@ -241,26 +260,23 @@ let
         cache = "auto";
       };
     assert !(builtins.head externalStoreSocketManifest.mounts ? virtiofsd_exec);
+    assert pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
+      vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
+    assert pkgs.lib.hasInfix
+      "nixStoreShareSocket does not exist or is not a socket: '/tmp/$(touch injected).sock'"
+      vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
     assert
-      pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
-        vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
-    assert
-      pkgs.lib.hasInfix
-        "nixStoreShareSocket does not exist or is not a socket: '/tmp/$(touch injected).sock'"
-        vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
-    assert
-      !(pkgs.lib.hasInfix
-        ''nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock''
-        vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
+      !(pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock" vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
     assert !invalidRelativeStoreSocket.success;
     true;
 
   _customSSHExec =
-    assert customSSHExecManifest.ssh.exec == [
-      "/custom/ssh"
-      "-F"
-      "custom-config"
-    ];
+    assert
+      customSSHExecManifest.ssh.exec == [
+        "/custom/ssh"
+        "-F"
+        "custom-config"
+      ];
     assert !(builtins.elem "ProxyUseFdpass=yes" customSSHExecManifest.ssh.exec);
     assert !(builtins.elem ".agentspace-test/id_ed25519" customSSHExecManifest.ssh.exec);
     true;

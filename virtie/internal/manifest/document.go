@@ -44,6 +44,7 @@ type Document struct {
 	Balloon       *BalloonFacts      `json:"balloon,omitempty" toml:"balloon"`
 	SSH           SSHFacts           `json:"ssh,omitempty" toml:"ssh"`
 	VSock         VSockFacts         `json:"vsock,omitempty" toml:"vsock"`
+	Workspace     WorkspaceFacts     `json:"workspace,omitempty" toml:"workspace"`
 	WriteFiles    []WriteFileFacts   `json:"write_files,omitempty" toml:"write_files"`
 	Notifications NotificationsFacts `json:"notifications,omitempty" toml:"notifications"`
 }
@@ -175,6 +176,18 @@ type NotificationsFacts struct {
 	States []string `json:"states,omitempty" toml:"states"`
 }
 
+type WorkspaceFacts struct {
+	Mode       string `json:"mode,omitempty" toml:"mode"`
+	MountPoint string `json:"mount_point,omitempty" toml:"mount_point"`
+}
+
+func normalizeWorkspaceFacts(workspace WorkspaceFacts) WorkspaceFacts {
+	if workspace.Mode == "" {
+		workspace.Mode = defaultWorkspaceMode
+	}
+	return workspace
+}
+
 func LoadBytes(data []byte, name string) (*Manifest, error) {
 	var doc Document
 	var err error
@@ -202,6 +215,10 @@ func UpdateWorkingDirBytes(data []byte, name string, workingDir string) ([]byte,
 		return nil, err
 	}
 	doc.WorkingDir = workingDir
+	doc.Workspace = normalizeWorkspaceFacts(doc.Workspace)
+	if doc.Workspace.Mode == "passthrough" {
+		doc.Workspace.MountPoint = workingDir
+	}
 	if isTOML {
 		var out bytes.Buffer
 		if err := toml.NewEncoder(&out).Encode(doc); err != nil {
@@ -262,6 +279,7 @@ func (d Document) Manifest() (*Manifest, error) {
 	}
 
 	host := d.Host.withDefaults()
+	workspace := normalizeWorkspaceFacts(d.Workspace)
 	m := &Manifest{
 		Identity: Identity{
 			HostName: d.HostName,
@@ -286,6 +304,10 @@ func (d Document) Manifest() (*Manifest, error) {
 			},
 		},
 		Notifications: lowerNotifications(d.Notifications),
+		Workspace: Workspace{
+			Mode:       workspace.Mode,
+			MountPoint: workspace.MountPoint,
+		},
 	}
 	if m.Identity.HostName == "" {
 		m.Identity.HostName = defaultHostName
@@ -603,6 +625,7 @@ func lowerVirtioFSMounts(mounts []MountFacts, transport string) []QEMUVirtioFSSh
 		shares = append(shares, QEMUVirtioFSShare{
 			ID:         "fs" + strconv.Itoa(i),
 			SocketPath: mount.SocketPath,
+			SourcePath: mount.SourcePath,
 			Tag:        mount.Tag,
 			Transport:  transport,
 		})
@@ -639,6 +662,7 @@ func lowerVirtioFSDaemons(mounts []MountFacts) []VirtioFSDaemon {
 		daemons = append(daemons, VirtioFSDaemon{
 			Tag:        mount.Tag,
 			SocketPath: mount.SocketPath,
+			SourcePath: mount.SourcePath,
 			Command:    command,
 		})
 	}

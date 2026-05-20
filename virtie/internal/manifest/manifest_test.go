@@ -144,6 +144,31 @@ func TestLoadTOMLExamples(t *testing.T) {
 	}
 }
 
+func TestUpdateWorkingDirBytesPersistsPassthroughWorkspaceMountPoint(t *testing.T) {
+	document := validDocument()
+	document.Workspace = WorkspaceFacts{Mode: "passthrough", MountPoint: "/home/agent/workspace"}
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+
+	updated, err := UpdateWorkingDirBytes(data, "manifest.json", "/tmp/work")
+	if err != nil {
+		t.Fatalf("update manifest working dir: %v", err)
+	}
+
+	loaded, err := Load(bytes.NewReader(updated))
+	if err != nil {
+		t.Fatalf("load updated manifest: %v", err)
+	}
+	if got, want := loaded.Workspace.Mode, "passthrough"; got != want {
+		t.Fatalf("unexpected workspace mode: got %q want %q", got, want)
+	}
+	if got, want := loaded.Workspace.MountPoint, "/tmp/work"; got != want {
+		t.Fatalf("unexpected passthrough mount point: got %q want %q", got, want)
+	}
+}
+
 func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
 	manifest := validManifest()
 	if manifest.SSH.RetryDelay != nil {
@@ -376,6 +401,9 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			}
 			if got, want := daemons[0].SocketPath, tt.wantSocket; got != want {
 				t.Fatalf("unexpected daemon socket path: got %q want %q", got, want)
+			}
+			if got, want := daemons[0].SourcePath, "/tmp/work/shares/workspace"; got != want {
+				t.Fatalf("unexpected daemon source path: got %q want %q", got, want)
 			}
 		})
 	}
@@ -1230,6 +1258,7 @@ func validDocument() Document {
 			{
 				Type:          "virtiofs",
 				Tag:           "workspace",
+				SourcePath:    "shares/workspace",
 				SocketPath:    "fs.sock",
 				VirtioFSDExec: []string{"/tmp/virtiofsd-workspace"},
 			},

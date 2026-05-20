@@ -109,6 +109,7 @@ func validManifest() *Manifest {
 					{
 						ID:         "fs0",
 						SocketPath: "fs.sock",
+						SourcePath: "shares/workspace",
 						Tag:        "workspace",
 						Transport:  "pci",
 					},
@@ -146,6 +147,7 @@ func validManifest() *Manifest {
 			{
 				Tag:        "workspace",
 				SocketPath: "fs.sock",
+				SourcePath: "shares/workspace",
 				Command: Command{
 					Path: "/tmp/virtiofsd-workspace",
 				},
