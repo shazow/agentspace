@@ -409,16 +409,17 @@ in
         ];
       };
 
-      mkManifestVolume = volume: {
-        image = volume.image;
-        size = volume.size;
-        fs = volume.fsType;
-        create = volume.autoCreate;
-        label = volume.label;
-        read_only = volume.readOnly;
-        direct = volume.direct;
-        serial = volume.serial;
-      };
+      mkManifestVolume = volume:
+        {
+          image = volume.image;
+          size = volume.size;
+          fs = volume.fsType;
+          create = volume.autoCreate;
+          read_only = volume.readOnly;
+          direct = volume.direct;
+        }
+        // lib.optionalAttrs (volume.label != null) { label = volume.label; }
+        // lib.optionalAttrs (volume.serial != null) { serial = volume.serial; };
       manifestVolumes =
         lib.optionals cfg.persistence.storeDisk [
           {
@@ -472,17 +473,16 @@ in
 
       manifestWriteFiles = lib.mapAttrsToList (
         guestPath: file:
-        builtins.removeAttrs file [
-          "path"
-          "followLinks"
-          "writeBack"
-        ]
-        // lib.optionalAttrs (file.path != null) { source = file.path; }
-        // {
+        {
           guest_path = guestPath;
           follow_links = file.followLinks;
           write_back = file.writeBack;
         }
+        // lib.optionalAttrs (file.chown != null) { chown = file.chown; }
+        // lib.optionalAttrs (file.text != null) { text = file.text; }
+        // lib.optionalAttrs (file.mode != null) { mode = file.mode; }
+        // lib.optionalAttrs (file.overwrite != null) { overwrite = file.overwrite; }
+        // lib.optionalAttrs (file.path != null) { source = file.path; }
       ) cfg.writeFiles;
 
       virtieManifestData = {
@@ -512,9 +512,13 @@ in
         machine = {
           type = config.microvm.qemu.machine;
           memory = config.microvm.mem;
-          vcpu = cfg.machine.vcpu;
-          id = config.microvm.machineId;
           kvm = pkgs.stdenv.hostPlatform.isLinux && config.microvm.cpu == null;
+        }
+        // lib.optionalAttrs (cfg.machine.vcpu != null) {
+          vcpu = cfg.machine.vcpu;
+        }
+        // lib.optionalAttrs (config.microvm.machineId != null) {
+          id = config.microvm.machineId;
         }
         // lib.optionalAttrs (config.microvm.cpu != null) {
           cpu = config.microvm.cpu;
@@ -557,10 +561,9 @@ in
         write_files = manifestWriteFiles;
       };
 
-      virtieManifestTemplate = pkgs.writeText "virtie-${cfg.hostName}.json" (
-        builtins.toJSON virtieManifestData
-      );
-      virtieManifest = "${persistenceBaseDir}/virtie-${cfg.hostName}.json";
+      tomlFormat = pkgs.formats.toml { };
+      virtieManifestTemplate = tomlFormat.generate "virtie-${cfg.hostName}.toml" virtieManifestData;
+      virtieManifest = "${persistenceBaseDir}/virtie-${cfg.hostName}.toml";
     in
     lib.mkMerge [
       {
