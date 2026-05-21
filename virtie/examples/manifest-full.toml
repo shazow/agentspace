@@ -28,10 +28,11 @@ exec = ["qemu-system-x86_64"]  # Default: qemu-system-$host_arch
 
 # Guest-to-host port forwarding uses QEMU guestfwd cmd: rules. This command
 # opens the host-side connection for each forward where from = "guest".
-# Native argv templates use {{.Host}} and {{.Port}}; shell commands also receive
-# HOST and PORT in the environment. Netcat and socat examples:
+# Native argv templates use {{.Host}} and {{.Port}}. QEMU starts guestfwd
+# commands directly, so HOST and PORT are not injected into the environment.
+# Netcat and shell examples:
 #   fwd_tunnel_exec = ["nc", "{{.Host}}", "{{.Port}}"]
-#   fwd_tunnel_exec = ["sh", "-c", "socat - TCP:$HOST:$PORT"]
+#   fwd_tunnel_exec = ["sh", "-c", "socat - TCP:{{.Host}}:{{.Port}}"]
 fwd_tunnel_exec = ["nc", "{{.Host}}", "{{.Port}}"]  # Default
 
 # QEMU can drop privileges to another host user before running the VM. This is

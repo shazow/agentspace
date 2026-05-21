@@ -15,8 +15,12 @@ flake output, manifest contract, or generated wrapper behavior changes.
 
 Manifest exec arrays now render Go `text/template` variables before launch.
 For native argv entries, use template variables such as `{{.Host}}` and
-`{{.Port}}`. The same values are also exposed to shell commands as environment
-variables such as `HOST` and `PORT`.
+`{{.Port}}`. For commands that `virtie` starts directly, the same values are
+also exposed to shell commands as environment variables.
+
+`qemu.fwd_tunnel_exec` is an exception: QEMU starts each `guestfwd cmd:`
+itself, so `HOST` and `PORT` are not injected into the environment. Use
+template variables there, including inside shell command strings.
 
 ### Migration Steps
 
@@ -28,10 +32,10 @@ and `$PORT` in non-shell argv entries:
 + fwd_tunnel_exec = ["nc", "{{.Host}}", "{{.Port}}"]
 ```
 
-Shell forms can keep using environment variables:
+Shell forms should use templates inside the shell string:
 
 ```toml
-fwd_tunnel_exec = ["sh", "-c", "socat - TCP:$HOST:$PORT"]
+fwd_tunnel_exec = ["sh", "-c", "socat - TCP:{{.Host}}:{{.Port}}"]
 ```
 
 ## 2026-05-20: Workspace options replace legacy current-directory mount

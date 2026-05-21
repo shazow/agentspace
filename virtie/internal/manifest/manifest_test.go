@@ -938,27 +938,27 @@ func TestLoadGuestForwardUsesTunnelExecTemplate(t *testing.T) {
 	}{
 		{
 			name: "default netcat",
-			want: []string{"guestfwd=tcp:10.0.2.15:2222-cmd:HOST=127.0.0.1 PORT=22 nc 127.0.0.1 22"},
+			want: []string{"guestfwd=tcp:10.0.2.15:2222-cmd:nc 127.0.0.1 22"},
 		},
 		{
 			name:          "explicit netcat template",
 			fwdTunnelExec: []string{"/bin/nc", "{{.Host}}", "{{.Port}}"},
-			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:HOST=127.0.0.1 PORT=22 /bin/nc 127.0.0.1 22"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:/bin/nc 127.0.0.1 22"},
 		},
 		{
 			name:          "socat template",
 			fwdTunnelExec: []string{"socat", "-", "TCP:{{.Host}}:{{.Port}}"},
-			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:HOST=127.0.0.1 PORT=22 socat - TCP:127.0.0.1:22"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:socat - TCP:127.0.0.1:22"},
 		},
 		{
-			name:          "shell env",
-			fwdTunnelExec: []string{"sh", "-c", "socat - TCP:$HOST:$PORT"},
-			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:HOST=127.0.0.1 PORT=22 sh -c 'socat - TCP:$HOST:$PORT'"},
+			name:          "shell template",
+			fwdTunnelExec: []string{"sh", "-c", "socat - TCP:{{.Host}}:{{.Port}}"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:sh -c 'socat - TCP:127.0.0.1:22'"},
 		},
 		{
 			name:          "quotes shell-sensitive args",
 			fwdTunnelExec: []string{"~/bin/nc", "{{.Host}}", "{{.Port}}"},
-			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:HOST=127.0.0.1 PORT=22 \\~/bin/nc 127.0.0.1 22"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:\\~/bin/nc 127.0.0.1 22"},
 		},
 	}
 

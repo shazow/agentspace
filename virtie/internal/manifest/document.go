@@ -776,7 +776,7 @@ func renderFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) ([]string, er
 	if err != nil {
 		return nil, err
 	}
-	return append(ExecContextEnv(context), command...), nil
+	return command, nil
 }
 
 func lowerBalloon(facts *BalloonFacts, transport string) *balloon.Device {
