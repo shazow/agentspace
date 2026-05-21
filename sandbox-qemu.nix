@@ -139,7 +139,7 @@ in
     workspace = {
       enable = lib.mkOption {
         type = lib.types.bool;
-        default = false;
+        default = true;
         description = "Enable workspace-oriented host directory mounts.";
       };
 
@@ -151,8 +151,8 @@ in
 
       addCurrentDir = lib.mkOption {
         type = lib.types.bool;
-        default = false;
-        description = "Ask virtie to mount the launch working directory under workspace.basedir at runtime.";
+        default = true;
+        description = "Include the launch-time $PWD as a workspace";
       };
 
       spaces = lib.mkOption {
@@ -162,7 +162,7 @@ in
           agentspace = "/home/example/projects/agentspace";
           "project2/foo" = "/home/example/foo";
         };
-        description = "Host directories to mount, keyed by path under workspace.basedir.";
+        description = "Host directories to mount";
       };
     };
 
