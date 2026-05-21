@@ -262,7 +262,7 @@ overwrite = true
 # exit status should not become VM lifecycle policy.
 # Template values include {{.State}}, {{.Message}}, and {{.Env.USER}}. Hook
 # processes also receive VIRTIE_NOTIFY_* environment variables.
-exec = ["/bin/sh", "-c", "printf '%s\n' '{{.State}}'"]
+exec = ["notify-send", "virtie: {{.State}}", "{{.Message}}"]
 
 # Empty means all supported states. A non-empty list limits hook execution,
 # which is useful when only noisy states such as balloon changes should notify.
