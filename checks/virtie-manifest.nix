@@ -286,9 +286,9 @@ let
     true;
 
   _externalStoreSocket =
-    assert builtins.length externalStoreSocketManifest.mounts == 1;
+    assert builtins.length externalStoreSocketManifest.mounts == 2;
     assert
-      builtins.head externalStoreSocketManifest.mounts == {
+      builtins.any (mount: mount == {
         type = "virtiofs";
         source = "/nix/store";
         virtiofsd_socket = "/var/run/virtiofs-nix-store.sock";
@@ -296,8 +296,17 @@ let
         read_only = true;
         security_model = "none";
         cache = "auto";
-      };
-    assert !(builtins.head externalStoreSocketManifest.mounts ? virtiofsd_exec);
+      }) externalStoreSocketManifest.mounts;
+    assert builtins.any (
+      mount:
+      mount.tag == "workspace_cwd"
+      && mount.source == "."
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
+      && mount ? virtiofsd_exec
+    ) externalStoreSocketManifest.mounts;
+    assert builtins.all (
+      mount: mount.tag != "ro-store" || !(mount ? virtiofsd_exec)
+    ) externalStoreSocketManifest.mounts;
     assert
       pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
         vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
@@ -411,9 +420,9 @@ let
     assert builtins.any (
       file:
       file.guest_path == "/etc/agentspace-host"
-      && file.chown == null
-      && file.text == null
-      && file.mode == null
+      && !(file ? chown)
+      && !(file ? text)
+      && !(file ? mode)
       && file.overwrite == false
       && file.follow_links == false
       && file.write_back == true

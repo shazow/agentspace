@@ -19,10 +19,13 @@ flake output, manifest contract, or generated wrapper behavior changes.
 `agentspace.sandbox.workspaceMountPoint` were removed. Use
 `agentspace.sandbox.workspace` instead.
 
-Current-directory mounting is now opt-in through
-`agentspace.sandbox.workspace.addCurrentDir`. When enabled, the launch working
--directory is mounted in the guest under `workspace.basedir` using the basename
-of the resolved working directory.
+Current-directory mounting is enabled by default through
+`agentspace.sandbox.workspace.addCurrentDir`. The launch working directory is
+mounted in the guest under `workspace.basedir` using the basename of the
+resolved working directory. Set `agentspace.sandbox.workspace.enable = false`
+to disable workspace mounts entirely, or set
+`agentspace.sandbox.workspace.addCurrentDir = false` to keep fixed
+`workspace.spaces` mounts without mounting the launch directory.
 
 ### Migration Steps
 
