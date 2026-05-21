@@ -142,14 +142,15 @@ func validManifest() *Manifest {
 				AutoCreate: true,
 			},
 		},
-		VirtioFS: VirtioFS{Daemons: []VirtioFSDaemon{
+		RunWithSocket: []RunWithSocketCommand{
 			{
-				Tag:        "workspace",
+				Name:       "virtiofsd[workspace]",
 				SocketPath: "fs.sock",
 				Command: Command{
 					Path: "/tmp/virtiofsd-workspace",
 				},
+				Vars: map[string]string{"Tag": "workspace"},
 			},
-		}},
+		},
 	}
 }

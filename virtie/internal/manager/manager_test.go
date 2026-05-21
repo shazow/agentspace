@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -233,20 +234,22 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 			AutoCreate: true,
 		},
 	}
-	cfg.VirtioFS.Daemons = []manifest.VirtioFSDaemon{
+	cfg.RunWithSocket = []manifest.RunWithSocketCommand{
 		{
-			Tag:        "ro-store",
+			Name:       "virtiofsd[ro-store]",
 			SocketPath: "sock-a",
 			Command: manifest.Command{
 				Path: "/bin/virtiofsd-ro-store",
 			},
+			Vars: map[string]string{"Tag": "ro-store"},
 		},
 		{
-			Tag:        "workspace",
+			Name:       "virtiofsd[workspace]",
 			SocketPath: "sock-b",
 			Command: manifest.Command{
 				Path: "/bin/virtiofsd-workspace",
 			},
+			Vars: map[string]string{"Tag": "workspace"},
 		},
 	}
 	cfg.QEMU.Devices.VirtioFS = []manifest.QEMUVirtioFSShare{
@@ -301,9 +304,11 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	wantStarts := []string{"virtiofsd[ro-store]", "virtiofsd[workspace]", "qemu", "ssh"}
-	if !reflect.DeepEqual(runner.starts, wantStarts) {
-		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
+	if !slices.Contains(runner.starts[:2], "virtiofsd[ro-store]") || !slices.Contains(runner.starts[:2], "virtiofsd[workspace]") {
+		t.Fatalf("expected managed socket commands to start before qemu, got %v", runner.starts)
+	}
+	if got, want := runner.starts[2:], []string{"qemu", "ssh"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected post-socket start order: got %v want %v", got, want)
 	}
 
 	if !containsString(runner.qemuArgs, "-qmp") {
@@ -395,6 +400,43 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		"qmp_to_guest_agent=",
 		"guest_agent_to_files=",
 	})
+}
+
+func TestManagerLaunchManagedSocketFailureStopsLaunch(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.Devices.Block[0].ImagePath = "root.img"
+	cfg.Volumes[0].AutoCreate = false
+	cfg.RunWithSocket = append(cfg.RunWithSocket, manifest.RunWithSocketCommand{
+		Name:       "tunnel[dbus.sock]",
+		SocketPath: "tunnels/dbus.sock",
+		WorkDir:    "tunnels",
+		Command: manifest.Command{
+			Path: "/bin/false",
+		},
+		Vars: map[string]string{"SockName": "dbus.sock"},
+	})
+
+	runner := &fakeRunner{
+		failProcesses: map[string]error{"tunnel[dbus.sock]": errors.New("exit status 1")},
+	}
+	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{blockUntilCanceled: true},
+		shutdownDelay:     10 * time.Millisecond,
+		qmpConnectTimeout: time.Millisecond,
+	}
+
+	err := manager.launch(context.Background(), cfg, nil)
+	if err == nil || !strings.Contains(err.Error(), "tunnel[dbus.sock]") {
+		t.Fatalf("expected managed socket command failure, got %v", err)
+	}
+	if slices.Contains(runner.starts, "qemu") {
+		t.Fatalf("expected launch to stop before qemu when tunnel exits during startup, got %v", runner.starts)
+	}
 }
 
 func TestCreateVolumeImageCreatesNativeExt4(t *testing.T) {
@@ -2030,7 +2072,7 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 	}
 	defer listener.Close()
 	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
-	cfg.VirtioFS.Daemons = nil
+	cfg.RunWithSocket = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2082,7 +2124,7 @@ func TestManagerLaunchRejectsMissingExternalVirtioFSSocket(t *testing.T) {
 	cfg.Volumes[0].AutoCreate = false
 	externalSocket := filepath.Join(tmpDir, "missing-virtiofs.sock")
 	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
-	cfg.VirtioFS.Daemons = nil
+	cfg.RunWithSocket = nil
 
 	runner := &fakeRunner{}
 	manager := &manager{
@@ -2107,7 +2149,7 @@ func TestManagerLaunchSkipsVirtioFSReadinessWhenNoVirtioFSDevices(t *testing.T) 
 	cfg.QEMU.Devices.VirtioFS = nil
 	cfg.QEMU.Devices.Block = nil
 	cfg.Volumes = nil
-	cfg.VirtioFS.Daemons = nil
+	cfg.RunWithSocket = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2175,7 +2217,7 @@ func TestManagerLaunchWithOnlyNinePShareDoesNotWaitForVirtioFS(t *testing.T) {
 		},
 	}
 	cfg.Volumes = nil
-	cfg.VirtioFS.Daemons = nil
+	cfg.RunWithSocket = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2458,12 +2500,13 @@ func TestManagerSuspendPreservesExistingSavedStateWithoutSignal(t *testing.T) {
 func TestEffectiveSuspendSignalTimeoutIncludesMigrationAndTeardown(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	cfg.VirtioFS.Daemons = append(cfg.VirtioFS.Daemons, manifest.VirtioFSDaemon{
-		Tag:        "cache",
+	cfg.RunWithSocket = append(cfg.RunWithSocket, manifest.RunWithSocketCommand{
+		Name:       "virtiofsd[cache]",
 		SocketPath: "cache.sock",
 		Command: manifest.Command{
 			Path: "/tmp/virtiofsd-cache",
 		},
+		Vars: map[string]string{"Tag": "cache"},
 	})
 
 	manager := &manager{
@@ -3143,7 +3186,7 @@ func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest.QEMU.Devices.Block = nil
 	manifest.QEMU.Devices.Network = nil
 	manifest.Volumes = nil
-	manifest.VirtioFS.Daemons = nil
+	manifest.RunWithSocket = nil
 
 	spec, err := buildQEMUSpec(manifest, 42)
 	if err != nil {
@@ -3197,7 +3240,7 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	}
 }
 
-func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
+func TestStartRunWithSocketCommandsInjectsResolvedSocketPathEnv(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)
 
@@ -3210,16 +3253,16 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 		runner: runner,
 	}
 
-	if _, err := manager.startVirtioFSDaemons(manifest); err != nil {
-		t.Fatalf("start virtiofs daemons: %v", err)
+	if _, err := manager.startRunWithSocketCommands(context.Background(), manifest); err != nil {
+		t.Fatalf("start managed socket commands: %v", err)
 	}
 
 	wantSocket := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "fs.sock")
-	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIOFSD_SOCKET="+wantSocket) {
-		t.Fatalf("expected virtiofs daemon env to contain resolved socket path %q: %v", wantSocket, got)
+	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "SOCKET="+wantSocket) {
+		t.Fatalf("expected managed socket command env to contain resolved socket path %q: %v", wantSocket, got)
 	}
 	if !runner.processGroups["virtiofsd[workspace]"] {
-		t.Fatal("expected virtiofs daemon to run in its own process group")
+		t.Fatal("expected managed socket command to run in its own process group")
 	}
 }
 
@@ -3334,15 +3377,16 @@ func validManifest(workingDir string) *manifest.Manifest {
 				AutoCreate: true,
 			},
 		},
-		VirtioFS: manifest.VirtioFS{Daemons: []manifest.VirtioFSDaemon{
+		RunWithSocket: []manifest.RunWithSocketCommand{
 			{
-				Tag:        "workspace",
+				Name:       "virtiofsd[workspace]",
 				SocketPath: "fs.sock",
 				Command: manifest.Command{
 					Path: "/tmp/virtiofsd-workspace",
 				},
+				Vars: map[string]string{"Tag": "workspace"},
 			},
-		}},
+		},
 	}
 }
 
@@ -3364,7 +3408,9 @@ type fakeRunner struct {
 	qemuArgs                  []string
 	qemuEnv                   []string
 	virtiofsEnv               map[string][]string
+	managedSocketEnv          map[string][]string
 	processGroups             map[string]bool
+	failProcesses             map[string]error
 	interactiveStarts         int
 	cancel                    context.CancelFunc
 	cancelDelay               time.Duration
@@ -3454,11 +3500,24 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		}()
 		return process, nil
 	default:
-		if strings.HasPrefix(spec.Name, "virtiofsd[") {
+		if strings.HasPrefix(spec.Name, "virtiofsd[") || strings.HasPrefix(spec.Name, "tunnel[") {
+			if r.failProcesses != nil && r.failProcesses[spec.Name] != nil {
+				return &fakeProcess{
+					name:   spec.Name,
+					runner: r,
+					done:   closedErrorChannel(r.failProcesses[spec.Name]),
+				}, nil
+			}
+			if r.managedSocketEnv == nil {
+				r.managedSocketEnv = make(map[string][]string)
+			}
+			r.managedSocketEnv[spec.Name] = append([]string(nil), spec.Env...)
 			if r.virtiofsEnv == nil {
 				r.virtiofsEnv = make(map[string][]string)
 			}
-			r.virtiofsEnv[spec.Name] = append([]string(nil), spec.Env...)
+			if strings.HasPrefix(spec.Name, "virtiofsd[") {
+				r.virtiofsEnv[spec.Name] = append([]string(nil), spec.Env...)
+			}
 			return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
 		}
 		return nil, errors.New("unexpected process")
@@ -3518,10 +3577,11 @@ func (p *fakeProcess) complete(err error) {
 }
 
 type fakeSocketWaiter struct {
-	calls          int
-	paths          [][]string
-	noAutoSSHReady bool
-	callback       func(paths []string) error
+	calls              int
+	paths              [][]string
+	noAutoSSHReady     bool
+	blockUntilCanceled bool
+	callback           func(paths []string) error
 }
 
 func (w *fakeSocketWaiter) Wait(ctx context.Context, socketPaths []string) error {
@@ -3529,6 +3589,10 @@ func (w *fakeSocketWaiter) Wait(ctx context.Context, socketPaths []string) error
 	w.paths = append(w.paths, append([]string(nil), socketPaths...))
 	if !w.noAutoSSHReady && len(socketPaths) == 1 && filepath.Base(socketPaths[0]) == "ready.sock" {
 		return startFakeSSHReadySocket(ctx, socketPaths[0])
+	}
+	if w.blockUntilCanceled {
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	return w.callback(socketPaths)
 }

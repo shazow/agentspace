@@ -31,23 +31,24 @@ const (
 )
 
 type Document struct {
-	HostName      string             `json:"host_name,omitempty" toml:"host_name"`
-	WorkingDir    string             `json:"working_dir,omitempty" toml:"working_dir"`
-	StateDir      string             `json:"state_dir,omitempty" toml:"state_dir"`
-	Host          HostFacts          `json:"host,omitempty" toml:"host"`
-	QEMU          QEMUFacts          `json:"qemu,omitempty" toml:"qemu"`
-	Machine       MachineFacts       `json:"machine,omitempty" toml:"machine"`
-	Kernel        KernelFacts        `json:"kernel" toml:"kernel"`
-	Graphics      *GraphicsFacts     `json:"graphics,omitempty" toml:"graphics"`
-	Volumes       []VolumeFacts      `json:"volumes,omitempty" toml:"volumes"`
-	Mounts        []MountFacts       `json:"mounts,omitempty" toml:"mounts"`
-	Workspace     WorkspaceFacts     `json:"workspace,omitempty" toml:"workspace"`
-	Networks      []NetworkFacts     `json:"networks,omitempty" toml:"networks"`
-	Balloon       *BalloonFacts      `json:"balloon,omitempty" toml:"balloon"`
-	SSH           SSHFacts           `json:"ssh,omitempty" toml:"ssh"`
-	VSock         VSockFacts         `json:"vsock,omitempty" toml:"vsock"`
-	WriteFiles    []WriteFileFacts   `json:"write_files,omitempty" toml:"write_files"`
-	Notifications NotificationsFacts `json:"notifications,omitempty" toml:"notifications"`
+	HostName      string               `json:"host_name,omitempty" toml:"host_name"`
+	WorkingDir    string               `json:"working_dir,omitempty" toml:"working_dir"`
+	StateDir      string               `json:"state_dir,omitempty" toml:"state_dir"`
+	Host          HostFacts            `json:"host,omitempty" toml:"host"`
+	QEMU          QEMUFacts            `json:"qemu,omitempty" toml:"qemu"`
+	Machine       MachineFacts         `json:"machine,omitempty" toml:"machine"`
+	Kernel        KernelFacts          `json:"kernel" toml:"kernel"`
+	Graphics      *GraphicsFacts       `json:"graphics,omitempty" toml:"graphics"`
+	Volumes       []VolumeFacts        `json:"volumes,omitempty" toml:"volumes"`
+	Mounts        []MountFacts         `json:"mounts,omitempty" toml:"mounts"`
+	RunWithSocket []RunWithSocketFacts `json:"run_with_socket,omitempty" toml:"run_with_socket"`
+	Workspace     WorkspaceFacts       `json:"workspace,omitempty" toml:"workspace"`
+	Networks      []NetworkFacts       `json:"networks,omitempty" toml:"networks"`
+	Balloon       *BalloonFacts        `json:"balloon,omitempty" toml:"balloon"`
+	SSH           SSHFacts             `json:"ssh,omitempty" toml:"ssh"`
+	VSock         VSockFacts           `json:"vsock,omitempty" toml:"vsock"`
+	WriteFiles    []WriteFileFacts     `json:"write_files,omitempty" toml:"write_files"`
+	Notifications NotificationsFacts   `json:"notifications,omitempty" toml:"notifications"`
 }
 
 type HostFacts struct {
@@ -98,14 +99,21 @@ type VolumeFacts struct {
 }
 
 type MountFacts struct {
-	Type          string   `json:"type,omitempty" toml:"type"`
-	Tag           string   `json:"tag" toml:"tag"`
-	SourcePath    string   `json:"source,omitempty" toml:"source"`
-	SocketPath    string   `json:"virtiofsd_socket,omitempty" toml:"virtiofsd_socket"`
-	ReadOnly      bool     `json:"read_only,omitempty" toml:"read_only"`
-	SecurityModel string   `json:"security_model,omitempty" toml:"security_model"`
-	Cache         string   `json:"cache,omitempty" toml:"cache"`
-	VirtioFSDExec []string `json:"virtiofsd_exec,omitempty" toml:"virtiofsd_exec"`
+	Type          string `json:"type,omitempty" toml:"type"`
+	Tag           string `json:"tag" toml:"tag"`
+	SourcePath    string `json:"source,omitempty" toml:"source"`
+	SocketPath    string `json:"virtiofsd_socket,omitempty" toml:"virtiofsd_socket"`
+	ReadOnly      bool   `json:"read_only,omitempty" toml:"read_only"`
+	SecurityModel string `json:"security_model,omitempty" toml:"security_model"`
+	Cache         string `json:"cache,omitempty" toml:"cache"`
+}
+
+type RunWithSocketFacts struct {
+	Name    string            `json:"name" toml:"name"`
+	Socket  string            `json:"socket" toml:"socket"`
+	Exec    []string          `json:"exec" toml:"exec"`
+	WorkDir string            `json:"work_dir,omitempty" toml:"work_dir"`
+	Vars    map[string]string `json:"vars,omitempty" toml:"vars"`
 }
 
 type WorkspaceFacts struct {
@@ -324,7 +332,7 @@ func (d Document) Manifest() (*Manifest, error) {
 	}
 	m.QEMU = qemu
 	m.Volumes = lowerVolumes(d.Volumes)
-	m.VirtioFS.Daemons = lowerVirtioFSDaemons(d.Mounts)
+	m.RunWithSocket = lowerRunWithSocket(d.RunWithSocket)
 	m.WriteFiles = lowerWriteFiles(d.WriteFiles)
 
 	if err := m.Validate(); err != nil {
@@ -659,20 +667,18 @@ func lowerNinePMounts(mounts []MountFacts, transport string) []QEMUNinePShare {
 	return shares
 }
 
-func lowerVirtioFSDaemons(mounts []MountFacts) []VirtioFSDaemon {
-	daemons := make([]VirtioFSDaemon, 0, len(mounts))
-	for _, mount := range mounts {
-		if mount.effectiveType() != "virtiofs" || len(mount.VirtioFSDExec) == 0 {
-			continue
-		}
-		command := commandFromExec(mount.VirtioFSDExec)
-		daemons = append(daemons, VirtioFSDaemon{
-			Tag:        mount.Tag,
-			SocketPath: mount.SocketPath,
-			Command:    command,
+func lowerRunWithSocket(commands []RunWithSocketFacts) []RunWithSocketCommand {
+	result := make([]RunWithSocketCommand, 0, len(commands))
+	for _, command := range commands {
+		result = append(result, RunWithSocketCommand{
+			Name:       command.Name,
+			SocketPath: command.Socket,
+			Command:    commandFromExec(command.Exec),
+			WorkDir:    command.WorkDir,
+			Vars:       cloneStringMap(command.Vars),
 		})
 	}
-	return daemons
+	return result
 }
 
 func lowerNetwork(networks []NetworkFacts, fwdTunnelExec []string, host HostFacts, transport string, vcpu *int) ([]QEMUNetDevice, error) {
@@ -890,6 +896,17 @@ func commandFromExec(exec []string) Command {
 		Path: exec[0],
 		Args: append([]string(nil), exec[1:]...),
 	}
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
 }
 
 func persistenceDirectories(volumes []VolumeFacts, stateDir string) []string {

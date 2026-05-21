@@ -34,17 +34,17 @@ const (
 var writeFileModePattern = regexp.MustCompile(`^0?[0-7]{3}$`)
 
 type Manifest struct {
-	Identity      Identity      `json:"identity"`
-	Paths         Paths         `json:"paths"`
-	Persistence   Persistence   `json:"persistence"`
-	SSH           SSH           `json:"ssh"`
-	QEMU          QEMU          `json:"qemu"`
-	Volumes       []Volume      `json:"volumes,omitempty"`
-	VSock         VSock         `json:"vsock"`
-	VirtioFS      VirtioFS      `json:"virtiofs"`
-	Workspace     Workspace     `json:"workspace,omitempty"`
-	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
-	Notifications Notifications `json:"notifications,omitempty"`
+	Identity      Identity               `json:"identity"`
+	Paths         Paths                  `json:"paths"`
+	Persistence   Persistence            `json:"persistence"`
+	SSH           SSH                    `json:"ssh"`
+	QEMU          QEMU                   `json:"qemu"`
+	Volumes       []Volume               `json:"volumes,omitempty"`
+	VSock         VSock                  `json:"vsock"`
+	RunWithSocket []RunWithSocketCommand `json:"runWithSocket,omitempty"`
+	Workspace     Workspace              `json:"workspace,omitempty"`
+	WriteFiles    WriteFiles             `json:"writeFiles,omitempty"`
+	Notifications Notifications          `json:"notifications,omitempty"`
 }
 
 type Identity struct {
@@ -235,14 +235,12 @@ type Notifications struct {
 	States  []string `json:"states,omitempty"`
 }
 
-type VirtioFSDaemon struct {
-	Tag        string  `json:"tag"`
-	SocketPath string  `json:"socketPath"`
-	Command    Command `json:"command"`
-}
-
-type VirtioFS struct {
-	Daemons []VirtioFSDaemon `json:"daemons"`
+type RunWithSocketCommand struct {
+	Name       string            `json:"name"`
+	SocketPath string            `json:"socketPath"`
+	Command    Command           `json:"command"`
+	WorkDir    string            `json:"workDir,omitempty"`
+	Vars       map[string]string `json:"vars,omitempty"`
 }
 
 type WriteFile struct {
@@ -343,25 +341,6 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.graphics.backend must be one of gtk or cocoa")
 	}
 
-	virtioFSShareTags := make(map[string]struct{}, len(m.QEMU.Devices.VirtioFS))
-	for _, share := range m.QEMU.Devices.VirtioFS {
-		virtioFSShareTags[share.Tag] = struct{}{}
-	}
-	for i, daemon := range m.VirtioFS.Daemons {
-		if daemon.Tag == "" {
-			return fmt.Errorf("manifest.virtiofs.daemons[%d].tag is required", i)
-		}
-		if _, ok := virtioFSShareTags[daemon.Tag]; !ok {
-			return fmt.Errorf("manifest.virtiofs.daemons[%d].tag must match a qemu virtiofs share", i)
-		}
-		if daemon.SocketPath == "" {
-			return fmt.Errorf("manifest.virtiofs.daemons[%d].socketPath is required", i)
-		}
-		if daemon.Command.Path == "" {
-			return fmt.Errorf("manifest.virtiofs.daemons[%d].command.path is required", i)
-		}
-	}
-
 	for i, share := range m.QEMU.Devices.VirtioFS {
 		switch {
 		case share.SocketPath == "":
@@ -396,6 +375,9 @@ func (m *Manifest) Validate() error {
 	if err := validateWriteFiles(m.WriteFiles); err != nil {
 		return err
 	}
+	if err := validateRunWithSocket(m.RunWithSocket); err != nil {
+		return err
+	}
 	for i, volume := range m.Volumes {
 		if volume.AutoCreate && volume.ImagePath == "" {
 			return fmt.Errorf("manifest.volumes[%d].imagePath is required", i)
@@ -414,6 +396,25 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func validateRunWithSocket(commands []RunWithSocketCommand) error {
+	names := make(map[string]int, len(commands))
+	for i, command := range commands {
+		switch {
+		case command.Name == "":
+			return fmt.Errorf("manifest.runWithSocket[%d].name is required", i)
+		case command.SocketPath == "":
+			return fmt.Errorf("manifest.runWithSocket[%d].socketPath is required", i)
+		case command.Command.Path == "":
+			return fmt.Errorf("manifest.runWithSocket[%d].command.path is required", i)
+		}
+		if previous, ok := names[command.Name]; ok {
+			return fmt.Errorf("manifest.runWithSocket[%d].name duplicates manifest.runWithSocket[%d].name %q", i, previous, command.Name)
+		}
+		names[command.Name] = i
+	}
 	return nil
 }
 
@@ -520,9 +521,9 @@ func (m *Manifest) resolveSocketPath(path string) (string, error) {
 }
 
 func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
-	paths := make([]string, 0, len(m.VirtioFS.Daemons))
-	for _, daemon := range m.VirtioFS.Daemons {
-		resolved, err := m.resolveSocketPath(daemon.SocketPath)
+	paths := make([]string, 0, len(m.RunWithSocket))
+	for _, command := range m.RunWithSocket {
+		resolved, err := m.resolveSocketPath(command.SocketPath)
 		if err != nil {
 			return nil, err
 		}
@@ -544,19 +545,23 @@ func (m *Manifest) ResolvedVirtioFSSocketPaths() ([]string, error) {
 }
 
 func (m *Manifest) ResolvedExternalVirtioFSSocketPaths() ([]string, error) {
-	managedTags := make(map[string]struct{}, len(m.VirtioFS.Daemons))
-	for _, daemon := range m.VirtioFS.Daemons {
-		managedTags[daemon.Tag] = struct{}{}
+	managedSockets := make(map[string]struct{}, len(m.RunWithSocket))
+	for _, command := range m.RunWithSocket {
+		resolved, err := m.resolveSocketPath(command.SocketPath)
+		if err != nil {
+			return nil, err
+		}
+		managedSockets[resolved] = struct{}{}
 	}
 
 	paths := make([]string, 0, len(m.QEMU.Devices.VirtioFS))
 	for _, share := range m.QEMU.Devices.VirtioFS {
-		if _, managed := managedTags[share.Tag]; managed {
-			continue
-		}
 		resolved, err := m.resolveSocketPath(share.SocketPath)
 		if err != nil {
 			return nil, err
+		}
+		if _, managed := managedSockets[resolved]; managed {
+			continue
 		}
 		paths = append(paths, resolved)
 	}
@@ -662,34 +667,48 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	return resolved, nil
 }
 
-func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
-	daemons := make([]VirtioFSDaemon, 0, len(m.VirtioFS.Daemons))
-	for _, daemon := range m.VirtioFS.Daemons {
-		resolved := daemon
-		socketPath, err := m.resolveSocketPath(daemon.SocketPath)
+func (m *Manifest) ResolvedRunWithSocketCommands() ([]RunWithSocketCommand, error) {
+	commands := make([]RunWithSocketCommand, 0, len(m.RunWithSocket))
+	for _, command := range m.RunWithSocket {
+		resolved := command
+		socketPath, err := m.resolveSocketPath(command.SocketPath)
 		if err != nil {
 			return nil, err
 		}
 		resolved.SocketPath = socketPath
-		renderer, err := executor.New(executor.Context{
+		context := executor.Context{
 			"Socket": socketPath,
-			"Tag":    daemon.Tag,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s].command: %w", daemon.Tag, err)
 		}
-		command, err := RenderCommand(daemon.Command, renderer)
+		for key, value := range command.Vars {
+			context[key] = value
+		}
+		renderer, err := executor.New(context)
 		if err != nil {
-			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s].command: %w", daemon.Tag, err)
+			return nil, fmt.Errorf("manifest.runWithSocket[%s].command: %w", command.Name, err)
+		}
+		renderedCommand, err := RenderCommand(command.Command, renderer)
+		if err != nil {
+			return nil, fmt.Errorf("manifest.runWithSocket[%s].command: %w", command.Name, err)
+		}
+		workDir := command.WorkDir
+		if workDir == "" {
+			workDir = m.Paths.WorkingDir
 		}
 		resolved.Command = Command{
-			Path: m.resolvePath(command.Path),
-			Args: command.Args,
-			Env:  command.Env,
+			Path: m.resolvePath(renderedCommand.Path),
+			Args: renderedCommand.Args,
+			Env:  renderedCommand.Env,
 		}
-		daemons = append(daemons, resolved)
+		resolved.WorkDir = m.resolvePath(workDir)
+		if command.Vars != nil {
+			resolved.Vars = make(map[string]string, len(command.Vars))
+			for key, value := range command.Vars {
+				resolved.Vars[key] = value
+			}
+		}
+		commands = append(commands, resolved)
 	}
-	return daemons, nil
+	return commands, nil
 }
 
 func (m *Manifest) ResolvedNotifications() Notifications {

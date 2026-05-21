@@ -693,7 +693,7 @@ func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watc
 			}
 			return m.connectGuestAgent(ctx, socketPath, watchers...)
 		case <-ticker.C:
-			if err := firstUnexpectedExit("guest agent", watchers...); err != nil {
+			if err := m.firstUnexpectedExit("guest agent", watchers...); err != nil {
 				return nil, err
 			}
 		case <-ctx.Done():
@@ -723,7 +723,7 @@ func (m *manager) connectGuestAgent(ctx context.Context, socketPath string, watc
 		case <-timer.C:
 		}
 
-		if err := firstUnexpectedExit("guest agent", watchers...); err != nil {
+		if err := m.firstUnexpectedExit("guest agent", watchers...); err != nil {
 			return nil, err
 		}
 

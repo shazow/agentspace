@@ -177,18 +177,30 @@ read_only = false  # Default: guest can write to the share
 # manifest lets virtie wait for readiness and place it under state_dir.
 virtiofsd_socket = "workspace.sock"
 
-# The daemon command is needed when virtie owns the host-side virtiofsd
-# lifecycle. Omit it for externally managed sockets; setting it means virtie
-# will start and stop the daemon with the VM. virtie injects the resolved socket
-# path into the daemon environment as VIRTIOFSD_SOCKET. Template values include
-# {{.Socket}}, {{.Tag}}, and {{.Env.USER}}.
-virtiofsd_exec = ["virtiofsd"]
-
 # Filesystem security and cache policy are backend-specific share behavior. The
 # defaults match the normal workspace share, while 9p and read-only store shares
 # may need different values.
 security_model = "mapped"  # Options: mapped, none, passthrough (default: mapped)
 cache = "auto"  # Options: auto, always, none (default: auto)
+
+[[run_with_socket]]
+# Managed socket commands are host-side helpers whose socket lifecycle is tied
+# to the VM. virtie starts them before QEMU, injects SOCKET plus vars-derived
+# environment values, and stops them during teardown. This is how virtie-owned
+# virtiofsd daemons and user tunnels are expressed.
+name = "virtiofsd[workspace]"
+socket = "workspace.sock"
+exec = ["virtiofsd", "--socket-path={{.Socket}}"]
+vars = { Tag = "workspace" }
+
+[[run_with_socket]]
+# User tunnels can create sockets in a shared directory. Here SOCK_NAME is both
+# an environment variable and a template value; SOCKET is the resolved host path.
+name = "tunnel[dbus-notifications.sock]"
+socket = ".virtie/tunnels/dbus-notifications.sock"
+work_dir = ".virtie/tunnels"
+exec = ["sh", "-c", "xdg-dbus-proxy \"$DBUS_SESSION_BUS_ADDRESS\" \"$SOCK_NAME\" --filter"]
+vars = { SockName = "dbus-notifications.sock" }
 
 
 [[networks]]

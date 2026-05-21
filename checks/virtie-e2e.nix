@@ -342,7 +342,7 @@ let
         set -euo pipefail
 
         mkdir -p "$PWD/state"
-        socket_path="''${VIRTIOFSD_SOCKET:-$PWD/virtiofs.sock}"
+        socket_path="''${SOCKET:-$PWD/virtiofs.sock}"
         pid_path="$socket_path.pid"
         mkdir -p "$(dirname "$socket_path")"
         touch "$PWD/state/virtiofsd-started"
@@ -480,7 +480,16 @@ let
           type = "virtiofs";
           tag = "workspace";
           virtiofsd_socket = "virtiofs.sock";
-          virtiofsd_exec = [ "${fakeTools}/bin/virtiofsd-workspace" ];
+        }
+      ];
+      run_with_socket = [
+        {
+          name = "virtiofsd[workspace]";
+          socket = "virtiofs.sock";
+          exec = [ "${fakeTools}/bin/virtiofsd-workspace" ];
+          vars = {
+            Tag = "workspace";
+          };
         }
       ];
       write_files = [

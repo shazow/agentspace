@@ -172,6 +172,38 @@ in
       description = "Additional host directory shares mounted in the sandbox, using the microvm.shares schema.";
     };
 
+    runWithTunnel = lib.mkOption {
+      type = lib.types.listOf (
+        lib.types.submodule (
+          { ... }:
+          {
+            options = {
+              sockName = lib.mkOption {
+                type = lib.types.str;
+                example = "dbus-notifications.sock";
+                description = "Socket filename exposed in the guest under /run/tunnels.";
+              };
+
+              exec = lib.mkOption {
+                type = lib.types.nonEmptyListOf lib.types.str;
+                example = [
+                  "socat"
+                  "TCP-LISTEN:8080,fork,reuseaddr"
+                  "UNIX-CONNECT:{{.SockName}}"
+                ];
+                description = ''
+                  Host-side argv to run from the tunnel directory. Template
+                  values include `{{.Socket}}`, `{{.SockName}}`, and `.Env`.
+                '';
+              };
+            };
+          }
+        )
+      );
+      default = [ ];
+      description = "Host commands that create Unix sockets shared into the guest under /run/tunnels.";
+    };
+
     swapSize = lib.mkOption {
       type = lib.types.ints.unsigned;
       default = 0;
@@ -354,6 +386,14 @@ in
         share: share.proto == "virtiofs" && !(cfg.persistence.storeDisk && isNixStoreShare share)
       ) config.microvm.shares;
       ninepShares = builtins.filter (share: share.proto == "9p") config.microvm.shares;
+      tunnelDir = "${persistenceStateDir}/tunnels";
+      tunnelShare = {
+        proto = "virtiofs";
+        tag = "tunnels";
+        source = tunnelDir;
+        mountPoint = "/run/tunnels";
+        securityModel = "mapped";
+      };
       inherit (pkgs.stdenv.hostPlatform) system;
       arch = builtins.head (builtins.split "-" system);
       canSandbox = builtins.elem "--enable-seccomp" (config.microvm.qemu.package.configureFlags or [ ]);
@@ -375,7 +415,9 @@ in
           fi
 
           socket_path=${lib.escapeShellArg socket}
-          if [ -n "''${VIRTIOFSD_SOCKET-}" ]; then
+          if [ -n "''${SOCKET-}" ]; then
+            socket_path="$SOCKET"
+          elif [ -n "''${VIRTIOFSD_SOCKET-}" ]; then
             socket_path="$VIRTIOFSD_SOCKET"
           fi
 
@@ -457,25 +499,16 @@ in
       );
 
       manifestMounts =
-        builtins.map (
-          share:
-          let
-            socketPath =
-              if nixStoreShareUsesSocket && isNixStoreShare share then cfg.nixStoreShareSocket else share.socket;
-          in
-          {
-            type = "virtiofs";
-            tag = share.tag;
-            source = share.source;
-            virtiofsd_socket = socketPath;
-            read_only = share.readOnly;
-            security_model = share.securityModel;
-            cache = share.cache;
-          }
-          // lib.optionalAttrs (!(nixStoreShareUsesSocket && isNixStoreShare share)) {
-            virtiofsd_exec = [ (mkVirtioFSDaemonCommand share) ];
-          }
-        ) virtiofsShares
+        builtins.map (share: {
+          type = "virtiofs";
+          tag = share.tag;
+          source = share.source;
+          virtiofsd_socket =
+            if nixStoreShareUsesSocket && isNixStoreShare share then cfg.nixStoreShareSocket else share.socket;
+          read_only = share.readOnly;
+          security_model = share.securityModel;
+          cache = share.cache;
+        }) virtiofsShares
         ++ builtins.map (share: {
           type = "9p";
           tag = share.tag;
@@ -483,6 +516,27 @@ in
           read_only = share.readOnly;
           security_model = share.securityModel;
         }) ninepShares;
+
+      manifestRunWithSocket =
+        builtins.map (share: {
+          name = "virtiofsd[${share.tag}]";
+          socket =
+            if nixStoreShareUsesSocket && isNixStoreShare share then cfg.nixStoreShareSocket else share.socket;
+          exec = [ (mkVirtioFSDaemonCommand share) ];
+          vars = {
+            Tag = share.tag;
+            Source = share.source;
+          };
+        }) (builtins.filter (share: !(nixStoreShareUsesSocket && isNixStoreShare share)) virtiofsShares)
+        ++ builtins.map (tunnel: {
+          name = "tunnel[${tunnel.sockName}]";
+          socket = "tunnels/${tunnel.sockName}";
+          exec = tunnel.exec;
+          work_dir = tunnelDir;
+          vars = {
+            SockName = tunnel.sockName;
+          };
+        }) cfg.runWithTunnel;
 
       manifestWriteFiles = lib.mapAttrsToList (
         guestPath: file:
@@ -573,6 +627,7 @@ in
         }) config.microvm.interfaces;
         notifications = notificationManifest;
         write_files = manifestWriteFiles;
+        run_with_socket = manifestRunWithSocket;
       };
 
       tomlFormat = pkgs.formats.toml { };
@@ -587,6 +642,25 @@ in
               cfg.nixStoreShareSocket == null
               || (cfg.nixStoreShareSocket != "" && lib.hasPrefix "/" cfg.nixStoreShareSocket);
             message = "agentspace.sandbox.nixStoreShareSocket must be an absolute socket path when set.";
+          }
+          {
+            assertion =
+              let
+                sockNames = builtins.map (tunnel: tunnel.sockName) cfg.runWithTunnel;
+              in
+              builtins.length sockNames == builtins.length (lib.unique sockNames);
+            message = "agentspace.sandbox.runWithTunnel sockName values must be unique.";
+          }
+          {
+            assertion = builtins.all (
+              tunnel:
+              tunnel.sockName != ""
+              && !(lib.hasPrefix "/" tunnel.sockName)
+              && !(lib.hasInfix "/" tunnel.sockName)
+              && tunnel.sockName != "."
+              && tunnel.sockName != ".."
+            ) cfg.runWithTunnel;
+            message = "agentspace.sandbox.runWithTunnel sockName values must be relative socket filenames.";
           }
         ];
 
@@ -751,6 +825,7 @@ in
                 securityModel = "mapped";
               }
             ]
+            ++ lib.optionals (cfg.runWithTunnel != [ ]) [ tunnelShare ]
             ++ workspaceShares
             ++ cfg.shares;
 

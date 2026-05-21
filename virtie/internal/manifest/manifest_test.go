@@ -26,7 +26,12 @@ func TestLoadReadsFromReader(t *testing.T) {
 		SecurityModel: "none",
 	})
 	document.Volumes[0].ImagePath = "images/root.img"
-	document.Mounts[0].VirtioFSDExec = []string{"bin/virtiofsd-workspace"}
+	document.RunWithSocket = []RunWithSocketFacts{{
+		Name:   "virtiofsd[workspace]",
+		Socket: "fs.sock",
+		Exec:   []string{"bin/virtiofsd-workspace"},
+		Vars:   map[string]string{"Tag": "workspace"},
+	}}
 
 	data, err := json.Marshal(document)
 	if err != nil {
@@ -58,12 +63,12 @@ func TestLoadReadsFromReader(t *testing.T) {
 		t.Fatalf("unexpected 9p source path: got %q want %q", got, want)
 	}
 
-	daemons, err := loaded.ResolvedVirtioFSDaemons()
+	commands, err := loaded.ResolvedRunWithSocketCommands()
 	if err != nil {
-		t.Fatalf("resolve virtiofs daemons: %v", err)
+		t.Fatalf("resolve managed socket commands: %v", err)
 	}
-	if got, want := daemons[0].Command.Path, "/tmp/work/bin/virtiofsd-workspace"; got != want {
-		t.Fatalf("unexpected daemon command path: got %q want %q", got, want)
+	if got, want := commands[0].Command.Path, "/tmp/work/bin/virtiofsd-workspace"; got != want {
+		t.Fatalf("unexpected managed socket command path: got %q want %q", got, want)
 	}
 
 	if got, want := loaded.ResolvedVolumes(), []Volume{
@@ -362,7 +367,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			manifest := validManifest()
 			manifest.Paths.RuntimeDir = tt.runtimeDir
-			manifest.VirtioFS.Daemons[0].SocketPath = tt.socketPath
+			manifest.RunWithSocket[0].SocketPath = tt.socketPath
 			manifest.QEMU.Devices.VirtioFS[0].SocketPath = tt.socketPath
 			manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 			manifest.QEMU.SSHReady.SocketPath = "ssh-ready.sock"
@@ -426,12 +431,12 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 				t.Fatalf("unexpected qemu ssh readiness socket path: got %q want %q", got, want)
 			}
 
-			daemons, err := manifest.ResolvedVirtioFSDaemons()
+			commands, err := manifest.ResolvedRunWithSocketCommands()
 			if err != nil {
-				t.Fatalf("resolve virtiofs daemons: %v", err)
+				t.Fatalf("resolve managed socket commands: %v", err)
 			}
-			if got, want := daemons[0].SocketPath, tt.wantSocket; got != want {
-				t.Fatalf("unexpected daemon socket path: got %q want %q", got, want)
+			if got, want := commands[0].SocketPath, tt.wantSocket; got != want {
+				t.Fatalf("unexpected managed socket path: got %q want %q", got, want)
 			}
 		})
 	}
@@ -697,7 +702,8 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 			"qemu": {"exec": ["/bin/qemu-system-x86_64"]},
 			"machine": {"memory": 1024},
 			"kernel": {"path": "/tmp/vmlinuz", "initrd_path": "/tmp/initrd"},
-			"mounts": [{"type": "virtiofs", "tag": "workspace", "virtiofsd_socket": "fs.sock", "virtiofsd_exec": ["/tmp/virtiofsd-workspace"]}],
+			"mounts": [{"type": "virtiofs", "tag": "workspace", "virtiofsd_socket": "fs.sock"}],
+			"run_with_socket": [{"name": "virtiofsd[workspace]", "socket": "fs.sock", "exec": ["/tmp/virtiofsd-workspace"], "vars": {"Tag": "workspace"}}],
 			"volumes": [{"image": "root.img", "size": 256, "create": true}],
 			"notifications": {"exec": ["--verbose"]}
 		}`)
@@ -742,7 +748,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 
 func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	manifest := validManifest()
-	manifest.VirtioFS.Daemons = nil
+	manifest.RunWithSocket = nil
 	manifest.QEMU.Devices.VirtioFS[0].SocketPath = "/var/run/virtiofs-nix-store.sock"
 
 	if err := manifest.Validate(); err != nil {
@@ -774,28 +780,28 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	}
 }
 
-func TestResolvedVirtioFSDaemonsRenderExecTemplates(t *testing.T) {
+func TestResolvedRunWithSocketCommandsRenderExecTemplates(t *testing.T) {
 	manifest := validManifest()
-	manifest.VirtioFS.Daemons[0].Command = Command{
+	manifest.RunWithSocket[0].Command = Command{
 		Path: "bin/virtiofsd-{{.Tag}}",
 		Args: []string{"--socket-path={{.Socket}}", "--user={{.Env.USER}}"},
 		Env:  []string{"STATIC=1"},
 	}
 	t.Setenv("USER", "template-user")
 
-	daemons, err := manifest.ResolvedVirtioFSDaemons()
+	commands, err := manifest.ResolvedRunWithSocketCommands()
 	if err != nil {
-		t.Fatalf("resolve virtiofs daemons: %v", err)
+		t.Fatalf("resolve managed socket commands: %v", err)
 	}
-	if got, want := daemons[0].Command.Path, "/tmp/work/bin/virtiofsd-workspace"; got != want {
-		t.Fatalf("unexpected daemon path: got %q want %q", got, want)
+	if got, want := commands[0].Command.Path, "/tmp/work/bin/virtiofsd-workspace"; got != want {
+		t.Fatalf("unexpected managed socket command path: got %q want %q", got, want)
 	}
-	if got, want := daemons[0].Command.Args, []string{"--socket-path=/tmp/work/fs.sock", "--user=template-user"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected daemon args: got %#v want %#v", got, want)
+	if got, want := commands[0].Command.Args, []string{"--socket-path=/tmp/work/fs.sock", "--user=template-user"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected managed socket command args: got %#v want %#v", got, want)
 	}
 	for _, want := range []string{"STATIC=1", "SOCKET=/tmp/work/fs.sock", "TAG=workspace"} {
-		if !slices.Contains(daemons[0].Command.Env, want) {
-			t.Fatalf("expected daemon env %q in %#v", want, daemons[0].Command.Env)
+		if !slices.Contains(commands[0].Command.Env, want) {
+			t.Fatalf("expected managed socket command env %q in %#v", want, commands[0].Command.Env)
 		}
 	}
 }
@@ -1228,7 +1234,7 @@ func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest.QEMU.Devices.Block = nil
 	manifest.QEMU.Devices.Network = nil
 	manifest.Volumes = nil
-	manifest.VirtioFS.Daemons = nil
+	manifest.RunWithSocket = nil
 
 	if err := manifest.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
@@ -1355,12 +1361,17 @@ func validDocument() Document {
 		},
 		Mounts: []MountFacts{
 			{
-				Type:          "virtiofs",
-				Tag:           "workspace",
-				SocketPath:    "fs.sock",
-				VirtioFSDExec: []string{"/tmp/virtiofsd-workspace"},
+				Type:       "virtiofs",
+				Tag:        "workspace",
+				SocketPath: "fs.sock",
 			},
 		},
+		RunWithSocket: []RunWithSocketFacts{{
+			Name:   "virtiofsd[workspace]",
+			Socket: "fs.sock",
+			Exec:   []string{"/tmp/virtiofsd-workspace"},
+			Vars:   map[string]string{"Tag": "workspace"},
+		}},
 		Volumes: []VolumeFacts{
 			{
 				ImagePath:  "root.img",

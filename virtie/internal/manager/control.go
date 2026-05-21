@@ -147,10 +147,10 @@ func (m *manager) effectiveSuspendSignalTimeout(manifest *manifest.Manifest) tim
 	}
 
 	teardownProcesses := 2 // qemu plus the active ssh session when present.
-	if daemons, err := manifest.ResolvedVirtioFSDaemons(); err == nil {
-		teardownProcesses += len(daemons)
+	if commands, err := manifest.ResolvedRunWithSocketCommands(); err == nil {
+		teardownProcesses += len(commands)
 	} else {
-		teardownProcesses += len(manifest.VirtioFS.Daemons)
+		teardownProcesses += len(manifest.RunWithSocket)
 	}
 
 	return defaultLaunchSignalTimeout +

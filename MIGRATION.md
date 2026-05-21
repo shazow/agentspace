@@ -4,6 +4,52 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-21: Managed socket commands replace `virtiofsd_exec`
+
+### Who Is Affected
+
+- Direct virtie manifest producers setting `mounts[].virtiofsd_exec`.
+- Consumers inspecting generated manifests for managed virtiofsd commands.
+
+### What Changed
+
+Managed host commands that produce Unix sockets now live in the top-level
+`run_with_socket` list. Mounts keep only the socket path consumed by QEMU.
+Generated agentspace manifests use this same mechanism for virtiofsd and for
+`agentspace.sandbox.runWithTunnel`.
+
+`agentspace.sandbox.runWithTunnel` commands run in
+`${persistence.basedir}/tunnels`, create sockets shared into the guest under
+`/run/tunnels`, and receive `SOCKET` plus `SOCK_NAME`.
+
+### Migration Steps
+
+Move managed virtiofsd commands out of mounts:
+
+```toml
+[[mounts]]
+tag = "workspace"
+virtiofsd_socket = "workspace.sock"
+- virtiofsd_exec = ["virtiofsd"]
+
++ [[run_with_socket]]
++ name = "virtiofsd[workspace]"
++ socket = "workspace.sock"
++ exec = ["virtiofsd", "--socket-path={{.Socket}}"]
++ vars = { Tag = "workspace" }
+```
+
+For user tunnel commands, prefer the Nix API:
+
+```nix
+agentspace.sandbox.runWithTunnel = [
+  {
+    sockName = "dbus-notifications.sock";
+    exec = [ "sh" "-c" "xdg-dbus-proxy \"$DBUS_SESSION_BUS_ADDRESS\" \"$SOCK_NAME\" --filter" ];
+  }
+];
+```
+
 ## 2026-05-21: Manifest exec entries use Go templates
 
 ### Who Is Affected
@@ -27,7 +73,7 @@ template variables there, including inside shell command strings.
 | `qemu.exec` | `HostName`, `WorkingDir`, `StateDir`, `HostOS`, `HostArch`, `HostSystem`, `.Env` | none |
 | `qemu.fwd_tunnel_exec` | `Host`, `Port`, `.Env` | none; QEMU starts the command |
 | `ssh.exec` | `CID`, `User`, `Destination`, `.Env` | `CID`, `USER`, `DESTINATION` |
-| `mounts[].virtiofsd_exec` | `Socket`, `Tag`, `.Env` | `SOCKET`, `TAG` |
+| `run_with_socket[].exec` | `Socket`, configured `vars`, `.Env` | `SOCKET`, normalized `vars` keys |
 | `notifications.exec` | `State`, `Message`, notification context values, `.Env` | `STATE`, `MESSAGE`, normalized context values |
 
 ### Migration Steps

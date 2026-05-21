@@ -75,7 +75,7 @@ func (m *manager) waitForSSHReady(ctx context.Context, socketPath string, watche
 			}
 			return nil
 		case <-ticker.C:
-			if err := firstUnexpectedExit("vm startup", watchers...); err != nil {
+			if err := m.firstUnexpectedExit("vm startup", watchers...); err != nil {
 				return err
 			}
 		case <-readyCtx.Done():
@@ -104,7 +104,7 @@ func (m *manager) waitForSocketWithStage(ctx context.Context, stage, socketPath 
 			}
 			return nil
 		case <-ticker.C:
-			if err := firstUnexpectedExit(stage, watchers...); err != nil {
+			if err := m.firstUnexpectedExit(stage, watchers...); err != nil {
 				return err
 			}
 		case <-ctx.Done():

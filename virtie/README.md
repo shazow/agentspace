@@ -31,7 +31,8 @@ minimal manifest and a full manifest with default-valued fields included.
 - Loads and validates a manifest for the supported sandbox launch path.
 - Accepts JSON and TOML manifests, with Nix-generated manifests remaining JSON.
 - Allocates a runtime vsock CID for each session.
-- Starts `virtiofsd`, launches QEMU, waits for SSH readiness, and either
+- Starts managed socket commands such as `virtiofsd`, launches QEMU, waits for
+  SSH readiness, and either
   prints the SSH command or attaches the active session with `--ssh`.
 - Uses QMP for readiness and graceful shutdown.
 - Records the active launch PID under the manifest persistence state directory.
@@ -54,7 +55,7 @@ host process environment is available as `.Env` on every surface.
 | `qemu.exec` | `HostName`, `WorkingDir`, `StateDir`, `HostOS`, `HostArch`, `HostSystem`, `.Env` | none |
 | `qemu.fwd_tunnel_exec` | `Host`, `Port`, `.Env` | none; QEMU starts the command |
 | `ssh.exec` | `CID`, `User`, `Destination`, `.Env` | `CID`, `USER`, `DESTINATION` |
-| `mounts[].virtiofsd_exec` | `Socket`, `Tag`, `.Env` | `SOCKET`, `TAG` |
+| `run_with_socket[].exec` | `Socket`, configured `vars`, `.Env` | `SOCKET`, normalized `vars` keys |
 | `notifications.exec` | `State`, `Message`, notification context values, `.Env` | `STATE`, `MESSAGE`, normalized context values |
 
 ## Notes

@@ -54,6 +54,48 @@ let
     };
   };
 
+  vmVirtieTunnel = mkSandbox {
+    persistence.homeImage = null;
+    runWithTunnel = [
+      {
+        sockName = "dbus.sock";
+        exec = [
+          "sh"
+          "-c"
+          "printf ready > {{.SockName}}"
+        ];
+      }
+    ];
+  };
+
+  invalidDuplicateTunnel = builtins.tryEval (
+    (mkSandbox {
+      persistence.homeImage = null;
+      runWithTunnel = [
+        {
+          sockName = "dbus.sock";
+          exec = [ "true" ];
+        }
+        {
+          sockName = "dbus.sock";
+          exec = [ "true" ];
+        }
+      ];
+    }).config.system.build.toplevel.drvPath
+  );
+
+  invalidUnsafeTunnel = builtins.tryEval (
+    (mkSandbox {
+      persistence.homeImage = null;
+      runWithTunnel = [
+        {
+          sockName = "../dbus.sock";
+          exec = [ "true" ];
+        }
+      ];
+    }).config.system.build.toplevel.drvPath
+  );
+
   vmVirtieBalloonDisabled = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = mkExecSSH {
@@ -186,6 +228,7 @@ let
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtieManifestData;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
+  tunnelManifest = vmVirtieTunnel.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
@@ -199,9 +242,9 @@ let
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
 
   virtiofsMounts = builtins.filter (mount: mount.type == "virtiofs") manifest.mounts;
-  virtiofsDaemonMounts = builtins.filter (
-    mount: mount.type == "virtiofs" && mount ? virtiofsd_exec
-  ) manifest.mounts;
+  virtiofsDaemonCommands = builtins.filter (
+    command: pkgs.lib.hasPrefix "virtiofsd[" command.name
+  ) manifest.run_with_socket;
 
   _ =
     assert builtins.head manifest.qemu.exec != "";
@@ -244,11 +287,12 @@ let
     assert !(manifest.ssh ? retry_delay_ms);
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.exec;
     assert builtins.any (volume: volume.image == ".agentspace/nix-store-overlay.img") manifest.volumes;
-    assert builtins.length virtiofsDaemonMounts > 0;
+    assert builtins.all (mount: !(mount ? virtiofsd_exec)) manifest.mounts;
+    assert builtins.length virtiofsDaemonCommands > 0;
     assert builtins.all (
-      mount: mount.virtiofsd_socket != "" && builtins.head mount.virtiofsd_exec != ""
-    ) virtiofsDaemonMounts;
-    assert builtins.any (mount: mount.tag == "workspace_cwd") virtiofsDaemonMounts;
+      command: command.socket != "" && builtins.head command.exec != ""
+    ) virtiofsDaemonCommands;
+    assert builtins.any (command: command.name == "virtiofsd[workspace_cwd]") virtiofsDaemonCommands;
     assert !(manifest ? vsock);
     assert !(manifest.ssh ? destination);
     assert !(manifest ? qemuConfig);
@@ -305,11 +349,17 @@ let
       mount.tag == "workspace_cwd"
       && mount.source == "."
       && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
-      && mount ? virtiofsd_exec
     ) externalStoreSocketManifest.mounts;
-    assert builtins.all (
-      mount: mount.tag != "ro-store" || !(mount ? virtiofsd_exec)
-    ) externalStoreSocketManifest.mounts;
+    assert builtins.all (mount: !(mount ? virtiofsd_exec)) externalStoreSocketManifest.mounts;
+    assert builtins.any (
+      command:
+      command.name == "virtiofsd[workspace_cwd]"
+      && command.socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
+    ) externalStoreSocketManifest.run_with_socket;
+    assert
+      !(builtins.any (
+        command: command.name == "virtiofsd[ro-store]"
+      ) externalStoreSocketManifest.run_with_socket);
     assert pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
       vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
     assert pkgs.lib.hasInfix
@@ -355,10 +405,13 @@ let
       && mount.read_only == true
     ) extraSharesManifest.mounts;
     assert builtins.any (
-      mount: mount.tag == "tools" && mount.virtiofsd_socket != "" && mount ? virtiofsd_exec
+      mount: mount.tag == "tools" && mount.virtiofsd_socket != "" && !(mount ? virtiofsd_exec)
     ) extraSharesManifest.mounts;
+    assert builtins.any (
+      command: command.name == "virtiofsd[tools]" && command.socket != ""
+    ) extraSharesManifest.run_with_socket;
     assert
-      !(builtins.any (mount: mount.tag == "cache" && mount ? virtiofsd_exec) extraSharesManifest.mounts);
+      !(builtins.any (command: command.name == "virtiofsd[cache]") extraSharesManifest.run_with_socket);
     true;
 
   _workspace =
@@ -387,22 +440,28 @@ let
       mount.tag == "workspace-agentspace"
       && mount.source == "/home/shazow/projects/agentspace"
       && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace-agentspace.sock"
-      && mount ? virtiofsd_exec
     ) workspaceManifest.mounts;
     assert builtins.any (
       mount:
       mount.tag == "workspace-project2-foo"
       && mount.source == "/home/shazow/foo"
       && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace-project2-foo.sock"
-      && mount ? virtiofsd_exec
     ) workspaceManifest.mounts;
     assert builtins.any (
       mount:
       mount.tag == "workspace_cwd"
       && mount.source == "."
       && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
-      && mount ? virtiofsd_exec
     ) workspaceManifest.mounts;
+    assert builtins.any (
+      command: command.name == "virtiofsd[workspace-agentspace]"
+    ) workspaceManifest.run_with_socket;
+    assert builtins.any (
+      command: command.name == "virtiofsd[workspace-project2-foo]"
+    ) workspaceManifest.run_with_socket;
+    assert builtins.any (
+      command: command.name == "virtiofsd[workspace_cwd]"
+    ) workspaceManifest.run_with_socket;
     true;
 
   _writeFiles =
@@ -426,6 +485,39 @@ let
       && file.write_back == true
       && file.source == ".agentspace-test/host-file"
     ) featureRichManifest.write_files;
+    true;
+
+  _runWithTunnel =
+    assert builtins.all (mount: !(mount ? virtiofsd_exec)) tunnelManifest.mounts;
+    assert builtins.any (
+      mount:
+      mount.type == "virtiofs"
+      && mount.tag == "tunnels"
+      && mount.source == ".agentspace/tunnels"
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-tunnels.sock"
+    ) tunnelManifest.mounts;
+    assert builtins.any (
+      command:
+      command.name == "virtiofsd[tunnels]"
+      && command.socket == "agent-sandbox-virtiofs-tunnels.sock"
+      && command.vars.Tag == "tunnels"
+      && command.vars.Source == ".agentspace/tunnels"
+    ) tunnelManifest.run_with_socket;
+    assert builtins.any (
+      command:
+      command.name == "tunnel[dbus.sock]"
+      && command.socket == "tunnels/dbus.sock"
+      && command.work_dir == ".agentspace/tunnels"
+      && command.vars.SockName == "dbus.sock"
+      &&
+        command.exec == [
+          "sh"
+          "-c"
+          "printf ready > {{.SockName}}"
+        ]
+    ) tunnelManifest.run_with_socket;
+    assert !invalidDuplicateTunnel.success;
+    assert !invalidUnsafeTunnel.success;
     true;
 
   _notifications =
@@ -479,6 +571,10 @@ in
   virtie-manifest-write-files-contract =
     assert _writeFiles;
     pkgs.runCommand "virtie-manifest-write-files-contract" { } "touch $out";
+
+  virtie-manifest-run-with-tunnel-contract =
+    assert _runWithTunnel;
+    pkgs.runCommand "virtie-manifest-run-with-tunnel-contract" { } "touch $out";
 
   virtie-manifest-notifications-contract =
     assert _notifications;

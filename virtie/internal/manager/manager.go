@@ -29,6 +29,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -310,11 +311,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 	}()
 
-	virtiofsd, err := m.startVirtioFSDaemons(manifest)
+	managedSocketCommands, err := m.startRunWithSocketCommands(launchCtx, manifest)
 	if err != nil {
-		return &stageError{Stage: "virtiofs startup", Err: err}
+		return &stageError{Stage: "managed socket startup", Err: err}
 	}
-	started = append(started, virtiofsd...)
+	started = append(started, managedSocketCommands...)
 
 	if len(virtioFSSocketPaths) > 0 {
 		m.logger.Info("waiting for virtiofs sockets")
@@ -551,42 +552,44 @@ func (m *manager) startManagedProcess(spec processSpec) (*managedProcess, error)
 	return mp, nil
 }
 
-func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedProcess, error) {
-	daemons, err := manifest.ResolvedVirtioFSDaemons()
+func (m *manager) startRunWithSocketCommands(ctx context.Context, manifest *manifest.Manifest) ([]*managedProcess, error) {
+	commands, err := manifest.ResolvedRunWithSocketCommands()
 	if err != nil {
 		return nil, err
 	}
-	started := make([]*managedProcess, 0, len(daemons))
+	started := make([]*managedProcess, len(commands))
 
-	for _, daemon := range daemons {
-		name := "virtiofsd"
-		if daemon.Tag != "" {
-			name = fmt.Sprintf("virtiofsd[%s]", daemon.Tag)
-			m.logger.Info("starting virtiofsd", "tag", daemon.Tag)
-		} else {
-			m.logger.Info("starting virtiofsd")
-		}
-
-		env := append([]string(nil), daemon.Command.Env...)
-		env = append(env, fmt.Sprintf("VIRTIOFSD_SOCKET=%s", daemon.SocketPath))
-		process, err := m.startManagedProcess(processSpec{
-			Name:         name,
-			Path:         daemon.Command.Path,
-			Args:         daemon.Command.Args,
-			Dir:          manifest.Paths.WorkingDir,
-			Env:          env,
-			ProcessGroup: true,
-			Stdout:       os.Stderr,
-			Stderr:       os.Stderr,
+	group, groupCtx := errgroup.WithContext(ctx)
+	for i, command := range commands {
+		i, command := i, command
+		group.Go(func() error {
+			select {
+			case <-groupCtx.Done():
+				return groupCtx.Err()
+			default:
+			}
+			m.logger.Info("starting managed socket command", "name", command.Name, "socket", command.SocketPath)
+			process, err := m.startManagedProcess(processSpec{
+				Name:         command.Name,
+				Path:         command.Command.Path,
+				Args:         command.Command.Args,
+				Dir:          command.WorkDir,
+				Env:          command.Command.Env,
+				ProcessGroup: true,
+				Stdout:       os.Stderr,
+				Stderr:       os.Stderr,
+			})
+			if err != nil {
+				return err
+			}
+			started[i] = process
+			return nil
 		})
-		if err != nil {
-			_ = m.stopAll(started)
-			return nil, err
-		}
-
-		started = append(started, process)
 	}
-
+	if err := group.Wait(); err != nil {
+		_ = m.stopAll(started)
+		return nil, err
+	}
 	return started, nil
 }
 
@@ -651,7 +654,7 @@ func (m *manager) waitForSockets(ctx context.Context, socketPaths []string, watc
 			}
 			return nil
 		case <-ticker.C:
-			if err := firstUnexpectedExit("virtiofs startup", watchers...); err != nil {
+			if err := m.firstUnexpectedExit("virtiofs startup", watchers...); err != nil {
 				return err
 			}
 		case <-ctx.Done():
@@ -680,7 +683,7 @@ func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers ..
 			}
 			return m.connectQMP(ctx, socketPath, watchers...)
 		case <-ticker.C:
-			if err := firstUnexpectedExit("vm startup", watchers...); err != nil {
+			if err := m.firstUnexpectedExit("vm startup", watchers...); err != nil {
 				return nil, err
 			}
 		case <-ctx.Done():
@@ -710,7 +713,7 @@ func (m *manager) connectQMP(ctx context.Context, socketPath string, watchers ..
 		case <-timer.C:
 		}
 
-		if err := firstUnexpectedExit("vm startup", watchers...); err != nil {
+		if err := m.firstUnexpectedExit("vm startup", watchers...); err != nil {
 			return nil, err
 		}
 
@@ -900,7 +903,7 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 		case <-infoRequests:
 			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
 		case <-ticker.C:
-			if err := firstUnexpectedExit("active session", watchers...); err != nil {
+			if err := m.firstUnexpectedExit("active session", watchers...); err != nil {
 				return err
 			}
 		case <-ctx.Done():
@@ -964,7 +967,7 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, s
 		case <-infoRequests:
 			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
 		case <-ticker.C:
-			if err := firstUnexpectedExit("active session", watchers...); err != nil {
+			if err := m.firstUnexpectedExit("active session", watchers...); err != nil {
 				return err
 			}
 		case <-ctx.Done():
@@ -989,7 +992,7 @@ func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRe
 		case <-infoRequests:
 			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
 		case <-ticker.C:
-			if err := firstUnexpectedExit("vm session", watchers...); err != nil {
+			if err := m.firstUnexpectedExit("vm session", watchers...); err != nil {
 				return err
 			}
 		case <-ctx.Done():
@@ -1182,6 +1185,14 @@ func (p *managedProcess) pollExit() (bool, error) {
 	default:
 		return false, nil
 	}
+}
+
+func (m *manager) firstUnexpectedExit(stage string, processes ...*managedProcess) error {
+	err := firstUnexpectedExit(stage, processes...)
+	if err != nil && m.logger != nil {
+		m.logger.Error("managed process exited unexpectedly", "stage", stage, "err", err)
+	}
+	return err
 }
 
 func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
