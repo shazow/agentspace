@@ -18,6 +18,22 @@ type RenderedCommand struct {
 	Env  []string
 }
 
+func RenderCommand(command Command, context ExecTemplateContext) (Command, error) {
+	renderedArgv, err := RenderExecArgv(CommandArgv(command), context)
+	if err != nil {
+		return Command{}, err
+	}
+	rendered := Command{
+		Env: append([]string(nil), command.Env...),
+	}
+	if len(renderedArgv) > 0 {
+		rendered.Path = renderedArgv[0]
+		rendered.Args = append([]string(nil), renderedArgv[1:]...)
+	}
+	rendered.Env = append(rendered.Env, ExecContextEnv(context)...)
+	return rendered, nil
+}
+
 func RenderExec(argv []string, context ExecTemplateContext) (RenderedCommand, error) {
 	renderedArgv, err := RenderExecArgv(argv, context)
 	if err != nil {
@@ -61,7 +77,7 @@ func ExecContextEnv(context ExecTemplateContext) []string {
 
 	values := make(map[string]string, len(keys))
 	for _, key := range keys {
-		envKey := execEnvKey(key)
+		envKey := ExecEnvKey(key)
 		if envKey == "" {
 			continue
 		}
@@ -114,7 +130,15 @@ func environMap() map[string]string {
 	return env
 }
 
-func execEnvKey(key string) string {
+func CommandArgv(command Command) []string {
+	if command.Path == "" {
+		return append([]string(nil), command.Args...)
+	}
+	argv := []string{command.Path}
+	return append(argv, command.Args...)
+}
+
+func ExecEnvKey(key string) string {
 	var builder strings.Builder
 	var previousUnderscore bool
 	var previousLowerOrDigit bool

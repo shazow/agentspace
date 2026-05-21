@@ -8,8 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
-	"unicode"
 
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -106,7 +104,7 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 		return
 	}
 	context := notificationTemplateContext(state, message, values)
-	command, err := manifest.RenderExec(notificationCommandArgv(n.command), context)
+	command, err := manifest.RenderCommand(n.command, context)
 	if err != nil {
 		if n.logger != nil {
 			n.logger.Info("notification hook template failed", "state", state, "err", err)
@@ -145,7 +143,7 @@ func notificationEnv(state string, message string, values map[string]string) []s
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		env = append(env, fmt.Sprintf("VIRTIE_NOTIFY_CONTEXT_%s=%s", envKey(key), values[key]))
+		env = append(env, fmt.Sprintf("VIRTIE_NOTIFY_CONTEXT_%s=%s", manifest.ExecEnvKey(key), values[key]))
 	}
 	return env
 }
@@ -157,38 +155,7 @@ func notificationTemplateContext(state string, message string, values map[string
 	}
 	for key, value := range values {
 		context[key] = value
-		context[envKey(key)] = value
+		context[manifest.ExecEnvKey(key)] = value
 	}
 	return context
-}
-
-func notificationCommandArgv(command manifest.Command) []string {
-	if command.Path == "" {
-		return append([]string(nil), command.Args...)
-	}
-	argv := []string{command.Path}
-	return append(argv, command.Args...)
-}
-
-func envKey(key string) string {
-	var builder strings.Builder
-	var previousUnderscore bool
-	var previousLowerOrDigit bool
-	for _, r := range key {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			if unicode.IsUpper(r) && previousLowerOrDigit && !previousUnderscore {
-				builder.WriteByte('_')
-			}
-			builder.WriteRune(unicode.ToUpper(r))
-			previousUnderscore = false
-			previousLowerOrDigit = unicode.IsLower(r) || unicode.IsDigit(r)
-			continue
-		}
-		if builder.Len() > 0 && !previousUnderscore {
-			builder.WriteByte('_')
-			previousUnderscore = true
-		}
-		previousLowerOrDigit = false
-	}
-	return strings.Trim(builder.String(), "_")
 }

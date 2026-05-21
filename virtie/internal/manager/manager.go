@@ -420,7 +420,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 	}
 
-	if hint := buildSSHCommandHint(manifest, cid); hint != "" {
+	hint, err := buildSSHCommandHint(manifest, cid)
+	if err != nil {
+		m.logger.Info("ssh command hint template failed", "err", err)
+	} else if hint != "" {
 		fmt.Fprintf(m.outputWriter(), "connect with: %s\n", hint)
 	}
 	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
@@ -1235,7 +1238,7 @@ func buildSSHSpecWithArgv(launchManifest *manifest.Manifest, cid int, remoteComm
 	}, nil
 }
 
-func buildSSHCommandHint(launchManifest *manifest.Manifest, cid int) string {
+func buildSSHCommandHint(launchManifest *manifest.Manifest, cid int) (string, error) {
 	context := manifest.ExecTemplateContext{
 		"CID":         fmt.Sprintf("%d", cid),
 		"User":        launchManifest.SSH.User,
@@ -1243,9 +1246,9 @@ func buildSSHCommandHint(launchManifest *manifest.Manifest, cid int) string {
 	}
 	argv, err := manifest.RenderExecArgv(launchManifest.SSH.Argv, context)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return sshtools.CommandHint(sshtools.Config{Exec: argv, User: launchManifest.SSH.User}, cid)
+	return sshtools.CommandHint(sshtools.Config{Exec: argv, User: launchManifest.SSH.User}, cid), nil
 }
 
 func joinDeferredError(target *error, fn func() error) {

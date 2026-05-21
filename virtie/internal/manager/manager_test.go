@@ -195,8 +195,26 @@ func TestBuildSSHSpecRendersManifestExecTemplates(t *testing.T) {
 	if !containsString(session.Args, "control-10") || !containsString(session.Args, "HostName=agent@vsock/10") {
 		t.Fatalf("expected rendered ssh args, got %#v", session.Args)
 	}
-	if got, want := buildSSHCommandHint(manifest, 10), "/bin/ssh -S control-10 -o 'HostName=agent@vsock/10' agent@vsock/10"; got != want {
+	hint, err := buildSSHCommandHint(manifest, 10)
+	if err != nil {
+		t.Fatalf("build ssh command hint: %v", err)
+	}
+	if got, want := hint, "/bin/ssh -S control-10 -o 'HostName=agent@vsock/10' agent@vsock/10"; got != want {
 		t.Fatalf("unexpected rendered ssh hint: got %q want %q", got, want)
+	}
+}
+
+func TestBuildSSHCommandHintReturnsTemplateError(t *testing.T) {
+	manifest := &manifest.Manifest{
+		SSH: manifest.SSH{
+			Argv: []string{"/bin/ssh", "{{.Missing}}"},
+			User: "agent",
+		},
+	}
+
+	_, err := buildSSHCommandHint(manifest, 10)
+	if err == nil || !strings.Contains(err.Error(), `map has no entry for key "Missing"`) {
+		t.Fatalf("expected ssh hint template error, got %v", err)
 	}
 }
 

@@ -670,7 +670,7 @@ func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
 			return nil, err
 		}
 		resolved.SocketPath = socketPath
-		command, err := RenderExec(commandArgv(daemon.Command), ExecTemplateContext{
+		command, err := RenderCommand(daemon.Command, ExecTemplateContext{
 			"Socket": socketPath,
 			"Tag":    daemon.Tag,
 		})
@@ -699,14 +699,6 @@ func (m *Manifest) ResolvedNotifications() Notifications {
 		resolved.Command = &command
 	}
 	return resolved
-}
-
-func commandArgv(command Command) []string {
-	if command.Path == "" {
-		return append([]string(nil), command.Args...)
-	}
-	argv := []string{command.Path}
-	return append(argv, command.Args...)
 }
 
 func (m *Manifest) ResolvedVolumes() []Volume {

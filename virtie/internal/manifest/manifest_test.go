@@ -1050,6 +1050,46 @@ func TestLoadGuestForwardUsesTunnelExecTemplate(t *testing.T) {
 	}
 }
 
+func TestLoadGuestForwardRejectsLegacyTunnelExecEnvTokens(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		fwdTunnelExec []string
+		wantError     string
+	}{
+		{
+			name:          "legacy host",
+			fwdTunnelExec: []string{"nc", "$HOST", "{{.Port}}"},
+			wantError:     "exec[1] uses legacy $HOST; use {{.Host}}",
+		},
+		{
+			name:          "legacy port",
+			fwdTunnelExec: []string{"nc", "{{.Host}}", "$PORT"},
+			wantError:     "exec[2] uses legacy $PORT; use {{.Port}}",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.QEMU.FwdTunnelExec = tt.fwdTunnelExec
+			document.Networks = []NetworkFacts{
+				{
+					Forward: []ForwardPort{
+						{
+							From:  "guest",
+							Host:  "127.0.0.1:22",
+							Guest: "10.0.2.15:2222",
+						},
+					},
+				},
+			}
+
+			_, err := document.Manifest()
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantError, err)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsInvalidForwardOptions(t *testing.T) {
 	tests := []struct {
 		name      string

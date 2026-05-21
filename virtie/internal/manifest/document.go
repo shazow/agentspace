@@ -768,6 +768,9 @@ func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex
 		if from == "host" {
 			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", proto, hostEndpoint.Address, hostEndpoint.Port, guestEndpoint.Address, guestEndpoint.Port))
 		} else {
+			if err := rejectLegacyFwdTunnelExecEnv(fwdTunnelExec); err != nil {
+				return nil, fmt.Errorf("manifest.networks[%d].forward[%d].fwd_tunnel_exec: %w", networkIndex, i, err)
+			}
 			command, err := renderFwdTunnelExec(fwdTunnelExec, hostEndpoint)
 			if err != nil {
 				return nil, fmt.Errorf("manifest.networks[%d].forward[%d].fwd_tunnel_exec: %w", networkIndex, i, err)
@@ -776,6 +779,18 @@ func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex
 		}
 	}
 	return options, nil
+}
+
+func rejectLegacyFwdTunnelExecEnv(exec []string) error {
+	for i, arg := range exec {
+		switch arg {
+		case "$HOST":
+			return fmt.Errorf("exec[%d] uses legacy $HOST; use {{.Host}}", i)
+		case "$PORT":
+			return fmt.Errorf("exec[%d] uses legacy $PORT; use {{.Port}}", i)
+		}
+	}
+	return nil
 }
 
 func renderFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) ([]string, error) {

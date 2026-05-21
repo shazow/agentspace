@@ -22,6 +22,14 @@ also exposed to shell commands as environment variables.
 itself, so `HOST` and `PORT` are not injected into the environment. Use
 template variables there, including inside shell command strings.
 
+| Surface | Template values | Injected environment |
+| --- | --- | --- |
+| `qemu.exec` | `HostName`, `WorkingDir`, `StateDir`, `HostOS`, `HostArch`, `HostSystem`, `.Env` | none |
+| `qemu.fwd_tunnel_exec` | `Host`, `Port`, `.Env` | none; QEMU starts the command |
+| `ssh.exec` | `CID`, `User`, `Destination`, `.Env` | `CID`, `USER`, `DESTINATION` |
+| `mounts[].virtiofsd_exec` | `Socket`, `Tag`, `.Env` | `SOCKET`, `TAG` |
+| `notifications.exec` | `State`, `Message`, notification context values, normalized context aliases, `.Env` | `STATE`, `MESSAGE`, normalized context values |
+
 ### Migration Steps
 
 Update direct `qemu.fwd_tunnel_exec` manifests that relied on literal `$HOST`
@@ -381,14 +389,14 @@ Move the command under `qemu` and include endpoint template variables:
 - [host]
 - netcat = "nc"
 + [qemu]
-+ fwd_tunnel_exec = ["nc", "$HOST", "$PORT"]
++ fwd_tunnel_exec = ["nc", "{{.Host}}", "{{.Port}}"]
 ```
 
 For socat:
 
 ```toml
 [qemu]
-fwd_tunnel_exec = ["socat", "-", "TCP:$HOST:$PORT"]
+fwd_tunnel_exec = ["socat", "-", "TCP:{{.Host}}:{{.Port}}"]
 ```
 
 ## 2026-05-17: SSH retry delay seconds

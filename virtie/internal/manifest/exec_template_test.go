@@ -33,6 +33,30 @@ func TestRenderExecTemplatesArgvAndEnv(t *testing.T) {
 	}
 }
 
+func TestRenderCommandTemplatesAndMergesEnv(t *testing.T) {
+	command, err := RenderCommand(Command{
+		Path: "notify-{{.State}}",
+		Args: []string{"{{.Message}}"},
+		Env:  []string{"EXISTING=1"},
+	}, ExecTemplateContext{
+		"State":   "runtime:resume",
+		"Message": "Restored",
+	})
+	if err != nil {
+		t.Fatalf("render command: %v", err)
+	}
+
+	if got, want := command.Path, "notify-runtime:resume"; got != want {
+		t.Fatalf("unexpected path: got %q want %q", got, want)
+	}
+	if got, want := command.Args, []string{"Restored"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected args: got %#v want %#v", got, want)
+	}
+	if got, want := command.Env, []string{"EXISTING=1", "MESSAGE=Restored", "STATE=runtime:resume"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected env: got %#v want %#v", got, want)
+	}
+}
+
 func TestRenderExecRejectsMissingTemplateKey(t *testing.T) {
 	_, err := RenderExecArgv([]string{"echo", "{{.Missing}}"}, ExecTemplateContext{})
 	if err == nil || !strings.Contains(err.Error(), `map has no entry for key "Missing"`) {

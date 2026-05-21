@@ -89,6 +89,7 @@ func TestCommandNotifierRendersExecTemplates(t *testing.T) {
 	cfg.Notifications.Command = &manifest.Command{
 		Path: "bin/notify-{{.State}}",
 		Args: []string{"{{.Message}}", "{{.CID}}", "{{.Env.USER}}"},
+		Env:  []string{"CUSTOM=1"},
 	}
 	t.Setenv("USER", "template-user")
 	runner := &recordingNotificationRunner{}
@@ -108,7 +109,7 @@ func TestCommandNotifierRendersExecTemplates(t *testing.T) {
 	if got, want := call.args, []string{"Restored", "7", "template-user"}; !slices.Equal(got, want) {
 		t.Fatalf("unexpected command args: got %v want %v", got, want)
 	}
-	for _, want := range []string{"STATE=runtime:resume", "MESSAGE=Restored", "CID=7"} {
+	for _, want := range []string{"CUSTOM=1", "STATE=runtime:resume", "MESSAGE=Restored", "CID=7"} {
 		if !slices.Contains(call.env, want) {
 			t.Fatalf("expected env %q in %#v", want, call.env)
 		}
