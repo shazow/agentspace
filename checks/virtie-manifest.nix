@@ -190,8 +190,7 @@ let
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
-  customSSHExecManifest =
-    vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
+  customSSHExecManifest = vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
   configFileManifest = vmVirtieConfigFile.config.agentspace.sandbox.launch.virtieManifestData;
   homeSSHPathsManifest = vmVirtieHomeSSHPaths.config.agentspace.sandbox.launch.virtieManifestData;
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
@@ -231,11 +230,13 @@ let
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.after == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
-    assert vmVirtie.config.agentspace.sandbox.ssh.exec == mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
-    };
+    assert
+      vmVirtie.config.agentspace.sandbox.ssh.exec == mkExecSSH {
+        identityFile = sshKeys.virtie.identityFile;
+      };
     assert builtins.head manifest.ssh.exec == "${pkgs.openssh}/bin/ssh";
-    assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" manifest.ssh.exec;
+    assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
+      manifest.ssh.exec;
     assert builtins.elem "ProxyUseFdpass=yes" manifest.ssh.exec;
     assert builtins.elem "CheckHostIP=no" manifest.ssh.exec;
     assert manifest.ssh.user == "agent";
@@ -261,8 +262,8 @@ let
     assert defaultManifest.ssh.ready_socket == "ready.sock";
     assert vmDefault.config.microvm.virtiofsd.group == null;
     assert !(builtins.elem "-q" defaultManifest.ssh.exec);
-    assert
-      builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" defaultManifest.ssh.exec;
+    assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
+      defaultManifest.ssh.exec;
     assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);
     assert defaultManifest.write_files == [ ];
     assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;
@@ -287,8 +288,9 @@ let
 
   _externalStoreSocket =
     assert builtins.length externalStoreSocketManifest.mounts == 2;
-    assert
-      builtins.any (mount: mount == {
+    assert builtins.any (
+      mount:
+      mount == {
         type = "virtiofs";
         source = "/nix/store";
         virtiofsd_socket = "/var/run/virtiofs-nix-store.sock";
@@ -296,7 +298,8 @@ let
         read_only = true;
         security_model = "none";
         cache = "auto";
-      }) externalStoreSocketManifest.mounts;
+      }
+    ) externalStoreSocketManifest.mounts;
     assert builtins.any (
       mount:
       mount.tag == "workspace_cwd"
@@ -307,26 +310,23 @@ let
     assert builtins.all (
       mount: mount.tag != "ro-store" || !(mount ? virtiofsd_exec)
     ) externalStoreSocketManifest.mounts;
+    assert pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
+      vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
+    assert pkgs.lib.hasInfix
+      "nixStoreShareSocket does not exist or is not a socket: '/tmp/$(touch injected).sock'"
+      vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
     assert
-      pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
-        vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
-    assert
-      pkgs.lib.hasInfix
-        "nixStoreShareSocket does not exist or is not a socket: '/tmp/$(touch injected).sock'"
-        vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
-    assert
-      !(pkgs.lib.hasInfix
-        ''nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock''
-        vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
+      !(pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock" vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
     assert !invalidRelativeStoreSocket.success;
     true;
 
   _customSSHExec =
-    assert customSSHExecManifest.ssh.exec == [
-      "/custom/ssh"
-      "-F"
-      "custom-config"
-    ];
+    assert
+      customSSHExecManifest.ssh.exec == [
+        "/custom/ssh"
+        "-F"
+        "custom-config"
+      ];
     assert !(builtins.elem "ProxyUseFdpass=yes" customSSHExecManifest.ssh.exec);
     assert !(builtins.elem ".agentspace-test/id_ed25519" customSSHExecManifest.ssh.exec);
     true;
@@ -365,7 +365,8 @@ let
     assert workspaceManifest.workspace.basedir == "/home/agent/workspace";
     assert workspaceManifest.workspace.mount_cwd == true;
     assert vmVirtieWorkspaces.config.environment.sessionVariables.WORKSPACE == "/home/agent/workspace";
-    assert builtins.elem "d /home/agent/workspace 0755 agent users -" vmVirtieWorkspaces.config.systemd.tmpfiles.rules;
+    assert builtins.elem "d /home/agent/workspace 0755 agent users -"
+      vmVirtieWorkspaces.config.systemd.tmpfiles.rules;
     assert builtins.any (
       share:
       share.tag == "workspace-agentspace"
@@ -379,10 +380,7 @@ let
       && share.mountPoint == "/home/agent/workspace/project2/foo"
     ) vmVirtieWorkspaces.config.microvm.shares;
     assert builtins.any (
-      share:
-      share.tag == "workspace_cwd"
-      && share.source == "."
-      && share.mountPoint == "/mnt/cwd"
+      share: share.tag == "workspace_cwd" && share.source == "." && share.mountPoint == "/mnt/cwd"
     ) vmVirtieWorkspaces.config.microvm.shares;
     assert builtins.any (
       mount:

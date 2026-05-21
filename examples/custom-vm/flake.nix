@@ -64,7 +64,9 @@
         fi
         install -m 0644 ${manifest} manifest.toml
 
-        exec ${agentspace.packages.${system}.virtie}/bin/virtie launch -v --resume=no --manifest=manifest.toml "$@"
+        exec ${
+          agentspace.packages.${system}.virtie
+        }/bin/virtie launch -v --resume=no --manifest=manifest.toml "$@"
       '';
     in
     {
