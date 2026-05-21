@@ -401,6 +401,7 @@ func (m *Manifest) Validate() error {
 
 func validateRunWithSocket(commands []RunWithSocketCommand) error {
 	names := make(map[string]int, len(commands))
+	socketPaths := make(map[string]int, len(commands))
 	for i, command := range commands {
 		switch {
 		case command.Name == "":
@@ -414,6 +415,15 @@ func validateRunWithSocket(commands []RunWithSocketCommand) error {
 			return fmt.Errorf("manifest.runWithSocket[%d].name duplicates manifest.runWithSocket[%d].name %q", i, previous, command.Name)
 		}
 		names[command.Name] = i
+		if previous, ok := socketPaths[command.SocketPath]; ok {
+			return fmt.Errorf("manifest.runWithSocket[%d].socketPath duplicates manifest.runWithSocket[%d].socketPath %q", i, previous, command.SocketPath)
+		}
+		socketPaths[command.SocketPath] = i
+		for key := range command.Vars {
+			if key == "Socket" || key == "Env" {
+				return fmt.Errorf("manifest.runWithSocket[%d].vars uses reserved key %q", i, key)
+			}
+		}
 	}
 	return nil
 }

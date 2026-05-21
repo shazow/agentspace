@@ -341,7 +341,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	started = append(started, qemu)
 
 	m.logger.Info("waiting for qmp readiness")
-	qmpClient, err = m.waitForQMP(launchCtx, qmpSocketPath, qemu)
+	qmpClient, err = m.waitForQMP(launchCtx, qmpSocketPath, started...)
 	if err != nil {
 		return err
 	}
@@ -373,7 +373,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 
 	if resumeState == nil {
-		if err := m.writeGuestFiles(launchCtx, manifest, stats, qemu); err != nil {
+		if err := m.writeGuestFiles(launchCtx, manifest, stats, started...); err != nil {
 			return err
 		}
 		writeBackOnExit = true
@@ -381,7 +381,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 
 		if sshReadySocketPath != "" {
 			m.logger.Info("waiting for ssh readiness")
-			if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, qemu); err != nil {
+			if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, started...); err != nil {
 				return err
 			}
 		}
@@ -555,6 +555,18 @@ func (m *manager) startManagedProcess(spec processSpec) (*managedProcess, error)
 func (m *manager) startRunWithSocketCommands(ctx context.Context, manifest *manifest.Manifest) ([]*managedProcess, error) {
 	commands, err := manifest.ResolvedRunWithSocketCommands()
 	if err != nil {
+		return nil, err
+	}
+	workDirs := make([]string, 0, len(commands))
+	seenWorkDirs := make(map[string]struct{}, len(commands))
+	for _, command := range commands {
+		if _, ok := seenWorkDirs[command.WorkDir]; ok {
+			continue
+		}
+		seenWorkDirs[command.WorkDir] = struct{}{}
+		workDirs = append(workDirs, command.WorkDir)
+	}
+	if err := ensureDirectories(workDirs); err != nil {
 		return nil, err
 	}
 	started := make([]*managedProcess, len(commands))

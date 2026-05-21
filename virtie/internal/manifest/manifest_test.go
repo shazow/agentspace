@@ -442,6 +442,82 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 	}
 }
 
+func TestManifestRunWithSocketValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*Manifest)
+		wantError string
+	}{
+		{
+			name: "valid",
+			configure: func(manifest *Manifest) {
+				manifest.RunWithSocket = []RunWithSocketCommand{
+					{
+						Name:       "tunnel[dbus.sock]",
+						SocketPath: "tunnels/dbus.sock",
+						Command:    Command{Path: "/bin/proxy"},
+						Vars:       map[string]string{"SockName": "dbus.sock"},
+					},
+				}
+			},
+		},
+		{
+			name: "rejects duplicate names",
+			configure: func(manifest *Manifest) {
+				manifest.RunWithSocket = append(manifest.RunWithSocket, RunWithSocketCommand{
+					Name:       manifest.RunWithSocket[0].Name,
+					SocketPath: "other.sock",
+					Command:    Command{Path: "/bin/other"},
+				})
+			},
+			wantError: "name duplicates",
+		},
+		{
+			name: "rejects duplicate sockets",
+			configure: func(manifest *Manifest) {
+				manifest.RunWithSocket = append(manifest.RunWithSocket, RunWithSocketCommand{
+					Name:       "virtiofsd[other]",
+					SocketPath: manifest.RunWithSocket[0].SocketPath,
+					Command:    Command{Path: "/bin/other"},
+				})
+			},
+			wantError: "socketPath duplicates",
+		},
+		{
+			name: "rejects reserved socket var",
+			configure: func(manifest *Manifest) {
+				manifest.RunWithSocket[0].Vars = map[string]string{"Socket": "shadow"}
+			},
+			wantError: `reserved key "Socket"`,
+		},
+		{
+			name: "rejects reserved env var",
+			configure: func(manifest *Manifest) {
+				manifest.RunWithSocket[0].Vars = map[string]string{"Env": "shadow"}
+			},
+			wantError: `reserved key "Env"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := validManifest()
+			tt.configure(manifest)
+
+			err := manifest.Validate()
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("unexpected validation error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected validation error containing %q, got %v", tt.wantError, err)
+			}
+		})
+	}
+}
+
 func TestManifestWriteFilesValidation(t *testing.T) {
 	validText := "hello"
 	validMode := "0640"

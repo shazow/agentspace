@@ -3266,6 +3266,25 @@ func TestStartRunWithSocketCommandsInjectsResolvedSocketPathEnv(t *testing.T) {
 	}
 }
 
+func TestStartRunWithSocketCommandsCreatesWorkDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifest := validManifest(tmpDir)
+	manifest.RunWithSocket[0].WorkDir = "tunnels/nested"
+
+	manager := &manager{
+		logger: slog.New(slog.DiscardHandler),
+		runner: &fakeRunner{},
+	}
+
+	if _, err := manager.startRunWithSocketCommands(context.Background(), manifest); err != nil {
+		t.Fatalf("start managed socket commands: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(tmpDir, "tunnels", "nested")); err != nil {
+		t.Fatalf("expected managed socket work dir to be created: %v", err)
+	}
+}
+
 func assertLaunchStatsLog(t *testing.T, logs string, want []string, unwanted []string) {
 	t.Helper()
 
