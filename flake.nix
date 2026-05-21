@@ -98,25 +98,23 @@
             ${pkgs.coreutils}/bin/rm -f "$MANIFEST_PATH"
             ${pkgs.coreutils}/bin/install -m 0644 ${lib.escapeShellArg launchCfg.virtieManifestTemplate} "$MANIFEST_PATH"
 
-            ${
-              lib.optionalString (systemClosure != null) ''
-                SYSTEM_CLOSURE=${lib.escapeShellArg systemClosure}
-                if closure_info="$(${pkgs.nix}/bin/nix path-info --closure-size --human-readable "$SYSTEM_CLOSURE" 2>/dev/null)"; then
-                  closure_path=
-                  closure_size=
-                  closure_unit=
-                  read -r closure_path closure_size closure_unit <<< "$closure_info"
-                  if [ -n "$closure_size" ]; then
-                    if [ -n "$closure_unit" ]; then
-                      closure_size="$closure_size $closure_unit"
-                    fi
-                    echo "📦 mkSandbox closure size: $closure_size"
+            ${lib.optionalString (systemClosure != null) ''
+              SYSTEM_CLOSURE=${lib.escapeShellArg systemClosure}
+              if closure_info="$(${pkgs.nix}/bin/nix path-info --closure-size --human-readable "$SYSTEM_CLOSURE" 2>/dev/null)"; then
+                closure_path=
+                closure_size=
+                closure_unit=
+                read -r closure_path closure_size closure_unit <<< "$closure_info"
+                if [ -n "$closure_size" ]; then
+                  if [ -n "$closure_unit" ]; then
+                    closure_size="$closure_size $closure_unit"
                   fi
-                else
-                  echo "mkSandbox closure size unavailable for $SYSTEM_CLOSURE" >&2
+                  echo "📦 mkSandbox closure size: $closure_size"
                 fi
-              ''
-            }
+              else
+                echo "mkSandbox closure size unavailable for $SYSTEM_CLOSURE" >&2
+              fi
+            ''}
 
             if [ "$#" -eq 0 ] && [ -n ${lib.escapeShellArg remoteCommand} ]; then
               exec ${virtiePackage}/bin/virtie launch -v --ssh --manifest="$MANIFEST_PATH" -- ${lib.escapeShellArg remoteCommand}
@@ -160,6 +158,8 @@
       packages.${system} = {
         virtie = virtiePackage;
       };
+
+      formatter.${system} = pkgs.nixfmt-tree;
 
       nixosModules.default = ./sandbox-qemu.nix;
 

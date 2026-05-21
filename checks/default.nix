@@ -7,7 +7,13 @@
 }:
 let
   args = {
-    inherit mkLaunch mkSandbox mkExecSSH pkgs virtiePackage;
+    inherit
+      mkLaunch
+      mkSandbox
+      mkExecSSH
+      pkgs
+      virtiePackage
+      ;
   };
 in
 import ./virtie-manifest.nix args

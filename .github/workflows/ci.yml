@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agentspace:
+    name: agentspace / flake checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Check Nix formatting
+        run: nix fmt -- --fail-on-change
+
+      - name: Run flake checks
+        run: nix flake check --print-build-logs
+
+  virtie:
+    name: virtie / go fmt and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: virtie
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: virtie/go.mod
+          cache-dependency-path: virtie/go.sum
+
+      - name: Check formatting
+        run: |
+          go fmt ./...
+          git diff --exit-code
+
+      - name: Run vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test ./...

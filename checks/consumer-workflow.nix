@@ -74,19 +74,21 @@ let
   virtiofsdHelper = "${runner}/bin/virtiofsd-run";
 
   consumerWorkflow =
-    assert sandboxCfg.ssh.exec == mkExecSSH {
-      identityFile = sshKeys.consumer.identityFile;
-    };
+    assert
+      sandboxCfg.ssh.exec == mkExecSSH {
+        identityFile = sshKeys.consumer.identityFile;
+      };
     assert sandboxCfg.ssh.command == "bash -lc pwd";
     assert sandboxCfg.ssh.autoconnect == true;
     assert sandboxCfg.persistence.homeImage == "/var/lib/agentspace/home.img";
     assert sandboxCfg.persistence.storeOverlay == "/var/lib/agentspace/nix-store-overlay.img";
     assert sandboxCfg.machine.memory == 512;
     assert sandboxCfg.machine.vcpu == 16;
-    assert sandboxCfg.groups == [
-      "wheel"
-      "kvm"
-    ];
+    assert
+      sandboxCfg.groups == [
+        "wheel"
+        "kvm"
+      ];
     assert builtins.length sandboxCfg.extraModules == 1;
     assert vmConsumer.config.microvm.vcpu == 16;
     assert vmConsumer.config.microvm.mem == 512;

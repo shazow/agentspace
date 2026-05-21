@@ -412,7 +412,8 @@ in
         ];
       };
 
-      mkManifestVolume = volume:
+      mkManifestVolume =
+        volume:
         {
           image = volume.image;
           size = volume.size;
@@ -446,11 +447,14 @@ in
         }
       ) config.microvm.forwardPorts;
 
-      manifestWorkspace = lib.optionalAttrs cfg.workspace.enable ({
-        basedir = cfg.workspace.basedir;
-      } // lib.optionalAttrs cfg.workspace.addCurrentDir {
-        mount_cwd = true;
-      });
+      manifestWorkspace = lib.optionalAttrs cfg.workspace.enable (
+        {
+          basedir = cfg.workspace.basedir;
+        }
+        // lib.optionalAttrs cfg.workspace.addCurrentDir {
+          mount_cwd = true;
+        }
+      );
 
       manifestMounts =
         builtins.map (

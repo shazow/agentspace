@@ -27,59 +27,61 @@
               # Documentation-only shim for the upstream microvm share schema
               # reused by agentspace.sandbox.shares.
               options.microvm.shares = lib.mkOption {
-                type = lib.types.listOf (lib.types.submodule {
-                  options = {
-                    proto = lib.mkOption {
-                      type = lib.types.enum [
-                        "virtiofs"
-                        "9p"
-                      ];
-                      default = "virtiofs";
-                      description = "Share transport used for this mount.";
+                type = lib.types.listOf (
+                  lib.types.submodule {
+                    options = {
+                      proto = lib.mkOption {
+                        type = lib.types.enum [
+                          "virtiofs"
+                          "9p"
+                        ];
+                        default = "virtiofs";
+                        description = "Share transport used for this mount.";
+                      };
+                      tag = lib.mkOption {
+                        type = lib.types.str;
+                        description = "QEMU mount tag used to identify the share.";
+                      };
+                      source = lib.mkOption {
+                        type = lib.types.str;
+                        description = "Host path exported into the sandbox.";
+                      };
+                      mountPoint = lib.mkOption {
+                        type = lib.types.str;
+                        description = "Guest path where the share is mounted.";
+                      };
+                      securityModel = lib.mkOption {
+                        type = lib.types.enum [
+                          "none"
+                          "passthrough"
+                          "mapped"
+                          "mapped-xattr"
+                        ];
+                        default = "none";
+                        description = "QEMU filesystem security model for the share.";
+                      };
+                      readOnly = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether the guest sees the share as read-only.";
+                      };
+                      cache = lib.mkOption {
+                        type = lib.types.enum [
+                          "auto"
+                          "always"
+                          "never"
+                        ];
+                        default = "auto";
+                        description = "virtiofsd cache mode for the share.";
+                      };
+                      socket = lib.mkOption {
+                        type = lib.types.str;
+                        default = "";
+                        description = "Host-side virtiofsd socket path for virtiofs shares.";
+                      };
                     };
-                    tag = lib.mkOption {
-                      type = lib.types.str;
-                      description = "QEMU mount tag used to identify the share.";
-                    };
-                    source = lib.mkOption {
-                      type = lib.types.str;
-                      description = "Host path exported into the sandbox.";
-                    };
-                    mountPoint = lib.mkOption {
-                      type = lib.types.str;
-                      description = "Guest path where the share is mounted.";
-                    };
-                    securityModel = lib.mkOption {
-                      type = lib.types.enum [
-                        "none"
-                        "passthrough"
-                        "mapped"
-                        "mapped-xattr"
-                      ];
-                      default = "none";
-                      description = "QEMU filesystem security model for the share.";
-                    };
-                    readOnly = lib.mkOption {
-                      type = lib.types.bool;
-                      default = false;
-                      description = "Whether the guest sees the share as read-only.";
-                    };
-                    cache = lib.mkOption {
-                      type = lib.types.enum [
-                        "auto"
-                        "always"
-                        "never"
-                      ];
-                      default = "auto";
-                      description = "virtiofsd cache mode for the share.";
-                    };
-                    socket = lib.mkOption {
-                      type = lib.types.str;
-                      default = "";
-                      description = "Host-side virtiofsd socket path for virtiofs shares.";
-                    };
-                  };
-                });
+                  }
+                );
                 default = [ ];
                 internal = true;
               };
