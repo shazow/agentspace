@@ -194,13 +194,12 @@ exec = ["virtiofsd", "--socket-path={{.Socket}}"]
 vars = { Tag = "workspace" }
 
 [[run_with_socket]]
-# User tunnels can create sockets in a shared directory. Here SOCK_NAME is both
-# an environment variable and a template value; SOCKET is the resolved host path.
+# User tunnels can create sockets in a shared directory. SOCKET is the resolved
+# host path and can also be rendered with {{.Socket}}.
 name = "tunnel[dbus-notifications.sock]"
-socket = ".virtie/tunnels/dbus-notifications.sock"
+socket = "tunnels/dbus-notifications.sock"
 work_dir = ".virtie/tunnels"
-exec = ["sh", "-c", "xdg-dbus-proxy \"$DBUS_SESSION_BUS_ADDRESS\" \"$SOCK_NAME\" --filter"]
-vars = { SockName = "dbus-notifications.sock" }
+exec = ["sh", "-c", "xdg-dbus-proxy \"$DBUS_SESSION_BUS_ADDRESS\" \"$SOCKET\" --filter"]
 
 
 [[networks]]

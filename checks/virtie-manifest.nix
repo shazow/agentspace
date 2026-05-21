@@ -58,11 +58,20 @@ let
     persistence.homeImage = null;
     runWithTunnel = [
       {
-        sockName = "dbus.sock";
+        socket = "dbus.sock";
         exec = [
           "sh"
           "-c"
-          "printf ready > {{.SockName}}"
+          "printf ready > {{.Socket}}"
+        ];
+      }
+      {
+        socket = "dbus/session.sock";
+        exec = [
+          "xdg-dbus-proxy"
+          "$DBUS_SESSION_BUS_ADDRESS"
+          "{{.Socket}}"
+          "--filter"
         ];
       }
     ];
@@ -73,11 +82,11 @@ let
       persistence.homeImage = null;
       runWithTunnel = [
         {
-          sockName = "dbus.sock";
+          socket = "dbus.sock";
           exec = [ "true" ];
         }
         {
-          sockName = "dbus.sock";
+          socket = "dbus.sock";
           exec = [ "true" ];
         }
       ];
@@ -89,7 +98,19 @@ let
       persistence.homeImage = null;
       runWithTunnel = [
         {
-          sockName = "../dbus.sock";
+          socket = "../dbus.sock";
+          exec = [ "true" ];
+        }
+      ];
+    }).config.system.build.toplevel.drvPath
+  );
+
+  invalidUncleanTunnel = builtins.tryEval (
+    (mkSandbox {
+      persistence.homeImage = null;
+      runWithTunnel = [
+        {
+          socket = "foo/../dbus.sock";
           exec = [ "true" ];
         }
       ];
@@ -508,16 +529,31 @@ let
       command.name == "tunnel[dbus.sock]"
       && command.socket == "tunnels/dbus.sock"
       && command.work_dir == ".agentspace/tunnels"
-      && command.vars.SockName == "dbus.sock"
+      && !(command ? vars)
       &&
         command.exec == [
           "sh"
           "-c"
-          "printf ready > {{.SockName}}"
+          "printf ready > {{.Socket}}"
+        ]
+    ) tunnelManifest.run_with_socket;
+    assert builtins.any (
+      command:
+      command.name == "tunnel[dbus/session.sock]"
+      && command.socket == "tunnels/dbus/session.sock"
+      && command.work_dir == ".agentspace/tunnels/dbus"
+      && !(command ? vars)
+      &&
+        command.exec == [
+          "xdg-dbus-proxy"
+          "$DBUS_SESSION_BUS_ADDRESS"
+          "{{.Socket}}"
+          "--filter"
         ]
     ) tunnelManifest.run_with_socket;
     assert !invalidDuplicateTunnel.success;
     assert !invalidUnsafeTunnel.success;
+    assert !invalidUncleanTunnel.success;
     true;
 
   _notifications =

@@ -456,7 +456,7 @@ func TestManifestRunWithSocketValidation(t *testing.T) {
 						Name:       "tunnel[dbus.sock]",
 						SocketPath: "tunnels/dbus.sock",
 						Command:    Command{Path: "/bin/proxy"},
-						Vars:       map[string]string{"SockName": "dbus.sock"},
+						Vars:       map[string]string{"Tunnel": "dbus.sock"},
 					},
 				}
 			},

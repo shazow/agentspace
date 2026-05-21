@@ -415,7 +415,7 @@ func TestManagerLaunchManagedSocketFailureStopsLaunch(t *testing.T) {
 		Command: manifest.Command{
 			Path: "/bin/false",
 		},
-		Vars: map[string]string{"SockName": "dbus.sock"},
+		Vars: map[string]string{"Tunnel": "dbus.sock"},
 	})
 
 	runner := &fakeRunner{

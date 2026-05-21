@@ -20,7 +20,8 @@ Generated agentspace manifests use this same mechanism for virtiofsd and for
 
 `agentspace.sandbox.runWithTunnel` commands run in
 `${persistence.basedir}/tunnels`, create sockets shared into the guest under
-`/run/tunnels`, and receive `SOCKET` plus `SOCK_NAME`.
+`/run/tunnels`, and receive `SOCKET`. The Nix option field is `socket`; the
+earlier draft field name is not supported.
 
 ### Migration Steps
 
@@ -44,8 +45,8 @@ For user tunnel commands, prefer the Nix API:
 ```nix
 agentspace.sandbox.runWithTunnel = [
   {
-    sockName = "dbus-notifications.sock";
-    exec = [ "sh" "-c" "xdg-dbus-proxy \"$DBUS_SESSION_BUS_ADDRESS\" \"$SOCK_NAME\" --filter" ];
+    socket = "dbus-notifications.sock";
+    exec = [ "sh" "-c" "xdg-dbus-proxy \"$DBUS_SESSION_BUS_ADDRESS\" \"$SOCKET\" --filter" ];
   }
 ];
 ```

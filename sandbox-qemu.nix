@@ -178,10 +178,10 @@ in
           { ... }:
           {
             options = {
-              sockName = lib.mkOption {
+              socket = lib.mkOption {
                 type = lib.types.str;
                 example = "dbus-notifications.sock";
-                description = "Socket filename exposed in the guest under /run/tunnels.";
+                description = "Clean relative socket path exposed in the guest under /run/tunnels.";
               };
 
               exec = lib.mkOption {
@@ -189,11 +189,13 @@ in
                 example = [
                   "socat"
                   "TCP-LISTEN:8080,fork,reuseaddr"
-                  "UNIX-CONNECT:{{.SockName}}"
+                  "UNIX-CONNECT:{{.Socket}}"
                 ];
                 description = ''
-                  Host-side argv to run from the tunnel directory. Template
-                  values include `{{.Socket}}`, `{{.SockName}}`, and `.Env`.
+                  Host-side argv to run from the socket parent directory under
+                  the tunnel directory. Template values include `{{.Socket}}`
+                  and `.Env`. `{{.Socket}}` and `SOCKET` resolve to the host
+                  path shared into the guest under `/run/tunnels`.
                 '';
               };
             };
@@ -387,6 +389,20 @@ in
       ) config.microvm.shares;
       ninepShares = builtins.filter (share: share.proto == "9p") config.microvm.shares;
       tunnelDir = "${persistenceStateDir}/tunnels";
+      cleanTunnelSocket =
+        socket:
+        socket != ""
+        && !(lib.hasPrefix "/" socket)
+        && !(lib.hasPrefix "./" socket)
+        && !(lib.hasPrefix "../" socket)
+        && !(lib.hasSuffix "/" socket)
+        && !(lib.hasSuffix "/." socket)
+        && !(lib.hasSuffix "/.." socket)
+        && !(lib.hasInfix "//" socket)
+        && !(lib.hasInfix "/./" socket)
+        && !(lib.hasInfix "/../" socket)
+        && socket != "."
+        && socket != "..";
       tunnelShare = {
         proto = "virtiofs";
         tag = "tunnels";
@@ -528,15 +544,18 @@ in
             Source = share.source;
           };
         }) (builtins.filter (share: !(nixStoreShareUsesSocket && isNixStoreShare share)) virtiofsShares)
-        ++ builtins.map (tunnel: {
-          name = "tunnel[${tunnel.sockName}]";
-          socket = "tunnels/${tunnel.sockName}";
-          exec = tunnel.exec;
-          work_dir = tunnelDir;
-          vars = {
-            SockName = tunnel.sockName;
-          };
-        }) cfg.runWithTunnel;
+        ++ builtins.map (
+          tunnel:
+          let
+            hostSocket = "${tunnelDir}/${tunnel.socket}";
+          in
+          {
+            name = "tunnel[${tunnel.socket}]";
+            socket = "tunnels/${tunnel.socket}";
+            exec = tunnel.exec;
+            work_dir = builtins.dirOf hostSocket;
+          }
+        ) cfg.runWithTunnel;
 
       manifestWriteFiles = lib.mapAttrsToList (
         guestPath: file:
@@ -646,21 +665,14 @@ in
           {
             assertion =
               let
-                sockNames = builtins.map (tunnel: tunnel.sockName) cfg.runWithTunnel;
+                sockets = builtins.map (tunnel: tunnel.socket) cfg.runWithTunnel;
               in
-              builtins.length sockNames == builtins.length (lib.unique sockNames);
-            message = "agentspace.sandbox.runWithTunnel sockName values must be unique.";
+              builtins.length sockets == builtins.length (lib.unique sockets);
+            message = "agentspace.sandbox.runWithTunnel socket values must be unique.";
           }
           {
-            assertion = builtins.all (
-              tunnel:
-              tunnel.sockName != ""
-              && !(lib.hasPrefix "/" tunnel.sockName)
-              && !(lib.hasInfix "/" tunnel.sockName)
-              && tunnel.sockName != "."
-              && tunnel.sockName != ".."
-            ) cfg.runWithTunnel;
-            message = "agentspace.sandbox.runWithTunnel sockName values must be relative socket filenames.";
+            assertion = builtins.all (tunnel: cleanTunnelSocket tunnel.socket) cfg.runWithTunnel;
+            message = "agentspace.sandbox.runWithTunnel socket values must be clean relative paths.";
           }
         ];
 

@@ -59,8 +59,8 @@ But to recap, here's a flake you can make to give it a try:
         # tunnel directory and expose them in the guest at /run/tunnels.
         #runWithTunnel = [
         #  {
-        #    sockName = "dbus-notifications.sock";
-        #    exec = [ "sh" "-c" "xdg-dbus-proxy \"$DBUS_SESSION_BUS_ADDRESS\" \"$SOCK_NAME\" --filter" ];
+        #    socket = "dbus-notifications.sock";
+        #    exec = [ "sh" "-c" "xdg-dbus-proxy \"$DBUS_SESSION_BUS_ADDRESS\" \"$SOCKET\" --filter" ];
         #  }
         #];
       };
