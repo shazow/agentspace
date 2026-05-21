@@ -397,6 +397,74 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	})
 }
 
+func TestManagerLaunchStartsRunWithTunnels(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+	cfg.RunWithTunnel = []manifest.RunWithTunnel{
+		{
+			SocketPath: "dbus-notifications.sock",
+			Command: manifest.Command{
+				Path: "/bin/proxy",
+				Args: []string{"--socket={{.Socket}}", "--guest={{.GuestSocket}}", "--name={{.Name}}"},
+			},
+			Vars: map[string]string{"Name": "notifications"},
+		},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		sshReadyDialer:    &fakeSSHReadyDialer{},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true}); err != nil {
+		t.Fatalf("launch with run_with_tunnel: %v", err)
+	}
+
+	tunnelName := "run_with_tunnel[/run/tunnels/dbus-notifications.sock]"
+	if !containsString(runner.starts, tunnelName) {
+		t.Fatalf("expected run_with_tunnel process start in %v", runner.starts)
+	}
+	if got, want := runner.processDirs[tunnelName], filepath.Join(tmpDir, ".virtie", "tunnels"); got != want {
+		t.Fatalf("unexpected tunnel working directory: got %q want %q", got, want)
+	}
+	socketPath := filepath.Join(tmpDir, ".virtie", "tunnels", "dbus-notifications.sock")
+	if got, want := runner.tunnelArgs[tunnelName], []string{"--socket=" + socketPath, "--guest=/run/tunnels/dbus-notifications.sock", "--name=notifications"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected tunnel args: got %#v want %#v", got, want)
+	}
+	for _, want := range []string{
+		"SOCKET=" + socketPath,
+		"GUEST_SOCKET=/run/tunnels/dbus-notifications.sock",
+		"NAME=notifications",
+	} {
+		if !containsString(runner.tunnelEnv[tunnelName], want) {
+			t.Fatalf("expected tunnel env %q in %#v", want, runner.tunnelEnv[tunnelName])
+		}
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".virtie", "tunnels")); err != nil {
+		t.Fatalf("expected tunnel directory to exist: %v", err)
+	}
+}
+
 func TestCreateVolumeImageCreatesNativeExt4(t *testing.T) {
 	label := "persist"
 	for _, tt := range []struct {
@@ -3363,8 +3431,11 @@ type fakeRunner struct {
 	sshArgs                   [][]string
 	qemuArgs                  []string
 	qemuEnv                   []string
+	tunnelArgs                map[string][]string
+	tunnelEnv                 map[string][]string
 	virtiofsEnv               map[string][]string
 	processGroups             map[string]bool
+	processDirs               map[string]string
 	interactiveStarts         int
 	cancel                    context.CancelFunc
 	cancelDelay               time.Duration
@@ -3390,6 +3461,10 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		r.processGroups = make(map[string]bool)
 	}
 	r.processGroups[spec.Name] = spec.ProcessGroup
+	if r.processDirs == nil {
+		r.processDirs = make(map[string]string)
+	}
+	r.processDirs[spec.Name] = spec.Dir
 
 	switch spec.Name {
 	case "qemu":
@@ -3454,6 +3529,17 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		}()
 		return process, nil
 	default:
+		if strings.HasPrefix(spec.Name, "run_with_tunnel[") {
+			if r.tunnelArgs == nil {
+				r.tunnelArgs = make(map[string][]string)
+			}
+			if r.tunnelEnv == nil {
+				r.tunnelEnv = make(map[string][]string)
+			}
+			r.tunnelArgs[spec.Name] = append([]string(nil), spec.Args...)
+			r.tunnelEnv[spec.Name] = append([]string(nil), spec.Env...)
+			return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
+		}
 		if strings.HasPrefix(spec.Name, "virtiofsd[") {
 			if r.virtiofsEnv == nil {
 				r.virtiofsEnv = make(map[string][]string)

@@ -128,6 +128,106 @@ func TestDocumentWriteFilesFollowLinksLowersToManifest(t *testing.T) {
 	}
 }
 
+func TestDocumentRunWithTunnelLowersAndResolvesCommand(t *testing.T) {
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+
+	document := validDocument()
+	document.RunWithTunnel = []RunWithTunnelFacts{
+		{
+			SocketPath: "dbus-notifications.sock",
+			Exec: []string{
+				"xdg-dbus-proxy",
+				"{{.Env.DBUS_SESSION_BUS_ADDRESS}}",
+				"{{.Socket}}",
+				"--name={{.Name}}",
+				"--guest={{.GuestSocket}}",
+			},
+			Vars: map[string]string{"Name": "notifications"},
+		},
+	}
+
+	loaded, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+
+	tunnels, err := loaded.ResolvedRunWithTunnels()
+	if err != nil {
+		t.Fatalf("resolve run_with_tunnel: %v", err)
+	}
+	if len(tunnels) != 1 {
+		t.Fatalf("expected one tunnel, got %#v", tunnels)
+	}
+	socketPath := filepath.Join("/tmp/work", ".virtie", "tunnels", "dbus-notifications.sock")
+	if got, want := tunnels[0].SocketPath, socketPath; got != want {
+		t.Fatalf("unexpected tunnel socket path: got %q want %q", got, want)
+	}
+	if got, want := tunnels[0].GuestSocketPath, "/run/tunnels/dbus-notifications.sock"; got != want {
+		t.Fatalf("unexpected guest tunnel socket path: got %q want %q", got, want)
+	}
+	wantArgs := []string{
+		"unix:path=/run/user/1000/bus",
+		socketPath,
+		"--name=notifications",
+		"--guest=/run/tunnels/dbus-notifications.sock",
+	}
+	if got := tunnels[0].Command.Args; !reflect.DeepEqual(got, wantArgs) {
+		t.Fatalf("unexpected tunnel command args: got %#v want %#v", got, wantArgs)
+	}
+	for _, want := range []string{
+		"SOCKET=" + socketPath,
+		"GUEST_SOCKET=/run/tunnels/dbus-notifications.sock",
+		"NAME=notifications",
+	} {
+		if !slices.Contains(tunnels[0].Command.Env, want) {
+			t.Fatalf("expected tunnel env %q in %#v", want, tunnels[0].Command.Env)
+		}
+	}
+}
+
+func TestDocumentRunWithTunnelValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		tunnel  RunWithTunnelFacts
+		wantErr string
+	}{
+		{
+			name: "absolute socket",
+			tunnel: RunWithTunnelFacts{
+				SocketPath: "/tmp/dbus.sock",
+				Exec:       []string{"proxy"},
+			},
+			wantErr: "socketPath must be relative",
+		},
+		{
+			name: "escaping socket",
+			tunnel: RunWithTunnelFacts{
+				SocketPath: "../dbus.sock",
+				Exec:       []string{"proxy"},
+			},
+			wantErr: "socketPath must not contain '..'",
+		},
+		{
+			name: "reserved var",
+			tunnel: RunWithTunnelFacts{
+				SocketPath: "dbus.sock",
+				Exec:       []string{"proxy"},
+				Vars:       map[string]string{"Socket": "override"},
+			},
+			wantErr: `vars key "Socket" is reserved`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.RunWithTunnel = []RunWithTunnelFacts{tt.tunnel}
+			_, err := document.Manifest()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected %q error, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestLoadTOMLExamples(t *testing.T) {
 	for _, path := range []string{
 		"../../examples/manifest-simple.toml",

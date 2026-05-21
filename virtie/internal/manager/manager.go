@@ -29,6 +29,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -234,6 +235,18 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err := ensureParentDirectories([]string{qmpSocketPath}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	if len(manifest.RunWithTunnel) > 0 {
+		if err := ensureDirectories([]string{manifest.ResolvedTunnelDir()}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
+		tunnelSocketPaths := manifest.ResolvedRunWithTunnelSocketPaths()
+		if err := ensureParentDirectories(tunnelSocketPaths); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
+		if err := removeSocketPaths(tunnelSocketPaths); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
+	}
 	if guestAgentSocketPath != "" {
 		if err := ensureParentDirectories([]string{guestAgentSocketPath}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
@@ -300,6 +313,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if sshReadySocketPath != "" {
 			cleanupPaths = append(cleanupPaths, sshReadySocketPath)
 		}
+		cleanupPaths = append(cleanupPaths, manifest.ResolvedRunWithTunnelSocketPaths()...)
 		cleanupErr := removeSocketPaths(cleanupPaths)
 		if err == nil {
 			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
@@ -309,6 +323,12 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		stats.MarkCompleted(time.Now())
 		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 	}()
+
+	tunnelProcesses, err := m.startRunWithTunnels(manifest)
+	if err != nil {
+		return &stageError{Stage: "tunnel startup", Err: err}
+	}
+	started = append(started, tunnelProcesses...)
 
 	virtiofsd, err := m.startVirtioFSDaemons(manifest)
 	if err != nil {
@@ -340,7 +360,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	started = append(started, qemu)
 
 	m.logger.Info("waiting for qmp readiness")
-	qmpClient, err = m.waitForQMP(launchCtx, qmpSocketPath, qemu)
+	qmpClient, err = m.waitForQMP(launchCtx, qmpSocketPath, started...)
 	if err != nil {
 		return err
 	}
@@ -372,7 +392,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 
 	if resumeState == nil {
-		if err := m.writeGuestFiles(launchCtx, manifest, stats, qemu); err != nil {
+		if err := m.writeGuestFiles(launchCtx, manifest, stats, started...); err != nil {
 			return err
 		}
 		writeBackOnExit = true
@@ -380,7 +400,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 
 		if sshReadySocketPath != "" {
 			m.logger.Info("waiting for ssh readiness")
-			if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, qemu); err != nil {
+			if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, started...); err != nil {
 				return err
 			}
 		}
@@ -587,6 +607,46 @@ func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 		started = append(started, process)
 	}
 
+	return started, nil
+}
+
+func (m *manager) startRunWithTunnels(manifest *manifest.Manifest) ([]*managedProcess, error) {
+	tunnels, err := manifest.ResolvedRunWithTunnels()
+	if err != nil {
+		return nil, err
+	}
+	if len(tunnels) == 0 {
+		return nil, nil
+	}
+
+	started := make([]*managedProcess, len(tunnels))
+	var group errgroup.Group
+	for i, tunnel := range tunnels {
+		i, tunnel := i, tunnel
+		group.Go(func() error {
+			name := fmt.Sprintf("run_with_tunnel[%s]", tunnel.GuestSocketPath)
+			m.logger.Info("starting run_with_tunnel", "socket", tunnel.SocketPath, "guest_socket", tunnel.GuestSocketPath)
+			process, err := m.startManagedProcess(processSpec{
+				Name:         name,
+				Path:         tunnel.Command.Path,
+				Args:         tunnel.Command.Args,
+				Dir:          manifest.ResolvedTunnelDir(),
+				Env:          tunnel.Command.Env,
+				ProcessGroup: true,
+				Stdout:       os.Stderr,
+				Stderr:       os.Stderr,
+			})
+			if err != nil {
+				return err
+			}
+			started[i] = process
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		_ = m.stopAll(started)
+		return nil, err
+	}
 	return started, nil
 }
 

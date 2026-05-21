@@ -190,6 +190,18 @@ virtiofsd_exec = ["virtiofsd"]
 security_model = "mapped"  # Options: mapped, none, passthrough (default: mapped)
 cache = "auto"  # Options: auto, always, none (default: auto)
 
+[[run_with_tunnel]]
+# Tunnel commands create Unix sockets under state_dir/tunnels on the host. That
+# directory can be shared into the guest, where agentspace mounts it at
+# /run/tunnels. The command runs with state_dir/tunnels as its working directory.
+socket = "dbus-notifications.sock"
+
+# Template values include {{.Socket}} for the resolved host socket path,
+# {{.GuestSocket}} for /run/tunnels/<socket>, vars entries, and {{.Env.USER}}.
+# The same values are injected into the command environment as SOCKET,
+# GUEST_SOCKET, and upper-snake-case vars.
+exec = ["xdg-dbus-proxy", "{{.Env.DBUS_SESSION_BUS_ADDRESS}}", "{{.Socket}}", "--filter"]
+vars = { Name = "notifications" }
 
 [[networks]]
 # Network devices default to QEMU user networking, but the manifest needs a

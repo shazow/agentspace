@@ -11,6 +11,7 @@ require (
 	github.com/kata-containers/govmm v0.0.0-20220119175834-88960a15dacd
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	golang.org/x/crypto v0.51.0
+	golang.org/x/sync v0.20.0
 )
 
 require (
