@@ -26,6 +26,7 @@ import (
 	backendfile "github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
 	shellquote "github.com/kballard/go-shellquote"
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
@@ -420,7 +421,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 	}
 
-	if hint := buildSSHCommandHint(manifest, cid); hint != "" {
+	hint, err := buildSSHCommandHint(manifest, cid)
+	if err != nil {
+		m.logger.Info("ssh command hint template failed", "err", err)
+	} else if hint != "" {
 		fmt.Fprintf(m.outputWriter(), "connect with: %s\n", hint)
 	}
 	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
@@ -563,12 +567,14 @@ func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 			m.logger.Info("starting virtiofsd")
 		}
 
+		env := append([]string(nil), daemon.Command.Env...)
+		env = append(env, fmt.Sprintf("VIRTIOFSD_SOCKET=%s", daemon.SocketPath))
 		process, err := m.startManagedProcess(processSpec{
 			Name:         name,
 			Path:         daemon.Command.Path,
 			Args:         daemon.Command.Args,
 			Dir:          manifest.Paths.WorkingDir,
-			Env:          []string{fmt.Sprintf("VIRTIOFSD_SOCKET=%s", daemon.SocketPath)},
+			Env:          env,
 			ProcessGroup: true,
 			Stdout:       os.Stderr,
 			Stderr:       os.Stderr,
@@ -810,7 +816,10 @@ func (m *manager) runSSHSession(
 		stderr := sshtools.NewRetryOutput(m.outputWriter(), false, sshRetryOutputRevealDelay)
 		attemptStarted := time.Now()
 		stats.MarkSSHAttempt(attemptStarted)
-		spec := buildSSHSpecWithArgv(launchManifest, cid, remoteCommand, argv)
+		spec, err := buildSSHSpecWithArgv(launchManifest, cid, remoteCommand, argv)
+		if err != nil {
+			return &stageError{Stage: "active session", Err: err}
+		}
 		sessionLogger.Info("ssh command", "command", shellquote.Join(append([]string{spec.Path}, spec.Args...)...))
 		spec.Stderr = stderr
 		session, err := m.startManagedProcess(spec)
@@ -1199,29 +1208,53 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 	return nil
 }
 
-func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) processSpec {
+func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) (processSpec, error) {
 	return buildSSHSpecWithArgv(manifest, cid, remoteCommand, manifest.SSH.Argv)
 }
 
-func buildSSHSpecWithArgv(manifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) processSpec {
-	command, err := sshtools.NewCommand(sshtools.Config{Exec: argv, User: manifest.SSH.User}, cid, remoteCommand)
+func buildSSHSpecWithArgv(launchManifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) (processSpec, error) {
+	renderer, err := executor.New(executor.Context{
+		"CID":         fmt.Sprintf("%d", cid),
+		"User":        launchManifest.SSH.User,
+		"Destination": sshtools.VSockDestination(launchManifest.SSH.User, cid),
+	})
 	if err != nil {
-		return processSpec{Name: "ssh"}
+		return processSpec{Name: "ssh"}, err
 	}
-
+	renderedArgv, err := renderer.RenderArgv(argv)
+	if err != nil {
+		return processSpec{Name: "ssh"}, err
+	}
+	command, err := sshtools.NewCommand(sshtools.Config{Exec: renderedArgv, User: launchManifest.SSH.User}, cid, remoteCommand)
+	if err != nil {
+		return processSpec{Name: "ssh"}, err
+	}
 	return processSpec{
 		Name:   "ssh",
 		Path:   command.Path,
 		Args:   command.Args,
-		Dir:    manifest.Paths.WorkingDir,
+		Dir:    launchManifest.Paths.WorkingDir,
+		Env:    renderer.Env(),
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
-	}
+	}, nil
 }
 
-func buildSSHCommandHint(manifest *manifest.Manifest, cid int) string {
-	return sshtools.CommandHint(sshtools.Config{Exec: manifest.SSH.Argv, User: manifest.SSH.User}, cid)
+func buildSSHCommandHint(launchManifest *manifest.Manifest, cid int) (string, error) {
+	renderer, err := executor.New(executor.Context{
+		"CID":         fmt.Sprintf("%d", cid),
+		"User":        launchManifest.SSH.User,
+		"Destination": sshtools.VSockDestination(launchManifest.SSH.User, cid),
+	})
+	if err != nil {
+		return "", err
+	}
+	argv, err := renderer.RenderArgv(launchManifest.SSH.Argv)
+	if err != nil {
+		return "", err
+	}
+	return sshtools.CommandHint(sshtools.Config{Exec: argv, User: launchManifest.SSH.User}, cid), nil
 }
 
 func joinDeferredError(target *error, fn func() error) {

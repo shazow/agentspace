@@ -210,8 +210,8 @@ let
     assert
       manifest.qemu.fwd_tunnel_exec == [
         "${pkgs.netcat}/bin/nc"
-        "$HOST"
-        "$PORT"
+        "{{.Host}}"
+        "{{.Port}}"
       ];
     assert manifest.machine.type == "microvm";
     assert !(manifest.qemu ? machine_options);
@@ -421,7 +421,7 @@ let
       && !(file ? chown)
       && !(file ? text)
       && !(file ? mode)
-      && file.overwrite == false
+      && (file.overwrite or false) == false
       && file.follow_links == false
       && file.write_back == true
       && file.source == ".agentspace-test/host-file"

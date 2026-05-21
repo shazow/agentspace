@@ -8,9 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
-	"unicode"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -70,10 +69,8 @@ func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner
 	}
 	dir := resolvedNotificationWorkingDir(manifest.Paths.WorkingDir)
 	command := *notifications.Command
-	if !filepath.IsAbs(command.Path) {
-		command.Path = filepath.Join(dir, command.Path)
-	}
 	command.Args = append([]string(nil), notifications.Command.Args...)
+	command.Env = append([]string(nil), notifications.Command.Env...)
 
 	var states map[string]struct{}
 	if len(notifications.States) > 0 {
@@ -107,8 +104,34 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 	if n == nil || !n.enabled(state) {
 		return
 	}
-	env := notificationEnv(state, message, values)
-	if err := n.runner.Run(ctx, n.command.Path, n.command.Args, n.dir, env); err != nil && n.logger != nil {
+	context := notificationTemplateContext(state, message, values)
+	renderer, err := executor.New(context)
+	if err != nil {
+		if n.logger != nil {
+			n.logger.Info("notification hook template failed", "state", state, "err", err)
+		}
+		return
+	}
+	command, err := manifest.RenderCommand(n.command, renderer)
+	if err != nil {
+		if n.logger != nil {
+			n.logger.Info("notification hook template failed", "state", state, "err", err)
+		}
+		return
+	}
+	path := command.Path
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(n.dir, path)
+	}
+	env, err := notificationEnv(state, message, values)
+	if err != nil {
+		if n.logger != nil {
+			n.logger.Info("notification hook template failed", "state", state, "err", err)
+		}
+		return
+	}
+	env = append(env, command.Env...)
+	if err := n.runner.Run(ctx, path, command.Args, n.dir, env); err != nil && n.logger != nil {
 		n.logger.Info("notification hook failed", "state", state, "err", err)
 	}
 }
@@ -121,7 +144,7 @@ func (n *commandNotifier) enabled(state string) bool {
 	return ok
 }
 
-func notificationEnv(state string, message string, values map[string]string) []string {
+func notificationEnv(state string, message string, values map[string]string) ([]string, error) {
 	env := append([]string(nil), os.Environ()...)
 	env = append(env,
 		"VIRTIE_NOTIFY_STATE="+state,
@@ -134,30 +157,22 @@ func notificationEnv(state string, message string, values map[string]string) []s
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		env = append(env, fmt.Sprintf("VIRTIE_NOTIFY_CONTEXT_%s=%s", envKey(key), values[key]))
+		envKey, err := executor.EnvName(key)
+		if err != nil {
+			return nil, err
+		}
+		env = append(env, fmt.Sprintf("VIRTIE_NOTIFY_CONTEXT_%s=%s", envKey, values[key]))
 	}
-	return env
+	return env, nil
 }
 
-func envKey(key string) string {
-	var builder strings.Builder
-	var previousUnderscore bool
-	var previousLowerOrDigit bool
-	for _, r := range key {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			if unicode.IsUpper(r) && previousLowerOrDigit && !previousUnderscore {
-				builder.WriteByte('_')
-			}
-			builder.WriteRune(unicode.ToUpper(r))
-			previousUnderscore = false
-			previousLowerOrDigit = unicode.IsLower(r) || unicode.IsDigit(r)
-			continue
-		}
-		if builder.Len() > 0 && !previousUnderscore {
-			builder.WriteByte('_')
-			previousUnderscore = true
-		}
-		previousLowerOrDigit = false
+func notificationTemplateContext(state string, message string, values map[string]string) executor.Context {
+	context := executor.Context{
+		"State":   state,
+		"Message": message,
 	}
-	return strings.Trim(builder.String(), "_")
+	for key, value := range values {
+		context[key] = value
+	}
+	return context
 }

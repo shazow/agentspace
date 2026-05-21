@@ -14,6 +14,7 @@ import (
 	"github.com/BurntSushi/toml"
 	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 const (
@@ -317,7 +318,7 @@ func (d Document) Manifest() (*Manifest, error) {
 		m.SSH.User = defaultSSHUser
 	}
 
-	qemu, err := d.lowerQEMU(host, m.Identity.HostName)
+	qemu, err := d.lowerQEMU(host, m.Identity.HostName, m.Paths.WorkingDir, m.Persistence.StateDir)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +346,7 @@ func (h HostFacts) withDefaults() HostFacts {
 	return h
 }
 
-func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
+func (d Document) lowerQEMU(host HostFacts, hostName string, workingDir string, stateDir string) (QEMU, error) {
 	machineType := d.Machine.Type
 	if machineType == "" {
 		machineType = defaultMachineType
@@ -365,9 +366,24 @@ func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
 	if d.Machine.KVM != nil {
 		enableKVM = *d.Machine.KVM
 	}
+	qemuRenderer, err := executor.New(executor.Context{
+		"HostName":   hostName,
+		"WorkingDir": workingDir,
+		"StateDir":   stateDir,
+		"HostOS":     host.OS,
+		"HostArch":   host.Arch,
+		"HostSystem": host.System,
+	})
+	if err != nil {
+		return QEMU{}, fmt.Errorf("manifest.qemu.exec: %w", err)
+	}
+	qemuExec, err := qemuRenderer.RenderArgv(d.QEMU.Exec)
+	if err != nil {
+		return QEMU{}, fmt.Errorf("manifest.qemu.exec: %w", err)
+	}
 	binaryPath := ""
-	if len(d.QEMU.Exec) > 0 {
-		binaryPath = d.QEMU.Exec[0]
+	if len(qemuExec) > 0 {
+		binaryPath = qemuExec[0]
 	}
 	if binaryPath == "" {
 		binaryPath = "qemu-system-" + host.Arch
@@ -452,7 +468,7 @@ func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
 			},
 		},
 		MachineID:       d.Machine.ID,
-		PassthroughArgs: qemuPassthroughArgs(d.QEMU),
+		PassthroughArgs: qemuPassthroughArgs(d.QEMU, qemuExec),
 	}
 	if d.Machine.Type != "" && d.Machine.Type == machineType {
 		// The public schema intentionally keeps machine identity separate
@@ -729,7 +745,7 @@ func parsePortEndpoint(value string) (PortEndpoint, error) {
 func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex int) ([]string, error) {
 	options := make([]string, 0, len(ports))
 	if len(fwdTunnelExec) == 0 {
-		fwdTunnelExec = []string{"nc", "$HOST", "$PORT"}
+		fwdTunnelExec = []string{"nc", "{{.Host}}", "{{.Port}}"}
 	}
 	for i, port := range ports {
 		proto := port.Proto
@@ -757,22 +773,44 @@ func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex
 		if from == "host" {
 			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", proto, hostEndpoint.Address, hostEndpoint.Port, guestEndpoint.Address, guestEndpoint.Port))
 		} else {
-			command := expandFwdTunnelExec(fwdTunnelExec, hostEndpoint)
+			if err := rejectLegacyFwdTunnelExecEnv(fwdTunnelExec); err != nil {
+				return nil, fmt.Errorf("manifest.networks[%d].forward[%d].fwd_tunnel_exec: %w", networkIndex, i, err)
+			}
+			command, err := renderFwdTunnelExec(fwdTunnelExec, hostEndpoint)
+			if err != nil {
+				return nil, fmt.Errorf("manifest.networks[%d].forward[%d].fwd_tunnel_exec: %w", networkIndex, i, err)
+			}
 			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s", proto, guestEndpoint.Address, guestEndpoint.Port, shellquote.Join(command...)))
 		}
 	}
 	return options, nil
 }
 
-func expandFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) []string {
-	result := make([]string, 0, len(exec))
-	port := strconv.Itoa(hostEndpoint.Port)
-	for _, arg := range exec {
-		arg = strings.ReplaceAll(arg, "$HOST", hostEndpoint.Address)
-		arg = strings.ReplaceAll(arg, "$PORT", port)
-		result = append(result, arg)
+func rejectLegacyFwdTunnelExecEnv(exec []string) error {
+	for i, arg := range exec {
+		switch arg {
+		case "$HOST":
+			return fmt.Errorf("exec[%d] uses legacy $HOST; use {{.Host}}", i)
+		case "$PORT":
+			return fmt.Errorf("exec[%d] uses legacy $PORT; use {{.Port}}", i)
+		}
 	}
-	return result
+	return nil
+}
+
+func renderFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) ([]string, error) {
+	renderer, err := executor.New(executor.Context{
+		"Host": hostEndpoint.Address,
+		"Port": strconv.Itoa(hostEndpoint.Port),
+	})
+	if err != nil {
+		return nil, err
+	}
+	command, err := renderer.RenderArgv(exec)
+	if err != nil {
+		return nil, err
+	}
+	return command, nil
 }
 
 func lowerBalloon(facts *BalloonFacts, transport string) *balloon.Device {
@@ -885,10 +923,10 @@ func uniqueStrings(values []string) []string {
 	return result
 }
 
-func qemuPassthroughArgs(qemu QEMUFacts) []string {
+func qemuPassthroughArgs(qemu QEMUFacts, exec []string) []string {
 	extraArgs := []string(nil)
-	if len(qemu.Exec) > 1 {
-		extraArgs = qemu.Exec[1:]
+	if len(exec) > 1 {
+		extraArgs = exec[1:]
 	}
 	args := make([]string, 0, len(extraArgs)+2)
 	if qemu.User != nil && *qemu.User != "" {

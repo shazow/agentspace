@@ -509,8 +509,8 @@ in
           ++ config.microvm.qemu.extraArgs;
           fwd_tunnel_exec = [
             "${config.microvm.vmHostPackages.netcat}/bin/nc"
-            "$HOST"
-            "$PORT"
+            "{{.Host}}"
+            "{{.Port}}"
           ];
           seccomp = canSandbox;
           qmp_socket = if config.microvm.socket != null then config.microvm.socket else "qmp.sock";

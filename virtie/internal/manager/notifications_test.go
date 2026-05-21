@@ -84,6 +84,38 @@ func TestCommandNotifierResolvesRelativeCommandAgainstAbsoluteWorkingDir(t *test
 	}
 }
 
+func TestCommandNotifierRendersExecTemplates(t *testing.T) {
+	cfg := validManifest("/tmp/work")
+	cfg.Notifications.Command = &manifest.Command{
+		Path: "bin/notify-{{.State}}",
+		Args: []string{"{{.Message}}", "{{.cid}}", "{{.Env.USER}}"},
+		Env:  []string{"CUSTOM=1"},
+	}
+	t.Setenv("USER", "template-user")
+	runner := &recordingNotificationRunner{}
+	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
+
+	notifier.Notify(context.Background(), notifyStateRuntimeResume, "Restored", map[string]string{
+		"cid": "7",
+	})
+
+	if got, want := len(runner.calls), 1; got != want {
+		t.Fatalf("expected one notification command, got %d", got)
+	}
+	call := runner.calls[0]
+	if got, want := call.path, "/tmp/work/bin/notify-runtime:resume"; got != want {
+		t.Fatalf("unexpected command path: got %q want %q", got, want)
+	}
+	if got, want := call.args, []string{"Restored", "7", "template-user"}; !slices.Equal(got, want) {
+		t.Fatalf("unexpected command args: got %v want %v", got, want)
+	}
+	for _, want := range []string{"CUSTOM=1", "STATE=runtime:resume", "MESSAGE=Restored", "CID=7"} {
+		if !slices.Contains(call.env, want) {
+			t.Fatalf("expected env %q in %#v", want, call.env)
+		}
+	}
+}
+
 func TestCommandNotifierLogsAndIgnoresHookFailure(t *testing.T) {
 	cfg := validManifest("/tmp/work")
 	cfg.Notifications.Command = &manifest.Command{Path: "/bin/notify"}

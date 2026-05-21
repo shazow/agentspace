@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -226,6 +227,61 @@ func TestDocumentSSHExecDefaultsToEmpty(t *testing.T) {
 	}
 	if len(manifest.SSH.Argv) != 0 {
 		t.Fatalf("expected omitted ssh exec to lower to empty argv, got %#v", manifest.SSH.Argv)
+	}
+}
+
+func TestDocumentQEMUExecRendersTemplates(t *testing.T) {
+	t.Setenv("USER", "template-user")
+
+	document := validDocument()
+	document.Host = HostFacts{
+		OS:     "linux",
+		Arch:   "x86_64",
+		System: "x86_64-linux",
+	}
+	document.QEMU.Exec = []string{
+		"/nix/store/qemu-{{.HostArch}}",
+		"-name={{.HostName}}",
+		"-sandbox={{.WorkingDir}}",
+		"-state={{.StateDir}}",
+		"-host={{.HostOS}}/{{.HostSystem}}",
+		"-user={{.Env.USER}}",
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest with qemu exec templates: %v", err)
+	}
+	if got, want := manifest.QEMU.BinaryPath, "/nix/store/qemu-x86_64"; got != want {
+		t.Fatalf("unexpected qemu binary path: got %q want %q", got, want)
+	}
+	wantArgs := []string{
+		"-name=agent-sandbox",
+		"-sandbox=/tmp/work",
+		"-state=.virtie",
+		"-host=linux/x86_64-linux",
+		"-user=template-user",
+	}
+	if got := manifest.QEMU.PassthroughArgs; !reflect.DeepEqual(got, wantArgs) {
+		t.Fatalf("unexpected qemu passthrough args: got %#v want %#v", got, wantArgs)
+	}
+}
+
+func TestDocumentQEMUExecRejectsMissingTemplateKey(t *testing.T) {
+	document := validDocument()
+	document.QEMU.Exec = []string{"qemu-system-{{.Missing}}"}
+
+	_, err := document.Manifest()
+	if err == nil {
+		t.Fatal("expected qemu exec template error")
+	}
+	for _, want := range []string{
+		"manifest.qemu.exec: exec[0]",
+		`map has no entry for key "Missing"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
 	}
 }
 
@@ -718,6 +774,32 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	}
 }
 
+func TestResolvedVirtioFSDaemonsRenderExecTemplates(t *testing.T) {
+	manifest := validManifest()
+	manifest.VirtioFS.Daemons[0].Command = Command{
+		Path: "bin/virtiofsd-{{.Tag}}",
+		Args: []string{"--socket-path={{.Socket}}", "--user={{.Env.USER}}"},
+		Env:  []string{"STATIC=1"},
+	}
+	t.Setenv("USER", "template-user")
+
+	daemons, err := manifest.ResolvedVirtioFSDaemons()
+	if err != nil {
+		t.Fatalf("resolve virtiofs daemons: %v", err)
+	}
+	if got, want := daemons[0].Command.Path, "/tmp/work/bin/virtiofsd-workspace"; got != want {
+		t.Fatalf("unexpected daemon path: got %q want %q", got, want)
+	}
+	if got, want := daemons[0].Command.Args, []string{"--socket-path=/tmp/work/fs.sock", "--user=template-user"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected daemon args: got %#v want %#v", got, want)
+	}
+	for _, want := range []string{"STATIC=1", "SOCKET=/tmp/work/fs.sock", "TAG=workspace"} {
+		if !slices.Contains(daemons[0].Command.Env, want) {
+			t.Fatalf("expected daemon env %q in %#v", want, daemons[0].Command.Env)
+		}
+	}
+}
+
 func TestManifestValidatesQEMUDeviceTransports(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -915,18 +997,23 @@ func TestLoadGuestForwardUsesTunnelExecTemplate(t *testing.T) {
 			want: []string{"guestfwd=tcp:10.0.2.15:2222-cmd:nc 127.0.0.1 22"},
 		},
 		{
-			name:          "explicit netcat",
-			fwdTunnelExec: []string{"/bin/nc", "$HOST", "$PORT"},
+			name:          "explicit netcat template",
+			fwdTunnelExec: []string{"/bin/nc", "{{.Host}}", "{{.Port}}"},
 			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:/bin/nc 127.0.0.1 22"},
 		},
 		{
-			name:          "socat",
-			fwdTunnelExec: []string{"socat", "-", "TCP:$HOST:$PORT"},
+			name:          "socat template",
+			fwdTunnelExec: []string{"socat", "-", "TCP:{{.Host}}:{{.Port}}"},
 			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:socat - TCP:127.0.0.1:22"},
 		},
 		{
+			name:          "shell template",
+			fwdTunnelExec: []string{"sh", "-c", "socat - TCP:{{.Host}}:{{.Port}}"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:sh -c 'socat - TCP:127.0.0.1:22'"},
+		},
+		{
 			name:          "quotes shell-sensitive args",
-			fwdTunnelExec: []string{"~/bin/nc", "$HOST", "$PORT"},
+			fwdTunnelExec: []string{"~/bin/nc", "{{.Host}}", "{{.Port}}"},
 			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:\\~/bin/nc 127.0.0.1 22"},
 		},
 	}
@@ -959,6 +1046,46 @@ func TestLoadGuestForwardUsesTunnelExecTemplate(t *testing.T) {
 			}
 			if got := loaded.QEMU.Devices.Network[0].NetdevOptions; !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("unexpected network forward options: got %#v want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadGuestForwardRejectsLegacyTunnelExecEnvTokens(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		fwdTunnelExec []string
+		wantError     string
+	}{
+		{
+			name:          "legacy host",
+			fwdTunnelExec: []string{"nc", "$HOST", "{{.Port}}"},
+			wantError:     "exec[1] uses legacy $HOST; use {{.Host}}",
+		},
+		{
+			name:          "legacy port",
+			fwdTunnelExec: []string{"nc", "{{.Host}}", "$PORT"},
+			wantError:     "exec[2] uses legacy $PORT; use {{.Port}}",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.QEMU.FwdTunnelExec = tt.fwdTunnelExec
+			document.Networks = []NetworkFacts{
+				{
+					Forward: []ForwardPort{
+						{
+							From:  "guest",
+							Host:  "127.0.0.1:22",
+							Guest: "10.0.2.15:2222",
+						},
+					},
+				},
+			}
+
+			_, err := document.Manifest()
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantError, err)
 			}
 		})
 	}

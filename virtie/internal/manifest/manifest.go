@@ -19,6 +19,7 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 const (
@@ -226,6 +227,7 @@ type Volume struct {
 type Command struct {
 	Path string   `json:"path"`
 	Args []string `json:"args,omitempty"`
+	Env  []string `json:"env,omitempty"`
 }
 
 type Notifications struct {
@@ -669,8 +671,22 @@ func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
 			return nil, err
 		}
 		resolved.SocketPath = socketPath
-		resolved.Command.Path = m.resolvePath(daemon.Command.Path)
-		resolved.Command.Args = append([]string(nil), daemon.Command.Args...)
+		renderer, err := executor.New(executor.Context{
+			"Socket": socketPath,
+			"Tag":    daemon.Tag,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s].command: %w", daemon.Tag, err)
+		}
+		command, err := RenderCommand(daemon.Command, renderer)
+		if err != nil {
+			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s].command: %w", daemon.Tag, err)
+		}
+		resolved.Command = Command{
+			Path: m.resolvePath(command.Path),
+			Args: command.Args,
+			Env:  command.Env,
+		}
 		daemons = append(daemons, resolved)
 	}
 	return daemons, nil
@@ -684,6 +700,7 @@ func (m *Manifest) ResolvedNotifications() Notifications {
 		command := *m.Notifications.Command
 		command.Path = m.resolvePath(command.Path)
 		command.Args = append([]string(nil), m.Notifications.Command.Args...)
+		command.Env = append([]string(nil), m.Notifications.Command.Env...)
 		resolved.Command = &command
 	}
 	return resolved

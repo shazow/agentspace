@@ -4,6 +4,48 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-21: Manifest exec entries use Go templates
+
+### Who Is Affected
+
+- Direct virtie manifest producers setting `qemu.fwd_tunnel_exec`.
+- Consumers using shell wrappers in manifest exec arrays.
+
+### What Changed
+
+Manifest exec arrays now render Go `text/template` variables before launch.
+For native argv entries, use template variables such as `{{.Host}}` and
+`{{.Port}}`. For commands that `virtie` starts directly, the same values are
+also exposed to shell commands as environment variables.
+
+`qemu.fwd_tunnel_exec` is an exception: QEMU starts each `guestfwd cmd:`
+itself, so `HOST` and `PORT` are not injected into the environment. Use
+template variables there, including inside shell command strings.
+
+| Surface | Template values | Injected environment |
+| --- | --- | --- |
+| `qemu.exec` | `HostName`, `WorkingDir`, `StateDir`, `HostOS`, `HostArch`, `HostSystem`, `.Env` | none |
+| `qemu.fwd_tunnel_exec` | `Host`, `Port`, `.Env` | none; QEMU starts the command |
+| `ssh.exec` | `CID`, `User`, `Destination`, `.Env` | `CID`, `USER`, `DESTINATION` |
+| `mounts[].virtiofsd_exec` | `Socket`, `Tag`, `.Env` | `SOCKET`, `TAG` |
+| `notifications.exec` | `State`, `Message`, notification context values, `.Env` | `STATE`, `MESSAGE`, normalized context values |
+
+### Migration Steps
+
+Update direct `qemu.fwd_tunnel_exec` manifests that relied on literal `$HOST`
+and `$PORT` in non-shell argv entries:
+
+```toml
+- fwd_tunnel_exec = ["nc", "$HOST", "$PORT"]
++ fwd_tunnel_exec = ["nc", "{{.Host}}", "{{.Port}}"]
+```
+
+Shell forms should use templates inside the shell string:
+
+```toml
+fwd_tunnel_exec = ["sh", "-c", "socat - TCP:{{.Host}}:{{.Port}}"]
+```
+
 ## 2026-05-20: Workspace options replace legacy current-directory mount
 
 ### Who Is Affected
@@ -347,14 +389,14 @@ Move the command under `qemu` and include endpoint template variables:
 - [host]
 - netcat = "nc"
 + [qemu]
-+ fwd_tunnel_exec = ["nc", "$HOST", "$PORT"]
++ fwd_tunnel_exec = ["nc", "{{.Host}}", "{{.Port}}"]
 ```
 
 For socat:
 
 ```toml
 [qemu]
-fwd_tunnel_exec = ["socat", "-", "TCP:$HOST:$PORT"]
+fwd_tunnel_exec = ["socat", "-", "TCP:{{.Host}}:{{.Port}}"]
 ```
 
 ## 2026-05-17: SSH retry delay seconds
