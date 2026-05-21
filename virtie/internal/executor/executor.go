@@ -1,3 +1,4 @@
+// Package executor renders exec command templates and their environment.
 package executor
 
 import (
@@ -10,17 +11,21 @@ import (
 	"unicode"
 )
 
+// Context holds named values available to exec command templates.
 type Context map[string]string
 
+// Renderer renders exec command templates from a fixed context.
 type Renderer struct {
 	data map[string]any
 	env  []string
 }
 
+// New returns a Renderer that uses the current process environment for Env lookups.
 func New(context Context) (*Renderer, error) {
 	return NewWithEnviron(context, os.Environ())
 }
 
+// NewWithEnviron returns a Renderer that uses environ for Env lookups.
 func NewWithEnviron(context Context, environ []string) (*Renderer, error) {
 	env, err := contextEnv(context)
 	if err != nil {
@@ -37,6 +42,7 @@ func NewWithEnviron(context Context, environ []string) (*Renderer, error) {
 	}, nil
 }
 
+// RenderArgv renders each argument in argv as a Go template.
 func (r *Renderer) RenderArgv(argv []string) ([]string, error) {
 	rendered := make([]string, 0, len(argv))
 	for i, arg := range argv {
@@ -49,6 +55,7 @@ func (r *Renderer) RenderArgv(argv []string) ([]string, error) {
 	return rendered, nil
 }
 
+// RenderString renders value as a Go template.
 func (r *Renderer) RenderString(value string) (string, error) {
 	tmpl, err := template.New("exec").Option("missingkey=error").Parse(value)
 	if err != nil {
@@ -61,6 +68,7 @@ func (r *Renderer) RenderString(value string) (string, error) {
 	return out.String(), nil
 }
 
+// Env returns the environment variables derived from the context.
 func (r *Renderer) Env() []string {
 	return append([]string(nil), r.env...)
 }
