@@ -14,6 +14,10 @@ let
       identityFile = sshKeys.virtie.identityFile;
     };
     persistence.homeImage = null;
+    workspace = {
+      enable = true;
+      addCurrentDir = true;
+    };
   };
 
   vmDefault = mkSandbox {
@@ -65,20 +69,17 @@ let
       identityFile = sshKeys.virtie.identityFile;
     };
     persistence.homeImage = null;
-    mountWorkspace = false;
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
   vmVirtieEscapedExternalStoreSocket = mkSandbox {
     persistence.homeImage = null;
-    mountWorkspace = false;
     nixStoreShareSocket = "/tmp/$(touch injected).sock";
   };
 
   invalidRelativeStoreSocket = builtins.tryEval (
     (mkSandbox {
       persistence.homeImage = null;
-      mountWorkspace = false;
       nixStoreShareSocket = "virtiofs-nix-store.sock";
     }).config.system.build.toplevel.drvPath
   );
@@ -246,7 +247,7 @@ let
     assert builtins.all (
       mount: mount.virtiofsd_socket != "" && builtins.head mount.virtiofsd_exec != ""
     ) virtiofsDaemonMounts;
-    assert builtins.any (mount: mount.tag == "workspace") virtiofsDaemonMounts;
+    assert builtins.any (mount: mount.tag == "workspace_cwd") virtiofsDaemonMounts;
     assert !(manifest ? vsock);
     assert !(manifest.ssh ? destination);
     assert !(manifest ? qemuConfig);
@@ -354,7 +355,7 @@ let
   _workspace =
     assert workspaceManifest.workspace.basedir == "/home/agent/workspace";
     assert workspaceManifest.workspace.mount_cwd == true;
-    assert vmVirtieWorkspaces.config.home-manager.users.agent.home.sessionVariables.WORKSPACE == "/home/agent/workspace";
+    assert vmVirtieWorkspaces.config.environment.sessionVariables.WORKSPACE == "/home/agent/workspace";
     assert builtins.elem "d /home/agent/workspace 0755 agent users -" vmVirtieWorkspaces.config.systemd.tmpfiles.rules;
     assert builtins.any (
       share:

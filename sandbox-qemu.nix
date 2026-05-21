@@ -136,12 +136,6 @@ in
       };
     };
 
-    mountWorkspace = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Deprecated: mount the current working directory into the VM as the legacy workspace share.";
-    };
-
     workspace = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -265,12 +259,6 @@ in
       description = "Files to write into the guest during fresh VM launch, keyed by absolute guest path.";
     };
 
-    workspaceMountPoint = lib.mkOption {
-      type = lib.types.str;
-      default = "/home/${cfg.user}/workspace";
-      description = "Where to mount the current working directory inside the VM.";
-    };
-
     nixStoreShareSocket = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -352,8 +340,8 @@ in
           exit 1
         fi
       ''
-      + lib.optionalString cfg.mountWorkspace ''
-        echo "📂 Mounting current directory at ~/workspace"
+      + lib.optionalString (cfg.workspace.enable && cfg.workspace.addCurrentDir) ''
+        echo "📂 Mounting current directory into workspace"
         cd "$REPO_DIR"
       '';
 
@@ -636,6 +624,10 @@ in
           "vm.vfs_cache_pressure" = 1000; # Default: 100
         };
 
+        environment.sessionVariables = lib.mkIf cfg.workspace.enable {
+          WORKSPACE = cfg.workspace.basedir;
+        };
+
         # User Configuration
         users.users.${cfg.user} = {
           password = "";
@@ -657,9 +649,6 @@ in
             home.stateVersion = lib.mkDefault config.system.stateVersion;
 
             programs.home-manager.enable = lib.mkDefault true;
-            home.sessionVariables = lib.mkIf cfg.workspace.enable {
-              WORKSPACE = cfg.workspace.basedir;
-            };
           };
         };
 
@@ -747,15 +736,6 @@ in
                 source = "/nix/store";
                 mountPoint = "/nix/.ro-store";
                 readOnly = true;
-              }
-            ]
-            ++ lib.optionals (cfg.mountWorkspace && !cfg.workspace.enable) [
-              {
-                proto = "virtiofs";
-                tag = "workspace";
-                source = ".";
-                mountPoint = cfg.workspaceMountPoint;
-                securityModel = "mapped";
               }
             ]
             ++ lib.optionals (cfg.workspace.enable && cfg.workspace.addCurrentDir) [
