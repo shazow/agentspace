@@ -423,7 +423,7 @@ let
       && !(file ? chown)
       && !(file ? text)
       && !(file ? mode)
-      && file.overwrite == false
+      && (file.overwrite or false) == false
       && file.follow_links == false
       && file.write_back == true
       && file.source == ".agentspace-test/host-file"

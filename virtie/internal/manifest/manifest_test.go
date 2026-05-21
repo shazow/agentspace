@@ -230,6 +230,61 @@ func TestDocumentSSHExecDefaultsToEmpty(t *testing.T) {
 	}
 }
 
+func TestDocumentQEMUExecRendersTemplates(t *testing.T) {
+	t.Setenv("USER", "template-user")
+
+	document := validDocument()
+	document.Host = HostFacts{
+		OS:     "linux",
+		Arch:   "x86_64",
+		System: "x86_64-linux",
+	}
+	document.QEMU.Exec = []string{
+		"/nix/store/qemu-{{.HostArch}}",
+		"-name={{.HostName}}",
+		"-sandbox={{.WorkingDir}}",
+		"-state={{.StateDir}}",
+		"-host={{.HostOS}}/{{.HostSystem}}",
+		"-user={{.Env.USER}}",
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest with qemu exec templates: %v", err)
+	}
+	if got, want := manifest.QEMU.BinaryPath, "/nix/store/qemu-x86_64"; got != want {
+		t.Fatalf("unexpected qemu binary path: got %q want %q", got, want)
+	}
+	wantArgs := []string{
+		"-name=agent-sandbox",
+		"-sandbox=/tmp/work",
+		"-state=.virtie",
+		"-host=linux/x86_64-linux",
+		"-user=template-user",
+	}
+	if got := manifest.QEMU.PassthroughArgs; !reflect.DeepEqual(got, wantArgs) {
+		t.Fatalf("unexpected qemu passthrough args: got %#v want %#v", got, wantArgs)
+	}
+}
+
+func TestDocumentQEMUExecRejectsMissingTemplateKey(t *testing.T) {
+	document := validDocument()
+	document.QEMU.Exec = []string{"qemu-system-{{.Missing}}"}
+
+	_, err := document.Manifest()
+	if err == nil {
+		t.Fatal("expected qemu exec template error")
+	}
+	for _, want := range []string{
+		"manifest.qemu.exec: exec[0]",
+		`map has no entry for key "Missing"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %v", want, err)
+		}
+	}
+}
+
 func TestDocumentSSHAutoprovisionLowersToManifest(t *testing.T) {
 	document := validDocument()
 	document.SSH.Autoprovision = true

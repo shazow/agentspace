@@ -317,7 +317,7 @@ func (d Document) Manifest() (*Manifest, error) {
 		m.SSH.User = defaultSSHUser
 	}
 
-	qemu, err := d.lowerQEMU(host, m.Identity.HostName)
+	qemu, err := d.lowerQEMU(host, m.Identity.HostName, m.Paths.WorkingDir, m.Persistence.StateDir)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +345,7 @@ func (h HostFacts) withDefaults() HostFacts {
 	return h
 }
 
-func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
+func (d Document) lowerQEMU(host HostFacts, hostName string, workingDir string, stateDir string) (QEMU, error) {
 	machineType := d.Machine.Type
 	if machineType == "" {
 		machineType = defaultMachineType
@@ -365,9 +365,20 @@ func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
 	if d.Machine.KVM != nil {
 		enableKVM = *d.Machine.KVM
 	}
+	qemuExec, err := RenderExecArgv(d.QEMU.Exec, ExecTemplateContext{
+		"HostName":   hostName,
+		"WorkingDir": workingDir,
+		"StateDir":   stateDir,
+		"HostOS":     host.OS,
+		"HostArch":   host.Arch,
+		"HostSystem": host.System,
+	})
+	if err != nil {
+		return QEMU{}, fmt.Errorf("manifest.qemu.exec: %w", err)
+	}
 	binaryPath := ""
-	if len(d.QEMU.Exec) > 0 {
-		binaryPath = d.QEMU.Exec[0]
+	if len(qemuExec) > 0 {
+		binaryPath = qemuExec[0]
 	}
 	if binaryPath == "" {
 		binaryPath = "qemu-system-" + host.Arch
@@ -452,7 +463,7 @@ func (d Document) lowerQEMU(host HostFacts, hostName string) (QEMU, error) {
 			},
 		},
 		MachineID:       d.Machine.ID,
-		PassthroughArgs: qemuPassthroughArgs(d.QEMU),
+		PassthroughArgs: qemuPassthroughArgs(d.QEMU, qemuExec),
 	}
 	if d.Machine.Type != "" && d.Machine.Type == machineType {
 		// The public schema intentionally keeps machine identity separate
@@ -889,10 +900,10 @@ func uniqueStrings(values []string) []string {
 	return result
 }
 
-func qemuPassthroughArgs(qemu QEMUFacts) []string {
+func qemuPassthroughArgs(qemu QEMUFacts, exec []string) []string {
 	extraArgs := []string(nil)
-	if len(qemu.Exec) > 1 {
-		extraArgs = qemu.Exec[1:]
+	if len(exec) > 1 {
+		extraArgs = exec[1:]
 	}
 	args := make([]string, 0, len(extraArgs)+2)
 	if qemu.User != nil && *qemu.User != "" {
