@@ -165,6 +165,65 @@ let
     ];
   };
 
+  vmVirtieRunWithTunnel = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
+    persistence.homeImage = null;
+    mountWorkspace = false;
+    runWithTunnel = [
+      {
+        command = "socat UNIX-LISTEN:$VIRTIE_TUNNEL_SOCKET,fork TCP:127.0.0.1:8080";
+        mountSock = "proxy.sock";
+      }
+      {
+        command = "xdg-dbus-proxy $DBUS_SESSION_BUS_ADDRESS $VIRTIE_TUNNEL_SOCKET --filter";
+        mountSock = "dbus/session.sock:dbus/session.sock";
+      }
+    ];
+  };
+
+  invalidRunWithTunnelAbsoluteHost = builtins.tryEval (
+    (mkSandbox {
+      persistence.homeImage = null;
+      runWithTunnel = [
+        {
+          command = "true";
+          mountSock = "/tmp/proxy.sock";
+        }
+      ];
+    }).config.system.build.toplevel.drvPath
+  );
+
+  invalidRunWithTunnelEscapedGuest = builtins.tryEval (
+    (mkSandbox {
+      persistence.homeImage = null;
+      runWithTunnel = [
+        {
+          command = "true";
+          mountSock = "proxy.sock:../proxy.sock";
+        }
+      ];
+    }).config.system.build.toplevel.drvPath
+  );
+
+  invalidRunWithTunnelDuplicateGuest = builtins.tryEval (
+    (mkSandbox {
+      persistence.homeImage = null;
+      runWithTunnel = [
+        {
+          command = "true";
+          mountSock = "proxy-a.sock:proxy.sock";
+        }
+        {
+          command = "true";
+          mountSock = "proxy-b.sock:proxy.sock";
+        }
+      ];
+    }).config.system.build.toplevel.drvPath
+  );
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtieManifestData;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
@@ -179,6 +238,7 @@ let
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
   fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
+  runWithTunnelManifest = vmVirtieRunWithTunnel.config.agentspace.sandbox.launch.virtieManifestData;
 
   virtiofsMounts = builtins.filter (mount: mount.type == "virtiofs") manifest.mounts;
   virtiofsDaemonMounts = builtins.filter (
@@ -200,7 +260,7 @@ let
     assert manifest.state_dir == ".agentspace";
     assert manifest.qemu.qmp_socket == "qmp.sock";
     assert manifest.machine.memory == 4096;
-    assert manifest.machine.vcpu == null;
+    assert !(manifest.machine ? vcpu);
     assert manifest.graphics.backend == "headless";
     assert manifest.write_files == [ ];
     assert manifest.notifications.states == [ ];
@@ -346,9 +406,9 @@ let
     assert builtins.any (
       file:
       file.guest_path == "/etc/agentspace-host"
-      && file.chown == null
-      && file.text == null
-      && file.mode == null
+      && !(file ? chown)
+      && !(file ? text)
+      && !(file ? mode)
       && file.overwrite == false
       && file.follow_links == false
       && file.write_back == true
@@ -369,6 +429,45 @@ let
         "runtime:suspend"
         "balloon:resize"
       ];
+    true;
+
+  _runWithTunnel =
+    assert runWithTunnelManifest.run_tunnels == [
+      {
+        exec = [
+          pkgs.runtimeShell
+          "-c"
+          "socat UNIX-LISTEN:$VIRTIE_TUNNEL_SOCKET,fork TCP:127.0.0.1:8080"
+        ];
+        socket = "proxy.sock";
+      }
+      {
+        exec = [
+          pkgs.runtimeShell
+          "-c"
+          "xdg-dbus-proxy $DBUS_SESSION_BUS_ADDRESS $VIRTIE_TUNNEL_SOCKET --filter"
+        ];
+        socket = "dbus/session.sock";
+      }
+    ];
+    assert builtins.any (
+      mount:
+      mount.type == "virtiofs"
+      && mount.tag == "agentspace-tunnels"
+      && mount.source == ".agentspace"
+      && mount.virtiofsd_socket != ""
+      && mount ? virtiofsd_exec
+    ) runWithTunnelManifest.mounts;
+    assert builtins.elem "L+ /run/proxy.sock - - - - /run/agentspace-tunnels/proxy.sock"
+      vmVirtieRunWithTunnel.config.systemd.tmpfiles.rules;
+    assert builtins.elem "d /run/dbus 0755 root root -"
+      vmVirtieRunWithTunnel.config.systemd.tmpfiles.rules;
+    assert builtins.elem
+      "L+ /run/dbus/session.sock - - - - /run/agentspace-tunnels/dbus/session.sock"
+      vmVirtieRunWithTunnel.config.systemd.tmpfiles.rules;
+    assert !invalidRunWithTunnelAbsoluteHost.success;
+    assert !invalidRunWithTunnelEscapedGuest.success;
+    assert !invalidRunWithTunnelDuplicateGuest.success;
     true;
 in
 {
@@ -411,4 +510,8 @@ in
   virtie-manifest-notifications-contract =
     assert _notifications;
     pkgs.runCommand "virtie-manifest-notifications-contract" { } "touch $out";
+
+  virtie-manifest-run-with-tunnel-contract =
+    assert _runWithTunnel;
+    pkgs.runCommand "virtie-manifest-run-with-tunnel-contract" { } "touch $out";
 }

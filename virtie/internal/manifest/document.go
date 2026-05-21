@@ -44,6 +44,7 @@ type Document struct {
 	Balloon       *BalloonFacts      `json:"balloon,omitempty" toml:"balloon"`
 	SSH           SSHFacts           `json:"ssh,omitempty" toml:"ssh"`
 	VSock         VSockFacts         `json:"vsock,omitempty" toml:"vsock"`
+	RunTunnels    []RunTunnelFacts   `json:"run_tunnels,omitempty" toml:"run_tunnels"`
 	WriteFiles    []WriteFileFacts   `json:"write_files,omitempty" toml:"write_files"`
 	Notifications NotificationsFacts `json:"notifications,omitempty" toml:"notifications"`
 }
@@ -152,6 +153,11 @@ type SSHFacts struct {
 
 type VSockFacts struct {
 	CIDRange RangeFacts `json:"cid_range,omitempty" toml:"cid_range"`
+}
+
+type RunTunnelFacts struct {
+	Exec       []string `json:"exec,omitempty" toml:"exec"`
+	SocketPath string   `json:"socket,omitempty" toml:"socket"`
 }
 
 type RangeFacts struct {
@@ -317,6 +323,7 @@ func (d Document) Manifest() (*Manifest, error) {
 	m.QEMU = qemu
 	m.Volumes = lowerVolumes(d.Volumes)
 	m.VirtioFS.Daemons = lowerVirtioFSDaemons(d.Mounts)
+	m.RunTunnels = lowerRunTunnels(d.RunTunnels)
 	m.WriteFiles = lowerWriteFiles(d.WriteFiles)
 
 	if err := m.Validate(); err != nil {
@@ -808,6 +815,17 @@ func lowerWriteFiles(files []WriteFileFacts) WriteFiles {
 			WriteBack:   file.WriteBack,
 			Path:        file.Path,
 		}
+	}
+	return result
+}
+
+func lowerRunTunnels(tunnels []RunTunnelFacts) []RunTunnel {
+	result := make([]RunTunnel, 0, len(tunnels))
+	for _, tunnel := range tunnels {
+		result = append(result, RunTunnel{
+			SocketPath: tunnel.SocketPath,
+			Command:    commandFromExec(tunnel.Exec),
+		})
 	}
 	return result
 }

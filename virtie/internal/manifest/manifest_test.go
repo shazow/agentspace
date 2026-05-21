@@ -242,6 +242,50 @@ func TestDocumentSSHAutoprovisionLowersToManifest(t *testing.T) {
 	}
 }
 
+func TestDocumentRunTunnelsLowerToManifest(t *testing.T) {
+	document := validDocument()
+	document.RunTunnels = []RunTunnelFacts{
+		{
+			Exec:       []string{"bin/proxy", "--socket", "$VIRTIE_TUNNEL_SOCKET"},
+			SocketPath: "dbus/session.sock",
+		},
+	}
+
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+
+	loaded, err := Load(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+
+	tunnels, err := loaded.ResolvedRunTunnels()
+	if err != nil {
+		t.Fatalf("resolve tunnels: %v", err)
+	}
+	if got, want := tunnels, []RunTunnel{
+		{
+			SocketPath: "/tmp/work/.virtie/dbus/session.sock",
+			Command: Command{
+				Path: "/tmp/work/bin/proxy",
+				Args: []string{"--socket", "$VIRTIE_TUNNEL_SOCKET"},
+			},
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected resolved tunnels: got %#v want %#v", got, want)
+	}
+
+	socketPaths, err := loaded.ResolvedRunTunnelSocketPaths()
+	if err != nil {
+		t.Fatalf("resolve tunnel socket paths: %v", err)
+	}
+	if got, want := socketPaths, []string{"/tmp/work/.virtie/dbus/session.sock"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected tunnel socket paths: got %#v want %#v", got, want)
+	}
+}
+
 func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)
@@ -543,6 +587,75 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 				}
 			},
 			wantError: "mode must match",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manifest := validManifest()
+			tt.configure(manifest)
+
+			err := manifest.Validate()
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("unexpected validation error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected validation error containing %q, got %v", tt.wantError, err)
+			}
+		})
+	}
+}
+
+func TestManifestRunTunnelValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*Manifest)
+		wantError string
+	}{
+		{
+			name: "valid tunnel",
+			configure: func(manifest *Manifest) {
+				manifest.RunTunnels = []RunTunnel{
+					{
+						SocketPath: "dbus/session.sock",
+						Command:    Command{Path: "/bin/proxy"},
+					},
+				}
+			},
+		},
+		{
+			name: "rejects absolute socket",
+			configure: func(manifest *Manifest) {
+				manifest.RunTunnels = []RunTunnel{{SocketPath: "/tmp/session.sock", Command: Command{Path: "/bin/proxy"}}}
+			},
+			wantError: "clean relative path",
+		},
+		{
+			name: "rejects escaping socket",
+			configure: func(manifest *Manifest) {
+				manifest.RunTunnels = []RunTunnel{{SocketPath: "../session.sock", Command: Command{Path: "/bin/proxy"}}}
+			},
+			wantError: "clean relative path",
+		},
+		{
+			name: "rejects missing command",
+			configure: func(manifest *Manifest) {
+				manifest.RunTunnels = []RunTunnel{{SocketPath: "session.sock"}}
+			},
+			wantError: "command.path is required",
+		},
+		{
+			name: "rejects duplicate socket",
+			configure: func(manifest *Manifest) {
+				manifest.RunTunnels = []RunTunnel{
+					{SocketPath: "session.sock", Command: Command{Path: "/bin/proxy-a"}},
+					{SocketPath: "session.sock", Command: Command{Path: "/bin/proxy-b"}},
+				}
+			},
+			wantError: "duplicates",
 		},
 	}
 

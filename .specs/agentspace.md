@@ -8,7 +8,7 @@ Nix-managed sandbox launch workflow for the currently supported `virtie` path.
 
 Keep `mkSandbox` as the stable entrypoint for constructing the sandbox system and host-side launch helpers.
 
-- Support a single active host launch path: SSH + QEMU through `virtie`, with built-in `virtiofs` shares, opt-in additional `virtiofs` or `9p` shares, and opt-in graphical QEMU mode through `microvm.graphics`.
+- Support a single active host launch path: SSH + QEMU through `virtie`, with built-in `virtiofs` shares, opt-in additional `virtiofs` or `9p` shares, opt-in host tunnel socket commands, and opt-in graphical QEMU mode through `microvm.graphics`.
 - Generate a Nix-owned launch wrapper and manifest that contain the inputs required by `virtie`.
 - Keep the public Nix surface focused on launch-shape choices, including whether the virtio-balloon device is enabled, while leaving runtime balloon policy defaults to `virtie`.
 - Reject unsupported launch configurations explicitly instead of falling back to legacy orchestration.
@@ -31,6 +31,7 @@ Acceptance criteria:
 - [x] The default `mkSandbox {}` launch experience provisions a usable out-of-the-box SSH credential story.
 - [x] Repo-level flake outputs and enabled checks validate the documented path end to end.
 - [x] `microvm.graphics.enable = true` is accepted and lowered into the typed `virtie` manifest for GTK or Cocoa display backends.
+- [x] `agentspace.sandbox.runWithTunnel` runs host commands that create Unix sockets under `state_dir` and exposes them in the guest under `/run`.
 
 ## Progress
 
@@ -52,6 +53,7 @@ Acceptance criteria:
 - [x] Keep the launch-contract and `virtie` fake-tools E2E checks enabled in `checks/default.nix`, alongside retained-hook checks for `extraModules`, `homeModules`, and a downstream-style consumer config.
 - [x] Fix `nix flake check` evaluation by removing broken non-derivation package shims.
 - [x] Add graphical-mode spec and typed `virtie` manifest lowering for `microvm.graphics`.
+- [x] Add `agentspace.sandbox.runWithTunnel` with `command` and `mountSock`, lower it into `run_tunnels`, and create guest `/run` symlinks through an internal state-dir share.
 
 ## Appendix
 
@@ -65,6 +67,7 @@ Acceptance criteria:
   - `virtie` owns host-side QEMU policy derivation from those facts, including transport selection, machine defaults, CPU defaults, kernel console parameters, memory backend selection, device IDs, block letters, network forwarding lowering, graphics display args, final argv compilation, the long-lived QMP lifecycle, optional runtime balloon control, process launch, and teardown ordering.
   - Nix exposes only `agentspace.sandbox.balloon` for enabling or disabling the virtio-balloon device.
   - Nix exposes `agentspace.sandbox.notifications` for an optional host-side shell notification command and state allowlist.
+  - Nix exposes `agentspace.sandbox.runWithTunnel[]` for host-side commands that produce Unix sockets. Host socket paths are relative to manifest `state_dir`; guest paths are relative to `/run`; `host:guest` mappings are accepted.
   - When enabled, the generated manifest includes balloon facts but leaves transport and controller defaults to `virtie`.
   - The generated manifest sets `paths.runtimeDir = ""`, so relative socket paths, including the SSH readiness socket, resolve under the per-user XDG runtime directory by default.
   - Graphical launches reuse the upstream `microvm.graphics` option schema. `microvm.graphics.enable = true` lowers to a typed `graphics.backend`, with `gtk` supported on Linux and `cocoa` supported on Darwin; the sandbox remains headless by default.
@@ -81,6 +84,7 @@ Acceptance criteria:
   - `user`, `hostName`, `swapSize`
   - optional `balloon`
   - optional `notifications.command` shell string and `notifications.states`
+  - optional `runWithTunnel[]` entries with `command` and `mountSock`
   - optional `shares[]` for additional mounts with `proto`, `tag`, `source`, `mountPoint`, `securityModel`, `readOnly`, `cache`, and `socket`
   - optional `microvm.graphics.enable` and `microvm.graphics.backend` through retained module hooks
 

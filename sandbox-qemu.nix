@@ -168,6 +168,35 @@ in
       };
     };
 
+    runWithTunnel = lib.mkOption {
+      type = lib.types.listOf (
+        lib.types.submodule (
+          { ... }:
+          {
+            options = {
+              command = lib.mkOption {
+                type = lib.types.str;
+                description = "Host-side shell command that creates a Unix socket under the sandbox state directory.";
+              };
+
+              mountSock = lib.mkOption {
+                type = lib.types.str;
+                example = "dbus.sock:dbus/session.sock";
+                description = ''
+                  Socket mapping. The host-side path before the optional colon
+                  is relative to the sandbox state directory; the guest-side
+                  path after the colon is relative to /run. When no guest path
+                  is provided, the same relative path is used in /run.
+                '';
+              };
+            };
+          }
+        )
+      );
+      default = [ ];
+      description = "Host-side commands whose Unix socket outputs are exposed inside the guest under /run.";
+    };
+
     writeFiles = lib.mkOption {
       type = lib.types.attrsOf (
         lib.types.submodule (
@@ -330,6 +359,88 @@ in
       inherit (pkgs.stdenv.hostPlatform) system;
       arch = builtins.head (builtins.split "-" system);
       canSandbox = builtins.elem "--enable-seccomp" (config.microvm.qemu.package.configureFlags or [ ]);
+      tunnelMountTag = "agentspace-tunnels";
+      tunnelMountPoint = "/run/${tunnelMountTag}";
+      splitTunnelMountSock =
+        value:
+        let
+          parts = lib.splitString ":" value;
+        in
+        {
+          valid = builtins.length parts == 1 || builtins.length parts == 2;
+          host = builtins.elemAt parts 0;
+          guest = if builtins.length parts == 2 then builtins.elemAt parts 1 else builtins.elemAt parts 0;
+        };
+      cleanRelativePath =
+        path:
+        path != ""
+        && !(lib.hasPrefix "/" path)
+        && path != "."
+        && path != ".."
+        && !(lib.hasPrefix "../" path)
+        && !(lib.hasPrefix "./" path)
+        && !(lib.hasInfix "/../" path)
+        && !(lib.hasInfix "/./" path)
+        && !(lib.hasInfix "//" path)
+        && !(lib.hasSuffix "/.." path)
+        && !(lib.hasSuffix "/." path)
+        && !(lib.hasSuffix "/" path);
+      tunnelSpecs = builtins.map (
+        tunnel:
+        let
+          mapping = splitTunnelMountSock tunnel.mountSock;
+        in
+        {
+          inherit (mapping) valid host guest;
+          command = tunnel.command;
+        }
+      ) cfg.runWithTunnel;
+      tunnelHostPaths = builtins.map (tunnel: tunnel.host) tunnelSpecs;
+      tunnelGuestPaths = builtins.map (tunnel: tunnel.guest) tunnelSpecs;
+      duplicateValues =
+        values:
+        let
+          sorted = builtins.sort builtins.lessThan values;
+          go =
+            previous: rest:
+            if rest == [ ] then
+              [ ]
+            else
+              let
+                current = builtins.head rest;
+                tail = builtins.tail rest;
+              in
+              lib.optionals (previous != null && previous == current) [ current ] ++ go current tail;
+        in
+        lib.unique (go null sorted);
+      tunnelHostDuplicates = duplicateValues tunnelHostPaths;
+      tunnelGuestDuplicates = duplicateValues tunnelGuestPaths;
+      tunnelParentPrefixes =
+        parts:
+        let
+          go =
+            prefix: rest:
+            if rest == [ ] then
+              [ ]
+            else
+              let
+                current = builtins.head rest;
+                next = if prefix == "" then current else "${prefix}/${current}";
+              in
+              [ next ] ++ go next (builtins.tail rest);
+        in
+        go "" parts;
+      tunnelGuestParentDirs =
+        lib.unique (
+          lib.concatMap (
+            tunnel:
+            let
+              parts = lib.splitString "/" tunnel.guest;
+              parents = if builtins.length parts <= 1 then [ ] else lib.init parts;
+            in
+            builtins.map (path: "/run/${path}") (tunnelParentPrefixes parents)
+          ) tunnelSpecs
+        );
 
       mkVirtioFSDaemonCommand =
         {
@@ -384,6 +495,14 @@ in
           cfg.notifications.command
         ];
       };
+      tunnelManifest = builtins.map (tunnel: {
+        exec = [
+          pkgs.runtimeShell
+          "-c"
+          tunnel.command
+        ];
+        socket = tunnel.host;
+      }) tunnelSpecs;
 
       mkManifestVolume = volume:
         {
@@ -533,6 +652,7 @@ in
           mac = interface.mac;
           forward = manifestForwardPorts;
         }) config.microvm.interfaces;
+        run_tunnels = tunnelManifest;
         notifications = notificationManifest;
         write_files = manifestWriteFiles;
       };
@@ -544,6 +664,26 @@ in
     lib.mkMerge [
       {
         assertions = [
+          {
+            assertion = builtins.all (tunnel: tunnel.valid) tunnelSpecs;
+            message = "agentspace.sandbox.runWithTunnel.*.mountSock must contain at most one ':' separator.";
+          }
+          {
+            assertion = builtins.all (tunnel: cleanRelativePath tunnel.host) tunnelSpecs;
+            message = "agentspace.sandbox.runWithTunnel.*.mountSock host paths must be clean relative paths under state_dir.";
+          }
+          {
+            assertion = builtins.all (tunnel: cleanRelativePath tunnel.guest) tunnelSpecs;
+            message = "agentspace.sandbox.runWithTunnel.*.mountSock guest paths must be clean relative paths under /run.";
+          }
+          {
+            assertion = tunnelHostDuplicates == [ ];
+            message = "agentspace.sandbox.runWithTunnel has duplicate host socket paths: ${lib.concatStringsSep ", " tunnelHostDuplicates}";
+          }
+          {
+            assertion = tunnelGuestDuplicates == [ ];
+            message = "agentspace.sandbox.runWithTunnel has duplicate guest socket paths: ${lib.concatStringsSep ", " tunnelGuestDuplicates}";
+          }
           {
             assertion =
               cfg.nixStoreShareSocket == null
@@ -645,7 +785,11 @@ in
         # Directory permissions
         systemd.tmpfiles.rules = [
           "d /home/${cfg.user} 0700 ${cfg.user} users -"
-        ];
+        ]
+        ++ builtins.map (dir: "d ${dir} 0755 root root -") tunnelGuestParentDirs
+        ++ builtins.map (
+          tunnel: "L+ /run/${tunnel.guest} - - - - ${tunnelMountPoint}/${tunnel.host}"
+        ) tunnelSpecs;
 
         # Basic Package Set
         environment.systemPackages = [
@@ -703,6 +847,15 @@ in
                 tag = "workspace";
                 source = ".";
                 mountPoint = cfg.workspaceMountPoint;
+                securityModel = "mapped";
+              }
+            ]
+            ++ lib.optionals (cfg.runWithTunnel != [ ]) [
+              {
+                proto = "virtiofs";
+                tag = tunnelMountTag;
+                source = persistenceStateDir;
+                mountPoint = tunnelMountPoint;
                 securityModel = "mapped";
               }
             ]

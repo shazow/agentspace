@@ -3130,6 +3130,113 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchStartsRunTunnelsBeforeVirtioFSAndQEMU(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.RunTunnels = []manifest.RunTunnel{
+		{
+			SocketPath: "dbus/session.sock",
+			Command: manifest.Command{
+				Path: "/bin/proxy",
+				Args: []string{"--socket", "$VIRTIE_TUNNEL_SOCKET"},
+			},
+		},
+	}
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runner := &fakeRunner{cancel: cancel}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	waiter := &fakeSocketWaiter{
+		callback: func(paths []string) error {
+			for _, path := range paths {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					return err
+				}
+				file, err := os.Create(path)
+				if err != nil {
+					return err
+				}
+				file.Close()
+			}
+			return nil
+		},
+	}
+	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      waiter,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	err := manager.launch(cancelCtx, cfg, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if got, want := runner.starts, []string{"tunnel[0]", "virtiofsd[workspace]", "qemu", "ssh"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected start order: got %v want %v", got, want)
+	}
+	wantSocket := filepath.Join(tmpDir, ".virtie", "dbus", "session.sock")
+	if got := runner.tunnelEnv["tunnel[0]"]; !containsString(got, "VIRTIE_TUNNEL_SOCKET="+wantSocket) {
+		t.Fatalf("expected tunnel env to contain resolved socket path %q: %v", wantSocket, got)
+	}
+	if !runner.processGroups["tunnel[0]"] {
+		t.Fatal("expected tunnel to run in its own process group")
+	}
+	if got, want := waiter.paths[0], []string{wantSocket}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected first socket wait to target tunnel socket: got %v want %v", got, want)
+	}
+}
+
+func TestManagerLaunchFailsWhenRunTunnelExitsBeforeSocketReady(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.RunTunnels = []manifest.RunTunnel{
+		{
+			SocketPath: "session.sock",
+			Command:    manifest.Command{Path: "/bin/proxy"},
+		},
+	}
+
+	runner := &fakeRunner{failTunnel: true}
+	waiterStarted := make(chan struct{})
+	manager := &manager{
+		logger: slog.New(slog.DiscardHandler),
+		locker: &fileLocker{},
+		runner: runner,
+		socketWaiter: &fakeSocketWaiter{
+			callback: func(paths []string) error {
+				close(waiterStarted)
+				<-context.Background().Done()
+				return nil
+			},
+		},
+	}
+
+	err := manager.launch(context.Background(), cfg, nil)
+	if err == nil || !strings.Contains(err.Error(), "tunnel startup") || !strings.Contains(err.Error(), "tunnel failed") {
+		t.Fatalf("expected tunnel startup error, got %v", err)
+	}
+	if containsString(runner.starts, "qemu") {
+		t.Fatalf("expected launch to fail before qemu starts, got starts %v", runner.starts)
+	}
+	<-waiterStarted
+}
+
 func assertLaunchStatsLog(t *testing.T, logs string, want []string, unwanted []string) {
 	t.Helper()
 
@@ -3271,6 +3378,7 @@ type fakeRunner struct {
 	qemuArgs                  []string
 	qemuEnv                   []string
 	virtiofsEnv               map[string][]string
+	tunnelEnv                 map[string][]string
 	processGroups             map[string]bool
 	interactiveStarts         int
 	cancel                    context.CancelFunc
@@ -3281,6 +3389,7 @@ type fakeRunner struct {
 	transientSSHFailures      int
 	transientSSHOutputs       []string
 	authSSHFailures           int
+	failTunnel                bool
 	qemu                      *fakeProcess
 	onStart                   func(processSpec)
 }
@@ -3361,6 +3470,20 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		}()
 		return process, nil
 	default:
+		if strings.HasPrefix(spec.Name, "tunnel[") {
+			if r.tunnelEnv == nil {
+				r.tunnelEnv = make(map[string][]string)
+			}
+			r.tunnelEnv[spec.Name] = append([]string(nil), spec.Env...)
+			if r.failTunnel {
+				return &fakeProcess{
+					name:   spec.Name,
+					runner: r,
+					done:   closedErrorChannel(errors.New("tunnel failed")),
+				}, nil
+			}
+			return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
+		}
 		if strings.HasPrefix(spec.Name, "virtiofsd[") {
 			if r.virtiofsEnv == nil {
 				r.virtiofsEnv = make(map[string][]string)

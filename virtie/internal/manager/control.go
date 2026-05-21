@@ -152,6 +152,11 @@ func (m *manager) effectiveSuspendSignalTimeout(manifest *manifest.Manifest) tim
 	} else {
 		teardownProcesses += len(manifest.VirtioFS.Daemons)
 	}
+	if tunnels, err := manifest.ResolvedRunTunnels(); err == nil {
+		teardownProcesses += len(tunnels)
+	} else {
+		teardownProcesses += len(manifest.RunTunnels)
+	}
 
 	return defaultLaunchSignalTimeout +
 		m.effectiveQMPMigrationTimeout() +

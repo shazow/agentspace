@@ -41,6 +41,7 @@ type Manifest struct {
 	Volumes       []Volume      `json:"volumes,omitempty"`
 	VSock         VSock         `json:"vsock"`
 	VirtioFS      VirtioFS      `json:"virtiofs"`
+	RunTunnels    []RunTunnel   `json:"runTunnels,omitempty"`
 	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
 	Notifications Notifications `json:"notifications,omitempty"`
 }
@@ -237,6 +238,11 @@ type VirtioFS struct {
 	Daemons []VirtioFSDaemon `json:"daemons"`
 }
 
+type RunTunnel struct {
+	SocketPath string  `json:"socketPath"`
+	Command    Command `json:"command"`
+}
+
 type WriteFile struct {
 	Chown       *string `json:"chown,omitempty"`
 	Text        *string `json:"text,omitempty"`
@@ -354,6 +360,22 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
+	seenTunnelSockets := make(map[string]int, len(m.RunTunnels))
+	for i, tunnel := range m.RunTunnels {
+		switch {
+		case tunnel.SocketPath == "":
+			return fmt.Errorf("manifest.runTunnels[%d].socketPath is required", i)
+		case !cleanRelativePath(tunnel.SocketPath):
+			return fmt.Errorf("manifest.runTunnels[%d].socketPath must be a clean relative path under state_dir", i)
+		case tunnel.Command.Path == "":
+			return fmt.Errorf("manifest.runTunnels[%d].command.path is required", i)
+		}
+		if previous, ok := seenTunnelSockets[tunnel.SocketPath]; ok {
+			return fmt.Errorf("manifest.runTunnels[%d].socketPath duplicates manifest.runTunnels[%d]", i, previous)
+		}
+		seenTunnelSockets[tunnel.SocketPath] = i
+	}
+
 	for i, share := range m.QEMU.Devices.VirtioFS {
 		switch {
 		case share.SocketPath == "":
@@ -461,6 +483,13 @@ func validQEMUGraphicsBackend(backend string) bool {
 	}
 }
 
+func cleanRelativePath(path string) bool {
+	if path == "" || filepath.IsAbs(path) || path == "." || filepath.Clean(path) != path {
+		return false
+	}
+	return path != ".." && !strings.HasPrefix(path, ".."+string(filepath.Separator))
+}
+
 func (m *Manifest) resolvePath(path string) string {
 	if path == "" || filepath.IsAbs(path) {
 		return path
@@ -511,10 +540,34 @@ func (m *Manifest) resolveSocketPath(path string) (string, error) {
 	return filepath.Join(m.resolvePath(*m.Paths.RuntimeDir), path), nil
 }
 
+func (m *Manifest) resolveStatePath(path string) (string, error) {
+	if path == "" || filepath.IsAbs(path) {
+		return path, nil
+	}
+	return filepath.Join(m.ResolvedPersistenceStateDir(), path), nil
+}
+
 func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
-	paths := make([]string, 0, len(m.VirtioFS.Daemons))
+	paths := make([]string, 0, len(m.VirtioFS.Daemons)+len(m.RunTunnels))
 	for _, daemon := range m.VirtioFS.Daemons {
 		resolved, err := m.resolveSocketPath(daemon.SocketPath)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, resolved)
+	}
+	tunnelPaths, err := m.ResolvedRunTunnelSocketPaths()
+	if err != nil {
+		return nil, err
+	}
+	paths = append(paths, tunnelPaths...)
+	return paths, nil
+}
+
+func (m *Manifest) ResolvedRunTunnelSocketPaths() ([]string, error) {
+	paths := make([]string, 0, len(m.RunTunnels))
+	for _, tunnel := range m.RunTunnels {
+		resolved, err := m.resolveStatePath(tunnel.SocketPath)
 		if err != nil {
 			return nil, err
 		}
@@ -668,6 +721,22 @@ func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
 		daemons = append(daemons, resolved)
 	}
 	return daemons, nil
+}
+
+func (m *Manifest) ResolvedRunTunnels() ([]RunTunnel, error) {
+	tunnels := make([]RunTunnel, 0, len(m.RunTunnels))
+	for _, tunnel := range m.RunTunnels {
+		resolved := tunnel
+		socketPath, err := m.resolveStatePath(tunnel.SocketPath)
+		if err != nil {
+			return nil, err
+		}
+		resolved.SocketPath = socketPath
+		resolved.Command.Path = m.resolvePath(tunnel.Command.Path)
+		resolved.Command.Args = append([]string(nil), tunnel.Command.Args...)
+		tunnels = append(tunnels, resolved)
+	}
+	return tunnels, nil
 }
 
 func (m *Manifest) ResolvedNotifications() Notifications {

@@ -10,10 +10,10 @@ Provide the foreground launch runtime for the supported sandbox session created 
 
 - Load and validate a Nix-generated manifest for the supported sandbox workflow.
 - Allocate and lock a runtime vsock CID for each session.
-- Create missing auto-created volume images, start `virtiofsd`, launch QEMU directly, wait for SSH readiness, and either print out-of-band SSH instructions or attach the active SSH session when requested.
+- Create missing auto-created volume images, start tunnel commands and `virtiofsd`, launch QEMU directly, wait for SSH readiness, and either print out-of-band SSH instructions or attach the active SSH session when requested.
 - Keep a long-lived QMP session open after boot for graceful shutdown and optional runtime balloon control.
 - Support disk-backed suspend/resume by saving QEMU migration state to disk and restoring it later.
-- Tear down SSH, QEMU, and `virtiofsd` in the correct order on exit or signal.
+- Tear down SSH, QEMU, tunnel commands, and `virtiofsd` in the correct order on exit or signal.
 - Surface stage-specific failures clearly enough to debug preflight, startup, readiness, session, and teardown problems.
 
 Out of scope:
@@ -37,6 +37,7 @@ Acceptance criteria:
 - [x] Teardown stops the foreground SSH session when present, then requests QMP `quit`, then falls back to signal-based QEMU shutdown, then stops `virtiofsd`.
 - [x] Repo-level Nix checks exercise the generated wrapper and E2E launch path by default.
 - [x] Graphical QEMU launch manifests can opt out of `-nographic` and request the supported GTK or Cocoa display backend.
+- [x] Manifest-provided `run_tunnels[]` commands run before QEMU, are watched for Unix socket readiness under `state_dir`, and are stopped during teardown.
 
 ## Progress
 
@@ -65,6 +66,7 @@ Acceptance criteria:
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
 - [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface, including saved suspend/resume coverage.
 - [x] Add typed graphical display compilation for `gtk` and `cocoa` manifest backends.
+- [x] Add `run_tunnels[]` manifest support for state-dir-relative Unix socket producer commands.
 - [x] Add JSON and TOML decoding for the manifest, with Nix-generated manifests remaining JSON.
 
 ## Appendix
@@ -79,6 +81,7 @@ Acceptance criteria:
   - Optional `vsock.cid_range` defaults to the allocatable CID range `3..65535`.
   - `volumes[]` use `image`, `size`, `fs`, `create`, `read_only`, optional `label`, `direct`, and optional `serial`; auto-created volumes are ext4 only and require `size >= 256`.
   - `mounts[]` describe `virtiofs` or `9p` shares; managed `virtiofsd` commands use `virtiofsd_exec`, and `virtie` injects the resolved socket path as `VIRTIOFSD_SOCKET`.
+  - Optional `run_tunnels[]` entries contain `exec` and a clean relative `socket` path under `state_dir`; `virtie` injects the resolved socket path as `VIRTIE_TUNNEL_SOCKET`.
   - `networks[]` describe user networking and `forward[]` host-to-guest or guest-to-host port forwards.
   - Optional `balloon` contains device facts and controller policy; optional `write_files[]` contains `guest_path`, exactly one of `text` or `source`, optional `chown`, optional mode, and `overwrite`; optional `notifications.exec` and `notifications.states` define best-effort host hooks.
 - Runtime assumptions:
@@ -93,6 +96,7 @@ Acceptance criteria:
   - If `paths.runtimeDir` is omitted, relative socket paths still resolve from `paths.workingDir`.
   - If `paths.runtimeDir` is the empty string, `virtie` resolves relative socket paths under the per-user XDG runtime location at `agentspace/<hostName>/...`.
   - `virtie` injects `VIRTIOFSD_SOCKET` for each `virtiofsd` daemon process so launch scripts can consume the resolved socket path.
+  - `virtie` injects `VIRTIE_TUNNEL_SOCKET` for each tunnel command and resolves those paths under manifest `state_dir`, not the runtime socket directory.
   - `virtie launch` records its PID at `<workingDir>/.virtie/<hostName>.pid` after acquiring the sandbox lock and removes that file during teardown.
 - Implementation notes:
   - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.
