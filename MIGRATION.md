@@ -4,6 +4,36 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-21: Manifest exec entries use Go templates
+
+### Who Is Affected
+
+- Direct virtie manifest producers setting `qemu.fwd_tunnel_exec`.
+- Consumers using shell wrappers in manifest exec arrays.
+
+### What Changed
+
+Manifest exec arrays now render Go `text/template` variables before launch.
+For native argv entries, use template variables such as `{{.Host}}` and
+`{{.Port}}`. The same values are also exposed to shell commands as environment
+variables such as `HOST` and `PORT`.
+
+### Migration Steps
+
+Update direct `qemu.fwd_tunnel_exec` manifests that relied on literal `$HOST`
+and `$PORT` in non-shell argv entries:
+
+```toml
+- fwd_tunnel_exec = ["nc", "$HOST", "$PORT"]
++ fwd_tunnel_exec = ["nc", "{{.Host}}", "{{.Port}}"]
+```
+
+Shell forms can keep using environment variables:
+
+```toml
+fwd_tunnel_exec = ["sh", "-c", "socat - TCP:$HOST:$PORT"]
+```
+
 ## 2026-05-20: Workspace options replace legacy current-directory mount
 
 ### Who Is Affected

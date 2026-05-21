@@ -70,10 +70,8 @@ func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner
 	}
 	dir := resolvedNotificationWorkingDir(manifest.Paths.WorkingDir)
 	command := *notifications.Command
-	if !filepath.IsAbs(command.Path) {
-		command.Path = filepath.Join(dir, command.Path)
-	}
 	command.Args = append([]string(nil), notifications.Command.Args...)
+	command.Env = append([]string(nil), notifications.Command.Env...)
 
 	var states map[string]struct{}
 	if len(notifications.States) > 0 {
@@ -107,8 +105,21 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 	if n == nil || !n.enabled(state) {
 		return
 	}
+	context := notificationTemplateContext(state, message, values)
+	command, err := manifest.RenderExec(notificationCommandArgv(n.command), context)
+	if err != nil {
+		if n.logger != nil {
+			n.logger.Info("notification hook template failed", "state", state, "err", err)
+		}
+		return
+	}
+	path := command.Path
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(n.dir, path)
+	}
 	env := notificationEnv(state, message, values)
-	if err := n.runner.Run(ctx, n.command.Path, n.command.Args, n.dir, env); err != nil && n.logger != nil {
+	env = append(env, command.Env...)
+	if err := n.runner.Run(ctx, path, command.Args, n.dir, env); err != nil && n.logger != nil {
 		n.logger.Info("notification hook failed", "state", state, "err", err)
 	}
 }
@@ -137,6 +148,26 @@ func notificationEnv(state string, message string, values map[string]string) []s
 		env = append(env, fmt.Sprintf("VIRTIE_NOTIFY_CONTEXT_%s=%s", envKey(key), values[key]))
 	}
 	return env
+}
+
+func notificationTemplateContext(state string, message string, values map[string]string) manifest.ExecTemplateContext {
+	context := manifest.ExecTemplateContext{
+		"State":   state,
+		"Message": message,
+	}
+	for key, value := range values {
+		context[key] = value
+		context[envKey(key)] = value
+	}
+	return context
+}
+
+func notificationCommandArgv(command manifest.Command) []string {
+	if command.Path == "" {
+		return append([]string(nil), command.Args...)
+	}
+	argv := []string{command.Path}
+	return append(argv, command.Args...)
 }
 
 func envKey(key string) string {

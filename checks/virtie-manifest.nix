@@ -211,8 +211,8 @@ let
     assert
       manifest.qemu.fwd_tunnel_exec == [
         "${pkgs.netcat}/bin/nc"
-        "$HOST"
-        "$PORT"
+        "{{.Host}}"
+        "{{.Port}}"
       ];
     assert manifest.machine.type == "microvm";
     assert !(manifest.qemu ? machine_options);

@@ -729,7 +729,7 @@ func parsePortEndpoint(value string) (PortEndpoint, error) {
 func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex int) ([]string, error) {
 	options := make([]string, 0, len(ports))
 	if len(fwdTunnelExec) == 0 {
-		fwdTunnelExec = []string{"nc", "$HOST", "$PORT"}
+		fwdTunnelExec = []string{"nc", "{{.Host}}", "{{.Port}}"}
 	}
 	for i, port := range ports {
 		proto := port.Proto
@@ -757,22 +757,26 @@ func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex
 		if from == "host" {
 			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", proto, hostEndpoint.Address, hostEndpoint.Port, guestEndpoint.Address, guestEndpoint.Port))
 		} else {
-			command := expandFwdTunnelExec(fwdTunnelExec, hostEndpoint)
+			command, err := renderFwdTunnelExec(fwdTunnelExec, hostEndpoint)
+			if err != nil {
+				return nil, fmt.Errorf("manifest.networks[%d].forward[%d].fwd_tunnel_exec: %w", networkIndex, i, err)
+			}
 			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s", proto, guestEndpoint.Address, guestEndpoint.Port, shellquote.Join(command...)))
 		}
 	}
 	return options, nil
 }
 
-func expandFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) []string {
-	result := make([]string, 0, len(exec))
-	port := strconv.Itoa(hostEndpoint.Port)
-	for _, arg := range exec {
-		arg = strings.ReplaceAll(arg, "$HOST", hostEndpoint.Address)
-		arg = strings.ReplaceAll(arg, "$PORT", port)
-		result = append(result, arg)
+func renderFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) ([]string, error) {
+	context := ExecTemplateContext{
+		"Host": hostEndpoint.Address,
+		"Port": strconv.Itoa(hostEndpoint.Port),
 	}
-	return result
+	command, err := RenderExecArgv(exec, context)
+	if err != nil {
+		return nil, err
+	}
+	return append(ExecContextEnv(context), command...), nil
 }
 
 func lowerBalloon(facts *BalloonFacts, transport string) *balloon.Device {

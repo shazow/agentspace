@@ -124,7 +124,10 @@ func TestBuildSSHSpecBuildsInteractiveSession(t *testing.T) {
 		},
 	}
 
-	session := buildSSHSpec(manifest, 10, []string{"bash", "-lc", "echo hi"})
+	session, err := buildSSHSpec(manifest, 10, []string{"bash", "-lc", "echo hi"})
+	if err != nil {
+		t.Fatalf("build ssh spec: %v", err)
+	}
 	wantArgs := []string{
 		"-tt",
 		"-q",
@@ -151,16 +154,49 @@ func TestBuildSSHSpecShellQuotesRemoteCommand(t *testing.T) {
 		},
 	}
 
-	session := buildSSHSpec(manifest, 10, []string{"printf", "%s\n", "it's $HOME", ""})
+	session, err := buildSSHSpec(manifest, 10, []string{"printf", "%s\n", "it's $HOME", ""})
+	if err != nil {
+		t.Fatalf("build ssh spec: %v", err)
+	}
 	want := "printf '%s\n' 'it'\\''s $HOME' ''"
 	if got := session.Args[len(session.Args)-1]; got != want {
 		t.Fatalf("unexpected quoted remote command: got %q want %q", got, want)
 	}
 
-	configuredCommand := buildSSHSpec(manifest, 10, []string{"tmux new-session -A -s codex \"npx @openai/codex --yolo\""})
+	configuredCommand, err := buildSSHSpec(manifest, 10, []string{"tmux new-session -A -s codex \"npx @openai/codex --yolo\""})
+	if err != nil {
+		t.Fatalf("build configured ssh spec: %v", err)
+	}
 	wantConfigured := "tmux new-session -A -s codex \"npx @openai/codex --yolo\""
 	if got := configuredCommand.Args[len(configuredCommand.Args)-1]; got != wantConfigured {
 		t.Fatalf("unexpected configured remote command: got %q want %q", got, wantConfigured)
+	}
+}
+
+func TestBuildSSHSpecRendersManifestExecTemplates(t *testing.T) {
+	manifest := &manifest.Manifest{
+		Paths: manifest.Paths{WorkingDir: "/tmp/work"},
+		SSH: manifest.SSH{
+			Argv: []string{"/bin/ssh", "-S", "control-{{.CID}}", "-o", "HostName={{.Destination}}"},
+			User: "agent",
+		},
+	}
+
+	session, err := buildSSHSpec(manifest, 10, nil)
+	if err != nil {
+		t.Fatalf("build ssh spec: %v", err)
+	}
+
+	for _, want := range []string{"CID=10", "USER=agent", "DESTINATION=agent@vsock/10"} {
+		if !containsString(session.Env, want) {
+			t.Fatalf("expected ssh env %q in %#v", want, session.Env)
+		}
+	}
+	if !containsString(session.Args, "control-10") || !containsString(session.Args, "HostName=agent@vsock/10") {
+		t.Fatalf("expected rendered ssh args, got %#v", session.Args)
+	}
+	if got, want := buildSSHCommandHint(manifest, 10), "/bin/ssh -S control-10 -o 'HostName=agent@vsock/10' agent@vsock/10"; got != want {
+		t.Fatalf("unexpected rendered ssh hint: got %q want %q", got, want)
 	}
 }
 

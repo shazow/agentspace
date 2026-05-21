@@ -27,12 +27,12 @@ state_dir = ".virtie"  # Default: ".virtie"
 exec = ["qemu-system-x86_64"]  # Default: qemu-system-$host_arch
 
 # Guest-to-host port forwarding uses QEMU guestfwd cmd: rules. This command
-# opens the host-side connection for each forward where from = "guest"; virtie
-# expands $HOST and $PORT from the forward's host endpoint. Netcat and socat
-# examples:
-#   fwd_tunnel_exec = ["nc", "$HOST", "$PORT"]
-#   fwd_tunnel_exec = ["socat", "-", "TCP:$HOST:$PORT"]
-fwd_tunnel_exec = ["nc", "$HOST", "$PORT"]  # Default: ["nc", "$HOST", "$PORT"]
+# opens the host-side connection for each forward where from = "guest".
+# Native argv templates use {{.Host}} and {{.Port}}; shell commands also receive
+# HOST and PORT in the environment. Netcat and socat examples:
+#   fwd_tunnel_exec = ["nc", "{{.Host}}", "{{.Port}}"]
+#   fwd_tunnel_exec = ["sh", "-c", "socat - TCP:$HOST:$PORT"]
+fwd_tunnel_exec = ["nc", "{{.Host}}", "{{.Port}}"]  # Default
 
 # QEMU can drop privileges to another host user before running the VM. This is
 # useful for generated manifests that know the host account policy; leaving it
@@ -113,7 +113,8 @@ user = "agent"  # Default: "agent"
 
 # The SSH executable and fixed arguments are configurable. Default: [] (no
 # automatic SSH attach or command hint). Generated manifests can pin OpenSSH and
-# identity options.
+# identity options. Template values include {{.CID}}, {{.User}},
+# {{.Destination}}, and {{.Env.USER}}.
 exec = [
   "ssh",
   "-q",
@@ -173,7 +174,8 @@ virtiofsd_socket = "workspace.sock"
 # The daemon command is needed when virtie owns the host-side virtiofsd
 # lifecycle. Omit it for externally managed sockets; setting it means virtie
 # will start and stop the daemon with the VM. virtie injects the resolved socket
-# path into the daemon environment as VIRTIOFSD_SOCKET.
+# path into the daemon environment as VIRTIOFSD_SOCKET. Template values include
+# {{.Socket}}, {{.Tag}}, and {{.Env.USER}}.
 virtiofsd_exec = ["virtiofsd"]
 
 # Filesystem security and cache policy are backend-specific share behavior. The
@@ -252,6 +254,7 @@ overwrite = true
 # Notifications are host-side hooks for surfacing runtime state changes. The
 # command is optional because hooks can run arbitrary host code; when set, its
 # exit status should not become VM lifecycle policy.
+# Template values include {{.State}}, {{.Message}}, and {{.Env.USER}}.
 exec = ["/bin/sh", "-c", "printf '%s\n' \"$VIRTIE_NOTIFY_STATE\""]
 
 # Empty means all supported states. A non-empty list limits hook execution,

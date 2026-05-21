@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -718,6 +719,31 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	}
 }
 
+func TestResolvedVirtioFSDaemonsRenderExecTemplates(t *testing.T) {
+	manifest := validManifest()
+	manifest.VirtioFS.Daemons[0].Command = Command{
+		Path: "bin/virtiofsd-{{.Tag}}",
+		Args: []string{"--socket-path={{.Socket}}", "--user={{.Env.USER}}"},
+	}
+	t.Setenv("USER", "template-user")
+
+	daemons, err := manifest.ResolvedVirtioFSDaemons()
+	if err != nil {
+		t.Fatalf("resolve virtiofs daemons: %v", err)
+	}
+	if got, want := daemons[0].Command.Path, "/tmp/work/bin/virtiofsd-workspace"; got != want {
+		t.Fatalf("unexpected daemon path: got %q want %q", got, want)
+	}
+	if got, want := daemons[0].Command.Args, []string{"--socket-path=/tmp/work/fs.sock", "--user=template-user"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected daemon args: got %#v want %#v", got, want)
+	}
+	for _, want := range []string{"SOCKET=/tmp/work/fs.sock", "TAG=workspace"} {
+		if !slices.Contains(daemons[0].Command.Env, want) {
+			t.Fatalf("expected daemon env %q in %#v", want, daemons[0].Command.Env)
+		}
+	}
+}
+
 func TestManifestValidatesQEMUDeviceTransports(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -912,22 +938,27 @@ func TestLoadGuestForwardUsesTunnelExecTemplate(t *testing.T) {
 	}{
 		{
 			name: "default netcat",
-			want: []string{"guestfwd=tcp:10.0.2.15:2222-cmd:nc 127.0.0.1 22"},
+			want: []string{"guestfwd=tcp:10.0.2.15:2222-cmd:HOST=127.0.0.1 PORT=22 nc 127.0.0.1 22"},
 		},
 		{
-			name:          "explicit netcat",
-			fwdTunnelExec: []string{"/bin/nc", "$HOST", "$PORT"},
-			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:/bin/nc 127.0.0.1 22"},
+			name:          "explicit netcat template",
+			fwdTunnelExec: []string{"/bin/nc", "{{.Host}}", "{{.Port}}"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:HOST=127.0.0.1 PORT=22 /bin/nc 127.0.0.1 22"},
 		},
 		{
-			name:          "socat",
-			fwdTunnelExec: []string{"socat", "-", "TCP:$HOST:$PORT"},
-			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:socat - TCP:127.0.0.1:22"},
+			name:          "socat template",
+			fwdTunnelExec: []string{"socat", "-", "TCP:{{.Host}}:{{.Port}}"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:HOST=127.0.0.1 PORT=22 socat - TCP:127.0.0.1:22"},
+		},
+		{
+			name:          "shell env",
+			fwdTunnelExec: []string{"sh", "-c", "socat - TCP:$HOST:$PORT"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:HOST=127.0.0.1 PORT=22 sh -c 'socat - TCP:$HOST:$PORT'"},
 		},
 		{
 			name:          "quotes shell-sensitive args",
-			fwdTunnelExec: []string{"~/bin/nc", "$HOST", "$PORT"},
-			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:\\~/bin/nc 127.0.0.1 22"},
+			fwdTunnelExec: []string{"~/bin/nc", "{{.Host}}", "{{.Port}}"},
+			want:          []string{"guestfwd=tcp:10.0.2.15:2222-cmd:HOST=127.0.0.1 PORT=22 \\~/bin/nc 127.0.0.1 22"},
 		},
 	}
 
