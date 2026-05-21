@@ -55,7 +55,7 @@ func RenderExecArgv(argv []string, context ExecTemplateContext) ([]string, error
 	for i, arg := range argv {
 		value, err := renderExecTemplateArg(arg, data)
 		if err != nil {
-			return nil, fmt.Errorf("exec[%d]: %w", i, err)
+			return nil, fmt.Errorf("exec[%d] %q: %w", i, arg, err)
 		}
 		rendered = append(rendered, value)
 	}
@@ -68,6 +68,8 @@ func ExecContextEnv(context ExecTemplateContext) []string {
 	}
 	keys := make([]string, 0, len(context))
 	for key := range context {
+		// Env is reserved for host environment lookups in templates and is not
+		// injected into child process environments as a context value.
 		if key == "" || key == "Env" || strings.ContainsRune(key, '=') {
 			continue
 		}
@@ -102,6 +104,8 @@ func execTemplateData(context ExecTemplateContext) map[string]any {
 	for key, value := range context {
 		data[key] = value
 	}
+	// Env exposes the host environment to text/template lookups, for example
+	// {{.Env.USER}} or {{index .Env "XDG_RUNTIME_DIR"}}.
 	data["Env"] = environMap()
 	return data
 }
@@ -138,6 +142,8 @@ func CommandArgv(command Command) []string {
 	return append(argv, command.Args...)
 }
 
+// ExecEnvKey converts template context keys into stable environment names.
+// For example, vmStatePath becomes VM_STATE_PATH.
 func ExecEnvKey(key string) string {
 	var builder strings.Builder
 	var previousUnderscore bool

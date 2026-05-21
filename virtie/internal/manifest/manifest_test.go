@@ -779,6 +779,7 @@ func TestResolvedVirtioFSDaemonsRenderExecTemplates(t *testing.T) {
 	manifest.VirtioFS.Daemons[0].Command = Command{
 		Path: "bin/virtiofsd-{{.Tag}}",
 		Args: []string{"--socket-path={{.Socket}}", "--user={{.Env.USER}}"},
+		Env:  []string{"STATIC=1"},
 	}
 	t.Setenv("USER", "template-user")
 
@@ -792,7 +793,7 @@ func TestResolvedVirtioFSDaemonsRenderExecTemplates(t *testing.T) {
 	if got, want := daemons[0].Command.Args, []string{"--socket-path=/tmp/work/fs.sock", "--user=template-user"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected daemon args: got %#v want %#v", got, want)
 	}
-	for _, want := range []string{"SOCKET=/tmp/work/fs.sock", "TAG=workspace"} {
+	for _, want := range []string{"STATIC=1", "SOCKET=/tmp/work/fs.sock", "TAG=workspace"} {
 		if !slices.Contains(daemons[0].Command.Env, want) {
 			t.Fatalf("expected daemon env %q in %#v", want, daemons[0].Command.Env)
 		}

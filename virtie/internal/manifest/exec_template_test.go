@@ -59,14 +59,18 @@ func TestRenderCommandTemplatesAndMergesEnv(t *testing.T) {
 
 func TestRenderExecRejectsMissingTemplateKey(t *testing.T) {
 	_, err := RenderExecArgv([]string{"echo", "{{.Missing}}"}, ExecTemplateContext{})
-	if err == nil || !strings.Contains(err.Error(), `map has no entry for key "Missing"`) {
+	if err == nil ||
+		!strings.Contains(err.Error(), `exec[1] "{{.Missing}}"`) ||
+		!strings.Contains(err.Error(), `map has no entry for key "Missing"`) {
 		t.Fatalf("expected missing key error, got %v", err)
 	}
 }
 
 func TestRenderExecRejectsInvalidTemplate(t *testing.T) {
 	_, err := RenderExecArgv([]string{"echo", "{{"}, ExecTemplateContext{})
-	if err == nil || !strings.Contains(err.Error(), "unclosed action") {
+	if err == nil ||
+		!strings.Contains(err.Error(), `exec[1] "{{"`) ||
+		!strings.Contains(err.Error(), "unclosed action") {
 		t.Fatalf("expected template parse error, got %v", err)
 	}
 }

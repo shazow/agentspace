@@ -23,13 +23,12 @@ state_dir = ".virtie"  # Default: ".virtie"
 # must be configurable so Nix-generated manifests can pin an exact package while
 # hand-written manifests can use a PATH-resolved binary. Extra arguments are an
 # escape hatch for QEMU features virtie does not model yet; they are appended
-# after generated arguments and can affect launch behavior. Each argv element
-# renders as a Go text/template during manifest loading. Available values are
-# {{.HostName}}, {{.WorkingDir}}, {{.StateDir}}, {{.HostOS}}, {{.HostArch}},
-# {{.HostSystem}}, and host environment values such as {{.Env.USER}}.
-# Unlike commands virtie starts through its Command contract, qemu.exec does
-# not receive injected environment variables; this is template substitution
-# only.
+# after generated arguments and can affect launch behavior. virtie substitutes
+# Go text/template values in each argv element before launching QEMU. Available
+# values are {{.HostName}}, {{.WorkingDir}}, {{.StateDir}}, {{.HostOS}},
+# {{.HostArch}}, {{.HostSystem}}, and host environment values such as
+# {{.Env.USER}}. qemu.exec only receives the substituted argv; virtie does not
+# inject those values as QEMU environment variables.
 exec = ["qemu-system-x86_64"]  # Default: qemu-system-$host_arch
 
 # Guest-to-host port forwarding uses QEMU guestfwd cmd: rules. This command
@@ -261,8 +260,9 @@ overwrite = true
 # Notifications are host-side hooks for surfacing runtime state changes. The
 # command is optional because hooks can run arbitrary host code; when set, its
 # exit status should not become VM lifecycle policy.
-# Template values include {{.State}}, {{.Message}}, and {{.Env.USER}}.
-exec = ["/bin/sh", "-c", "printf '%s\n' \"$VIRTIE_NOTIFY_STATE\""]
+# Template values include {{.State}}, {{.Message}}, and {{.Env.USER}}. Hook
+# processes also receive VIRTIE_NOTIFY_* environment variables.
+exec = ["/bin/sh", "-c", "printf '%s\n' '{{.State}}'"]
 
 # Empty means all supported states. A non-empty list limits hook execution,
 # which is useful when only noisy states such as balloon changes should notify.
