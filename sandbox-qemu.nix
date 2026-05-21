@@ -15,6 +15,15 @@ let
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
+  workspaceKeyToTag = key: "workspace-${lib.replaceStrings [ "/" "." " " ] [ "-" "-" "-" ] key}";
+  workspaceSpaces = lib.optionalAttrs cfg.workspace.enable cfg.workspace.spaces;
+  workspaceShares = lib.mapAttrsToList (key: source: {
+    proto = "virtiofs";
+    tag = workspaceKeyToTag key;
+    inherit source;
+    mountPoint = "${cfg.workspace.basedir}/${key}";
+    securityModel = "mapped";
+  }) workspaceSpaces;
 in
 {
   imports = [
@@ -127,10 +136,34 @@ in
       };
     };
 
-    mountWorkspace = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Mount the current working directory into the VM as the workspace share.";
+    workspace = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Enable workspace-oriented host directory mounts.";
+      };
+
+      basedir = lib.mkOption {
+        type = lib.types.str;
+        default = "/home/${cfg.user}/workspace";
+        description = "Guest directory containing workspace spaces and exported as WORKSPACE.";
+      };
+
+      addCurrentDir = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Ask virtie to mount the launch working directory under workspace.basedir at runtime.";
+      };
+
+      spaces = lib.mkOption {
+        type = lib.types.attrsOf lib.types.str;
+        default = { };
+        example = {
+          agentspace = "/home/example/projects/agentspace";
+          "project2/foo" = "/home/example/foo";
+        };
+        description = "Host directories to mount, keyed by path under workspace.basedir.";
+      };
     };
 
     shares = lib.mkOption {
@@ -226,12 +259,6 @@ in
       description = "Files to write into the guest during fresh VM launch, keyed by absolute guest path.";
     };
 
-    workspaceMountPoint = lib.mkOption {
-      type = lib.types.str;
-      default = "/home/${cfg.user}/workspace";
-      description = "Where to mount the current working directory inside the VM.";
-    };
-
     nixStoreShareSocket = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -313,8 +340,8 @@ in
           exit 1
         fi
       ''
-      + lib.optionalString cfg.mountWorkspace ''
-        echo "📂 Mounting current directory at ~/workspace"
+      + lib.optionalString (cfg.workspace.enable && cfg.workspace.addCurrentDir) ''
+        echo "📂 Mounting current directory into workspace"
         cd "$REPO_DIR"
       '';
 
@@ -359,7 +386,7 @@ in
                 config.microvm.virtiofsd.group != null
               ) "--socket-group=${config.microvm.virtiofsd.group}"
             } \
-            --shared-dir=${lib.escapeShellArg source} \
+            --shared-dir="''${VIRTIOFSD_SOURCE-${lib.escapeShellArg source}}" \
             "''${opt_rlimit[@]}" \
             --thread-pool-size ${toString config.microvm.virtiofsd.threadPoolSize} \
             --posix-acl --xattr \
@@ -418,6 +445,12 @@ in
           guest = "${guest.address}:${toString guest.port}";
         }
       ) config.microvm.forwardPorts;
+
+      manifestWorkspace = lib.optionalAttrs cfg.workspace.enable ({
+        basedir = cfg.workspace.basedir;
+      } // lib.optionalAttrs cfg.workspace.addCurrentDir {
+        mount_cwd = true;
+      });
 
       manifestMounts =
         builtins.map (
@@ -527,6 +560,7 @@ in
             };
         volumes = manifestVolumes;
         mounts = manifestMounts;
+        workspace = manifestWorkspace;
         networks = builtins.map (interface: {
           id = interface.id;
           type = interface.type;
@@ -590,6 +624,10 @@ in
           "vm.vfs_cache_pressure" = 1000; # Default: 100
         };
 
+        environment.sessionVariables = lib.mkIf cfg.workspace.enable {
+          WORKSPACE = cfg.workspace.basedir;
+        };
+
         # User Configuration
         users.users.${cfg.user} = {
           password = "";
@@ -645,6 +683,9 @@ in
         # Directory permissions
         systemd.tmpfiles.rules = [
           "d /home/${cfg.user} 0700 ${cfg.user} users -"
+        ]
+        ++ lib.optionals cfg.workspace.enable [
+          "d ${cfg.workspace.basedir} 0755 ${cfg.user} users -"
         ];
 
         # Basic Package Set
@@ -697,15 +738,16 @@ in
                 readOnly = true;
               }
             ]
-            ++ lib.optionals cfg.mountWorkspace [
+            ++ lib.optionals (cfg.workspace.enable && cfg.workspace.addCurrentDir) [
               {
                 proto = "virtiofs";
-                tag = "workspace";
+                tag = "workspace_cwd";
                 source = ".";
-                mountPoint = cfg.workspaceMountPoint;
+                mountPoint = "/mnt/cwd";
                 securityModel = "mapped";
               }
             ]
+            ++ workspaceShares
             ++ cfg.shares;
 
           writableStoreOverlay = "/nix/.rw-store";

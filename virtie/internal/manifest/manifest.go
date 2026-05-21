@@ -41,6 +41,7 @@ type Manifest struct {
 	Volumes       []Volume      `json:"volumes,omitempty"`
 	VSock         VSock         `json:"vsock"`
 	VirtioFS      VirtioFS      `json:"virtiofs"`
+	Workspace     Workspace     `json:"workspace,omitempty"`
 	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
 	Notifications Notifications `json:"notifications,omitempty"`
 }
@@ -75,6 +76,11 @@ type VSockCIDRange struct {
 
 type VSock struct {
 	CIDRange VSockCIDRange `json:"cidRange"`
+}
+
+type Workspace struct {
+	BaseDir  string `json:"baseDir,omitempty"`
+	MountCWD bool   `json:"mountCWD,omitempty"`
 }
 
 type QEMU struct {

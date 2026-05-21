@@ -14,6 +14,10 @@ let
       identityFile = sshKeys.virtie.identityFile;
     };
     persistence.homeImage = null;
+    workspace = {
+      enable = true;
+      addCurrentDir = true;
+    };
   };
 
   vmDefault = mkSandbox {
@@ -65,20 +69,17 @@ let
       identityFile = sshKeys.virtie.identityFile;
     };
     persistence.homeImage = null;
-    mountWorkspace = false;
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
   vmVirtieEscapedExternalStoreSocket = mkSandbox {
     persistence.homeImage = null;
-    mountWorkspace = false;
     nixStoreShareSocket = "/tmp/$(touch injected).sock";
   };
 
   invalidRelativeStoreSocket = builtins.tryEval (
     (mkSandbox {
       persistence.homeImage = null;
-      mountWorkspace = false;
       nixStoreShareSocket = "virtiofs-nix-store.sock";
     }).config.system.build.toplevel.drvPath
   );
@@ -137,6 +138,23 @@ let
     ];
   };
 
+  vmVirtieWorkspaces = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
+    persistence.homeImage = null;
+    workspace = {
+      enable = true;
+      basedir = "/home/agent/workspace";
+      addCurrentDir = true;
+      spaces = {
+        agentspace = "/home/shazow/projects/agentspace";
+        "project2/foo" = "/home/shazow/foo";
+      };
+    };
+  };
+
   vmVirtieFixedMachine = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = mkExecSSH {
@@ -177,6 +195,7 @@ let
   configFileManifest = vmVirtieConfigFile.config.agentspace.sandbox.launch.virtieManifestData;
   homeSSHPathsManifest = vmVirtieHomeSSHPaths.config.agentspace.sandbox.launch.virtieManifestData;
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
+  workspaceManifest = vmVirtieWorkspaces.config.agentspace.sandbox.launch.virtieManifestData;
   fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
 
@@ -200,7 +219,7 @@ let
     assert manifest.state_dir == ".agentspace";
     assert manifest.qemu.qmp_socket == "qmp.sock";
     assert manifest.machine.memory == 4096;
-    assert manifest.machine.vcpu == null;
+    assert !(manifest.machine ? vcpu);
     assert manifest.graphics.backend == "headless";
     assert manifest.write_files == [ ];
     assert manifest.notifications.states == [ ];
@@ -228,7 +247,7 @@ let
     assert builtins.all (
       mount: mount.virtiofsd_socket != "" && builtins.head mount.virtiofsd_exec != ""
     ) virtiofsDaemonMounts;
-    assert builtins.any (mount: mount.tag == "workspace") virtiofsDaemonMounts;
+    assert builtins.any (mount: mount.tag == "workspace_cwd") virtiofsDaemonMounts;
     assert !(manifest ? vsock);
     assert !(manifest.ssh ? destination);
     assert !(manifest ? qemuConfig);
@@ -331,6 +350,52 @@ let
     ) extraSharesManifest.mounts;
     assert
       !(builtins.any (mount: mount.tag == "cache" && mount ? virtiofsd_exec) extraSharesManifest.mounts);
+    true;
+
+  _workspace =
+    assert workspaceManifest.workspace.basedir == "/home/agent/workspace";
+    assert workspaceManifest.workspace.mount_cwd == true;
+    assert vmVirtieWorkspaces.config.environment.sessionVariables.WORKSPACE == "/home/agent/workspace";
+    assert builtins.elem "d /home/agent/workspace 0755 agent users -" vmVirtieWorkspaces.config.systemd.tmpfiles.rules;
+    assert builtins.any (
+      share:
+      share.tag == "workspace-agentspace"
+      && share.source == "/home/shazow/projects/agentspace"
+      && share.mountPoint == "/home/agent/workspace/agentspace"
+    ) vmVirtieWorkspaces.config.microvm.shares;
+    assert builtins.any (
+      share:
+      share.tag == "workspace-project2-foo"
+      && share.source == "/home/shazow/foo"
+      && share.mountPoint == "/home/agent/workspace/project2/foo"
+    ) vmVirtieWorkspaces.config.microvm.shares;
+    assert builtins.any (
+      share:
+      share.tag == "workspace_cwd"
+      && share.source == "."
+      && share.mountPoint == "/mnt/cwd"
+    ) vmVirtieWorkspaces.config.microvm.shares;
+    assert builtins.any (
+      mount:
+      mount.tag == "workspace-agentspace"
+      && mount.source == "/home/shazow/projects/agentspace"
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace-agentspace.sock"
+      && mount ? virtiofsd_exec
+    ) workspaceManifest.mounts;
+    assert builtins.any (
+      mount:
+      mount.tag == "workspace-project2-foo"
+      && mount.source == "/home/shazow/foo"
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace-project2-foo.sock"
+      && mount ? virtiofsd_exec
+    ) workspaceManifest.mounts;
+    assert builtins.any (
+      mount:
+      mount.tag == "workspace_cwd"
+      && mount.source == "."
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
+      && mount ? virtiofsd_exec
+    ) workspaceManifest.mounts;
     true;
 
   _writeFiles =

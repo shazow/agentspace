@@ -4,6 +4,51 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-20: Workspace options replace legacy current-directory mount
+
+### Who Is Affected
+
+- Consumers setting `agentspace.sandbox.mountWorkspace`.
+- Consumers setting `agentspace.sandbox.workspaceMountPoint`.
+- Consumers relying on the default current directory mount at
+  `/home/<user>/workspace`.
+
+### What Changed
+
+`agentspace.sandbox.mountWorkspace` and
+`agentspace.sandbox.workspaceMountPoint` were removed. Use
+`agentspace.sandbox.workspace` instead.
+
+Current-directory mounting is now opt-in through
+`agentspace.sandbox.workspace.addCurrentDir`. When enabled, the launch working
+-directory is mounted in the guest under `workspace.basedir` using the basename
+of the resolved working directory.
+
+### Migration Steps
+
+Replace legacy current-directory options:
+
+```diff
+- mountWorkspace = true;
+- workspaceMountPoint = "/home/agent/workspace";
++ workspace = {
++   enable = true;
++   addCurrentDir = true;
++   basedir = "/home/agent/workspace";
++ };
+```
+
+For fixed workspace mounts, use `workspace.spaces`:
+
+```nix
+workspace = {
+  enable = true;
+  spaces = {
+    agentspace = "/home/example/projects/agentspace";
+  };
+};
+```
+
 ## 2026-05-20: mkExecSSH helper replaces SSH path options
 
 ### Who Is Affected

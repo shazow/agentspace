@@ -250,7 +250,8 @@ func (c *socketGuestAgentClient) run(timeout time.Duration, execute string, argu
 
 func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *launchStats, watchers ...*managedProcess) error {
 	files := launchManifest.ResolvedWriteFiles()
-	if len(files) == 0 {
+	mountCWD := launchManifest.Workspace.MountCWD
+	if len(files) == 0 && !mountCWD {
 		return nil
 	}
 
@@ -268,6 +269,12 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		stats.MarkGuestAgentReady(time.Now())
 	}
 	defer client.Disconnect()
+
+	if mountCWD {
+		if err := m.mountWorkspaceCWD(ctx, client, launchManifest); err != nil {
+			return &stageError{Stage: "workspace cwd mount", Err: err}
+		}
+	}
 
 	for _, file := range files {
 		if !file.Overwrite {
@@ -505,9 +512,30 @@ const (
 	guestChmodPath   = "/run/current-system/sw/bin/chmod"
 	guestChownPath   = "/run/current-system/sw/bin/chown"
 	guestInstallPath = "/run/current-system/sw/bin/install"
+	guestMountPath   = "/run/current-system/sw/bin/mount"
 	guestPSPath      = "/run/current-system/sw/bin/ps"
 	guestTestPath    = "/run/current-system/sw/bin/test"
 )
+
+func (m *manager) mountWorkspaceCWD(ctx context.Context, client guestAgentClient, launchManifest *manifest.Manifest) error {
+	baseDir := launchManifest.Workspace.BaseDir
+	if baseDir == "" {
+		return fmt.Errorf("workspace.basedir is required when workspace.mount_cwd is true")
+	}
+	name := filepath.Base(launchManifest.Paths.WorkingDir)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return fmt.Errorf("derive workspace cwd name from working directory %q", launchManifest.Paths.WorkingDir)
+	}
+	target := path.Join(baseDir, name)
+	if err := m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, []string{"-d", baseDir, target}, target); err != nil {
+		return err
+	}
+	if err := m.runGuestFileCommand(ctx, client, "mount --bind", guestMountPath, []string{"--bind", "/mnt/cwd", target}, target); err != nil {
+		return err
+	}
+	m.logger.Info("mounted workspace cwd", "source", "/mnt/cwd", "target", target)
+	return nil
+}
 
 func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAgentClient, guestPath string, owner *string) error {
 	guestDir := path.Dir(guestPath)
