@@ -15,6 +15,15 @@ let
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
+  workspaceKeyToTag = key: "workspace-${lib.replaceStrings [ "/" "." " " ] [ "-" "-" "-" ] key}";
+  workspaceSpaces = lib.optionalAttrs cfg.workspace.enable cfg.workspace.spaces;
+  workspaceShares = lib.mapAttrsToList (key: source: {
+    proto = "virtiofs";
+    tag = workspaceKeyToTag key;
+    inherit source;
+    mountPoint = "${cfg.workspace.basedir}/${key}";
+    securityModel = "mapped";
+  }) workspaceSpaces;
 in
 {
   imports = [
@@ -130,7 +139,31 @@ in
     mountWorkspace = lib.mkOption {
       type = lib.types.bool;
       default = true;
-      description = "Mount the current working directory into the VM as the workspace share.";
+      description = "Deprecated: mount the current working directory into the VM as the legacy workspace share.";
+    };
+
+    workspace = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Enable workspace-oriented host directory mounts.";
+      };
+
+      basedir = lib.mkOption {
+        type = lib.types.str;
+        default = "/home/${cfg.user}/workspace";
+        description = "Guest directory containing workspace spaces and exported as WORKSPACE.";
+      };
+
+      spaces = lib.mkOption {
+        type = lib.types.attrsOf lib.types.str;
+        default = { };
+        example = {
+          agentspace = "/home/example/projects/agentspace";
+          "project2/foo" = "/home/example/foo";
+        };
+        description = "Host directories to mount, keyed by path under workspace.basedir.";
+      };
     };
 
     shares = lib.mkOption {
@@ -611,6 +644,9 @@ in
             home.stateVersion = lib.mkDefault config.system.stateVersion;
 
             programs.home-manager.enable = lib.mkDefault true;
+            home.sessionVariables = lib.mkIf cfg.workspace.enable {
+              WORKSPACE = cfg.workspace.basedir;
+            };
           };
         };
 
@@ -645,6 +681,9 @@ in
         # Directory permissions
         systemd.tmpfiles.rules = [
           "d /home/${cfg.user} 0700 ${cfg.user} users -"
+        ]
+        ++ lib.optionals cfg.workspace.enable [
+          "d ${cfg.workspace.basedir} 0755 ${cfg.user} users -"
         ];
 
         # Basic Package Set
@@ -697,7 +736,7 @@ in
                 readOnly = true;
               }
             ]
-            ++ lib.optionals cfg.mountWorkspace [
+            ++ lib.optionals (cfg.mountWorkspace && !cfg.workspace.enable) [
               {
                 proto = "virtiofs";
                 tag = "workspace";
@@ -706,6 +745,7 @@ in
                 securityModel = "mapped";
               }
             ]
+            ++ workspaceShares
             ++ cfg.shares;
 
           writableStoreOverlay = "/nix/.rw-store";
