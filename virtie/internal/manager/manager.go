@@ -26,6 +26,7 @@ import (
 	backendfile "github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
 	shellquote "github.com/kballard/go-shellquote"
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
@@ -1212,12 +1213,15 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) 
 }
 
 func buildSSHSpecWithArgv(launchManifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) (processSpec, error) {
-	context := manifest.ExecTemplateContext{
+	renderer, err := executor.New(executor.Context{
 		"CID":         fmt.Sprintf("%d", cid),
 		"User":        launchManifest.SSH.User,
 		"Destination": sshtools.VSockDestination(launchManifest.SSH.User, cid),
+	})
+	if err != nil {
+		return processSpec{Name: "ssh"}, err
 	}
-	renderedArgv, err := manifest.RenderExecArgv(argv, context)
+	renderedArgv, err := renderer.RenderArgv(argv)
 	if err != nil {
 		return processSpec{Name: "ssh"}, err
 	}
@@ -1225,17 +1229,12 @@ func buildSSHSpecWithArgv(launchManifest *manifest.Manifest, cid int, remoteComm
 	if err != nil {
 		return processSpec{Name: "ssh"}, err
 	}
-	env, err := manifest.ExecContextEnv(context)
-	if err != nil {
-		return processSpec{Name: "ssh"}, err
-	}
-
 	return processSpec{
 		Name:   "ssh",
 		Path:   command.Path,
 		Args:   command.Args,
 		Dir:    launchManifest.Paths.WorkingDir,
-		Env:    env,
+		Env:    renderer.Env(),
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
@@ -1243,12 +1242,15 @@ func buildSSHSpecWithArgv(launchManifest *manifest.Manifest, cid int, remoteComm
 }
 
 func buildSSHCommandHint(launchManifest *manifest.Manifest, cid int) (string, error) {
-	context := manifest.ExecTemplateContext{
+	renderer, err := executor.New(executor.Context{
 		"CID":         fmt.Sprintf("%d", cid),
 		"User":        launchManifest.SSH.User,
 		"Destination": sshtools.VSockDestination(launchManifest.SSH.User, cid),
+	})
+	if err != nil {
+		return "", err
 	}
-	argv, err := manifest.RenderExecArgv(launchManifest.SSH.Argv, context)
+	argv, err := renderer.RenderArgv(launchManifest.SSH.Argv)
 	if err != nil {
 		return "", err
 	}

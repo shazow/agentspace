@@ -19,6 +19,7 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 const (
@@ -670,10 +671,14 @@ func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
 			return nil, err
 		}
 		resolved.SocketPath = socketPath
-		command, err := RenderCommand(daemon.Command, ExecTemplateContext{
+		renderer, err := executor.New(executor.Context{
 			"Socket": socketPath,
 			"Tag":    daemon.Tag,
 		})
+		if err != nil {
+			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s].command: %w", daemon.Tag, err)
+		}
+		command, err := RenderCommand(daemon.Command, renderer)
 		if err != nil {
 			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s].command: %w", daemon.Tag, err)
 		}

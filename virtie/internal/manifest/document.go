@@ -14,6 +14,7 @@ import (
 	"github.com/BurntSushi/toml"
 	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 const (
@@ -365,7 +366,7 @@ func (d Document) lowerQEMU(host HostFacts, hostName string, workingDir string, 
 	if d.Machine.KVM != nil {
 		enableKVM = *d.Machine.KVM
 	}
-	qemuExec, err := RenderExecArgv(d.QEMU.Exec, ExecTemplateContext{
+	qemuRenderer, err := executor.New(executor.Context{
 		"HostName":   hostName,
 		"WorkingDir": workingDir,
 		"StateDir":   stateDir,
@@ -373,6 +374,10 @@ func (d Document) lowerQEMU(host HostFacts, hostName string, workingDir string, 
 		"HostArch":   host.Arch,
 		"HostSystem": host.System,
 	})
+	if err != nil {
+		return QEMU{}, fmt.Errorf("manifest.qemu.exec: %w", err)
+	}
+	qemuExec, err := qemuRenderer.RenderArgv(d.QEMU.Exec)
 	if err != nil {
 		return QEMU{}, fmt.Errorf("manifest.qemu.exec: %w", err)
 	}
@@ -794,11 +799,14 @@ func rejectLegacyFwdTunnelExecEnv(exec []string) error {
 }
 
 func renderFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) ([]string, error) {
-	context := ExecTemplateContext{
+	renderer, err := executor.New(executor.Context{
 		"Host": hostEndpoint.Address,
 		"Port": strconv.Itoa(hostEndpoint.Port),
+	})
+	if err != nil {
+		return nil, err
 	}
-	command, err := RenderExecArgv(exec, context)
+	command, err := renderer.RenderArgv(exec)
 	if err != nil {
 		return nil, err
 	}

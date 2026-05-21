@@ -111,7 +111,7 @@ Acceptance criteria:
   - If the manifest omits `qemu.devices.balloon.controller`, `virtie` defaults to `maxActualMiB = qemu.memory.sizeMiB`, an idle reclaim target of 50% of that max, a grow threshold at 25% available memory, and the existing step, poll, and reclaim-holdoff defaults.
   - Notification hooks are best-effort and never fail launch, suspend, resume, teardown, or balloon control.
   - Current notification states are `runtime:suspend` after saved suspend state is written, `runtime:resume` after restore migration and QMP `cont` succeed, and `balloon:resize` after a balloon resize succeeds.
-  - Notification commands receive `VIRTIE_NOTIFY_STATE`, `VIRTIE_NOTIFY_MESSAGE`, and `VIRTIE_NOTIFY_CONTEXT_<UPPER_SNAKE_KEY>` environment variables. Command args are rendered as templates, then passed without shell word-splitting.
+  - Notification commands receive `VIRTIE_NOTIFY_STATE`, `VIRTIE_NOTIFY_MESSAGE`, and `VIRTIE_NOTIFY_CONTEXT_<UPPER_SNAKE_KEY>` environment variables. Command args are rendered as templates using original context keys, then passed without shell word-splitting.
   - The old Nix-owned argv-template path has been removed from the active contract.
   - When `qemu.knobs.noGraphic` is false and `qemu.graphics.backend` is set, `virtie` emits the local QEMU display device set for `gtk` or `cocoa` instead of `-nographic`.
   - Future manifest/runtime improvements to keep visible: replace guest-to-host `guestfwd cmd:` lowering with QEMU-native forwarding or chardev handling if QEMU grows a better fit, and revisit whether headless graphics should remain both explicit and representable by omission.

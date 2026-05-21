@@ -55,7 +55,7 @@ host process environment is available as `.Env` on every surface.
 | `qemu.fwd_tunnel_exec` | `Host`, `Port`, `.Env` | none; QEMU starts the command |
 | `ssh.exec` | `CID`, `User`, `Destination`, `.Env` | `CID`, `USER`, `DESTINATION` |
 | `mounts[].virtiofsd_exec` | `Socket`, `Tag`, `.Env` | `SOCKET`, `TAG` |
-| `notifications.exec` | `State`, `Message`, notification context values, normalized context aliases, `.Env` | `STATE`, `MESSAGE`, normalized context values |
+| `notifications.exec` | `State`, `Message`, notification context values, `.Env` | `STATE`, `MESSAGE`, normalized context values |
 
 ## Notes
 

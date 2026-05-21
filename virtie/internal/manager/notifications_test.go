@@ -88,7 +88,7 @@ func TestCommandNotifierRendersExecTemplates(t *testing.T) {
 	cfg := validManifest("/tmp/work")
 	cfg.Notifications.Command = &manifest.Command{
 		Path: "bin/notify-{{.State}}",
-		Args: []string{"{{.Message}}", "{{.CID}}", "{{.Env.USER}}"},
+		Args: []string{"{{.Message}}", "{{.cid}}", "{{.Env.USER}}"},
 		Env:  []string{"CUSTOM=1"},
 	}
 	t.Setenv("USER", "template-user")

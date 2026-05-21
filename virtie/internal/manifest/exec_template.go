@@ -1,25 +1,9 @@
 package manifest
 
-import (
-	"bytes"
-	"fmt"
-	"os"
-	"sort"
-	"strings"
-	"text/template"
-	"unicode"
-)
+import "github.com/shazow/agentspace/virtie/internal/executor"
 
-type ExecTemplateContext map[string]string
-
-type RenderedCommand struct {
-	Path string
-	Args []string
-	Env  []string
-}
-
-func RenderCommand(command Command, context ExecTemplateContext) (Command, error) {
-	renderedArgv, err := RenderExecArgv(CommandArgv(command), context)
+func RenderCommand(command Command, renderer *executor.Renderer) (Command, error) {
+	renderedArgv, err := renderer.RenderArgv(commandArgv(command))
 	if err != nil {
 		return Command{}, err
 	}
@@ -30,153 +14,14 @@ func RenderCommand(command Command, context ExecTemplateContext) (Command, error
 		rendered.Path = renderedArgv[0]
 		rendered.Args = append([]string(nil), renderedArgv[1:]...)
 	}
-	env, err := ExecContextEnv(context)
-	if err != nil {
-		return Command{}, err
-	}
-	rendered.Env = append(rendered.Env, env...)
+	rendered.Env = append(rendered.Env, renderer.Env()...)
 	return rendered, nil
 }
 
-func RenderExec(argv []string, context ExecTemplateContext) (RenderedCommand, error) {
-	renderedArgv, err := RenderExecArgv(argv, context)
-	if err != nil {
-		return RenderedCommand{}, err
-	}
-	if len(renderedArgv) == 0 {
-		return RenderedCommand{}, nil
-	}
-	env, err := ExecContextEnv(context)
-	if err != nil {
-		return RenderedCommand{}, err
-	}
-	return RenderedCommand{
-		Path: renderedArgv[0],
-		Args: append([]string(nil), renderedArgv[1:]...),
-		Env:  env,
-	}, nil
-}
-
-func RenderExecArgv(argv []string, context ExecTemplateContext) ([]string, error) {
-	data := execTemplateData(context)
-	rendered := make([]string, 0, len(argv))
-	for i, arg := range argv {
-		value, err := renderExecTemplateArg(arg, data)
-		if err != nil {
-			return nil, fmt.Errorf("exec[%d] %q: %w", i, arg, err)
-		}
-		rendered = append(rendered, value)
-	}
-	return rendered, nil
-}
-
-func ExecContextEnv(context ExecTemplateContext) ([]string, error) {
-	if len(context) == 0 {
-		return nil, nil
-	}
-	keys := make([]string, 0, len(context))
-	for key := range context {
-		// Env is reserved for host environment lookups in templates and is not
-		// injected into child process environments as a context value.
-		if key == "" {
-			return nil, fmt.Errorf("exec template context key must not be empty")
-		}
-		if key == "Env" {
-			return nil, fmt.Errorf("exec template context key %q is reserved", key)
-		}
-		if strings.ContainsRune(key, '=') {
-			return nil, fmt.Errorf("exec template context key %q must not contain '='", key)
-		}
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	values := make(map[string]string, len(keys))
-	for _, key := range keys {
-		envKey := ExecEnvKey(key)
-		if envKey == "" {
-			return nil, fmt.Errorf("exec template context key %q does not produce an environment name", key)
-		}
-		values[envKey] = context[key]
-	}
-
-	keys = keys[:0]
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	env := make([]string, 0, len(keys))
-	for _, key := range keys {
-		env = append(env, key+"="+values[key])
-	}
-	return env, nil
-}
-
-func execTemplateData(context ExecTemplateContext) map[string]any {
-	data := make(map[string]any, len(context)+1)
-	for key, value := range context {
-		data[key] = value
-	}
-	// Env exposes the host environment to text/template lookups, for example
-	// {{.Env.USER}} or {{index .Env "XDG_RUNTIME_DIR"}}.
-	data["Env"] = environMap()
-	return data
-}
-
-func renderExecTemplateArg(arg string, data map[string]any) (string, error) {
-	tmpl, err := template.New("exec").Option("missingkey=error").Parse(arg)
-	if err != nil {
-		return "", err
-	}
-	var out bytes.Buffer
-	if err := tmpl.Execute(&out, data); err != nil {
-		return "", err
-	}
-	return out.String(), nil
-}
-
-func environMap() map[string]string {
-	env := make(map[string]string)
-	for _, entry := range os.Environ() {
-		key, value, ok := strings.Cut(entry, "=")
-		if !ok {
-			continue
-		}
-		env[key] = value
-	}
-	return env
-}
-
-func CommandArgv(command Command) []string {
+func commandArgv(command Command) []string {
 	if command.Path == "" {
 		return append([]string(nil), command.Args...)
 	}
 	argv := []string{command.Path}
 	return append(argv, command.Args...)
-}
-
-// ExecEnvKey converts template context keys into stable environment names.
-// For example, vmStatePath becomes VM_STATE_PATH.
-func ExecEnvKey(key string) string {
-	var builder strings.Builder
-	var previousUnderscore bool
-	var previousLowerOrDigit bool
-	for _, r := range key {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			if unicode.IsUpper(r) && previousLowerOrDigit && !previousUnderscore {
-				builder.WriteByte('_')
-			}
-			builder.WriteRune(unicode.ToUpper(r))
-			previousUnderscore = false
-			previousLowerOrDigit = unicode.IsLower(r) || unicode.IsDigit(r)
-			continue
-		}
-		if builder.Len() > 0 && !previousUnderscore {
-			builder.WriteByte('_')
-		}
-		previousUnderscore = true
-		previousLowerOrDigit = false
-	}
-	return strings.Trim(builder.String(), "_")
 }
