@@ -161,6 +161,8 @@
         virtie = virtiePackage;
       };
 
+      formatter.${system} = pkgs.nixfmt-tree;
+
       nixosModules.default = ./sandbox-qemu.nix;
 
       lib = {
