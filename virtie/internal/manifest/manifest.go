@@ -366,7 +366,7 @@ func (m *Manifest) Validate() error {
 		case tunnel.SocketPath == "":
 			return fmt.Errorf("manifest.runTunnels[%d].socketPath is required", i)
 		case !cleanRelativePath(tunnel.SocketPath):
-			return fmt.Errorf("manifest.runTunnels[%d].socketPath must be a clean relative path under state_dir", i)
+			return fmt.Errorf("manifest.runTunnels[%d].socketPath must be a clean relative path under state_dir/tunnels", i)
 		case tunnel.Command.Path == "":
 			return fmt.Errorf("manifest.runTunnels[%d].command.path is required", i)
 		}
@@ -547,6 +547,13 @@ func (m *Manifest) resolveStatePath(path string) (string, error) {
 	return filepath.Join(m.ResolvedPersistenceStateDir(), path), nil
 }
 
+func (m *Manifest) resolveTunnelSocketPath(path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(m.ResolvedPersistenceStateDir(), "tunnels", path)
+}
+
 func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
 	paths := make([]string, 0, len(m.VirtioFS.Daemons)+len(m.RunTunnels))
 	for _, daemon := range m.VirtioFS.Daemons {
@@ -567,11 +574,7 @@ func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
 func (m *Manifest) ResolvedRunTunnelSocketPaths() ([]string, error) {
 	paths := make([]string, 0, len(m.RunTunnels))
 	for _, tunnel := range m.RunTunnels {
-		resolved, err := m.resolveStatePath(tunnel.SocketPath)
-		if err != nil {
-			return nil, err
-		}
-		paths = append(paths, resolved)
+		paths = append(paths, m.resolveTunnelSocketPath(tunnel.SocketPath))
 	}
 	return paths, nil
 }
@@ -727,11 +730,7 @@ func (m *Manifest) ResolvedRunTunnels() ([]RunTunnel, error) {
 	tunnels := make([]RunTunnel, 0, len(m.RunTunnels))
 	for _, tunnel := range m.RunTunnels {
 		resolved := tunnel
-		socketPath, err := m.resolveStatePath(tunnel.SocketPath)
-		if err != nil {
-			return nil, err
-		}
-		resolved.SocketPath = socketPath
+		resolved.SocketPath = m.resolveTunnelSocketPath(tunnel.SocketPath)
 		resolved.Command.Path = m.resolvePath(tunnel.Command.Path)
 		resolved.Command.Args = append([]string(nil), tunnel.Command.Args...)
 		tunnels = append(tunnels, resolved)

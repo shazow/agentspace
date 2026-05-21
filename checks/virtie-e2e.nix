@@ -628,7 +628,7 @@ in
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    if ! ${launchScript} sh -c 'test -f .agentspace/state/tunnel-started; test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f state/ssh-ready-sent; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f .agentspace/proxy.sock; test -f .agentspace/proxy.sock.pid; test -f .agentspace/virtiofs.sock; test -f .agentspace/virtiofs.sock.pid; test -S .agentspace/qmp.sock; test -S .agentspace/qga.sock; test -S .agentspace/ready.sock; test -f overlay.img; test ! -e proxy.sock; test ! -e proxy.sock.pid; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; test ! -e ready.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
+    if ! ${launchScript} sh -c 'test -f .agentspace/tunnels/state/tunnel-started; test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f state/ssh-ready-sent; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f .agentspace/tunnels/proxy.sock; test -f .agentspace/tunnels/proxy.sock.pid; test -f .agentspace/virtiofs.sock; test -f .agentspace/virtiofs.sock.pid; test -S .agentspace/qmp.sock; test -S .agentspace/qga.sock; test -S .agentspace/ready.sock; test -f overlay.img; test ! -e .agentspace/proxy.sock; test ! -e .agentspace/proxy.sock.pid; test ! -e proxy.sock; test ! -e proxy.sock.pid; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; test ! -e ready.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
       echo "virtie-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1
@@ -650,10 +650,10 @@ in
     grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtie/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     grep -Fx '/run/current-system/sw/bin/test -d /var/lib/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     grep -Fx '/run/current-system/sw/bin/install -d /var/lib/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    test -f "$workspace_dir/.agentspace/state/tunnel-started"
+    test -f "$workspace_dir/.agentspace/tunnels/state/tunnel-started"
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
-    test -f "$workspace_dir/.agentspace/state/tunnel-stopped"
+    test -f "$workspace_dir/.agentspace/tunnels/state/tunnel-stopped"
     test ! -e "$workspace_dir/.agentspace/virtie-fake.pid"
 
     command_workspace_dir="$tmpdir/command-workspace"

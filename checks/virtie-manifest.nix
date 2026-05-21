@@ -179,7 +179,7 @@ let
       }
       {
         command = "xdg-dbus-proxy $DBUS_SESSION_BUS_ADDRESS $VIRTIE_TUNNEL_SOCKET --filter";
-        mountSock = "dbus/session.sock:dbus/session.sock";
+        mountSock = "dbus/session.sock";
       }
     ];
   };
@@ -196,29 +196,29 @@ let
     }).config.system.build.toplevel.drvPath
   );
 
-  invalidRunWithTunnelEscapedGuest = builtins.tryEval (
+  invalidRunWithTunnelColonMapping = builtins.tryEval (
     (mkSandbox {
       persistence.homeImage = null;
       runWithTunnel = [
         {
           command = "true";
-          mountSock = "proxy.sock:../proxy.sock";
+          mountSock = "proxy.sock:proxy.sock";
         }
       ];
     }).config.system.build.toplevel.drvPath
   );
 
-  invalidRunWithTunnelDuplicateGuest = builtins.tryEval (
+  invalidRunWithTunnelDuplicateSocket = builtins.tryEval (
     (mkSandbox {
       persistence.homeImage = null;
       runWithTunnel = [
         {
           command = "true";
-          mountSock = "proxy-a.sock:proxy.sock";
+          mountSock = "proxy.sock";
         }
         {
           command = "true";
-          mountSock = "proxy-b.sock:proxy.sock";
+          mountSock = "proxy.sock";
         }
       ];
     }).config.system.build.toplevel.drvPath
@@ -454,20 +454,27 @@ let
       mount:
       mount.type == "virtiofs"
       && mount.tag == "agentspace-tunnels"
-      && mount.source == ".agentspace"
+      && mount.source == ".agentspace/tunnels"
       && mount.virtiofsd_socket != ""
       && mount ? virtiofsd_exec
     ) runWithTunnelManifest.mounts;
-    assert builtins.elem "L+ /run/proxy.sock - - - - /run/agentspace-tunnels/proxy.sock"
-      vmVirtieRunWithTunnel.config.systemd.tmpfiles.rules;
-    assert builtins.elem "d /run/dbus 0755 root root -"
-      vmVirtieRunWithTunnel.config.systemd.tmpfiles.rules;
-    assert builtins.elem
-      "L+ /run/dbus/session.sock - - - - /run/agentspace-tunnels/dbus/session.sock"
-      vmVirtieRunWithTunnel.config.systemd.tmpfiles.rules;
+    assert builtins.any (
+      share:
+      share.proto == "virtiofs"
+      && share.tag == "agentspace-tunnels"
+      && share.source == ".agentspace/tunnels"
+      && share.mountPoint == "/run/tunnels"
+    ) vmVirtieRunWithTunnel.config.microvm.shares;
+    assert !(builtins.any (
+      share: (share.source or "") == ".agentspace/tunnels" || (share.mountPoint or "") == "/run/tunnels"
+    ) vmDefault.config.microvm.shares);
+    assert !(builtins.any (rule: builtins.match ".*agentspace-tunnels.*" rule != null)
+      vmVirtieRunWithTunnel.config.systemd.tmpfiles.rules);
+    assert !(builtins.any (rule: builtins.match ".*L\\+ /run/.*" rule != null)
+      vmVirtieRunWithTunnel.config.systemd.tmpfiles.rules);
     assert !invalidRunWithTunnelAbsoluteHost.success;
-    assert !invalidRunWithTunnelEscapedGuest.success;
-    assert !invalidRunWithTunnelDuplicateGuest.success;
+    assert !invalidRunWithTunnelColonMapping.success;
+    assert !invalidRunWithTunnelDuplicateSocket.success;
     true;
 in
 {

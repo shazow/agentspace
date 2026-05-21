@@ -267,7 +267,7 @@ func TestDocumentRunTunnelsLowerToManifest(t *testing.T) {
 	}
 	if got, want := tunnels, []RunTunnel{
 		{
-			SocketPath: "/tmp/work/.virtie/dbus/session.sock",
+			SocketPath: "/tmp/work/.virtie/tunnels/dbus/session.sock",
 			Command: Command{
 				Path: "/tmp/work/bin/proxy",
 				Args: []string{"--socket", "$VIRTIE_TUNNEL_SOCKET"},
@@ -281,7 +281,7 @@ func TestDocumentRunTunnelsLowerToManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve tunnel socket paths: %v", err)
 	}
-	if got, want := socketPaths, []string{"/tmp/work/.virtie/dbus/session.sock"}; !reflect.DeepEqual(got, want) {
+	if got, want := socketPaths, []string{"/tmp/work/.virtie/tunnels/dbus/session.sock"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected tunnel socket paths: got %#v want %#v", got, want)
 	}
 }

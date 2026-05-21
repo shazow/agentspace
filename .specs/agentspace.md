@@ -31,7 +31,7 @@ Acceptance criteria:
 - [x] The default `mkSandbox {}` launch experience provisions a usable out-of-the-box SSH credential story.
 - [x] Repo-level flake outputs and enabled checks validate the documented path end to end.
 - [x] `microvm.graphics.enable = true` is accepted and lowered into the typed `virtie` manifest for GTK or Cocoa display backends.
-- [x] `agentspace.sandbox.runWithTunnel` runs host commands that create Unix sockets under `state_dir` and exposes them in the guest under `/run`.
+- [x] `agentspace.sandbox.runWithTunnel` runs host commands that create Unix sockets under `state_dir/tunnels` and exposes that directory in the guest at `/run/tunnels`.
 
 ## Progress
 
@@ -53,7 +53,7 @@ Acceptance criteria:
 - [x] Keep the launch-contract and `virtie` fake-tools E2E checks enabled in `checks/default.nix`, alongside retained-hook checks for `extraModules`, `homeModules`, and a downstream-style consumer config.
 - [x] Fix `nix flake check` evaluation by removing broken non-derivation package shims.
 - [x] Add graphical-mode spec and typed `virtie` manifest lowering for `microvm.graphics`.
-- [x] Add `agentspace.sandbox.runWithTunnel` with `command` and `mountSock`, lower it into `run_tunnels`, and create guest `/run` symlinks through an internal state-dir share.
+- [x] Add `agentspace.sandbox.runWithTunnel` with `command` and `mountSock`, lower it into `run_tunnels`, and mount an internal tunnel directory at `/run/tunnels`.
 
 ## Appendix
 
@@ -67,7 +67,7 @@ Acceptance criteria:
   - `virtie` owns host-side QEMU policy derivation from those facts, including transport selection, machine defaults, CPU defaults, kernel console parameters, memory backend selection, device IDs, block letters, network forwarding lowering, graphics display args, final argv compilation, the long-lived QMP lifecycle, optional runtime balloon control, process launch, and teardown ordering.
   - Nix exposes only `agentspace.sandbox.balloon` for enabling or disabling the virtio-balloon device.
   - Nix exposes `agentspace.sandbox.notifications` for an optional host-side shell notification command and state allowlist.
-  - Nix exposes `agentspace.sandbox.runWithTunnel[]` for host-side commands that produce Unix sockets. Host socket paths are relative to manifest `state_dir`; guest paths are relative to `/run`; `host:guest` mappings are accepted.
+  - Nix exposes `agentspace.sandbox.runWithTunnel[]` for host-side commands that produce Unix sockets. Socket paths are clean relative paths below `state_dir/tunnels` on the host and are visible at the same relative path below `/run/tunnels` in the guest.
   - When enabled, the generated manifest includes balloon facts but leaves transport and controller defaults to `virtie`.
   - The generated manifest sets `paths.runtimeDir = ""`, so relative socket paths, including the SSH readiness socket, resolve under the per-user XDG runtime directory by default.
   - Graphical launches reuse the upstream `microvm.graphics` option schema. `microvm.graphics.enable = true` lowers to a typed `graphics.backend`, with `gtk` supported on Linux and `cocoa` supported on Darwin; the sandbox remains headless by default.

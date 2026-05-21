@@ -3188,9 +3188,12 @@ func TestManagerLaunchStartsRunTunnelsBeforeVirtioFSAndQEMU(t *testing.T) {
 	if got, want := runner.starts, []string{"tunnel[0]", "virtiofsd[workspace]", "qemu", "ssh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
-	wantSocket := filepath.Join(tmpDir, ".virtie", "dbus", "session.sock")
+	wantSocket := filepath.Join(tmpDir, ".virtie", "tunnels", "dbus", "session.sock")
 	if got := runner.tunnelEnv["tunnel[0]"]; !containsString(got, "VIRTIE_TUNNEL_SOCKET="+wantSocket) {
 		t.Fatalf("expected tunnel env to contain resolved socket path %q: %v", wantSocket, got)
+	}
+	if got, want := runner.tunnelDir["tunnel[0]"], filepath.Dir(wantSocket); got != want {
+		t.Fatalf("expected tunnel cwd to be %q, got %q", want, got)
 	}
 	if !runner.processGroups["tunnel[0]"] {
 		t.Fatal("expected tunnel to run in its own process group")
@@ -3379,6 +3382,7 @@ type fakeRunner struct {
 	qemuEnv                   []string
 	virtiofsEnv               map[string][]string
 	tunnelEnv                 map[string][]string
+	tunnelDir                 map[string]string
 	processGroups             map[string]bool
 	interactiveStarts         int
 	cancel                    context.CancelFunc
@@ -3474,7 +3478,11 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 			if r.tunnelEnv == nil {
 				r.tunnelEnv = make(map[string][]string)
 			}
+			if r.tunnelDir == nil {
+				r.tunnelDir = make(map[string]string)
+			}
 			r.tunnelEnv[spec.Name] = append([]string(nil), spec.Env...)
+			r.tunnelDir[spec.Name] = spec.Dir
 			if r.failTunnel {
 				return &fakeProcess{
 					name:   spec.Name,

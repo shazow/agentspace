@@ -615,7 +615,7 @@ func (m *manager) startRunTunnels(manifest *manifest.Manifest) ([]*managedProces
 			Name:         name,
 			Path:         tunnel.Command.Path,
 			Args:         tunnel.Command.Args,
-			Dir:          manifest.ResolvedPersistenceStateDir(),
+			Dir:          filepath.Dir(tunnel.SocketPath),
 			Env:          []string{fmt.Sprintf("VIRTIE_TUNNEL_SOCKET=%s", tunnel.SocketPath)},
 			ProcessGroup: true,
 			Stdout:       os.Stderr,
