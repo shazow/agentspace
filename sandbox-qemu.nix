@@ -155,6 +155,12 @@ in
         description = "Guest directory containing workspace spaces and exported as WORKSPACE.";
       };
 
+      addCurrentDir = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Ask virtie to mount the launch working directory under workspace.basedir at runtime.";
+      };
+
       spaces = lib.mkOption {
         type = lib.types.attrsOf lib.types.str;
         default = { };
@@ -392,7 +398,7 @@ in
                 config.microvm.virtiofsd.group != null
               ) "--socket-group=${config.microvm.virtiofsd.group}"
             } \
-            --shared-dir=${lib.escapeShellArg source} \
+            --shared-dir="''${VIRTIOFSD_SOURCE-${lib.escapeShellArg source}}" \
             "''${opt_rlimit[@]}" \
             --thread-pool-size ${toString config.microvm.virtiofsd.threadPoolSize} \
             --posix-acl --xattr \
@@ -451,6 +457,12 @@ in
           guest = "${guest.address}:${toString guest.port}";
         }
       ) config.microvm.forwardPorts;
+
+      manifestWorkspace = lib.optionalAttrs cfg.workspace.enable ({
+        basedir = cfg.workspace.basedir;
+      } // lib.optionalAttrs cfg.workspace.addCurrentDir {
+        mount_cwd = true;
+      });
 
       manifestMounts =
         builtins.map (
@@ -560,6 +572,7 @@ in
             };
         volumes = manifestVolumes;
         mounts = manifestMounts;
+        workspace = manifestWorkspace;
         networks = builtins.map (interface: {
           id = interface.id;
           type = interface.type;
@@ -742,6 +755,15 @@ in
                 tag = "workspace";
                 source = ".";
                 mountPoint = cfg.workspaceMountPoint;
+                securityModel = "mapped";
+              }
+            ]
+            ++ lib.optionals (cfg.workspace.enable && cfg.workspace.addCurrentDir) [
+              {
+                proto = "virtiofs";
+                tag = "workspace_cwd";
+                source = ".";
+                mountPoint = "/mnt/cwd";
                 securityModel = "mapped";
               }
             ]

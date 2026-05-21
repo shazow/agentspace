@@ -875,6 +875,45 @@ func TestManagerLaunchLogsGuestInfoFailureOnSIGUSR1(t *testing.T) {
 	}
 }
 
+func TestManagerMountsWorkspaceCWD(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.WorkingDir = filepath.Join(tmpDir, "agentspace")
+	cfg.Workspace = manifest.Workspace{
+		BaseDir:  "/home/agent/workspace",
+		MountCWD: true,
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{{Exited: true}, {Exited: true}},
+	}
+	manager := &manager{
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		logger:            slog.New(slog.DiscardHandler),
+		qmpConnectTimeout: time.Second,
+	}
+
+	if err := manager.writeGuestFiles(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("mount workspace cwd: %v", err)
+	}
+
+	want := []guestExecCall{
+		{
+			path:          guestInstallPath,
+			args:          []string{"-d", "/home/agent/workspace", "/home/agent/workspace/agentspace"},
+			captureOutput: true,
+		},
+		{
+			path:          guestMountPath,
+			args:          []string{"--bind", "/mnt/cwd", "/home/agent/workspace/agentspace"},
+			captureOutput: true,
+		},
+	}
+	if !reflect.DeepEqual(guestAgent.execs, want) {
+		t.Fatalf("unexpected guest execs: got %#v want %#v", guestAgent.execs, want)
+	}
+}
+
 func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)

@@ -146,6 +146,7 @@ let
     workspace = {
       enable = true;
       basedir = "/home/agent/workspace";
+      addCurrentDir = true;
       spaces = {
         agentspace = "/home/shazow/projects/agentspace";
         "project2/foo" = "/home/shazow/foo";
@@ -351,6 +352,8 @@ let
     true;
 
   _workspace =
+    assert workspaceManifest.workspace.basedir == "/home/agent/workspace";
+    assert workspaceManifest.workspace.mount_cwd == true;
     assert vmVirtieWorkspaces.config.home-manager.users.agent.home.sessionVariables.WORKSPACE == "/home/agent/workspace";
     assert builtins.elem "d /home/agent/workspace 0755 agent users -" vmVirtieWorkspaces.config.systemd.tmpfiles.rules;
     assert builtins.any (
@@ -366,6 +369,12 @@ let
       && share.mountPoint == "/home/agent/workspace/project2/foo"
     ) vmVirtieWorkspaces.config.microvm.shares;
     assert builtins.any (
+      share:
+      share.tag == "workspace_cwd"
+      && share.source == "."
+      && share.mountPoint == "/mnt/cwd"
+    ) vmVirtieWorkspaces.config.microvm.shares;
+    assert builtins.any (
       mount:
       mount.tag == "workspace-agentspace"
       && mount.source == "/home/shazow/projects/agentspace"
@@ -377,6 +386,13 @@ let
       mount.tag == "workspace-project2-foo"
       && mount.source == "/home/shazow/foo"
       && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace-project2-foo.sock"
+      && mount ? virtiofsd_exec
+    ) workspaceManifest.mounts;
+    assert builtins.any (
+      mount:
+      mount.tag == "workspace_cwd"
+      && mount.source == "."
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
       && mount ? virtiofsd_exec
     ) workspaceManifest.mounts;
     true;

@@ -40,6 +40,7 @@ type Document struct {
 	Graphics      *GraphicsFacts     `json:"graphics,omitempty" toml:"graphics"`
 	Volumes       []VolumeFacts      `json:"volumes,omitempty" toml:"volumes"`
 	Mounts        []MountFacts       `json:"mounts,omitempty" toml:"mounts"`
+	Workspace     WorkspaceFacts     `json:"workspace,omitempty" toml:"workspace"`
 	Networks      []NetworkFacts     `json:"networks,omitempty" toml:"networks"`
 	Balloon       *BalloonFacts      `json:"balloon,omitempty" toml:"balloon"`
 	SSH           SSHFacts           `json:"ssh,omitempty" toml:"ssh"`
@@ -104,6 +105,11 @@ type MountFacts struct {
 	SecurityModel string   `json:"security_model,omitempty" toml:"security_model"`
 	Cache         string   `json:"cache,omitempty" toml:"cache"`
 	VirtioFSDExec []string `json:"virtiofsd_exec,omitempty" toml:"virtiofsd_exec"`
+}
+
+type WorkspaceFacts struct {
+	BaseDir  string `json:"basedir,omitempty" toml:"basedir"`
+	MountCWD bool   `json:"mount_cwd,omitempty" toml:"mount_cwd"`
 }
 
 type NetworkFacts struct {
@@ -286,6 +292,7 @@ func (d Document) Manifest() (*Manifest, error) {
 			},
 		},
 		Notifications: lowerNotifications(d.Notifications),
+		Workspace:     lowerWorkspace(d.Workspace),
 	}
 	if m.Identity.HostName == "" {
 		m.Identity.HostName = defaultHostName
@@ -595,6 +602,13 @@ func (m MountFacts) effectiveType() string {
 		return "virtiofs"
 	}
 	return m.Type
+}
+
+func lowerWorkspace(workspace WorkspaceFacts) Workspace {
+	return Workspace{
+		BaseDir:  workspace.BaseDir,
+		MountCWD: workspace.MountCWD,
+	}
 }
 
 func lowerVirtioFSMounts(mounts []MountFacts, transport string) []QEMUVirtioFSShare {
