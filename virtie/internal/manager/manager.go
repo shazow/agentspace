@@ -1225,13 +1225,17 @@ func buildSSHSpecWithArgv(launchManifest *manifest.Manifest, cid int, remoteComm
 	if err != nil {
 		return processSpec{Name: "ssh"}, err
 	}
+	env, err := manifest.ExecContextEnv(context)
+	if err != nil {
+		return processSpec{Name: "ssh"}, err
+	}
 
 	return processSpec{
 		Name:   "ssh",
 		Path:   command.Path,
 		Args:   command.Args,
 		Dir:    launchManifest.Paths.WorkingDir,
-		Env:    manifest.ExecContextEnv(context),
+		Env:    env,
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,

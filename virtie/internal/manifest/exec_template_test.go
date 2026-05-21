@@ -57,6 +57,50 @@ func TestRenderCommandTemplatesAndMergesEnv(t *testing.T) {
 	}
 }
 
+func TestExecContextEnvRejectsReservedKeys(t *testing.T) {
+	tests := []struct {
+		name      string
+		context   ExecTemplateContext
+		wantError string
+	}{
+		{
+			name:      "empty",
+			context:   ExecTemplateContext{"": "value"},
+			wantError: "must not be empty",
+		},
+		{
+			name:      "env",
+			context:   ExecTemplateContext{"Env": "value"},
+			wantError: `key "Env" is reserved`,
+		},
+		{
+			name:      "contains equals",
+			context:   ExecTemplateContext{"BAD=KEY": "value"},
+			wantError: `key "BAD=KEY" must not contain '='`,
+		},
+		{
+			name:      "no env name",
+			context:   ExecTemplateContext{"---": "value"},
+			wantError: `key "---" does not produce an environment name`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ExecContextEnv(test.context)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("expected error containing %q, got %v", test.wantError, err)
+			}
+		})
+	}
+}
+
+func TestRenderExecRejectsReservedContextKey(t *testing.T) {
+	_, err := RenderExec([]string{"echo", "{{.Env.USER}}"}, ExecTemplateContext{"Env": "value"})
+	if err == nil || !strings.Contains(err.Error(), `key "Env" is reserved`) {
+		t.Fatalf("expected reserved key error, got %v", err)
+	}
+}
+
 func TestRenderExecRejectsMissingTemplateKey(t *testing.T) {
 	_, err := RenderExecArgv([]string{"echo", "{{.Missing}}"}, ExecTemplateContext{})
 	if err == nil ||

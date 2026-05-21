@@ -30,7 +30,11 @@ func RenderCommand(command Command, context ExecTemplateContext) (Command, error
 		rendered.Path = renderedArgv[0]
 		rendered.Args = append([]string(nil), renderedArgv[1:]...)
 	}
-	rendered.Env = append(rendered.Env, ExecContextEnv(context)...)
+	env, err := ExecContextEnv(context)
+	if err != nil {
+		return Command{}, err
+	}
+	rendered.Env = append(rendered.Env, env...)
 	return rendered, nil
 }
 
@@ -42,10 +46,14 @@ func RenderExec(argv []string, context ExecTemplateContext) (RenderedCommand, er
 	if len(renderedArgv) == 0 {
 		return RenderedCommand{}, nil
 	}
+	env, err := ExecContextEnv(context)
+	if err != nil {
+		return RenderedCommand{}, err
+	}
 	return RenderedCommand{
 		Path: renderedArgv[0],
 		Args: append([]string(nil), renderedArgv[1:]...),
-		Env:  ExecContextEnv(context),
+		Env:  env,
 	}, nil
 }
 
@@ -62,16 +70,22 @@ func RenderExecArgv(argv []string, context ExecTemplateContext) ([]string, error
 	return rendered, nil
 }
 
-func ExecContextEnv(context ExecTemplateContext) []string {
+func ExecContextEnv(context ExecTemplateContext) ([]string, error) {
 	if len(context) == 0 {
-		return nil
+		return nil, nil
 	}
 	keys := make([]string, 0, len(context))
 	for key := range context {
 		// Env is reserved for host environment lookups in templates and is not
 		// injected into child process environments as a context value.
-		if key == "" || key == "Env" || strings.ContainsRune(key, '=') {
-			continue
+		if key == "" {
+			return nil, fmt.Errorf("exec template context key must not be empty")
+		}
+		if key == "Env" {
+			return nil, fmt.Errorf("exec template context key %q is reserved", key)
+		}
+		if strings.ContainsRune(key, '=') {
+			return nil, fmt.Errorf("exec template context key %q must not contain '='", key)
 		}
 		keys = append(keys, key)
 	}
@@ -81,7 +95,7 @@ func ExecContextEnv(context ExecTemplateContext) []string {
 	for _, key := range keys {
 		envKey := ExecEnvKey(key)
 		if envKey == "" {
-			continue
+			return nil, fmt.Errorf("exec template context key %q does not produce an environment name", key)
 		}
 		values[envKey] = context[key]
 	}
@@ -96,7 +110,7 @@ func ExecContextEnv(context ExecTemplateContext) []string {
 	for _, key := range keys {
 		env = append(env, key+"="+values[key])
 	}
-	return env
+	return env, nil
 }
 
 func execTemplateData(context ExecTemplateContext) map[string]any {
