@@ -84,6 +84,25 @@ let
     }).config.system.build.toplevel.drvPath
   );
 
+  invalidOldPersistenceBaseDir = builtins.tryEval (
+    (mkSandbox {
+      persistence.basedir = ".agentspace-old";
+    }).config.system.build.toplevel.drvPath
+  );
+
+  invalidOldWorkspaceBaseDir = builtins.tryEval (
+    (mkSandbox {
+      workspace.basedir = "/home/agent/workspace-old";
+    }).config.system.build.toplevel.drvPath
+  );
+
+  invalidSwapWithoutWorkspace = builtins.tryEval (
+    (mkSandbox {
+      swapSize = 1024;
+      workspace.enable = false;
+    }).config.system.build.toplevel.drvPath
+  );
+
   vmVirtieCustomSSHExec = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = [
@@ -146,12 +165,21 @@ let
     persistence.homeImage = null;
     workspace = {
       enable = true;
-      basedir = "/home/agent/workspace";
+      baseDir = "/home/agent/workspace";
       addCurrentDir = true;
       spaces = {
         agentspace = "/home/shazow/projects/agentspace";
         "project2/foo" = "/home/shazow/foo";
       };
+    };
+  };
+
+  vmVirtieSwap = mkSandbox {
+    persistence.homeImage = null;
+    swapSize = 1024;
+    workspace = {
+      enable = true;
+      baseDir = "/home/agent/workspace";
     };
   };
 
@@ -309,7 +337,7 @@ let
     true;
 
   _externalStoreSocket =
-    assert builtins.length externalStoreSocketManifest.mounts == 2;
+    assert builtins.length externalStoreSocketManifest.mounts == 3;
     assert builtins.any (
       mount:
       mount == {
@@ -321,6 +349,13 @@ let
         security_model = "none";
         cache = "auto";
       }
+    ) externalStoreSocketManifest.mounts;
+    assert builtins.any (
+      mount:
+      mount.tag == "workspace"
+      && mount.source == ".agentspace/workspace"
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace.sock"
+      && mount ? virtiofsd_exec
     ) externalStoreSocketManifest.mounts;
     assert builtins.any (
       mount:
@@ -340,6 +375,8 @@ let
     assert
       !(pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock" vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
     assert !invalidRelativeStoreSocket.success;
+    assert !invalidOldPersistenceBaseDir.success;
+    assert !invalidOldWorkspaceBaseDir.success;
     true;
 
   _customSSHExec =
@@ -391,6 +428,12 @@ let
       vmVirtieWorkspaces.config.systemd.tmpfiles.rules;
     assert builtins.any (
       share:
+      share.tag == "workspace"
+      && share.source == ".agentspace/workspace"
+      && share.mountPoint == "/home/agent/workspace"
+    ) vmVirtieWorkspaces.config.microvm.shares;
+    assert builtins.any (
+      share:
       share.tag == "workspace-agentspace"
       && share.source == "/home/shazow/projects/agentspace"
       && share.mountPoint == "/home/agent/workspace/agentspace"
@@ -404,6 +447,13 @@ let
     assert builtins.any (
       share: share.tag == "workspace_cwd" && share.source == "." && share.mountPoint == "/mnt/cwd"
     ) vmVirtieWorkspaces.config.microvm.shares;
+    assert builtins.any (
+      mount:
+      mount.tag == "workspace"
+      && mount.source == ".agentspace/workspace"
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace.sock"
+      && mount ? virtiofsd_exec
+    ) workspaceManifest.mounts;
     assert builtins.any (
       mount:
       mount.tag == "workspace-agentspace"
@@ -425,6 +475,14 @@ let
       && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
       && mount ? virtiofsd_exec
     ) workspaceManifest.mounts;
+    true;
+
+  _swap =
+    assert builtins.any (
+      swap: swap.device == "/home/agent/workspace/swapfile" && swap.size == 1024
+    ) vmVirtieSwap.config.swapDevices;
+    assert !(builtins.any (swap: swap.device == "/swapfile") vmVirtieSwap.config.swapDevices);
+    assert !invalidSwapWithoutWorkspace.success;
     true;
 
   _writeFiles =
@@ -533,6 +591,10 @@ in
   virtie-manifest-write-files-contract =
     assert _writeFiles;
     pkgs.runCommand "virtie-manifest-write-files-contract" { } "touch $out";
+
+  virtie-manifest-swap-contract =
+    assert _swap;
+    pkgs.runCommand "virtie-manifest-swap-contract" { } "touch $out";
 
   virtie-manifest-notifications-contract =
     assert _notifications;

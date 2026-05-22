@@ -9,19 +9,28 @@
 
 let
   cfg = config.agentspace.sandbox;
-  persistenceBaseDir = cfg.persistence.basedir;
+  persistenceBaseDir = cfg.persistence.baseDir;
   persistenceStateDir = persistenceBaseDir;
   resolvePersistencePath =
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
+  workspaceHostDir = "${persistenceStateDir}/workspace";
+  workspaceSwapFile = "${cfg.workspace.baseDir}/swapfile";
+  workspaceBaseShare = {
+    proto = "virtiofs";
+    tag = "workspace";
+    source = workspaceHostDir;
+    mountPoint = cfg.workspace.baseDir;
+    securityModel = "mapped";
+  };
   workspaceKeyToTag = key: "workspace-${lib.replaceStrings [ "/" "." " " ] [ "-" "-" "-" ] key}";
   workspaceSpaces = lib.optionalAttrs cfg.workspace.enable cfg.workspace.spaces;
   workspaceShares = lib.mapAttrsToList (key: source: {
     proto = "virtiofs";
     tag = workspaceKeyToTag key;
     inherit source;
-    mountPoint = "${cfg.workspace.basedir}/${key}";
+    mountPoint = "${cfg.workspace.baseDir}/${key}";
     securityModel = "mapped";
   }) workspaceSpaces;
   tunnelGuestDir = "/run/tunnels";
@@ -107,10 +116,18 @@ in
     };
 
     persistence = {
-      basedir = lib.mkOption {
+      baseDir = lib.mkOption {
         type = lib.types.str;
         default = ".agentspace";
         description = "Base directory for generated sandbox persistence paths.";
+      };
+
+      # TODO: Remove this after 2026-06-01
+      basedir = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        visible = false;
+        description = "Deprecated spelling of baseDir.";
       };
 
       homeImage = lib.mkOption {
@@ -145,10 +162,18 @@ in
         description = "Enable workspace-oriented host directory mounts.";
       };
 
-      basedir = lib.mkOption {
+      baseDir = lib.mkOption {
         type = lib.types.str;
         default = "/home/${cfg.user}/workspace";
         description = "Guest directory containing workspace spaces and exported as WORKSPACE.";
+      };
+
+      # TODO: Remove this after 2026-06-01
+      basedir = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        visible = false;
+        description = "Deprecated spelling of baseDir.";
       };
 
       addCurrentDir = lib.mkOption {
@@ -375,6 +400,9 @@ in
       + lib.optionalString (cfg.runWithTunnel != [ ]) ''
         ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg tunnelHostDir}
       ''
+      + lib.optionalString cfg.workspace.enable ''
+        ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg workspaceHostDir}
+      ''
       + lib.optionalString nixStoreShareUsesSocket ''
         if [ ! -S ${lib.escapeShellArg cfg.nixStoreShareSocket} ]; then
           echo "agentspace: nixStoreShareSocket does not exist or is not a socket: ${lib.escapeShellArg cfg.nixStoreShareSocket}" >&2
@@ -490,7 +518,7 @@ in
 
       manifestWorkspace = lib.optionalAttrs cfg.workspace.enable (
         {
-          basedir = cfg.workspace.basedir;
+          basedir = cfg.workspace.baseDir;
         }
         // lib.optionalAttrs cfg.workspace.addCurrentDir {
           mount_cwd = true;
@@ -631,6 +659,18 @@ in
       {
         assertions = [
           {
+            assertion = cfg.persistence.basedir == null;
+            message = "agentspace.sandbox.persistence.basedir was renamed to agentspace.sandbox.persistence.baseDir.";
+          }
+          {
+            assertion = cfg.workspace.basedir == null;
+            message = "agentspace.sandbox.workspace.basedir was renamed to agentspace.sandbox.workspace.baseDir.";
+          }
+          {
+            assertion = cfg.swapSize == 0 || cfg.workspace.enable;
+            message = "agentspace.sandbox.swapSize requires agentspace.sandbox.workspace.enable = true because the swapfile is created under WORKSPACE.";
+          }
+          {
             assertion =
               cfg.nixStoreShareSocket == null
               || (cfg.nixStoreShareSocket != "" && lib.hasPrefix "/" cfg.nixStoreShareSocket);
@@ -686,7 +726,7 @@ in
         };
 
         environment.sessionVariables = lib.mkIf cfg.workspace.enable {
-          WORKSPACE = cfg.workspace.basedir;
+          WORKSPACE = cfg.workspace.baseDir;
         };
 
         # User Configuration
@@ -736,7 +776,7 @@ in
         security.sudo.wheelNeedsPassword = false;
         swapDevices = lib.optionals (cfg.swapSize > 0) [
           {
-            device = "/swapfile";
+            device = workspaceSwapFile;
             size = cfg.swapSize;
           }
         ];
@@ -746,7 +786,7 @@ in
           "d /home/${cfg.user} 0700 ${cfg.user} users -"
         ]
         ++ lib.optionals cfg.workspace.enable [
-          "d ${cfg.workspace.basedir} 0755 ${cfg.user} users -"
+          "d ${cfg.workspace.baseDir} 0755 ${cfg.user} users -"
         ];
 
         # Basic Package Set
@@ -798,6 +838,9 @@ in
                 mountPoint = "/nix/.ro-store";
                 readOnly = true;
               }
+            ]
+            ++ lib.optionals cfg.workspace.enable [
+              workspaceBaseShare
             ]
             ++ lib.optionals (cfg.workspace.enable && cfg.workspace.addCurrentDir) [
               {

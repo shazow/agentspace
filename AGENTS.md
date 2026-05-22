@@ -25,6 +25,7 @@
 Commit message style:
 - First line: `<component name>: <short description of changes>`
 - Following paragraph: `<Additional details about the changes worth noting>`
+- If we're completing a specific issue number, mention it: `Closes #234`
 - When written the a coding agent, final line should include: `Assisted-by: AGENT_NAME:MODEL_VERSION`
 
 Example resulting commit message:
@@ -38,7 +39,8 @@ gets overwritten by virtie.
 Validation performed:
 - ...
 
-Closes #123
+Fixes #123
+Closes #234
 
 Assisted-by: codex:gpt-5.5-xhigh
 ```
