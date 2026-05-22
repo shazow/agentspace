@@ -48,6 +48,7 @@ Acceptance criteria:
 - [x] Extend the QMP session to use `go-qemu/qmp/raw` for `query-balloon`, `balloon`, `qom-set`, `qom-get`, and `qom-list` so runtime balloon control can share the same monitor connection as shutdown.
 - [x] Implement launch sequencing for preflight, `virtiofs` socket wait, QMP readiness, QEMU start, virtio-serial SSH readiness, session attach, and ordered shutdown.
 - [x] Start an optional guest-pressure balloon controller only after SSH readiness succeeds, and stop it before sending the final QMP `quit`.
+- [x] Start optional `run_with_tunnel` host commands that produce Unix sockets under the state tunnel directory and keep them under the managed launch lifecycle.
 - [x] Implement volume auto-create handling, including filesystem defaults and native ext4 image creation.
 - [x] Implement per-sandbox and per-CID lock files for concurrent session safety.
 - [x] Add runtime-dir-based socket resolution for relative QMP, SSH readiness, QGA, and `virtiofs` sockets, using XDG defaults when requested by the manifest.
@@ -66,6 +67,7 @@ Acceptance criteria:
 - [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface, including saved suspend/resume coverage.
 - [x] Add typed graphical display compilation for `gtk` and `cocoa` manifest backends.
 - [x] Add JSON and TOML decoding for the manifest, with Nix-generated manifests remaining JSON.
+- [x] Add `run_with_tunnel` manifest decoding, template rendering, concurrent startup, and lifecycle monitoring.
 
 ## Appendix
 
@@ -77,6 +79,7 @@ Acceptance criteria:
   - Optional `graphics.backend` supports `headless`, `gtk`, and `cocoa`. Graphical GTK launches emit `-display gtk,gl=off`, `virtio-vga`, `qemu-xhci`, `usb-tablet`, and `usb-kbd`; Cocoa launches emit `-display cocoa`, `virtio-gpu`, `qemu-xhci`, `usb-tablet`, and `usb-kbd`.
   - `ssh` contains `exec`, `user`, optional `ready_socket`, optional `retry_delay`, and optional `autoprovision`.
   - Optional `vsock.cid_range` defaults to the allocatable CID range `3..65535`.
+  - Optional `run_with_tunnel[]` entries contain `socket`, `exec`, and optional string `vars`; `socket` is relative to `<state_dir>/tunnels` on the host and `/run/tunnels` in the guest.
   - `volumes[]` use `image`, `size`, `fs`, `create`, `read_only`, optional `label`, `direct`, and optional `serial`; auto-created volumes are ext4 only and require `size >= 256`.
   - `mounts[]` describe `virtiofs` or `9p` shares; managed `virtiofsd` commands use `virtiofsd_exec`, and `virtie` injects the resolved socket path as `VIRTIOFSD_SOCKET`.
   - `networks[]` describe user networking and `forward[]` host-to-guest or guest-to-host port forwards.
@@ -105,6 +108,7 @@ Acceptance criteria:
   - `virtie suspend` validates the launch PID and sends `SIGTSTP` as an internal control signal; `virtie launch` catches it, saves migration state through the existing QMP session, then exits.
   - Live pause/resume, terminal job-control suspend, and `SIGCONT` resume are not supported.
   - `virtie launch` writes final shutdown stats after teardown and cleanup complete; non-SSH launches omit the SSH-session interval. Verbose package logs use stdlib `log/slog` text records on stderr, with package identity carried as an attribute such as `package=manager`.
+  - `run_with_tunnel` commands run with `<state_dir>/tunnels` as the working directory. Command templates receive `Socket`, `GuestSocket`, optional `vars`, and `.Env`; commands receive matching uppercase environment variables.
   - `SIGUSR1` asks a running launch process to collect guest info through the configured QGA socket. The current info payload is raw `ps -eo pid,ppid,stat,comm,args` output; collection failures are logged and do not affect the VM lifecycle.
   - Fresh launches consume the exact `READY` token over the SSH readiness socket regardless of SSH autoconnect; startup fails if QEMU exits first, the token is wrong, or the readiness timeout expires.
   - When `qemu.devices.balloon` is present, `virtie` resolves the balloon QOM path, enables `guest-stats-polling-interval`, reads `guest-stats` plus `query-balloon`, and adjusts the logical guest memory size within configured or synthesized bounds.
@@ -123,18 +127,19 @@ flowchart TD
   B --> C[Acquire sandbox lock]
   C --> D[Allocate and lock free vsock CID]
   D --> E[Create required directories and auto-created volumes]
-  E --> F[Start virtiofsd daemons]
-  F --> G[Wait for virtiofs sockets]
-  G --> H[Compile QEMU argv from typed manifest plus runtime CID]
-  H --> I[Start QEMU]
-  I --> J[Wait for QMP socket and connect monitor]
-  J --> K[Wait for READY on virtio-serial SSH readiness socket]
-  K --> L{--ssh?}
-  L -->|yes| M[Attach interactive SSH session]
-  L -->|no| N[Print SSH command and wait for VM]
-  M --> O[Session exits or signal received]
-  N --> O
-  O --> P[Stop SSH if present, then request QMP quit]
-  P --> Q[Fallback to TERM or kill if needed]
-  Q --> R[Stop virtiofsd and clean sockets]
+  E --> F[Start run_with_tunnel commands]
+  F --> G[Start virtiofsd daemons]
+  G --> H[Wait for virtiofs sockets]
+  H --> I[Compile QEMU argv from typed manifest plus runtime CID]
+  I --> J[Start QEMU]
+  J --> K[Wait for QMP socket and connect monitor]
+  K --> L[Wait for READY on virtio-serial SSH readiness socket]
+  L --> M{--ssh?}
+  M -->|yes| N[Attach interactive SSH session]
+  M -->|no| O[Print SSH command and wait for VM]
+  N --> P[Session exits or signal received]
+  O --> P
+  P --> Q[Stop SSH if present, then request QMP quit]
+  Q --> R[Fallback to TERM or kill if needed]
+  R --> S[Stop managed helpers and clean sockets]
 ```

@@ -9,6 +9,7 @@ Nix-managed sandbox launch workflow for the currently supported `virtie` path.
 Keep `mkSandbox` as the stable entrypoint for constructing the sandbox system and host-side launch helpers.
 
 - Support a single active host launch path: SSH + QEMU through `virtie`, with built-in `virtiofs` shares, opt-in additional `virtiofs` or `9p` shares, and opt-in graphical QEMU mode through `microvm.graphics`.
+- Support opt-in host commands that create Unix sockets under the sandbox state directory and share them into the guest at `/run/tunnels`.
 - Generate a Nix-owned launch wrapper and manifest that contain the inputs required by `virtie`.
 - Keep the public Nix surface focused on launch-shape choices, including whether the virtio-balloon device is enabled, while leaving runtime balloon policy defaults to `virtie`.
 - Reject unsupported launch configurations explicitly instead of falling back to legacy orchestration.
@@ -31,6 +32,7 @@ Acceptance criteria:
 - [x] The default `mkSandbox {}` launch experience provisions a usable out-of-the-box SSH credential story.
 - [x] Repo-level flake outputs and enabled checks validate the documented path end to end.
 - [x] `microvm.graphics.enable = true` is accepted and lowered into the typed `virtie` manifest for GTK or Cocoa display backends.
+- [x] `agentspace.sandbox.runWithTunnel[]` lowers into `run_with_tunnel` manifest entries and adds a `/run/tunnels` guest share backed by `${persistence.basedir}/tunnels`.
 
 ## Progress
 
@@ -52,6 +54,7 @@ Acceptance criteria:
 - [x] Keep the launch-contract and `virtie` fake-tools E2E checks enabled in `checks/default.nix`, alongside retained-hook checks for `extraModules`, `homeModules`, and a downstream-style consumer config.
 - [x] Fix `nix flake check` evaluation by removing broken non-derivation package shims.
 - [x] Add graphical-mode spec and typed `virtie` manifest lowering for `microvm.graphics`.
+- [x] Add `agentspace.sandbox.runWithTunnel` for host-side tunnel socket producers shared into the guest.
 
 ## Appendix
 
@@ -83,6 +86,7 @@ Acceptance criteria:
   - optional `notifications.command` shell string and `notifications.states`
   - optional `shares[]` for additional mounts with `proto`, `tag`, `source`, `mountPoint`, `securityModel`, `readOnly`, `cache`, and `socket`
   - optional `microvm.graphics.enable` and `microvm.graphics.backend` through retained module hooks
+  - optional `runWithTunnel[]` entries with relative `socket`, host-side `exec`, and string `vars`
 
 ```mermaid
 flowchart TD

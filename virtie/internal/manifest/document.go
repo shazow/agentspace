@@ -31,23 +31,24 @@ const (
 )
 
 type Document struct {
-	HostName      string             `json:"host_name,omitempty" toml:"host_name"`
-	WorkingDir    string             `json:"working_dir,omitempty" toml:"working_dir"`
-	StateDir      string             `json:"state_dir,omitempty" toml:"state_dir"`
-	Host          HostFacts          `json:"host,omitempty" toml:"host"`
-	QEMU          QEMUFacts          `json:"qemu,omitempty" toml:"qemu"`
-	Machine       MachineFacts       `json:"machine,omitempty" toml:"machine"`
-	Kernel        KernelFacts        `json:"kernel" toml:"kernel"`
-	Graphics      *GraphicsFacts     `json:"graphics,omitempty" toml:"graphics"`
-	Volumes       []VolumeFacts      `json:"volumes,omitempty" toml:"volumes"`
-	Mounts        []MountFacts       `json:"mounts,omitempty" toml:"mounts"`
-	Workspace     WorkspaceFacts     `json:"workspace,omitempty" toml:"workspace"`
-	Networks      []NetworkFacts     `json:"networks,omitempty" toml:"networks"`
-	Balloon       *BalloonFacts      `json:"balloon,omitempty" toml:"balloon"`
-	SSH           SSHFacts           `json:"ssh,omitempty" toml:"ssh"`
-	VSock         VSockFacts         `json:"vsock,omitempty" toml:"vsock"`
-	WriteFiles    []WriteFileFacts   `json:"write_files,omitempty" toml:"write_files"`
-	Notifications NotificationsFacts `json:"notifications,omitempty" toml:"notifications"`
+	HostName      string               `json:"host_name,omitempty" toml:"host_name"`
+	WorkingDir    string               `json:"working_dir,omitempty" toml:"working_dir"`
+	StateDir      string               `json:"state_dir,omitempty" toml:"state_dir"`
+	Host          HostFacts            `json:"host,omitempty" toml:"host"`
+	QEMU          QEMUFacts            `json:"qemu,omitempty" toml:"qemu"`
+	Machine       MachineFacts         `json:"machine,omitempty" toml:"machine"`
+	Kernel        KernelFacts          `json:"kernel" toml:"kernel"`
+	Graphics      *GraphicsFacts       `json:"graphics,omitempty" toml:"graphics"`
+	Volumes       []VolumeFacts        `json:"volumes,omitempty" toml:"volumes"`
+	Mounts        []MountFacts         `json:"mounts,omitempty" toml:"mounts"`
+	Workspace     WorkspaceFacts       `json:"workspace,omitempty" toml:"workspace"`
+	Networks      []NetworkFacts       `json:"networks,omitempty" toml:"networks"`
+	Balloon       *BalloonFacts        `json:"balloon,omitempty" toml:"balloon"`
+	SSH           SSHFacts             `json:"ssh,omitempty" toml:"ssh"`
+	VSock         VSockFacts           `json:"vsock,omitempty" toml:"vsock"`
+	WriteFiles    []WriteFileFacts     `json:"write_files,omitempty" toml:"write_files"`
+	Notifications NotificationsFacts   `json:"notifications,omitempty" toml:"notifications"`
+	RunWithTunnel []RunWithTunnelFacts `json:"run_with_tunnel,omitempty" toml:"run_with_tunnel"`
 }
 
 type HostFacts struct {
@@ -182,6 +183,12 @@ type NotificationsFacts struct {
 	States []string `json:"states,omitempty" toml:"states"`
 }
 
+type RunWithTunnelFacts struct {
+	SocketPath string            `json:"socket" toml:"socket"`
+	Exec       []string          `json:"exec" toml:"exec"`
+	Vars       map[string]string `json:"vars,omitempty" toml:"vars"`
+}
+
 func LoadBytes(data []byte, name string) (*Manifest, error) {
 	var doc Document
 	var err error
@@ -294,6 +301,7 @@ func (d Document) Manifest() (*Manifest, error) {
 		},
 		Notifications: lowerNotifications(d.Notifications),
 		Workspace:     lowerWorkspace(d.Workspace),
+		RunWithTunnel: lowerRunWithTunnel(d.RunWithTunnel),
 	}
 	if m.Identity.HostName == "" {
 		m.Identity.HostName = defaultHostName
@@ -882,6 +890,18 @@ func lowerNotifications(notifications NotificationsFacts) Notifications {
 	return result
 }
 
+func lowerRunWithTunnel(tunnels []RunWithTunnelFacts) []RunWithTunnel {
+	result := make([]RunWithTunnel, 0, len(tunnels))
+	for _, tunnel := range tunnels {
+		result = append(result, RunWithTunnel{
+			SocketPath: tunnel.SocketPath,
+			Exec:       append([]string(nil), tunnel.Exec...),
+			Vars:       cloneStringMap(tunnel.Vars),
+		})
+	}
+	return result
+}
+
 func commandFromExec(exec []string) Command {
 	if len(exec) == 0 {
 		return Command{}
@@ -890,6 +910,17 @@ func commandFromExec(exec []string) Command {
 		Path: exec[0],
 		Args: append([]string(nil), exec[1:]...),
 	}
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
 }
 
 func persistenceDirectories(volumes []VolumeFacts, stateDir string) []string {

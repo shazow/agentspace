@@ -183,6 +183,27 @@ let
     ];
   };
 
+  vmVirtieRunWithTunnel = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
+    persistence.homeImage = null;
+    runWithTunnel = [
+      {
+        socket = "dbus-notifications.sock";
+        exec = [
+          "xdg-dbus-proxy"
+          "{{.Env.DBUS_SESSION_BUS_ADDRESS}}"
+          "{{.Socket}}"
+          "--filter"
+          "--name={{.Name}}"
+        ];
+        vars.Name = "notifications";
+      }
+    ];
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtieManifestData;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
@@ -197,6 +218,7 @@ let
   workspaceManifest = vmVirtieWorkspaces.config.agentspace.sandbox.launch.virtieManifestData;
   fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
+  runWithTunnelManifest = vmVirtieRunWithTunnel.config.agentspace.sandbox.launch.virtieManifestData;
 
   virtiofsMounts = builtins.filter (mount: mount.type == "virtiofs") manifest.mounts;
   virtiofsDaemonMounts = builtins.filter (
@@ -442,6 +464,38 @@ let
         "balloon:resize"
       ];
     true;
+
+  _runWithTunnel =
+    assert
+      runWithTunnelManifest.run_with_tunnel == [
+        {
+          socket = "dbus-notifications.sock";
+          exec = [
+            "xdg-dbus-proxy"
+            "{{.Env.DBUS_SESSION_BUS_ADDRESS}}"
+            "{{.Socket}}"
+            "--filter"
+            "--name={{.Name}}"
+          ];
+          vars.Name = "notifications";
+        }
+      ];
+    assert builtins.any (
+      share:
+      share.tag == "agentspace_tunnels"
+      && share.source == ".agentspace/tunnels"
+      && share.mountPoint == "/run/tunnels"
+    ) vmVirtieRunWithTunnel.config.microvm.shares;
+    assert builtins.any (
+      mount:
+      mount.tag == "agentspace_tunnels"
+      && mount.source == ".agentspace/tunnels"
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-agentspace_tunnels.sock"
+      && mount ? virtiofsd_exec
+    ) runWithTunnelManifest.mounts;
+    assert pkgs.lib.hasInfix "mkdir -p .agentspace/tunnels"
+      vmVirtieRunWithTunnel.config.agentspace.sandbox.launch.commonInit;
+    true;
 in
 {
   virtie-manifest-contract =
@@ -483,4 +537,8 @@ in
   virtie-manifest-notifications-contract =
     assert _notifications;
     pkgs.runCommand "virtie-manifest-notifications-contract" { } "touch $out";
+
+  virtie-manifest-run-with-tunnel-contract =
+    assert _runWithTunnel;
+    pkgs.runCommand "virtie-manifest-run-with-tunnel-contract" { } "touch $out";
 }

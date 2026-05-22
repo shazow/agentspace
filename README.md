@@ -54,6 +54,14 @@ But to recap, here's a flake you can make to give it a try:
 
         # home-manager modules for the primary user:
         #homeModules = [];
+
+        # Optional host-side socket producers are shared into the guest at /run/tunnels.
+        #runWithTunnel = [
+        #  {
+        #    socket = "dbus-notifications.sock";
+        #    exec = [ "xdg-dbus-proxy" "{{.Env.DBUS_SESSION_BUS_ADDRESS}}" "{{.Socket}}" "--filter" ];
+        #  }
+        #];
       };
     in
     {

@@ -24,6 +24,8 @@ let
     mountPoint = "${cfg.workspace.basedir}/${key}";
     securityModel = "mapped";
   }) workspaceSpaces;
+  tunnelGuestDir = "/run/tunnels";
+  tunnelHostDir = "${persistenceBaseDir}/tunnels";
 in
 {
   imports = [
@@ -170,6 +172,42 @@ in
       type = options.microvm.shares.type;
       default = [ ];
       description = "Additional host directory shares mounted in the sandbox, using the microvm.shares schema.";
+    };
+
+    runWithTunnel = lib.mkOption {
+      type = lib.types.listOf (
+        lib.types.submodule (
+          { ... }:
+          {
+            options = {
+              socket = lib.mkOption {
+                type = lib.types.str;
+                example = "dbus-notifications.sock";
+                description = "Socket path relative to ${tunnelGuestDir} in the guest and ${tunnelHostDir} on the host.";
+              };
+
+              exec = lib.mkOption {
+                type = lib.types.nonEmptyListOf lib.types.str;
+                example = [
+                  "xdg-dbus-proxy"
+                  "{{.Env.DBUS_SESSION_BUS_ADDRESS}}"
+                  "{{.Socket}}"
+                  "--filter"
+                ];
+                description = "Host-side argv that creates the tunnel socket. Template variables include Socket, GuestSocket, vars entries, and Env.";
+              };
+
+              vars = lib.mkOption {
+                type = lib.types.attrsOf lib.types.str;
+                default = { };
+                description = "Additional string template variables exposed to this tunnel command.";
+              };
+            };
+          }
+        )
+      );
+      default = [ ];
+      description = "Host-side commands that create Unix sockets shared into the guest under ${tunnelGuestDir}.";
     };
 
     swapSize = lib.mkOption {
@@ -334,6 +372,9 @@ in
       commonInit = ''
         echo "🚀 Preparing Agent QEMU Sandbox..."
       ''
+      + lib.optionalString (cfg.runWithTunnel != [ ]) ''
+        ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg tunnelHostDir}
+      ''
       + lib.optionalString nixStoreShareUsesSocket ''
         if [ ! -S ${lib.escapeShellArg cfg.nixStoreShareSocket} ]; then
           echo "agentspace: nixStoreShareSocket does not exist or is not a socket: ${lib.escapeShellArg cfg.nixStoreShareSocket}" >&2
@@ -456,6 +497,12 @@ in
         }
       );
 
+      manifestRunWithTunnel = builtins.map (tunnel: {
+        socket = tunnel.socket;
+        exec = tunnel.exec;
+        vars = tunnel.vars;
+      }) cfg.runWithTunnel;
+
       manifestMounts =
         builtins.map (
           share:
@@ -573,6 +620,7 @@ in
         }) config.microvm.interfaces;
         notifications = notificationManifest;
         write_files = manifestWriteFiles;
+        run_with_tunnel = manifestRunWithTunnel;
       };
 
       tomlFormat = pkgs.formats.toml { };
@@ -587,6 +635,15 @@ in
               cfg.nixStoreShareSocket == null
               || (cfg.nixStoreShareSocket != "" && lib.hasPrefix "/" cfg.nixStoreShareSocket);
             message = "agentspace.sandbox.nixStoreShareSocket must be an absolute socket path when set.";
+          }
+          {
+            assertion = builtins.all (
+              tunnel:
+              tunnel.socket != ""
+              && !(lib.hasPrefix "/" tunnel.socket)
+              && builtins.match "(^|.*/)\\.\\.(/.*|$)" tunnel.socket == null
+            ) cfg.runWithTunnel;
+            message = "agentspace.sandbox.runWithTunnel.*.socket must be a non-empty relative path that does not contain '..'.";
           }
         ];
 
@@ -752,6 +809,15 @@ in
               }
             ]
             ++ workspaceShares
+            ++ lib.optionals (cfg.runWithTunnel != [ ]) [
+              {
+                proto = "virtiofs";
+                tag = "agentspace_tunnels";
+                source = tunnelHostDir;
+                mountPoint = tunnelGuestDir;
+                securityModel = "mapped";
+              }
+            ]
             ++ cfg.shares;
 
           writableStoreOverlay = "/nix/.rw-store";

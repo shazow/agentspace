@@ -85,32 +85,7 @@ func (m *manager) waitForSSHReady(ctx context.Context, socketPath string, watche
 }
 
 func (m *manager) waitForSocketWithStage(ctx context.Context, stage, socketPath string, watchers ...*managedProcess) error {
-	waitCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- m.socketWaiter.Wait(waitCtx, []string{socketPath})
-	}()
-
-	ticker := time.NewTicker(defaultSocketPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case err := <-errCh:
-			if err != nil {
-				return &stageError{Stage: stage, Err: err}
-			}
-			return nil
-		case <-ticker.C:
-			if err := firstUnexpectedExit(stage, watchers...); err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			return &stageError{Stage: stage, Err: ctx.Err()}
-		}
-	}
+	return m.waitForSockets(ctx, stage, []string{socketPath}, watchers...)
 }
 
 func (m *manager) effectiveSSHReadyTimeout() time.Duration {

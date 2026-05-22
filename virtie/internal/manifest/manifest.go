@@ -34,17 +34,18 @@ const (
 var writeFileModePattern = regexp.MustCompile(`^0?[0-7]{3}$`)
 
 type Manifest struct {
-	Identity      Identity      `json:"identity"`
-	Paths         Paths         `json:"paths"`
-	Persistence   Persistence   `json:"persistence"`
-	SSH           SSH           `json:"ssh"`
-	QEMU          QEMU          `json:"qemu"`
-	Volumes       []Volume      `json:"volumes,omitempty"`
-	VSock         VSock         `json:"vsock"`
-	VirtioFS      VirtioFS      `json:"virtiofs"`
-	Workspace     Workspace     `json:"workspace,omitempty"`
-	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
-	Notifications Notifications `json:"notifications,omitempty"`
+	Identity      Identity        `json:"identity"`
+	Paths         Paths           `json:"paths"`
+	Persistence   Persistence     `json:"persistence"`
+	SSH           SSH             `json:"ssh"`
+	QEMU          QEMU            `json:"qemu"`
+	Volumes       []Volume        `json:"volumes,omitempty"`
+	VSock         VSock           `json:"vsock"`
+	VirtioFS      VirtioFS        `json:"virtiofs"`
+	Workspace     Workspace       `json:"workspace,omitempty"`
+	WriteFiles    WriteFiles      `json:"writeFiles,omitempty"`
+	Notifications Notifications   `json:"notifications,omitempty"`
+	RunWithTunnel []RunWithTunnel `json:"runWithTunnel,omitempty"`
 }
 
 type Identity struct {
@@ -245,6 +246,13 @@ type VirtioFS struct {
 	Daemons []VirtioFSDaemon `json:"daemons"`
 }
 
+type RunWithTunnel struct {
+	SocketPath string            `json:"socketPath"`
+	Exec       []string          `json:"exec"`
+	Env        []string          `json:"env,omitempty"`
+	Vars       map[string]string `json:"vars,omitempty"`
+}
+
 type WriteFile struct {
 	Chown       *string `json:"chown,omitempty"`
 	Text        *string `json:"text,omitempty"`
@@ -266,6 +274,15 @@ type ResolvedWriteFile struct {
 	FollowLinks bool
 	WriteBack   bool
 	HostPath    *string
+}
+
+type ResolvedRunWithTunnel struct {
+	SocketPath      string
+	GuestSocketPath string
+	Exec            []string
+	Env             []string
+	Dir             string
+	Vars            map[string]string
 }
 
 func Load(r io.Reader) (*Manifest, error) {
@@ -362,6 +379,12 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
+	for i, tunnel := range m.RunWithTunnel {
+		if err := validateRunWithTunnel(i, tunnel); err != nil {
+			return err
+		}
+	}
+
 	for i, share := range m.QEMU.Devices.VirtioFS {
 		switch {
 		case share.SocketPath == "":
@@ -415,6 +438,42 @@ func (m *Manifest) Validate() error {
 	}
 
 	return nil
+}
+
+func validateRunWithTunnel(index int, tunnel RunWithTunnel) error {
+	switch {
+	case tunnel.SocketPath == "":
+		return fmt.Errorf("manifest.runWithTunnel[%d].socketPath is required", index)
+	case filepath.IsAbs(tunnel.SocketPath):
+		return fmt.Errorf("manifest.runWithTunnel[%d].socketPath must be relative", index)
+	case pathEscapesBase(tunnel.SocketPath):
+		return fmt.Errorf("manifest.runWithTunnel[%d].socketPath must not contain '..'", index)
+	case len(tunnel.Exec) == 0:
+		return fmt.Errorf("manifest.runWithTunnel[%d].exec is required", index)
+	case tunnel.Exec[0] == "":
+		return fmt.Errorf("manifest.runWithTunnel[%d].exec[0] is required", index)
+	}
+	for key := range tunnel.Vars {
+		if key == "Socket" || key == "GuestSocket" || key == "Env" {
+			return fmt.Errorf("manifest.runWithTunnel[%d].vars key %q is reserved", index, key)
+		}
+	}
+	context := executor.Context{
+		"Socket":      tunnel.SocketPath,
+		"GuestSocket": tunnel.SocketPath,
+	}
+	for key, value := range tunnel.Vars {
+		context[key] = value
+	}
+	if _, err := executor.New(context); err != nil {
+		return fmt.Errorf("manifest.runWithTunnel[%d].vars: %w", index, err)
+	}
+	return nil
+}
+
+func pathEscapesBase(path string) bool {
+	cleaned := filepath.Clean(path)
+	return cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
 }
 
 func (m *Manifest) SSHRetryDelay(fallback time.Duration) time.Duration {
@@ -585,6 +644,18 @@ func (m *Manifest) ResolvedSSHReadySocketPath() (string, error) {
 	return m.resolveSocketPath(m.QEMU.SSHReady.SocketPath)
 }
 
+func (m *Manifest) ResolvedTunnelDir() string {
+	return filepath.Join(m.ResolvedPersistenceStateDir(), "tunnels")
+}
+
+func (m *Manifest) ResolvedRunWithTunnelSocketPaths() []string {
+	paths := make([]string, 0, len(m.RunWithTunnel))
+	for _, tunnel := range m.RunWithTunnel {
+		paths = append(paths, filepath.Join(m.ResolvedTunnelDir(), tunnel.SocketPath))
+	}
+	return paths
+}
+
 func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved := m.QEMU
 	resolved.BinaryPath = m.resolvePath(resolved.BinaryPath)
@@ -690,6 +761,41 @@ func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
 		daemons = append(daemons, resolved)
 	}
 	return daemons, nil
+}
+
+func (m *Manifest) ResolvedRunWithTunnels() ([]ResolvedRunWithTunnel, error) {
+	tunnels := make([]ResolvedRunWithTunnel, 0, len(m.RunWithTunnel))
+	tunnelDir := m.ResolvedTunnelDir()
+	for i, tunnel := range m.RunWithTunnel {
+		socketPath := filepath.Join(tunnelDir, tunnel.SocketPath)
+		guestSocketPath := filepath.Join("/run/tunnels", tunnel.SocketPath)
+		context := executor.Context{
+			"Socket":      socketPath,
+			"GuestSocket": guestSocketPath,
+		}
+		for key, value := range tunnel.Vars {
+			context[key] = value
+		}
+		renderer, err := executor.New(context)
+		if err != nil {
+			return nil, fmt.Errorf("manifest.runWithTunnel[%d].exec: %w", i, err)
+		}
+		exec, err := renderer.RenderArgv(tunnel.Exec)
+		if err != nil {
+			return nil, fmt.Errorf("manifest.runWithTunnel[%d].exec: %w", i, err)
+		}
+		env := append([]string(nil), tunnel.Env...)
+		env = append(env, renderer.Env()...)
+		tunnels = append(tunnels, ResolvedRunWithTunnel{
+			SocketPath:      socketPath,
+			GuestSocketPath: guestSocketPath,
+			Exec:            exec,
+			Env:             env,
+			Dir:             tunnelDir,
+			Vars:            cloneStringMap(tunnel.Vars),
+		})
+	}
+	return tunnels, nil
 }
 
 func (m *Manifest) ResolvedNotifications() Notifications {
