@@ -83,25 +83,6 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.graphics.backend must be one of gtk or cocoa")
 	}
 
-	virtioFSShareTags := make(map[string]struct{}, len(m.QEMU.Devices.VirtioFS))
-	for _, share := range m.QEMU.Devices.VirtioFS {
-		virtioFSShareTags[share.Tag] = struct{}{}
-	}
-	for i, daemon := range m.VirtioFS.Daemons {
-		if daemon.Tag == "" {
-			return fmt.Errorf("manifest.virtiofs.daemons[%d].tag is required", i)
-		}
-		if _, ok := virtioFSShareTags[daemon.Tag]; !ok {
-			return fmt.Errorf("manifest.virtiofs.daemons[%d].tag must match a qemu virtiofs share", i)
-		}
-		if daemon.SocketPath == "" {
-			return fmt.Errorf("manifest.virtiofs.daemons[%d].socketPath is required", i)
-		}
-		if daemon.Bin == "" {
-			return fmt.Errorf("manifest.virtiofs.daemons[%d].bin is required", i)
-		}
-	}
-
 	for i, run := range m.Run {
 		if err := validateRun(i, run); err != nil {
 			return err

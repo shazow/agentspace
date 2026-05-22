@@ -20,6 +20,14 @@ func Load(r io.Reader) (*Manifest, error) {
 }
 
 func LoadBytes(data []byte, name string) (*Manifest, error) {
+	doc, err := DecodeDocumentBytes(data, name)
+	if err != nil {
+		return nil, err
+	}
+	return doc.Manifest()
+}
+
+func DecodeDocumentBytes(data []byte, name string) (Document, error) {
 	var doc Document
 	var err error
 	if manifestLooksTOML(data, name) {
@@ -28,9 +36,9 @@ func LoadBytes(data []byte, name string) (*Manifest, error) {
 		err = decodeJSON(data, &doc)
 	}
 	if err != nil {
-		return nil, err
+		return Document{}, err
 	}
-	return doc.Manifest()
+	return doc, nil
 }
 
 func UpdateWorkingDirBytes(data []byte, name string, workingDir string) ([]byte, error) {

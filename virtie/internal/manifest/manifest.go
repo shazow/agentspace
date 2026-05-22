@@ -4,10 +4,17 @@
 // and validation rules that keep the runtime assumptions consistent. The
 // package also resolves working-directory and runtime-directory paths into the
 // concrete host-side paths that the manager uses for sockets, lock files,
-// volumes, QEMU binaries, and virtiofs daemons.
+// volumes, QEMU binaries, and run processes.
 package manifest
 
-import "time"
+import (
+	"log/slog"
+	"time"
+)
+
+type LowerOptions struct {
+	Logger *slog.Logger
+}
 
 type Manifest struct {
 	Identity      Identity      `json:"identity"`
@@ -17,7 +24,6 @@ type Manifest struct {
 	QEMU          QEMU          `json:"qemu"`
 	Volumes       []Volume      `json:"volumes,omitempty"`
 	VSock         VSock         `json:"vsock"`
-	VirtioFS      VirtioFS      `json:"virtiofs"`
 	Workspace     Workspace     `json:"workspace,omitempty"`
 	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
 	Notifications Notifications `json:"notifications,omitempty"`
@@ -99,22 +105,12 @@ type Notifications struct {
 	States  []string `json:"states,omitempty"`
 }
 
-type VirtioFSDaemon struct {
-	Tag        string   `json:"tag"`
-	SourcePath string   `json:"sourcePath"`
-	SocketPath string   `json:"socketPath"`
-	Bin        string   `json:"bin"`
-	Args       []string `json:"args,omitempty"`
-}
-
-type VirtioFS struct {
-	Daemons []VirtioFSDaemon `json:"daemons"`
-}
-
 type Run struct {
-	Exec []string       `json:"exec"`
-	Env  []string       `json:"env,omitempty"`
-	Vars map[string]any `json:"vars,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	Exec       []string       `json:"exec"`
+	Env        []string       `json:"env,omitempty"`
+	SocketPath string         `json:"socketPath,omitempty"`
+	Vars       map[string]any `json:"vars,omitempty"`
 }
 
 type WriteFile struct {
@@ -153,6 +149,7 @@ type ResolvedWriteFile struct {
 }
 
 type ResolvedRun struct {
+	Name string
 	Exec []string
 	Env  []string
 	Dir  string

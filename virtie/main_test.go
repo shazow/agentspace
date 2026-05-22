@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,7 +128,7 @@ func TestLoadLaunchManifestPersistsAbsoluteWorkingDir(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	manifest, err := loadLaunchManifest("manifest.json")
+	manifest, err := loadLaunchManifest("manifest.json", slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("load launch manifest: %v", err)
 	}

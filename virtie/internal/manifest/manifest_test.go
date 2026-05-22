@@ -3,6 +3,8 @@ package manifest
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -74,12 +76,12 @@ func TestLoadReadsFromReader(t *testing.T) {
 		t.Fatalf("unexpected 9p source path: got %q want %q", got, want)
 	}
 
-	daemons, err := loaded.ResolvedVirtioFSDaemons()
+	runs, err := loaded.ResolvedRuns(3)
 	if err != nil {
-		t.Fatalf("resolve virtiofs daemons: %v", err)
+		t.Fatalf("resolve runs: %v", err)
 	}
-	if got, want := daemons[0].Bin, "/tmp/work/bin/virtiofsd-workspace"; got != want {
-		t.Fatalf("unexpected daemon command path: got %q want %q", got, want)
+	if got, want := runs[0].Exec[0], "/tmp/work/bin/virtiofsd-workspace"; got != want {
+		t.Fatalf("unexpected run command path: got %q want %q", got, want)
 	}
 
 	if got, want := loaded.ResolvedVolumes(), []Volume{
@@ -172,6 +174,7 @@ func TestDocumentRunLowersAndResolvesCommand(t *testing.T) {
 
 	document := validDocument()
 	document.Workspace = WorkspaceInput{GuestDir: "/home/agent/workspace"}
+	document.Mounts = nil
 	document.Run = []RunInput{
 		{
 			Exec: []string{
@@ -270,6 +273,62 @@ func TestDocumentRunValidation(t *testing.T) {
 				t.Fatalf("expected %q error, got %v", tt.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestDocumentVirtioFSUsesExistingSocketWithoutRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, ".virtie", "fs.sock")
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
+		t.Fatalf("create socket directory: %v", err)
+	}
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen on virtiofs socket: %v", err)
+	}
+	defer listener.Close()
+
+	document := validDocument()
+	document.WorkingDir = tmpDir
+
+	var logOutput bytes.Buffer
+	manifest, err := document.ManifestWithOptions(LowerOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+
+	if len(manifest.Run) != 0 {
+		t.Fatalf("expected existing virtiofs socket to suppress generated run, got %#v", manifest.Run)
+	}
+	if !strings.Contains(logOutput.String(), "using existing virtiofs socket") || !strings.Contains(logOutput.String(), socketPath) {
+		t.Fatalf("expected existing socket log for %q, got %q", socketPath, logOutput.String())
+	}
+}
+
+func TestDocumentVirtioFSWarnsAndGeneratesRunForExistingNonSocket(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, ".virtie", "fs.sock")
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
+		t.Fatalf("create socket directory: %v", err)
+	}
+	if err := os.WriteFile(socketPath, []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale socket path: %v", err)
+	}
+
+	document := validDocument()
+	document.WorkingDir = tmpDir
+
+	var logOutput bytes.Buffer
+	manifest, err := document.ManifestWithOptions(LowerOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+
+	if len(manifest.Run) != 1 || manifest.Run[0].Name != "virtiofsd[workspace]" {
+		t.Fatalf("expected generated virtiofs run, got %#v", manifest.Run)
+	}
+	if !strings.Contains(logOutput.String(), "not a socket") || !strings.Contains(logOutput.String(), socketPath) {
+		t.Fatalf("expected non-socket warning for %q, got %q", socketPath, logOutput.String())
 	}
 }
 
@@ -506,7 +565,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			manifest := validManifest()
 			manifest.Paths.RuntimeDir = tt.runtimeDir
-			manifest.VirtioFS.Daemons[0].SocketPath = tt.socketPath
+			manifest.Run[0].SocketPath = tt.socketPath
 			manifest.QEMU.Devices.VirtioFS[0].SocketPath = tt.socketPath
 			manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 			manifest.QEMU.SSHReady.SocketPath = "ssh-ready.sock"
@@ -570,12 +629,12 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 				t.Fatalf("unexpected qemu ssh readiness socket path: got %q want %q", got, want)
 			}
 
-			daemons, err := manifest.ResolvedVirtioFSDaemons()
+			runSocketPaths, err := manifest.ResolvedSocketPaths()
 			if err != nil {
-				t.Fatalf("resolve virtiofs daemons: %v", err)
+				t.Fatalf("resolve run socket paths: %v", err)
 			}
-			if got, want := daemons[0].SocketPath, tt.wantSocket; got != want {
-				t.Fatalf("unexpected daemon socket path: got %q want %q", got, want)
+			if got, want := runSocketPaths, []string{tt.wantSocket}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("unexpected run socket paths: got %v want %v", got, want)
 			}
 		})
 	}
@@ -873,7 +932,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 
 func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	manifest := validManifest()
-	manifest.VirtioFS.Daemons = nil
+	manifest.Run = nil
 	manifest.QEMU.Devices.VirtioFS[0].SocketPath = "/var/run/virtiofs-nix-store.sock"
 
 	if err := manifest.Validate(); err != nil {
@@ -905,21 +964,20 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	}
 }
 
-func TestResolvedVirtioFSDaemonsRenderExecTemplates(t *testing.T) {
+func TestResolvedVirtioFSRunsRenderExecTemplates(t *testing.T) {
 	manifest := validManifest()
-	manifest.VirtioFS.Daemons[0].Bin = "bin/virtiofsd-{{.MountTag}}"
-	manifest.VirtioFS.Daemons[0].Args = []string{"--socket-path={{.Socket}}", "--source={{.MountSource}}", "--user={{.Env.USER}}"}
+	manifest.Run[0].Exec = []string{"/tmp/work/bin/virtiofsd-{{.MountTag}}", "--socket-path={{.Socket}}", "--source={{.MountSource}}", "--user={{.Env.USER}}"}
 	t.Setenv("USER", "template-user")
 
-	daemons, err := manifest.ResolvedVirtioFSDaemons()
+	runs, err := manifest.ResolvedRuns(3)
 	if err != nil {
-		t.Fatalf("resolve virtiofs daemons: %v", err)
+		t.Fatalf("resolve runs: %v", err)
 	}
-	if got, want := daemons[0].Bin, "/tmp/work/bin/virtiofsd-workspace"; got != want {
-		t.Fatalf("unexpected daemon path: got %q want %q", got, want)
+	if got, want := runs[0].Exec[0], "/tmp/work/bin/virtiofsd-workspace"; got != want {
+		t.Fatalf("unexpected run path: got %q want %q", got, want)
 	}
-	if got, want := daemons[0].Args, []string{"--socket-path=/tmp/work/fs.sock", "--source=/tmp/work", "--user=template-user"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected daemon args: got %#v want %#v", got, want)
+	if got, want := runs[0].Exec[1:], []string{"--socket-path=/tmp/work/fs.sock", "--source=/tmp/work", "--user=template-user"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected run args: got %#v want %#v", got, want)
 	}
 }
 
@@ -1350,7 +1408,7 @@ func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest.QEMU.Devices.Block = nil
 	manifest.QEMU.Devices.Network = nil
 	manifest.Volumes = nil
-	manifest.VirtioFS.Daemons = nil
+	manifest.Run = nil
 
 	if err := manifest.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)

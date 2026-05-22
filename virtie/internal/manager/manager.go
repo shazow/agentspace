@@ -313,12 +313,6 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	started = append(started, runProcesses...)
 
-	virtiofsd, err := m.startVirtioFSDaemons(manifest)
-	if err != nil {
-		return &stageError{Stage: "virtiofs startup", Err: err}
-	}
-	started = append(started, virtiofsd...)
-
 	if len(virtioFSSocketPaths) > 0 {
 		m.logger.Info("waiting for virtiofs sockets")
 		if err := m.waitForSockets(launchCtx, "virtiofs startup", virtioFSSocketPaths, started...); err != nil {
@@ -556,55 +550,6 @@ func (m *manager) startManagedProcess(spec processSpec) (*managedProcess, error)
 	return mp, nil
 }
 
-func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedProcess, error) {
-	daemons, err := manifest.ResolvedVirtioFSDaemons()
-	if err != nil {
-		return nil, err
-	}
-	started := make([]*managedProcess, 0, len(daemons))
-
-	for _, daemon := range daemons {
-		name := "virtiofsd"
-		if daemon.Tag != "" {
-			name = fmt.Sprintf("virtiofsd[%s]", daemon.Tag)
-			m.logger.Info("starting virtiofsd", "tag", daemon.Tag)
-		} else {
-			m.logger.Info("starting virtiofsd")
-		}
-
-		if info, err := os.Stat(daemon.SocketPath); err == nil {
-			if info.Mode()&os.ModeSocket == 0 {
-				m.logger.Warn("virtiofs socket path exists but is not a socket (possibly leftover from crash); starting virtiofsd anyway", "socket", daemon.SocketPath)
-			} else {
-				m.logger.Info("using existing virtiofs socket", "socket", daemon.SocketPath)
-				continue
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("stat virtiofs socket %q: %w", daemon.SocketPath, err)
-		}
-
-		env := []string{fmt.Sprintf("VIRTIOFSD_SOCKET=%s", daemon.SocketPath)}
-		process, err := m.startManagedProcess(processSpec{
-			Name:         name,
-			Path:         daemon.Bin,
-			Args:         daemon.Args,
-			Dir:          manifest.Paths.WorkingDir,
-			Env:          env,
-			ProcessGroup: true,
-			Stdout:       os.Stderr,
-			Stderr:       os.Stderr,
-		})
-		if err != nil {
-			_ = m.stopAll(started)
-			return nil, err
-		}
-
-		started = append(started, process)
-	}
-
-	return started, nil
-}
-
 func (m *manager) startRuns(cid int, manifest *manifest.Manifest) ([]*managedProcess, error) {
 	runs, err := manifest.ResolvedRuns(cid)
 	if err != nil {
@@ -617,7 +562,12 @@ func (m *manager) startRuns(cid int, manifest *manifest.Manifest) ([]*managedPro
 	started := make([]*managedProcess, 0, len(runs))
 	for i, run := range runs {
 		name := fmt.Sprintf("run[%d]", i)
-		m.logger.Info("starting run", "index", i)
+		if run.Name != "" {
+			name = run.Name
+			m.logger.Info("starting run", "name", name, "index", i)
+		} else {
+			m.logger.Info("starting run", "index", i)
+		}
 		process, err := m.startManagedProcess(processSpec{
 			Name:         name,
 			Path:         run.Exec[0],

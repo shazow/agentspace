@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -17,6 +18,10 @@ import (
 )
 
 func (d Document) Manifest() (*Manifest, error) {
+	return d.ManifestWithOptions(LowerOptions{})
+}
+
+func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 	if d.Kernel.Path == "" {
 		return nil, fmt.Errorf("manifest.kernel.path is required")
 	}
@@ -54,7 +59,6 @@ func (d Document) Manifest() (*Manifest, error) {
 		},
 		Notifications: lowerNotifications(d.Notifications),
 		Workspace:     lowerWorkspace(d.Workspace),
-		Run:           lowerRun(d.Run),
 	}
 	if m.Identity.HostName == "" {
 		m.Identity.HostName = defaultHostName
@@ -83,7 +87,11 @@ func (d Document) Manifest() (*Manifest, error) {
 	}
 	m.QEMU = qemu
 	m.Volumes = lowerVolumes(d.Volumes)
-	m.VirtioFS.Daemons = lowerVirtioFSDaemons(d.Mounts)
+	virtioFSRuns, err := m.lowerVirtioFSRuns(d.Mounts, options)
+	if err != nil {
+		return nil, err
+	}
+	m.Run = append(virtioFSRuns, lowerRun(d.Run)...)
 	m.WriteFiles = lowerWriteFiles(d.WriteFiles)
 
 	if err := m.Validate(); err != nil {
@@ -436,16 +444,38 @@ func lowerNinePMounts(mounts []MountInput, transport string) []QEMUNinePShare {
 	return shares
 }
 
-func lowerVirtioFSDaemons(mounts []MountInput) []VirtioFSDaemon {
-	daemons := make([]VirtioFSDaemon, 0, len(mounts))
+func (m *Manifest) lowerVirtioFSRuns(mounts []MountInput, options LowerOptions) ([]Run, error) {
+	runs := make([]Run, 0, len(mounts))
 	for _, mount := range mounts {
 		if mount.effectiveType() != "virtiofs" || mount.VirtioFS.Socket == "" {
+			continue
+		}
+		if mount.VirtioFS.Bin == "" && len(mount.VirtioFS.Args) == 0 {
 			continue
 		}
 		bin := mount.VirtioFS.Bin
 		if bin == "" {
 			bin = "virtiofsd"
 		}
+		socketPath, err := m.resolveSocketPath(mount.VirtioFS.Socket)
+		if err != nil {
+			return nil, err
+		}
+		if info, err := os.Stat(socketPath); err == nil {
+			if info.Mode()&os.ModeSocket == 0 {
+				if options.Logger != nil {
+					options.Logger.Warn("virtiofs socket path exists but is not a socket (possibly leftover from crash); starting virtiofsd anyway", "socket", socketPath)
+				}
+			} else {
+				if options.Logger != nil {
+					options.Logger.Info("using existing virtiofs socket", "socket", socketPath)
+				}
+				continue
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("stat virtiofs socket %q: %w", socketPath, err)
+		}
+
 		args := append([]string(nil), mount.VirtioFS.Args...)
 		if len(args) == 0 {
 			args = []string{
@@ -454,15 +484,19 @@ func lowerVirtioFSDaemons(mounts []MountInput) []VirtioFSDaemon {
 				"--tag={{.MountTag}}",
 			}
 		}
-		daemons = append(daemons, VirtioFSDaemon{
-			Tag:        mount.Tag,
-			SourcePath: mount.SourcePath,
+		runs = append(runs, Run{
+			Name:       fmt.Sprintf("virtiofsd[%s]", mount.Tag),
+			Exec:       append([]string{m.resolvePath(bin)}, args...),
+			Env:        []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
 			SocketPath: mount.VirtioFS.Socket,
-			Bin:        bin,
-			Args:       args,
+			Vars: map[string]any{
+				"Socket":      socketPath,
+				"MountTag":    mount.Tag,
+				"MountSource": m.resolvePath(mount.SourcePath),
+			},
 		})
 	}
-	return daemons
+	return runs, nil
 }
 
 func lowerNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInput, transport string, cpus CPUCount) ([]QEMUNetDevice, error) {

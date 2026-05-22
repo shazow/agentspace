@@ -146,12 +146,7 @@ func (m *manager) effectiveSuspendSignalTimeout(manifest *manifest.Manifest) tim
 		shutdownDelay = defaultShutdownDelay
 	}
 
-	teardownProcesses := 2 // qemu plus the active ssh session when present.
-	if daemons, err := manifest.ResolvedVirtioFSDaemons(); err == nil {
-		teardownProcesses += len(daemons)
-	} else {
-		teardownProcesses += len(manifest.VirtioFS.Daemons)
-	}
+	teardownProcesses := 2 + len(manifest.Run) // qemu, active ssh session when present, plus run processes.
 
 	return defaultLaunchSignalTimeout +
 		m.effectiveQMPMigrationTimeout() +

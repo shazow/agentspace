@@ -247,18 +247,18 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 			AutoCreate: true,
 		},
 	}
-	cfg.VirtioFS.Daemons = []manifest.VirtioFSDaemon{
+	cfg.Run = []manifest.Run{
 		{
-			Tag:        "ro-store",
-			SourcePath: "/nix/store",
+			Name:       "virtiofsd[ro-store]",
+			Exec:       []string{"/bin/virtiofsd-ro-store"},
 			SocketPath: "sock-a",
-			Bin:        "/bin/virtiofsd-ro-store",
+			Vars:       map[string]any{"Socket": filepath.Join(tmpDir, "sock-a")},
 		},
 		{
-			Tag:        "workspace",
-			SourcePath: ".",
+			Name:       "virtiofsd[workspace]",
+			Exec:       []string{"/bin/virtiofsd-workspace"},
 			SocketPath: "sock-b",
-			Bin:        "/bin/virtiofsd-workspace",
+			Vars:       map[string]any{"Socket": filepath.Join(tmpDir, "sock-b")},
 		},
 	}
 	cfg.QEMU.Devices.VirtioFS = []manifest.QEMUVirtioFSShare{
@@ -417,12 +417,10 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 	cfg.QEMU.QMP.SocketPath = "qmp.sock"
 	cfg.Volumes[0].AutoCreate = false
 	cfg.Workspace = manifest.Workspace{GuestDir: "/home/agent/workspace"}
-	cfg.Run = []manifest.Run{
-		{
-			Exec: []string{"/bin/proxy", "--workspace={{.Workspace}}", "--cid={{.CID}}", "--name={{.Name}}"},
-			Vars: map[string]any{"Name": "notifications"},
-		},
-	}
+	cfg.Run = append(cfg.Run, manifest.Run{
+		Exec: []string{"/bin/proxy", "--workspace={{.Workspace}}", "--cid={{.CID}}", "--name={{.Name}}"},
+		Vars: map[string]any{"Name": "notifications"},
+	})
 
 	var eventsMu sync.Mutex
 	var events []string
@@ -470,11 +468,11 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 		t.Fatalf("launch with run: %v", err)
 	}
 
-	runName := "run[0]"
+	runName := "run[1]"
 	if !containsString(runner.starts, runName) {
 		t.Fatalf("expected run process start in %v", runner.starts)
 	}
-	if got, want := runner.starts, []string{runName, "virtiofsd[workspace]", "qemu", "ssh"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.starts, []string{"virtiofsd[workspace]", runName, "qemu", "ssh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
 	if got, want := runner.processDirs[runName], tmpDir; got != want {
@@ -506,8 +504,8 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 	gotEvents := append([]string(nil), events...)
 	eventsMu.Unlock()
 	wantEvents := []string{
-		"start:" + runName,
 		"start:virtiofsd[workspace]",
+		"start:" + runName,
 		"wait:fs.sock",
 		"start:qemu",
 		"wait:qmp.sock",
@@ -524,6 +522,7 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Persistence.StateDir = ".virtie"
 	cfg.Volumes[0].AutoCreate = false
+	cfg.QEMU.Devices.VirtioFS = nil
 	cfg.Run = []manifest.Run{
 		{
 			Exec: []string{"/bin/proxy"},
@@ -555,9 +554,6 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 	if containsString(runner.starts, "qemu") {
 		t.Fatalf("expected qemu not to start, got starts %v", runner.starts)
 	}
-	if containsString(runner.starts, "virtiofsd[workspace]") {
-		t.Fatalf("expected virtiofsd not to start after run failure, got starts %v", runner.starts)
-	}
 	if !strings.Contains(logOutput.String(), "stats:") {
 		t.Fatalf("expected normal launch cleanup to emit stats, got %q", logOutput.String())
 	}
@@ -569,6 +565,7 @@ func TestManagerLaunchStopsStartedRunsWhenLaterRunFails(t *testing.T) {
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Persistence.StateDir = ".virtie"
 	cfg.Volumes[0].AutoCreate = false
+	cfg.QEMU.Devices.VirtioFS = nil
 	cfg.Run = []manifest.Run{
 		{
 			Exec: []string{"/bin/proxy-one"},
@@ -2266,7 +2263,7 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 	}
 	defer listener.Close()
 	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
-	cfg.VirtioFS.Daemons = nil
+	cfg.Run = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2318,7 +2315,7 @@ func TestManagerLaunchRejectsMissingExternalVirtioFSSocket(t *testing.T) {
 	cfg.Volumes[0].AutoCreate = false
 	externalSocket := filepath.Join(tmpDir, "missing-virtiofs.sock")
 	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
-	cfg.VirtioFS.Daemons = nil
+	cfg.Run = nil
 
 	runner := &fakeRunner{}
 	manager := &manager{
@@ -2343,7 +2340,7 @@ func TestManagerLaunchSkipsVirtioFSReadinessWhenNoVirtioFSDevices(t *testing.T) 
 	cfg.QEMU.Devices.VirtioFS = nil
 	cfg.QEMU.Devices.Block = nil
 	cfg.Volumes = nil
-	cfg.VirtioFS.Daemons = nil
+	cfg.Run = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2411,7 +2408,7 @@ func TestManagerLaunchWithOnlyNinePShareDoesNotWaitForVirtioFS(t *testing.T) {
 		},
 	}
 	cfg.Volumes = nil
-	cfg.VirtioFS.Daemons = nil
+	cfg.Run = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2694,11 +2691,10 @@ func TestManagerSuspendPreservesExistingSavedStateWithoutSignal(t *testing.T) {
 func TestEffectiveSuspendSignalTimeoutIncludesMigrationAndTeardown(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	cfg.VirtioFS.Daemons = append(cfg.VirtioFS.Daemons, manifest.VirtioFSDaemon{
-		Tag:        "cache",
-		SourcePath: ".",
+	cfg.Run = append(cfg.Run, manifest.Run{
+		Name:       "virtiofsd[cache]",
+		Exec:       []string{"/tmp/virtiofsd-cache"},
 		SocketPath: "cache.sock",
-		Bin:        "/tmp/virtiofsd-cache",
 	})
 
 	manager := &manager{
@@ -3377,7 +3373,7 @@ func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest.QEMU.Devices.Block = nil
 	manifest.QEMU.Devices.Network = nil
 	manifest.Volumes = nil
-	manifest.VirtioFS.Daemons = nil
+	manifest.Run = nil
 
 	spec, err := buildQEMUSpec(manifest, 42)
 	if err != nil {
@@ -3431,12 +3427,14 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	}
 }
 
-func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
+func TestStartRunsUsesNamedVirtioFSRunEnv(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)
 
 	cfg := validManifest(t.TempDir())
 	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirXDG}
+	wantSocket := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "fs.sock")
+	cfg.Run[0].Vars["Socket"] = wantSocket
 
 	runner := &fakeRunner{}
 	manager := &manager{
@@ -3444,66 +3442,15 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 		runner: runner,
 	}
 
-	if _, err := manager.startVirtioFSDaemons(cfg); err != nil {
-		t.Fatalf("start virtiofs daemons: %v", err)
+	if _, err := manager.startRuns(3, cfg); err != nil {
+		t.Fatalf("start runs: %v", err)
 	}
 
-	wantSocket := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "fs.sock")
 	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIOFSD_SOCKET="+wantSocket) {
-		t.Fatalf("expected virtiofs daemon env to contain resolved socket path %q: %v", wantSocket, got)
+		t.Fatalf("expected virtiofs run env to contain resolved socket path %q: %v", wantSocket, got)
 	}
 	if !runner.processGroups["virtiofsd[workspace]"] {
-		t.Fatal("expected virtiofs daemon to run in its own process group")
-	}
-}
-
-func TestStartVirtioFSDaemonsUsesExistingSocketPath(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := validManifest(tmpDir)
-	socketPath := filepath.Join(tmpDir, "fs.sock")
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatalf("listen on stale socket path: %v", err)
-	}
-	defer listener.Close()
-
-	runner := &fakeRunner{}
-	manager := &manager{
-		logger: slog.New(slog.DiscardHandler),
-		runner: runner,
-	}
-
-	if _, err := manager.startVirtioFSDaemons(cfg); err != nil {
-		t.Fatalf("start virtiofs daemons: %v", err)
-	}
-	if containsString(runner.starts, "virtiofsd[workspace]") {
-		t.Fatalf("expected virtiofs daemon not to start with existing socket path, got starts %v", runner.starts)
-	}
-}
-
-func TestStartVirtioFSDaemonsWarnsAndStartsWithExistingNonSocketPath(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := validManifest(tmpDir)
-	socketPath := filepath.Join(tmpDir, "fs.sock")
-	if err := os.WriteFile(socketPath, []byte("stale"), 0o600); err != nil {
-		t.Fatalf("write stale non-socket path: %v", err)
-	}
-
-	runner := &fakeRunner{}
-	var logOutput bytes.Buffer
-	manager := &manager{
-		logger: slog.New(slog.NewTextHandler(&logOutput, nil)),
-		runner: runner,
-	}
-
-	if _, err := manager.startVirtioFSDaemons(cfg); err != nil {
-		t.Fatalf("start virtiofs daemons: %v", err)
-	}
-	if !containsString(runner.starts, "virtiofsd[workspace]") {
-		t.Fatalf("expected virtiofs daemon to start with existing non-socket path, got starts %v", runner.starts)
-	}
-	if !strings.Contains(logOutput.String(), "not a socket") || !strings.Contains(logOutput.String(), socketPath) {
-		t.Fatalf("expected non-socket warning for %q, got logs %q", socketPath, logOutput.String())
+		t.Fatal("expected virtiofs run to run in its own process group")
 	}
 }
 
@@ -3618,14 +3565,19 @@ func validManifest(workingDir string) *manifest.Manifest {
 				AutoCreate: true,
 			},
 		},
-		VirtioFS: manifest.VirtioFS{Daemons: []manifest.VirtioFSDaemon{
+		Run: []manifest.Run{
 			{
-				Tag:        "workspace",
-				SourcePath: ".",
+				Name:       "virtiofsd[workspace]",
+				Exec:       []string{"/tmp/virtiofsd-workspace", "--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"},
+				Env:        []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
 				SocketPath: "fs.sock",
-				Bin:        "/tmp/virtiofsd-workspace",
+				Vars: map[string]any{
+					"Socket":      filepath.Join(workingDir, "fs.sock"),
+					"MountTag":    "workspace",
+					"MountSource": workingDir,
+				},
 			},
-		}},
+		},
 	}
 }
 

@@ -62,9 +62,12 @@ func (m *Manifest) resolveSocketPath(path string) (string, error) {
 }
 
 func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
-	paths := make([]string, 0, len(m.VirtioFS.Daemons))
-	for _, daemon := range m.VirtioFS.Daemons {
-		resolved, err := m.resolveSocketPath(daemon.SocketPath)
+	paths := make([]string, 0, len(m.Run))
+	for _, run := range m.Run {
+		if run.SocketPath == "" {
+			continue
+		}
+		resolved, err := m.resolveSocketPath(run.SocketPath)
 		if err != nil {
 			return nil, err
 		}
@@ -86,19 +89,26 @@ func (m *Manifest) ResolvedVirtioFSSocketPaths() ([]string, error) {
 }
 
 func (m *Manifest) ResolvedExternalVirtioFSSocketPaths() ([]string, error) {
-	managedTags := make(map[string]struct{}, len(m.VirtioFS.Daemons))
-	for _, daemon := range m.VirtioFS.Daemons {
-		managedTags[daemon.Tag] = struct{}{}
+	managedSockets := make(map[string]struct{}, len(m.Run))
+	for _, run := range m.Run {
+		if run.SocketPath == "" {
+			continue
+		}
+		resolved, err := m.resolveSocketPath(run.SocketPath)
+		if err != nil {
+			return nil, err
+		}
+		managedSockets[resolved] = struct{}{}
 	}
 
 	paths := make([]string, 0, len(m.QEMU.Devices.VirtioFS))
 	for _, share := range m.QEMU.Devices.VirtioFS {
-		if _, managed := managedTags[share.Tag]; managed {
-			continue
-		}
 		resolved, err := m.resolveSocketPath(share.SocketPath)
 		if err != nil {
 			return nil, err
+		}
+		if _, managed := managedSockets[resolved]; managed {
+			continue
 		}
 		paths = append(paths, resolved)
 	}
@@ -183,38 +193,6 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	return resolved, nil
 }
 
-func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
-	daemons := make([]VirtioFSDaemon, 0, len(m.VirtioFS.Daemons))
-	for _, daemon := range m.VirtioFS.Daemons {
-		resolved := daemon
-		socketPath, err := m.resolveSocketPath(daemon.SocketPath)
-		if err != nil {
-			return nil, err
-		}
-		resolved.SocketPath = socketPath
-		renderer, err := executor.New(executor.Context{
-			"Socket":      socketPath,
-			"MountTag":    daemon.Tag,
-			"MountSource": m.resolvePath(daemon.SourcePath),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s]: %w", daemon.Tag, err)
-		}
-		bin, err := renderer.RenderString(daemon.Bin)
-		if err != nil {
-			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s].bin: %w", daemon.Tag, err)
-		}
-		args, err := renderer.RenderArgv(daemon.Args)
-		if err != nil {
-			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s].args: %w", daemon.Tag, err)
-		}
-		resolved.Bin = m.resolvePath(bin)
-		resolved.Args = args
-		daemons = append(daemons, resolved)
-	}
-	return daemons, nil
-}
-
 func (m *Manifest) ResolvedRuns(cid int) ([]ResolvedRun, error) {
 	runs := make([]ResolvedRun, 0, len(m.Run))
 	for i, run := range m.Run {
@@ -234,9 +212,13 @@ func (m *Manifest) ResolvedRuns(cid int) ([]ResolvedRun, error) {
 		if err != nil {
 			return nil, fmt.Errorf("manifest.run[%d].exec: %w", i, err)
 		}
-		env := append([]string(nil), run.Env...)
+		env, err := renderer.RenderArgv(run.Env)
+		if err != nil {
+			return nil, fmt.Errorf("manifest.run[%d].env: %w", i, err)
+		}
 		env = append(env, renderer.Env()...)
 		runs = append(runs, ResolvedRun{
+			Name: run.Name,
 			Exec: exec,
 			Env:  env,
 			Dir:  m.Paths.WorkingDir,
