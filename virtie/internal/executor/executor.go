@@ -118,31 +118,10 @@ func scalarEnvValue(value any) (string, bool) {
 	switch value := value.(type) {
 	case string:
 		return value, true
-	case bool:
-		return fmt.Sprint(value), true
-	case int:
-		return fmt.Sprint(value), true
-	case int8:
-		return fmt.Sprint(value), true
-	case int16:
-		return fmt.Sprint(value), true
-	case int32:
-		return fmt.Sprint(value), true
-	case int64:
-		return fmt.Sprint(value), true
-	case uint:
-		return fmt.Sprint(value), true
-	case uint8:
-		return fmt.Sprint(value), true
-	case uint16:
-		return fmt.Sprint(value), true
-	case uint32:
-		return fmt.Sprint(value), true
-	case uint64:
-		return fmt.Sprint(value), true
-	case float32:
-		return fmt.Sprint(value), true
-	case float64:
+	case bool,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
 		return fmt.Sprint(value), true
 	case fmt.Stringer:
 		return value.String(), true
