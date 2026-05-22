@@ -3457,6 +3457,56 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	}
 }
 
+func TestStartVirtioFSDaemonsUsesExistingSocketPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	socketPath := filepath.Join(tmpDir, "fs.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen on stale socket path: %v", err)
+	}
+	defer listener.Close()
+
+	runner := &fakeRunner{}
+	manager := &manager{
+		logger: slog.New(slog.DiscardHandler),
+		runner: runner,
+	}
+
+	if _, err := manager.startVirtioFSDaemons(cfg); err != nil {
+		t.Fatalf("start virtiofs daemons: %v", err)
+	}
+	if containsString(runner.starts, "virtiofsd[workspace]") {
+		t.Fatalf("expected virtiofs daemon not to start with existing socket path, got starts %v", runner.starts)
+	}
+}
+
+func TestStartVirtioFSDaemonsWarnsAndStartsWithExistingNonSocketPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	socketPath := filepath.Join(tmpDir, "fs.sock")
+	if err := os.WriteFile(socketPath, []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale non-socket path: %v", err)
+	}
+
+	runner := &fakeRunner{}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		logger: slog.New(slog.NewTextHandler(&logOutput, nil)),
+		runner: runner,
+	}
+
+	if _, err := manager.startVirtioFSDaemons(cfg); err != nil {
+		t.Fatalf("start virtiofs daemons: %v", err)
+	}
+	if !containsString(runner.starts, "virtiofsd[workspace]") {
+		t.Fatalf("expected virtiofs daemon to start with existing non-socket path, got starts %v", runner.starts)
+	}
+	if !strings.Contains(logOutput.String(), "not a socket") || !strings.Contains(logOutput.String(), socketPath) {
+		t.Fatalf("expected non-socket warning for %q, got logs %q", socketPath, logOutput.String())
+	}
+}
+
 func assertLaunchStatsLog(t *testing.T, logs string, want []string, unwanted []string) {
 	t.Helper()
 

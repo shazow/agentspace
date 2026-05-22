@@ -574,10 +574,11 @@ func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 
 		if info, err := os.Stat(daemon.SocketPath); err == nil {
 			if info.Mode()&os.ModeSocket == 0 {
-				return nil, fmt.Errorf("external virtiofs socket %q is not a socket", daemon.SocketPath)
+				m.logger.Warn("virtiofs socket path exists but is not a socket (possibly leftover from crash); starting virtiofsd anyway", "socket", daemon.SocketPath)
+			} else {
+				m.logger.Info("using existing virtiofs socket", "socket", daemon.SocketPath)
+				continue
 			}
-			m.logger.Info("using existing virtiofs socket", "socket", daemon.SocketPath)
-			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("stat virtiofs socket %q: %w", daemon.SocketPath, err)
 		}
