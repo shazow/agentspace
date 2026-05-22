@@ -248,7 +248,8 @@ type VirtioFS struct {
 
 type RunWithTunnel struct {
 	SocketPath string            `json:"socketPath"`
-	Command    Command           `json:"command"`
+	Exec       []string          `json:"exec"`
+	Env        []string          `json:"env,omitempty"`
 	Vars       map[string]string `json:"vars,omitempty"`
 }
 
@@ -278,7 +279,9 @@ type ResolvedWriteFile struct {
 type ResolvedRunWithTunnel struct {
 	SocketPath      string
 	GuestSocketPath string
-	Command         Command
+	Exec            []string
+	Env             []string
+	Dir             string
 	Vars            map[string]string
 }
 
@@ -445,8 +448,10 @@ func validateRunWithTunnel(index int, tunnel RunWithTunnel) error {
 		return fmt.Errorf("manifest.runWithTunnel[%d].socketPath must be relative", index)
 	case pathEscapesBase(tunnel.SocketPath):
 		return fmt.Errorf("manifest.runWithTunnel[%d].socketPath must not contain '..'", index)
-	case tunnel.Command.Path == "":
-		return fmt.Errorf("manifest.runWithTunnel[%d].command.path is required", index)
+	case len(tunnel.Exec) == 0:
+		return fmt.Errorf("manifest.runWithTunnel[%d].exec is required", index)
+	case tunnel.Exec[0] == "":
+		return fmt.Errorf("manifest.runWithTunnel[%d].exec[0] is required", index)
 	}
 	for key := range tunnel.Vars {
 		if key == "Socket" || key == "GuestSocket" || key == "Env" {
@@ -773,16 +778,20 @@ func (m *Manifest) ResolvedRunWithTunnels() ([]ResolvedRunWithTunnel, error) {
 		}
 		renderer, err := executor.New(context)
 		if err != nil {
-			return nil, fmt.Errorf("manifest.runWithTunnel[%d].command: %w", i, err)
+			return nil, fmt.Errorf("manifest.runWithTunnel[%d].exec: %w", i, err)
 		}
-		command, err := RenderCommand(tunnel.Command, renderer)
+		exec, err := renderer.RenderArgv(tunnel.Exec)
 		if err != nil {
-			return nil, fmt.Errorf("manifest.runWithTunnel[%d].command: %w", i, err)
+			return nil, fmt.Errorf("manifest.runWithTunnel[%d].exec: %w", i, err)
 		}
+		env := append([]string(nil), tunnel.Env...)
+		env = append(env, renderer.Env()...)
 		tunnels = append(tunnels, ResolvedRunWithTunnel{
 			SocketPath:      socketPath,
 			GuestSocketPath: guestSocketPath,
-			Command:         command,
+			Exec:            exec,
+			Env:             env,
+			Dir:             tunnelDir,
 			Vars:            cloneStringMap(tunnel.Vars),
 		})
 	}

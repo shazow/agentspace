@@ -407,11 +407,8 @@ func TestManagerLaunchStartsRunWithTunnels(t *testing.T) {
 	cfg.RunWithTunnel = []manifest.RunWithTunnel{
 		{
 			SocketPath: "dbus-notifications.sock",
-			Command: manifest.Command{
-				Path: "/bin/proxy",
-				Args: []string{"--socket={{.Socket}}", "--guest={{.GuestSocket}}", "--name={{.Name}}"},
-			},
-			Vars: map[string]string{"Name": "notifications"},
+			Exec:       []string{"/bin/proxy", "--socket={{.Socket}}", "--guest={{.GuestSocket}}", "--name={{.Name}}"},
+			Vars:       map[string]string{"Name": "notifications"},
 		},
 	}
 
@@ -527,9 +524,7 @@ func TestManagerLaunchFailsWhenRunWithTunnelExitsBeforeSocketReady(t *testing.T)
 	cfg.RunWithTunnel = []manifest.RunWithTunnel{
 		{
 			SocketPath: "dbus-notifications.sock",
-			Command: manifest.Command{
-				Path: "/bin/proxy",
-			},
+			Exec:       []string{"/bin/proxy"},
 		},
 	}
 
@@ -574,6 +569,62 @@ func TestManagerLaunchFailsWhenRunWithTunnelExitsBeforeSocketReady(t *testing.T)
 	}
 	if !strings.Contains(logOutput.String(), "stats:") {
 		t.Fatalf("expected normal launch cleanup to emit stats, got %q", logOutput.String())
+	}
+}
+
+func TestManagerLaunchStopsStartedRunWithTunnelsWhenLaterTunnelFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Volumes[0].AutoCreate = false
+	cfg.RunWithTunnel = []manifest.RunWithTunnel{
+		{
+			SocketPath: "one.sock",
+			Exec:       []string{"/bin/proxy-one"},
+		},
+		{
+			SocketPath: "two.sock",
+			Exec:       []string{"/bin/proxy-two"},
+		},
+	}
+
+	firstName := "run_with_tunnel[/run/tunnels/one.sock]"
+	secondName := "run_with_tunnel[/run/tunnels/two.sock]"
+	runner := &fakeRunner{
+		startErrors: map[string]error{
+			secondName: errors.New("start second tunnel failed"),
+		},
+	}
+	waiter := &fakeSocketWaiter{callback: func(paths []string) error { return nil }}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:        &fileLocker{},
+		runner:        runner,
+		socketWaiter:  waiter,
+		logger:        slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:     &logOutput,
+		shutdownDelay: 10 * time.Millisecond,
+	}
+
+	err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true})
+	if err == nil || !strings.Contains(err.Error(), "tunnel startup") || !strings.Contains(err.Error(), "start second tunnel failed") {
+		t.Fatalf("expected second tunnel startup error, got %v", err)
+	}
+	if got, want := runner.starts, []string{firstName, secondName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected start order: got %v want %v", got, want)
+	}
+	if got, want := runner.signals, []string{firstName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup signals: got %v want %v", got, want)
+	}
+	if waiter.calls != 0 {
+		t.Fatalf("expected socket wait to be skipped after startup failure, got %d calls", waiter.calls)
+	}
+	if containsString(runner.starts, "qemu") {
+		t.Fatalf("expected qemu not to start, got starts %v", runner.starts)
+	}
+	if containsString(runner.starts, "virtiofsd[workspace]") {
+		t.Fatalf("expected virtiofsd not to start after tunnel failure, got starts %v", runner.starts)
 	}
 }
 
@@ -3573,6 +3624,7 @@ type fakeRunner struct {
 	transientSSHOutputs       []string
 	authSSHFailures           int
 	runWithTunnelExitErr      error
+	startErrors               map[string]error
 	qemu                      *fakeProcess
 	onStart                   func(processSpec)
 }
@@ -3593,6 +3645,9 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		r.processDirs = make(map[string]string)
 	}
 	r.processDirs[spec.Name] = spec.Dir
+	if err := r.startErrors[spec.Name]; err != nil {
+		return nil, err
+	}
 
 	switch spec.Name {
 	case "qemu":

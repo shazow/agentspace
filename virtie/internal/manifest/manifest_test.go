@@ -165,22 +165,26 @@ func TestDocumentRunWithTunnelLowersAndResolvesCommand(t *testing.T) {
 	if got, want := tunnels[0].GuestSocketPath, "/run/tunnels/dbus-notifications.sock"; got != want {
 		t.Fatalf("unexpected guest tunnel socket path: got %q want %q", got, want)
 	}
-	wantArgs := []string{
+	wantExec := []string{
+		"xdg-dbus-proxy",
 		"unix:path=/run/user/1000/bus",
 		socketPath,
 		"--name=notifications",
 		"--guest=/run/tunnels/dbus-notifications.sock",
 	}
-	if got := tunnels[0].Command.Args; !reflect.DeepEqual(got, wantArgs) {
-		t.Fatalf("unexpected tunnel command args: got %#v want %#v", got, wantArgs)
+	if got := tunnels[0].Exec; !reflect.DeepEqual(got, wantExec) {
+		t.Fatalf("unexpected tunnel exec: got %#v want %#v", got, wantExec)
+	}
+	if got, want := tunnels[0].Dir, filepath.Join("/tmp/work", ".virtie", "tunnels"); got != want {
+		t.Fatalf("unexpected tunnel dir: got %q want %q", got, want)
 	}
 	for _, want := range []string{
 		"SOCKET=" + socketPath,
 		"GUEST_SOCKET=/run/tunnels/dbus-notifications.sock",
 		"NAME=notifications",
 	} {
-		if !slices.Contains(tunnels[0].Command.Env, want) {
-			t.Fatalf("expected tunnel env %q in %#v", want, tunnels[0].Command.Env)
+		if !slices.Contains(tunnels[0].Env, want) {
+			t.Fatalf("expected tunnel env %q in %#v", want, tunnels[0].Env)
 		}
 	}
 }
@@ -215,6 +219,21 @@ func TestDocumentRunWithTunnelValidation(t *testing.T) {
 				Vars:       map[string]string{"Socket": "override"},
 			},
 			wantErr: `vars key "Socket" is reserved`,
+		},
+		{
+			name: "missing exec",
+			tunnel: RunWithTunnelFacts{
+				SocketPath: "dbus.sock",
+			},
+			wantErr: "exec is required",
+		},
+		{
+			name: "empty exec path",
+			tunnel: RunWithTunnelFacts{
+				SocketPath: "dbus.sock",
+				Exec:       []string{""},
+			},
+			wantErr: "exec[0] is required",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

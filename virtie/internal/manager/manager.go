@@ -29,7 +29,6 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -324,18 +323,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 	}()
 
-	tunnelProcesses, err := m.startRunWithTunnels(manifest)
+	tunnelProcesses, err := m.startRunWithTunnels(launchCtx, manifest)
 	if err != nil {
-		return &stageError{Stage: "tunnel startup", Err: err}
+		return err
 	}
 	started = append(started, tunnelProcesses...)
-	tunnelSocketPaths := manifest.ResolvedRunWithTunnelSocketPaths()
-	if len(tunnelSocketPaths) > 0 {
-		m.logger.Info("waiting for tunnel sockets")
-		if err := m.waitForSockets(launchCtx, "tunnel startup", tunnelSocketPaths, started...); err != nil {
-			return err
-		}
-	}
 
 	virtiofsd, err := m.startVirtioFSDaemons(manifest)
 	if err != nil {
@@ -617,43 +609,44 @@ func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedP
 	return started, nil
 }
 
-func (m *manager) startRunWithTunnels(manifest *manifest.Manifest) ([]*managedProcess, error) {
+func (m *manager) startRunWithTunnels(ctx context.Context, manifest *manifest.Manifest) ([]*managedProcess, error) {
 	tunnels, err := manifest.ResolvedRunWithTunnels()
 	if err != nil {
-		return nil, err
+		return nil, &stageError{Stage: "tunnel startup", Err: err}
 	}
 	if len(tunnels) == 0 {
 		return nil, nil
 	}
 
-	started := make([]*managedProcess, len(tunnels))
-	var group errgroup.Group
-	for i, tunnel := range tunnels {
-		i, tunnel := i, tunnel
-		group.Go(func() error {
-			name := fmt.Sprintf("run_with_tunnel[%s]", tunnel.GuestSocketPath)
-			m.logger.Info("starting run_with_tunnel", "socket", tunnel.SocketPath, "guest_socket", tunnel.GuestSocketPath)
-			process, err := m.startManagedProcess(processSpec{
-				Name:         name,
-				Path:         tunnel.Command.Path,
-				Args:         tunnel.Command.Args,
-				Dir:          manifest.ResolvedTunnelDir(),
-				Env:          tunnel.Command.Env,
-				ProcessGroup: true,
-				Stdout:       os.Stderr,
-				Stderr:       os.Stderr,
-			})
-			if err != nil {
-				return err
-			}
-			started[i] = process
-			return nil
+	started := make([]*managedProcess, 0, len(tunnels))
+	socketPaths := make([]string, 0, len(tunnels))
+	for _, tunnel := range tunnels {
+		name := fmt.Sprintf("run_with_tunnel[%s]", tunnel.GuestSocketPath)
+		m.logger.Info("starting run_with_tunnel", "socket", tunnel.SocketPath, "guest_socket", tunnel.GuestSocketPath)
+		process, err := m.startManagedProcess(processSpec{
+			Name:         name,
+			Path:         tunnel.Exec[0],
+			Args:         tunnel.Exec[1:],
+			Dir:          tunnel.Dir,
+			Env:          tunnel.Env,
+			ProcessGroup: true,
+			Stdout:       os.Stderr,
+			Stderr:       os.Stderr,
 		})
+		if err != nil {
+			_ = m.stopAll(started)
+			return nil, &stageError{Stage: "tunnel startup", Err: err}
+		}
+		started = append(started, process)
+		socketPaths = append(socketPaths, tunnel.SocketPath)
 	}
-	if err := group.Wait(); err != nil {
+
+	m.logger.Info("waiting for tunnel sockets")
+	if err := m.waitForSockets(ctx, "tunnel startup", socketPaths, started...); err != nil {
 		_ = m.stopAll(started)
 		return nil, err
 	}
+
 	return started, nil
 }
 

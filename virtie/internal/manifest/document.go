@@ -895,7 +895,7 @@ func lowerRunWithTunnel(tunnels []RunWithTunnelFacts) []RunWithTunnel {
 	for _, tunnel := range tunnels {
 		result = append(result, RunWithTunnel{
 			SocketPath: tunnel.SocketPath,
-			Command:    commandFromExec(tunnel.Exec),
+			Exec:       append([]string(nil), tunnel.Exec...),
 			Vars:       cloneStringMap(tunnel.Vars),
 		})
 	}
