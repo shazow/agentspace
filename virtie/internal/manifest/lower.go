@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -10,12 +11,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 )
+
+const virtioFSSocketProbeTimeout = 100 * time.Millisecond
 
 func (d Document) Manifest() (*Manifest, error) {
 	return d.ManifestWithOptions(LowerOptions{})
@@ -467,10 +471,19 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []MountInput, options LowerOptions) 
 					options.Logger.Warn("virtiofs socket path exists but is not a socket (possibly leftover from crash); starting virtiofsd anyway", "socket", socketPath)
 				}
 			} else {
-				if options.Logger != nil {
-					options.Logger.Info("using existing virtiofs socket", "socket", socketPath)
+				stale, err := staleUnixSocket(socketPath)
+				if stale {
+					if options.Logger != nil {
+						options.Logger.Warn("virtiofs socket path exists but appears stale; starting virtiofsd anyway", "socket", socketPath, "error", err)
+					}
+				} else {
+					if err != nil && options.Logger != nil {
+						options.Logger.Warn("virtiofs socket liveness probe failed; assuming it is externally managed", "socket", socketPath, "error", err)
+					} else if options.Logger != nil {
+						options.Logger.Info("using existing virtiofs socket", "socket", socketPath)
+					}
+					continue
 				}
-				continue
 			}
 		} else if !os.IsNotExist(err) {
 			return nil, fmt.Errorf("stat virtiofs socket %q: %w", socketPath, err)
@@ -497,6 +510,18 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []MountInput, options LowerOptions) 
 		m.addCleanupPath(mount.VirtioFS.Socket)
 	}
 	return runs, nil
+}
+
+func staleUnixSocket(path string) (bool, error) {
+	conn, err := net.DialTimeout("unix", path, virtioFSSocketProbeTimeout)
+	if err == nil {
+		_ = conn.Close()
+		return false, nil
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT) {
+		return true, err
+	}
+	return false, err
 }
 
 func (m *Manifest) addCleanupPath(path string) {

@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -315,6 +316,49 @@ func TestDocumentVirtioFSUsesExistingSocketWithoutRun(t *testing.T) {
 	}
 	if !strings.Contains(logOutput.String(), "using existing virtiofs socket") || !strings.Contains(logOutput.String(), socketPath) {
 		t.Fatalf("expected existing socket log for %q, got %q", socketPath, logOutput.String())
+	}
+}
+
+func TestDocumentVirtioFSStartsRunForStaleSocket(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, ".virtie", "fs.sock")
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
+		t.Fatalf("create socket directory: %v", err)
+	}
+	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("create unix socket: %v", err)
+	}
+	if err := syscall.Bind(fd, &syscall.SockaddrUnix{Name: socketPath}); err != nil {
+		_ = syscall.Close(fd)
+		t.Fatalf("bind stale virtiofs socket: %v", err)
+	}
+	if err := syscall.Close(fd); err != nil {
+		t.Fatalf("close stale unix socket: %v", err)
+	}
+	if info, err := os.Stat(socketPath); err != nil {
+		t.Fatalf("stat stale virtiofs socket: %v", err)
+	} else if info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("expected stale path to remain a socket, got mode %v", info.Mode())
+	}
+
+	document := validDocument()
+	document.WorkingDir = tmpDir
+
+	var logOutput bytes.Buffer
+	manifest, err := document.ManifestWithOptions(LowerOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+
+	if len(manifest.Run) != 1 || manifest.Run[0].Name != "virtiofsd[workspace]" {
+		t.Fatalf("expected generated virtiofs run, got %#v", manifest.Run)
+	}
+	if got, want := manifest.CleanupPaths, []string{"fs.sock"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup paths: got %#v want %#v", got, want)
+	}
+	if !strings.Contains(logOutput.String(), "appears stale") || !strings.Contains(logOutput.String(), socketPath) {
+		t.Fatalf("expected stale socket warning for %q, got %q", socketPath, logOutput.String())
 	}
 }
 
