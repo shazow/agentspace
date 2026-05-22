@@ -18,7 +18,7 @@ import (
 func TestCommandNotifierHonorsStateAllowlistAndPassesEnv(t *testing.T) {
 	cfg := validManifest("/tmp/work")
 	cfg.Notifications = manifest.Notifications{
-		Command: &manifest.Command{
+		Command: manifest.Command{
 			Path: "bin/notify",
 			Args: []string{"--flag"},
 		},
@@ -66,7 +66,7 @@ func TestCommandNotifierResolvesRelativeCommandAgainstAbsoluteWorkingDir(t *test
 	t.Chdir(tmpDir)
 
 	cfg := validManifest("work")
-	cfg.Notifications.Command = &manifest.Command{Path: "bin/notify"}
+	cfg.Notifications.Command = manifest.Command{Path: "bin/notify"}
 	runner := &recordingNotificationRunner{}
 	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
 
@@ -86,7 +86,7 @@ func TestCommandNotifierResolvesRelativeCommandAgainstAbsoluteWorkingDir(t *test
 
 func TestCommandNotifierRendersExecTemplates(t *testing.T) {
 	cfg := validManifest("/tmp/work")
-	cfg.Notifications.Command = &manifest.Command{
+	cfg.Notifications.Command = manifest.Command{
 		Path: "bin/notify-{{.State}}",
 		Args: []string{"{{.Message}}", "{{.cid}}", "{{.Env.USER}}"},
 		Env:  []string{"CUSTOM=1"},
@@ -118,7 +118,7 @@ func TestCommandNotifierRendersExecTemplates(t *testing.T) {
 
 func TestCommandNotifierLogsAndIgnoresHookFailure(t *testing.T) {
 	cfg := validManifest("/tmp/work")
-	cfg.Notifications.Command = &manifest.Command{Path: "/bin/notify"}
+	cfg.Notifications.Command = manifest.Command{Path: "/bin/notify"}
 	runner := &recordingNotificationRunner{err: errors.New("exit status 1")}
 	var logs bytes.Buffer
 	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(&logs, nil)), runner)

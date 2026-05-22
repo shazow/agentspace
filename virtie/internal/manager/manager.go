@@ -385,7 +385,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			"cid":           fmt.Sprintf("%d", cid),
 		})
 	}
-	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid, notifier, &writeBackOnExit)
+	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid, notifier, func() bool {
+		return writeBackOnExit
+	})
 	if err := m.handlePendingSuspendRequest(launchCtx, suspendRequests, suspendHandler); err != nil {
 		return err
 	}
@@ -818,12 +820,12 @@ type launchSuspendHandler struct {
 	client        qmpClient
 	cid           int
 	notifier      notificationSink
-	writeBack     *bool
+	writeBack     func() bool
 	once          sync.Once
 	err           error
 }
 
-func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink, writeBack *bool) *launchSuspendHandler {
+func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink, writeBack func() bool) *launchSuspendHandler {
 	return &launchSuspendHandler{
 		manager:       manager,
 		manifest:      manifest,
@@ -837,7 +839,7 @@ func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpS
 
 func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 	h.once.Do(func() {
-		if h.writeBack != nil && *h.writeBack {
+		if h.writeBack != nil && h.writeBack() {
 			if err := h.manager.writeBackGuestFiles(ctx, h.manifest); err != nil {
 				h.err = err
 				return
@@ -1406,15 +1408,15 @@ func createVolumeImage(volume manifest.Volume) error {
 	defer image.Close()
 
 	params := &ext4.Params{}
-	if volume.Label != nil {
-		params.VolumeName = *volume.Label
+	if volume.Label != "" {
+		params.VolumeName = volume.Label
 	}
 	params.SectorsPerBlock = 8
 	fs, err := ext4.Create(image, sizeBytes, 0, int64(ext4.SectorSize512), params)
 	if err != nil {
 		return fmt.Errorf("format ext4 volume image %q: %w", volume.ImagePath, err)
 	}
-	if volume.Label == nil {
+	if volume.Label == "" {
 		if err := fs.SetLabel(""); err != nil {
 			return fmt.Errorf("clear default ext4 volume label for %q: %w", volume.ImagePath, err)
 		}

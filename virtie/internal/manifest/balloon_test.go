@@ -95,10 +95,13 @@ func validManifest() *Manifest {
 				InitrdPath: "/tmp/initrd",
 			},
 			SMP: QEMUSMP{
-				CPUs: intPtr(2),
+				CPUs: ExplicitCPUs(2),
 			},
 			QMP: QEMUQMP{
 				SocketPath: "qmp.sock",
+			},
+			Knobs: QEMUKnobs{
+				NoGraphic: true,
 			},
 			Devices: QEMUDevices{
 				RNG: QEMURNGDevice{

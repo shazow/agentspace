@@ -30,6 +30,20 @@ import (
 
 const testMiB int64 = 1024 * 1024
 
+func manifestWriteText(text string) manifest.WriteFile {
+	return manifest.WriteFile{
+		Content:     manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: text},
+		FollowLinks: true,
+	}
+}
+
+func manifestWritePath(path string) manifest.WriteFile {
+	return manifest.WriteFile{
+		Content:     manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: path},
+		FollowLinks: true,
+	}
+}
+
 func TestManifestValidate(t *testing.T) {
 	emptyManifest := &manifest.Manifest{}
 	if err := emptyManifest.Validate(); err == nil {
@@ -70,7 +84,7 @@ func TestManifestValidate(t *testing.T) {
 func TestGuestInstallDirectoryArgs(t *testing.T) {
 	tests := []struct {
 		name     string
-		chown    *string
+		chown    string
 		expected []string
 	}{
 		{
@@ -79,22 +93,22 @@ func TestGuestInstallDirectoryArgs(t *testing.T) {
 		},
 		{
 			name:     "empty chown",
-			chown:    stringPtr(""),
+			chown:    "",
 			expected: []string{"-d", "/etc/virtie"},
 		},
 		{
 			name:     "user and group",
-			chown:    stringPtr("agent:users"),
+			chown:    "agent:users",
 			expected: []string{"-d", "-o", "agent", "-g", "users", "/etc/virtie"},
 		},
 		{
 			name:     "user only",
-			chown:    stringPtr("agent"),
+			chown:    "agent",
 			expected: []string{"-d", "-o", "agent", "/etc/virtie"},
 		},
 		{
 			name:     "group only",
-			chown:    stringPtr(":users"),
+			chown:    ":users",
 			expected: []string{"-d", "-g", "users", "/etc/virtie"},
 		},
 	}
@@ -633,12 +647,12 @@ func TestCreateVolumeImageCreatesNativeExt4(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
 		sizeMiB   int
-		label     *string
+		label     string
 		wantLabel string
 	}{
 		{name: "minimum-size-without-label", sizeMiB: 256},
-		{name: "minimum-size-with-label", sizeMiB: 256, label: &label, wantLabel: label},
-		{name: "default-home-size", sizeMiB: 4096, label: &label, wantLabel: label},
+		{name: "minimum-size-with-label", sizeMiB: 256, label: label, wantLabel: label},
+		{name: "default-home-size", sizeMiB: 4096, label: label, wantLabel: label},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
@@ -1232,8 +1246,8 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	inlineMode := "0640"
 	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/inline":   {Text: &inlineText, Chown: &inlineChown, Mode: &inlineMode, Overwrite: &overwrite},
-		"/var/lib/virtie/host": {Path: &hostPath, Overwrite: &overwrite},
+		"/etc/virtie/inline":   {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: inlineText}, Chown: inlineChown, Mode: inlineMode, Overwrite: overwrite, FollowLinks: true},
+		"/var/lib/virtie/host": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: hostPath}, Overwrite: overwrite, FollowLinks: true},
 	}
 
 	var eventMu sync.Mutex
@@ -1360,7 +1374,7 @@ func TestGuestFilePayloadRejectsHostSymlinkWhenFollowLinksFalse(t *testing.T) {
 
 	_, err := guestFilePayloadBase64(manifest.ResolvedWriteFile{
 		GuestPath:   "/etc/from-link",
-		HostPath:    &linkPath,
+		Content:     manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: linkPath},
 		FollowLinks: false,
 	})
 	if err == nil || !strings.Contains(err.Error(), "followLinks is false") {
@@ -1369,7 +1383,7 @@ func TestGuestFilePayloadRejectsHostSymlinkWhenFollowLinksFalse(t *testing.T) {
 
 	payload, err := guestFilePayloadBase64(manifest.ResolvedWriteFile{
 		GuestPath:   "/etc/from-link",
-		HostPath:    &linkPath,
+		Content:     manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: linkPath},
 		FollowLinks: true,
 	})
 	if err != nil {
@@ -1395,7 +1409,7 @@ func TestManagerLaunchWritesBackGuestFilesOnShutdown(t *testing.T) {
 	overwrite := true
 	writeBack := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/var/lib/virtie/host": {Path: &hostPath, Overwrite: &overwrite, WriteBack: &writeBack},
+		"/var/lib/virtie/host": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: hostPath}, Overwrite: overwrite, FollowLinks: true, WriteBack: writeBack},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -1449,7 +1463,7 @@ func TestLaunchSuspendHandlerWritesBackGuestFilesBeforeSuspend(t *testing.T) {
 	}
 	writeBack := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/var/lib/virtie/host": {Path: &hostPath, WriteBack: &writeBack},
+		"/var/lib/virtie/host": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: hostPath}, FollowLinks: true, WriteBack: writeBack},
 	}
 
 	guestAgent := &fakeGuestAgentClient{
@@ -1465,8 +1479,9 @@ func TestLaunchSuspendHandlerWritesBackGuestFilesBeforeSuspend(t *testing.T) {
 		qmpConnectTimeout:   time.Millisecond,
 		qmpMigrationTimeout: time.Second,
 	}
-	writeBackEnabled := true
-	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7, nil, &writeBackEnabled)
+	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7, nil, func() bool {
+		return true
+	})
 
 	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
 		t.Fatalf("suspend returned %v, want errSavedSuspendExit", err)
@@ -1497,7 +1512,7 @@ func TestWriteBackGuestFilesDoesNotReplaceHostOnGuestReadError(t *testing.T) {
 	}
 	writeBack := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/var/lib/virtie/host": {Path: &hostPath, WriteBack: &writeBack},
+		"/var/lib/virtie/host": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: hostPath}, FollowLinks: true, WriteBack: writeBack},
 	}
 
 	guestAgent := &fakeGuestAgentClient{
@@ -1539,7 +1554,7 @@ func TestWriteBackGuestFilesFollowsHostSymlinkWhenFollowLinksEnabled(t *testing.
 	}
 	writeBack := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/var/lib/virtie/host": {Path: &linkPath, WriteBack: &writeBack},
+		"/var/lib/virtie/host": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: linkPath}, FollowLinks: true, WriteBack: writeBack},
 	}
 
 	guestAgent := &fakeGuestAgentClient{
@@ -1687,7 +1702,7 @@ func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.
 	inlineChown := "agent:users"
 	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/inline": {Text: &inlineText, Chown: &inlineChown, Overwrite: &overwrite},
+		"/etc/virtie/inline": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: inlineText}, Chown: inlineChown, Overwrite: overwrite, FollowLinks: true},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -1750,7 +1765,7 @@ func TestManagerLaunchSkipsGuestFileWhenOverwriteFalseAndPathExists(t *testing.T
 	hostPath := "missing-host-file"
 	overwrite := false
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/existing": {Path: &hostPath, Overwrite: &overwrite},
+		"/etc/virtie/existing": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: hostPath}, Overwrite: overwrite, FollowLinks: true},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -1811,7 +1826,7 @@ func TestManagerLaunchWritesGuestFileWhenOverwriteFalseAndPathMissing(t *testing
 	text := "new"
 	overwrite := false
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/new": {Text: &text, Overwrite: &overwrite},
+		"/etc/virtie/new": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: text}, Overwrite: overwrite, FollowLinks: true},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -1877,7 +1892,7 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 	inlineMode := "0600"
 	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Text: &inlineText, Chown: &inlineChown, Mode: &inlineMode, Overwrite: &overwrite},
+		"/etc/inline": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: inlineText}, Chown: inlineChown, Mode: inlineMode, Overwrite: overwrite, FollowLinks: true},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -1946,7 +1961,7 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 	inlineChown := "agent:users"
 	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/virtie/inline": {Text: &inlineText, Chown: &inlineChown, Overwrite: &overwrite},
+		"/etc/virtie/inline": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: inlineText}, Chown: inlineChown, Overwrite: overwrite, FollowLinks: true},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -2018,7 +2033,7 @@ func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
 	inlineMode := "0600"
 	overwrite := true
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Text: &inlineText, Mode: &inlineMode, Overwrite: &overwrite},
+		"/etc/inline": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: inlineText}, Mode: inlineMode, Overwrite: overwrite, FollowLinks: true},
 	}
 
 	runner := &fakeRunner{finishInteractiveSSH: true}
@@ -2076,7 +2091,7 @@ func TestManagerLaunchSkipsGuestFilesOnResume(t *testing.T) {
 	cfg.Volumes[0].AutoCreate = false
 	inlineText := "inline"
 	cfg.WriteFiles = manifest.WriteFiles{
-		"/etc/inline": {Text: &inlineText},
+		"/etc/inline": manifestWriteText(inlineText),
 	}
 
 	vmStatePath := filepath.Join(tmpDir, ".agentspace", "agent-sandbox.vmstate")
@@ -3246,8 +3261,8 @@ func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manifest := validManifest("/tmp/work")
-			manifest.QEMU.Knobs.NoGraphic = boolPtr(false)
-			manifest.QEMU.Graphics = &tt.qemu
+			manifest.QEMU.Knobs.NoGraphic = false
+			manifest.QEMU.Graphics = tt.qemu
 
 			spec, err := buildQEMUSpec(manifest, 42)
 			if err != nil {
@@ -3267,12 +3282,11 @@ func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
 }
 
 func TestBuildQEMUSpecPreservesPassthroughGraphicsArgs(t *testing.T) {
-	manifest := validManifest("/tmp/work")
-	manifest.QEMU.Knobs.NoGraphic = boolPtr(false)
-	manifest.QEMU.Graphics = nil
-	manifest.QEMU.PassthroughArgs = []string{"-display", "sdl", "-device", "virtio-vga"}
+	cfg := validManifest("/tmp/work")
+	cfg.QEMU.Knobs.NoGraphic = false
+	cfg.QEMU.PassthroughArgs = []string{"-display", "sdl", "-device", "virtio-vga"}
 
-	spec, err := buildQEMUSpec(manifest, 42)
+	spec, err := buildQEMUSpec(cfg, 42)
 	if err != nil {
 		t.Fatalf("build qemu spec: %v", err)
 	}
@@ -3280,7 +3294,7 @@ func TestBuildQEMUSpecPreservesPassthroughGraphicsArgs(t *testing.T) {
 	if containsString(spec.Args, "-nographic") {
 		t.Fatalf("expected passthrough graphical qemu args to omit -nographic: %v", spec.Args)
 	}
-	for _, want := range manifest.QEMU.PassthroughArgs {
+	for _, want := range cfg.QEMU.PassthroughArgs {
 		if !containsString(spec.Args, want) {
 			t.Fatalf("expected qemu args to include passthrough arg %q: %v", want, spec.Args)
 		}
@@ -3288,10 +3302,10 @@ func TestBuildQEMUSpecPreservesPassthroughGraphicsArgs(t *testing.T) {
 }
 
 func TestBuildQEMUSpecUsesRuntimeCPUCountWhenOmitted(t *testing.T) {
-	manifest := validManifest("/tmp/work")
-	manifest.QEMU.SMP.CPUs = nil
+	cfg := validManifest("/tmp/work")
+	cfg.QEMU.SMP.CPUs = manifest.CPUCount{}
 
-	spec, err := buildQEMUSpec(manifest, 42)
+	spec, err := buildQEMUSpec(cfg, 42)
 	if err != nil {
 		t.Fatalf("build qemu spec: %v", err)
 	}
@@ -3420,24 +3434,24 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)
 
-	manifest := validManifest("/tmp/work")
-	manifest.Paths.RuntimeDir = stringPtr("")
-	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg := validManifest("/tmp/work")
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirXDG}
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 
-	spec, err := buildQEMUSpec(manifest, 42)
+	spec, err := buildQEMUSpec(cfg, 42)
 	if err != nil {
 		t.Fatalf("build qemu spec: %v", err)
 	}
 
-	wantQMP := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "qmp.sock")
+	wantQMP := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "qmp.sock")
 	if !containsString(spec.Args, "unix:"+wantQMP+",server,nowait") {
 		t.Fatalf("expected qemu args to include runtime qmp socket %q: %v", wantQMP, spec.Args)
 	}
-	wantQGA := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "qga.sock")
+	wantQGA := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "qga.sock")
 	if !containsString(spec.Args, "socket,path="+wantQGA+",server=on,wait=off,id=qga0") {
 		t.Fatalf("expected qemu args to include runtime guest agent socket %q: %v", wantQGA, spec.Args)
 	}
-	wantReady := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "ready.sock")
+	wantReady := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "ready.sock")
 	if !containsString(spec.Args, "socket,path="+wantReady+",server=on,wait=off,id=ready_char") {
 		t.Fatalf("expected qemu args to include runtime ssh readiness socket %q: %v", wantReady, spec.Args)
 	}
@@ -3447,8 +3461,8 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)
 
-	manifest := validManifest(t.TempDir())
-	manifest.Paths.RuntimeDir = stringPtr("")
+	cfg := validManifest(t.TempDir())
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirXDG}
 
 	runner := &fakeRunner{}
 	manager := &manager{
@@ -3456,11 +3470,11 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 		runner: runner,
 	}
 
-	if _, err := manager.startVirtioFSDaemons(manifest); err != nil {
+	if _, err := manager.startVirtioFSDaemons(cfg); err != nil {
 		t.Fatalf("start virtiofs daemons: %v", err)
 	}
 
-	wantSocket := filepath.Join(runtimeDir, "agentspace", manifest.Identity.HostName, "fs.sock")
+	wantSocket := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "fs.sock")
 	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIOFSD_SOCKET="+wantSocket) {
 		t.Fatalf("expected virtiofs daemon env to contain resolved socket path %q: %v", wantSocket, got)
 	}
@@ -3520,7 +3534,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 				Params:     "panic=-1",
 			},
 			SMP: manifest.QEMUSMP{
-				CPUs: intPtr(2),
+				CPUs: manifest.ExplicitCPUs(2),
 			},
 			Console: manifest.QEMUConsole{
 				StdioChardev: true,
@@ -3529,7 +3543,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 				NoDefaults:   true,
 				NoUserConfig: true,
 				NoReboot:     true,
-				NoGraphic:    boolPtr(true),
+				NoGraphic:    true,
 			},
 			QMP: manifest.QEMUQMP{
 				SocketPath: "qmp.sock",

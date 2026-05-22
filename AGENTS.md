@@ -10,6 +10,7 @@
 ## Code Style
 
 - Avoid making helpers that are only used once unless the helper code needs to be tested.
+- Keep pointer fields in parse/input structs when omission matters; lower early into value-oriented runtime structs with explicit defaults.
 
 ### Testing
 
