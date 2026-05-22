@@ -196,12 +196,14 @@ cache = "auto"  # Options: auto, always, none (default: auto)
 # /run/tunnels. The command runs with state_dir/tunnels as its working directory.
 socket = "dbus-notifications.sock"
 
+# Additional template variables
+vars = { Namespace = "org.freedesktop.*" }
+
 # Template values include {{.Socket}} for the resolved host socket path,
 # {{.GuestSocket}} for /run/tunnels/<socket>, vars entries, and {{.Env.USER}}.
 # The same values are injected into the command environment as SOCKET,
 # GUEST_SOCKET, and upper-snake-case vars.
-exec = ["xdg-dbus-proxy", "{{.Env.DBUS_SESSION_BUS_ADDRESS}}", "{{.Socket}}", "--filter"]
-vars = { Name = "notifications" }
+exec = ["xdg-dbus-proxy", "{{.Env.DBUS_SESSION_BUS_ADDRESS}}", "{{.Socket}}", "--filter", "--see={{.Namespace}}"]
 
 [[networks]]
 # Network devices default to QEMU user networking, but the manifest needs a
