@@ -84,6 +84,18 @@ let
     }).config.system.build.toplevel.drvPath
   );
 
+  invalidOldPersistenceBaseDir = builtins.tryEval (
+    (mkSandbox {
+      persistence.basedir = ".agentspace-old";
+    }).config.system.build.toplevel.drvPath
+  );
+
+  invalidOldWorkspaceBaseDir = builtins.tryEval (
+    (mkSandbox {
+      workspace.basedir = "/home/agent/workspace-old";
+    }).config.system.build.toplevel.drvPath
+  );
+
   vmVirtieCustomSSHExec = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = [
@@ -146,7 +158,7 @@ let
     persistence.homeImage = null;
     workspace = {
       enable = true;
-      basedir = "/home/agent/workspace";
+      baseDir = "/home/agent/workspace";
       addCurrentDir = true;
       spaces = {
         agentspace = "/home/shazow/projects/agentspace";
@@ -347,6 +359,8 @@ let
     assert
       !(pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock" vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
     assert !invalidRelativeStoreSocket.success;
+    assert !invalidOldPersistenceBaseDir.success;
+    assert !invalidOldWorkspaceBaseDir.success;
     true;
 
   _customSSHExec =

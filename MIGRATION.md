@@ -4,6 +4,35 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-22: sandbox baseDir option spelling
+
+### Who Is Affected
+
+- Consumers setting `agentspace.sandbox.persistence.basedir`.
+- Consumers setting `agentspace.sandbox.workspace.basedir`.
+
+### What Changed
+
+The Nix module options now use camelCase:
+
+- `agentspace.sandbox.persistence.baseDir`
+- `agentspace.sandbox.workspace.baseDir`
+
+The old `basedir` spellings now fail evaluation with an assertion that names
+the replacement option.
+
+### Migration Steps
+
+```diff
+- agentspace.sandbox.persistence.basedir = ".agentspace";
++ agentspace.sandbox.persistence.baseDir = ".agentspace";
+
+  agentspace.sandbox.workspace = {
+-   basedir = "/home/agent/workspace";
++   baseDir = "/home/agent/workspace";
+  };
+```
+
 ## 2026-05-21: Manifest exec entries use Go templates
 
 ### Who Is Affected
@@ -63,7 +92,7 @@ fwd_tunnel_exec = ["sh", "-c", "socat - TCP:{{.Host}}:{{.Port}}"]
 
 Current-directory mounting is enabled by default through
 `agentspace.sandbox.workspace.addCurrentDir`. The launch working directory is
-mounted in the guest under `workspace.basedir` using the basename of the
+mounted in the guest under `workspace.baseDir` using the basename of the
 resolved working directory. Set `agentspace.sandbox.workspace.enable = false`
 to disable workspace mounts entirely, or set
 `agentspace.sandbox.workspace.addCurrentDir = false` to keep fixed
@@ -79,7 +108,7 @@ Replace legacy current-directory options:
 + workspace = {
 +   enable = true;
 +   addCurrentDir = true;
-+   basedir = "/home/agent/workspace";
++   baseDir = "/home/agent/workspace";
 + };
 ```
 
@@ -880,7 +909,7 @@ Do not use `virtie launch --resume=force` unless saved suspend state exists.
 ### What Changed
 
 Virtie runtime state now lives directly under the manifest persistence base
-directory. With the default `agentspace.sandbox.persistence.basedir = ".agentspace"`,
+directory. With the default `agentspace.sandbox.persistence.baseDir = ".agentspace"`,
 files such as `<hostName>.pid`, `<hostName>.suspend.json`, and `<hostName>.vmstate`
 are written to `.agentspace/` instead of `.agentspace/.virtie/`.
 
@@ -926,7 +955,7 @@ interactive session behavior.
 
 ### What Changed
 
-`agentspace.sandbox.persistence.basedir` defaults to `.agentspace`. Relative
+`agentspace.sandbox.persistence.baseDir` defaults to `.agentspace`. Relative
 `persistence.homeImage` and `persistence.storeOverlay` paths are now generated
 under that base directory. The generated launch wrapper also copies its manifest
 template to `<basedir>/virtie-<hostName>.json` at runtime and launches `virtie`
@@ -942,7 +971,7 @@ launch PID is valid.
 To keep root-level generated persistence files, set:
 
 ```nix
-agentspace.sandbox.persistence.basedir = ".";
+agentspace.sandbox.persistence.baseDir = ".";
 ```
 
 Tooling that invokes `virtie suspend` or `virtie resume` should use the runtime

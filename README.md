@@ -38,7 +38,7 @@ But to recap, here's a flake you can make to give it a try:
     let
       sandbox = agentspace.lib.mkSandbox {
         # Where should the VM images and filesystem overlays live? Defaults to $PWD if empty, but that's messy
-        persistence.basedir = "/home/shazow/vms/agentspace";
+        persistence.baseDir = "/home/shazow/vms/agentspace";
 
         ssh.authorizedKeys = [
           # Put your SSH public keys in here, one string per list item
