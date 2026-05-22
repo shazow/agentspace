@@ -42,7 +42,7 @@ func (m *manager) installSSHAutoprovisionKey(ctx context.Context, launchManifest
 	defer client.Disconnect()
 
 	plan := sshtools.NewAuthorizedKeysInstallPlan(launchManifest.SSH.User, key.AuthorizedKey)
-	if err := m.installGuestFileDirectory(ctx, client, plan.AuthorizedKeysPath, &plan.Owner); err != nil {
+	if err := m.installGuestFileDirectory(ctx, client, plan.AuthorizedKeysPath, plan.Owner); err != nil {
 		return &stageError{Stage: "ssh autoprovision", Err: err}
 	}
 	if err := m.chownGuestFile(ctx, client, plan.SSHDir, plan.Owner); err != nil {
@@ -54,9 +54,12 @@ func (m *manager) installSSHAutoprovisionKey(ctx context.Context, launchManifest
 
 	tempFile := manifest.ResolvedWriteFile{
 		GuestPath: plan.TempKeyPath,
-		Text:      &plan.TempKeyText,
-		Mode:      &plan.TempKeyMode,
+		Mode:      plan.TempKeyMode,
 		Overwrite: true,
+		Content: manifest.WriteFileContent{
+			Kind: manifest.WriteFileContentText,
+			Text: plan.TempKeyText,
+		},
 	}
 	payloadBase64, err := guestFilePayloadBase64(tempFile)
 	if err != nil {

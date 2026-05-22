@@ -45,19 +45,20 @@ func (m *Manifest) resolveSocketPath(path string) (string, error) {
 		return path, nil
 	}
 
-	if m.Paths.RuntimeDir == nil {
+	switch m.Paths.RuntimeDir.Mode {
+	case RuntimeDirWorking:
 		return m.resolvePath(path), nil
-	}
-
-	if *m.Paths.RuntimeDir == "" {
+	case RuntimeDirXDG:
 		resolved, err := xdg.RuntimeFile(filepath.Join("agentspace", m.Identity.HostName, path))
 		if err != nil {
 			return "", fmt.Errorf("resolve runtime socket %q: %w", path, err)
 		}
 		return resolved, nil
+	case RuntimeDirPath:
+		return filepath.Join(m.resolvePath(m.Paths.RuntimeDir.Path), path), nil
+	default:
+		return "", fmt.Errorf("resolve runtime socket %q: invalid runtime dir mode %d", path, m.Paths.RuntimeDir.Mode)
 	}
-
-	return filepath.Join(m.resolvePath(*m.Paths.RuntimeDir), path), nil
 }
 
 func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
@@ -163,16 +164,7 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	}
 	resolved.SSHReady.SocketPath = sshReadySocketPath
 
-	if resolved.MachineID != nil {
-		value := *resolved.MachineID
-		resolved.MachineID = &value
-	}
-
 	resolved.Machine.Options = append([]string(nil), resolved.Machine.Options...)
-	if resolved.Graphics != nil {
-		value := *resolved.Graphics
-		resolved.Graphics = &value
-	}
 
 	resolved.Devices.VirtioFS = append([]QEMUVirtioFSShare(nil), resolved.Devices.VirtioFS...)
 	for i := range resolved.Devices.VirtioFS {
@@ -191,23 +183,11 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved.Devices.Block = append([]QEMUBlockDevice(nil), resolved.Devices.Block...)
 	for i := range resolved.Devices.Block {
 		resolved.Devices.Block[i].ImagePath = m.resolvePath(resolved.Devices.Block[i].ImagePath)
-		if resolved.Devices.Block[i].Cache != nil {
-			value := *resolved.Devices.Block[i].Cache
-			resolved.Devices.Block[i].Cache = &value
-		}
-		if resolved.Devices.Block[i].Serial != nil {
-			value := *resolved.Devices.Block[i].Serial
-			resolved.Devices.Block[i].Serial = &value
-		}
 	}
 
 	resolved.Devices.Network = append([]QEMUNetDevice(nil), resolved.Devices.Network...)
 	for i := range resolved.Devices.Network {
 		resolved.Devices.Network[i].NetdevOptions = append([]string(nil), resolved.Devices.Network[i].NetdevOptions...)
-		if resolved.Devices.Network[i].RomFile != nil {
-			value := *resolved.Devices.Network[i].RomFile
-			resolved.Devices.Network[i].RomFile = &value
-		}
 	}
 
 	resolved.Devices.Balloon = cloneBalloonDevice(resolved.Devices.Balloon)
@@ -284,12 +264,12 @@ func (m *Manifest) ResolvedNotifications() Notifications {
 	resolved := Notifications{
 		States: append([]string(nil), m.Notifications.States...),
 	}
-	if m.Notifications.Command != nil {
-		command := *m.Notifications.Command
+	if !m.Notifications.Command.IsZero() {
+		command := m.Notifications.Command
 		command.Path = m.resolvePath(command.Path)
-		command.Args = append([]string(nil), m.Notifications.Command.Args...)
-		command.Env = append([]string(nil), m.Notifications.Command.Env...)
-		resolved.Command = &command
+		command.Args = append([]string(nil), command.Args...)
+		command.Env = append([]string(nil), command.Env...)
+		resolved.Command = command
 	}
 	return resolved
 }
@@ -318,29 +298,16 @@ func (m *Manifest) ResolvedWriteFiles() []ResolvedWriteFile {
 		resolved := ResolvedWriteFile{
 			GuestPath:   guestPath,
 			Chown:       entry.Chown,
-			Text:        entry.Text,
 			Mode:        entry.Mode,
-			Overwrite:   writeFileOverwrite(entry),
-			FollowLinks: writeFileFollowLinks(entry),
-			WriteBack:   writeFileWriteBack(entry),
+			Overwrite:   entry.Overwrite,
+			FollowLinks: entry.FollowLinks,
+			WriteBack:   entry.WriteBack,
+			Content:     entry.Content,
 		}
-		if entry.Path != nil {
-			hostPath := m.resolvePath(*entry.Path)
-			resolved.HostPath = &hostPath
+		if entry.Content.Kind == WriteFileContentPath {
+			resolved.Content.Path = m.resolvePath(entry.Content.Path)
 		}
 		files = append(files, resolved)
 	}
 	return files
-}
-
-func writeFileOverwrite(file WriteFile) bool {
-	return file.Overwrite != nil && *file.Overwrite
-}
-
-func writeFileFollowLinks(file WriteFile) bool {
-	return file.FollowLinks == nil || *file.FollowLinks
-}
-
-func writeFileWriteBack(file WriteFile) bool {
-	return file.WriteBack != nil && *file.WriteBack
 }

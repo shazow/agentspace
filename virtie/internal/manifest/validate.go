@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"fmt"
-	"math"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -28,14 +27,8 @@ func (m *Manifest) applyDefaults() {
 		return
 	}
 
-	if m.SSH.RetryDelay == nil {
-		m.SSH.RetryDelay = float64Ptr(defaultSSHRetryDelaySeconds)
-	}
 	if m.QEMU.SSHReady.SocketPath == "" {
 		m.QEMU.SSHReady.SocketPath = defaultSSHReadySocket
-	}
-	if m.QEMU.Knobs.NoGraphic == nil {
-		m.QEMU.Knobs.NoGraphic = boolPtr(m.QEMU.Graphics == nil)
 	}
 
 	if m.VSock.CIDRange.Start == 0 {
@@ -68,7 +61,7 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.paths.lockPath is required")
 	case m.SSH.User == "":
 		return fmt.Errorf("manifest.ssh.user is required")
-	case m.SSH.RetryDelay != nil && (math.IsNaN(*m.SSH.RetryDelay) || math.IsInf(*m.SSH.RetryDelay, 0) || *m.SSH.RetryDelay < 0):
+	case m.SSH.RetryDelay < 0:
 		return fmt.Errorf("manifest.ssh.retryDelay must be a finite number greater than or equal to zero")
 	case m.QEMU.BinaryPath == "":
 		return fmt.Errorf("manifest.qemu.binaryPath is required")
@@ -86,7 +79,7 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.qemu.devices.vsock.transport must be one of pci, mmio, or ccw")
 	}
 
-	if m.QEMU.Graphics != nil && !validQEMUGraphicsBackend(m.QEMU.Graphics.Backend) {
+	if !m.QEMU.Graphics.IsZero() && !validQEMUGraphicsBackend(m.QEMU.Graphics.Backend) {
 		return fmt.Errorf("manifest.qemu.graphics.backend must be one of gtk or cocoa")
 	}
 
@@ -207,10 +200,10 @@ func pathEscapesBase(path string) bool {
 }
 
 func (m *Manifest) SSHRetryDelay(fallback time.Duration) time.Duration {
-	if m == nil || m.SSH.RetryDelay == nil {
+	if m == nil {
 		return fallback
 	}
-	return time.Duration(*m.SSH.RetryDelay * float64(time.Second))
+	return m.SSH.RetryDelay
 }
 
 func validateWriteFiles(files WriteFiles) error {
@@ -227,13 +220,15 @@ func validateWriteFiles(files WriteFiles) error {
 			return fmt.Errorf("manifest.writeFiles contains an empty guest path")
 		case !filepath.IsAbs(guestPath):
 			return fmt.Errorf("manifest.writeFiles[%q] guest path must be absolute", guestPath)
-		case (entry.Text == nil) == (entry.Path == nil):
+		case entry.Content.Kind == WriteFileContentNone:
 			return fmt.Errorf("manifest.writeFiles[%q] must set exactly one of text or path", guestPath)
-		case entry.Path != nil && *entry.Path == "":
+		case entry.Content.Kind != WriteFileContentText && entry.Content.Kind != WriteFileContentPath:
+			return fmt.Errorf("manifest.writeFiles[%q] must set exactly one of text or path", guestPath)
+		case entry.Content.Kind == WriteFileContentPath && entry.Content.Path == "":
 			return fmt.Errorf("manifest.writeFiles[%q].path must not be empty", guestPath)
-		case writeFileWriteBack(entry) && entry.Path == nil:
+		case entry.WriteBack && entry.Content.Kind != WriteFileContentPath:
 			return fmt.Errorf("manifest.writeFiles[%q].writeBack requires path", guestPath)
-		case entry.Mode != nil && !writeFileModePattern.MatchString(*entry.Mode):
+		case entry.Mode != "" && !writeFileModePattern.MatchString(entry.Mode):
 			return fmt.Errorf("manifest.writeFiles[%q].mode must match ^0?[0-7]{3}$", guestPath)
 		}
 	}

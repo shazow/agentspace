@@ -12,12 +12,12 @@ type QEMU struct {
 	SMP             QEMUSMP        `json:"smp"`
 	Console         QEMUConsole    `json:"console"`
 	Knobs           QEMUKnobs      `json:"knobs"`
-	Graphics        *QEMUGraphics  `json:"graphics,omitempty"`
+	Graphics        QEMUGraphics   `json:"graphics,omitempty"`
 	QMP             QEMUQMP        `json:"qmp"`
 	GuestAgent      QEMUGuestAgent `json:"guestAgent,omitempty"`
 	SSHReady        QEMUSSHReady   `json:"sshReady,omitempty"`
 	Devices         QEMUDevices    `json:"devices"`
-	MachineID       *string        `json:"machineId,omitempty"`
+	MachineID       string         `json:"machineId,omitempty"`
 	PassthroughArgs []string       `json:"passthroughArgs,omitempty"`
 }
 
@@ -44,7 +44,23 @@ type QEMUKernel struct {
 }
 
 type QEMUSMP struct {
-	CPUs *int `json:"cpus,omitempty"`
+	CPUs CPUCount `json:"cpus,omitempty"`
+}
+
+type CPUCount struct {
+	Value int  `json:"value,omitempty"`
+	Set   bool `json:"set,omitempty"`
+}
+
+func ExplicitCPUs(value int) CPUCount {
+	return CPUCount{Value: value, Set: true}
+}
+
+func (c CPUCount) QEMUValue() int {
+	if c.Set {
+		return c.Value
+	}
+	return 0
 }
 
 type QEMUConsole struct {
@@ -53,15 +69,19 @@ type QEMUConsole struct {
 }
 
 type QEMUKnobs struct {
-	NoDefaults     bool  `json:"noDefaults,omitempty"`
-	NoUserConfig   bool  `json:"noUserConfig,omitempty"`
-	NoReboot       bool  `json:"noReboot,omitempty"`
-	NoGraphic      *bool `json:"noGraphic,omitempty"`
-	SeccompSandbox bool  `json:"seccompSandbox,omitempty"`
+	NoDefaults     bool `json:"noDefaults,omitempty"`
+	NoUserConfig   bool `json:"noUserConfig,omitempty"`
+	NoReboot       bool `json:"noReboot,omitempty"`
+	NoGraphic      bool `json:"noGraphic,omitempty"`
+	SeccompSandbox bool `json:"seccompSandbox,omitempty"`
 }
 
 type QEMUGraphics struct {
 	Backend string `json:"backend"`
+}
+
+func (g QEMUGraphics) IsZero() bool {
+	return g.Backend == ""
 }
 
 type QEMUQMP struct {
@@ -109,13 +129,13 @@ type QEMUNinePShare struct {
 }
 
 type QEMUBlockDevice struct {
-	ID        string  `json:"id"`
-	ImagePath string  `json:"imagePath"`
-	AIO       string  `json:"aio,omitempty"`
-	Cache     *string `json:"cache,omitempty"`
-	ReadOnly  bool    `json:"readOnly,omitempty"`
-	Serial    *string `json:"serial,omitempty"`
-	Transport string  `json:"transport"`
+	ID        string `json:"id"`
+	ImagePath string `json:"imagePath"`
+	AIO       string `json:"aio,omitempty"`
+	Cache     string `json:"cache,omitempty"`
+	ReadOnly  bool   `json:"readOnly,omitempty"`
+	Serial    string `json:"serial,omitempty"`
+	Transport string `json:"transport"`
 }
 
 type QEMUNetDevice struct {
@@ -123,7 +143,8 @@ type QEMUNetDevice struct {
 	Backend       string   `json:"backend"`
 	MacAddress    string   `json:"macAddress"`
 	Transport     string   `json:"transport"`
-	RomFile       *string  `json:"romFile,omitempty"`
+	RomFile       string   `json:"romFile,omitempty"`
+	DisableROM    bool     `json:"disableROM,omitempty"`
 	NetdevOptions []string `json:"netdevOptions,omitempty"`
 	MQVectors     int      `json:"mqVectors,omitempty"`
 }
@@ -134,8 +155,5 @@ type QEMUVSOCKDevice struct {
 }
 
 func (q QEMU) NoGraphicEnabled() bool {
-	if q.Knobs.NoGraphic != nil {
-		return *q.Knobs.NoGraphic
-	}
-	return q.Graphics == nil
+	return q.Knobs.NoGraphic
 }

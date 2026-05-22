@@ -14,6 +14,22 @@ import (
 	"github.com/adrg/xdg"
 )
 
+func writeFileText(text string) WriteFile {
+	return WriteFile{Content: writeFileTextContent(text), FollowLinks: true}
+}
+
+func writeFilePath(path string) WriteFile {
+	return WriteFile{Content: writeFilePathContent(path), FollowLinks: true}
+}
+
+func writeFileTextContent(text string) WriteFileContent {
+	return WriteFileContent{Kind: WriteFileContentText, Text: text}
+}
+
+func writeFilePathContent(path string) WriteFileContent {
+	return WriteFileContent{Kind: WriteFileContentPath, Path: path}
+}
+
 func TestLoadReadsFromReader(t *testing.T) {
 	document := validDocument()
 	document.QEMU.Exec = []string{"bin/qemu-system-x86_64"}
@@ -265,12 +281,10 @@ func TestLoadTOMLExamples(t *testing.T) {
 }
 
 func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
-	manifest := validManifest()
-	if manifest.SSH.RetryDelay != nil {
-		t.Fatalf("test fixture should leave retry delay unset before validation, got %g", *manifest.SSH.RetryDelay)
-	}
-	if err := manifest.Validate(); err != nil {
-		t.Fatalf("validate manifest: %v", err)
+	document := validDocument()
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
 	}
 	if got, want := manifest.SSHRetryDelay(25*time.Millisecond), 500*time.Millisecond; got != want {
 		t.Fatalf("unexpected default ssh retry delay: got %s want %s", got, want)
@@ -290,19 +304,20 @@ func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("expected manifest without graphics to default to noGraphic")
 	}
 
-	custom := validManifest()
-	custom.SSH.RetryDelay = float64Ptr(0.25)
-	if err := custom.Validate(); err != nil {
-		t.Fatalf("validate custom retry delay: %v", err)
+	customDoc := validDocument()
+	customDoc.SSH.RetryDelay = float64Ptr(0.25)
+	custom, err := customDoc.Manifest()
+	if err != nil {
+		t.Fatalf("lower custom retry delay: %v", err)
 	}
 	if got, want := custom.SSHRetryDelay(time.Second), 250*time.Millisecond; got != want {
 		t.Fatalf("unexpected custom ssh retry delay: got %s want %s", got, want)
 	}
 
-	invalid := validManifest()
+	invalid := validDocument()
 	invalid.SSH.RetryDelay = float64Ptr(-1)
-	err := invalid.Validate()
-	if err == nil || !strings.Contains(err.Error(), "manifest.ssh.retryDelay must be a finite number greater than or equal to zero") {
+	_, err = invalid.Manifest()
+	if err == nil || !strings.Contains(err.Error(), "manifest.ssh.retry_delay must be a finite number greater than or equal to zero") {
 		t.Fatalf("expected retry delay validation error, got %v", err)
 	}
 }
@@ -423,7 +438,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		runtimeDir *string
+		runtimeDir RuntimeDir
 		socketPath string
 		wantSocket string
 		wantQMP    string
@@ -432,7 +447,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 	}{
 		{
 			name:       "legacy working dir",
-			runtimeDir: nil,
+			runtimeDir: RuntimeDir{},
 			socketPath: "fs.sock",
 			wantSocket: "/tmp/work/fs.sock",
 			wantQMP:    "/tmp/work/qmp.sock",
@@ -441,7 +456,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 		},
 		{
 			name:       "default runtime dir",
-			runtimeDir: stringPtr(""),
+			runtimeDir: RuntimeDir{Mode: RuntimeDirXDG},
 			socketPath: "fs.sock",
 			wantSocket: filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "fs.sock"),
 			wantQMP:    filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qmp.sock"),
@@ -450,7 +465,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 		},
 		{
 			name:       "relative runtime dir",
-			runtimeDir: stringPtr("runtime"),
+			runtimeDir: RuntimeDir{Mode: RuntimeDirPath, Path: "runtime"},
 			socketPath: "fs.sock",
 			wantSocket: "/tmp/work/runtime/fs.sock",
 			wantQMP:    "/tmp/work/runtime/qmp.sock",
@@ -459,7 +474,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 		},
 		{
 			name:       "absolute runtime dir",
-			runtimeDir: stringPtr("/tmp/runtime"),
+			runtimeDir: RuntimeDir{Mode: RuntimeDirPath, Path: "/tmp/runtime"},
 			socketPath: "fs.sock",
 			wantSocket: "/tmp/runtime/fs.sock",
 			wantQMP:    "/tmp/runtime/qmp.sock",
@@ -468,7 +483,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 		},
 		{
 			name:       "absolute socket path bypasses runtime dir",
-			runtimeDir: stringPtr(""),
+			runtimeDir: RuntimeDir{Mode: RuntimeDirXDG},
 			socketPath: "/tmp/explicit-fs.sock",
 			wantSocket: "/tmp/explicit-fs.sock",
 			wantQMP:    "/tmp/explicit-qmp.sock",
@@ -557,7 +572,6 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 }
 
 func TestManifestWriteFilesValidation(t *testing.T) {
-	validText := "hello"
 	validMode := "0640"
 
 	tests := []struct {
@@ -570,7 +584,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			configure: func(manifest *Manifest) {
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Text: &validText},
+					"/etc/agent.conf": writeFileText("hello"),
 				}
 			},
 		},
@@ -579,38 +593,34 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			configure: func(manifest *Manifest) {
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Text: &validText, Mode: &validMode},
+					"/etc/agent.conf": {Content: writeFileTextContent("hello"), Mode: validMode, FollowLinks: true},
 				}
 			},
 		},
 		{
 			name: "allows arbitrary chown",
 			configure: func(manifest *Manifest) {
-				chown := ""
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Text: &validText, Chown: &chown},
+					"/etc/agent.conf": {Content: writeFileTextContent("hello"), Chown: "", FollowLinks: true},
 				}
 			},
 		},
 		{
 			name: "valid host path",
 			configure: func(manifest *Manifest) {
-				hostPath := "agent.conf"
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Path: &hostPath},
+					"/etc/agent.conf": writeFilePath("agent.conf"),
 				}
 			},
 		},
 		{
 			name: "valid write back host path",
 			configure: func(manifest *Manifest) {
-				hostPath := "agent.conf"
-				writeBack := true
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Path: &hostPath, WriteBack: &writeBack},
+					"/etc/agent.conf": {Content: writeFilePathContent("agent.conf"), FollowLinks: true, WriteBack: true},
 				}
 			},
 		},
@@ -618,7 +628,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			name: "requires guest agent socket",
 			configure: func(manifest *Manifest) {
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Text: &validText},
+					"/etc/agent.conf": writeFileText("hello"),
 				}
 			},
 			wantError: "manifest.qemu.guestAgent.socketPath is required",
@@ -628,7 +638,7 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 			configure: func(manifest *Manifest) {
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"etc/agent.conf": {Text: &validText},
+					"etc/agent.conf": writeFileText("hello"),
 				}
 			},
 			wantError: "guest path must be absolute",
@@ -646,10 +656,9 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 		{
 			name: "rejects duplicate source",
 			configure: func(manifest *Manifest) {
-				hostPath := "agent.conf"
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Text: &validText, Path: &hostPath},
+					"/etc/agent.conf": {Content: WriteFileContent{Kind: 99, Text: "hello", Path: "agent.conf"}},
 				}
 			},
 			wantError: "must set exactly one",
@@ -657,10 +666,9 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 		{
 			name: "rejects empty host path",
 			configure: func(manifest *Manifest) {
-				hostPath := ""
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Path: &hostPath},
+					"/etc/agent.conf": writeFilePath(""),
 				}
 			},
 			wantError: "path must not be empty",
@@ -668,10 +676,9 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 		{
 			name: "rejects write back without host path",
 			configure: func(manifest *Manifest) {
-				writeBack := true
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Text: &validText, WriteBack: &writeBack},
+					"/etc/agent.conf": {Content: writeFileTextContent("hello"), FollowLinks: true, WriteBack: true},
 				}
 			},
 			wantError: "writeBack requires path",
@@ -679,20 +686,18 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 		{
 			name: "allows mode without leading zero",
 			configure: func(manifest *Manifest) {
-				mode := "640"
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Text: &validText, Mode: &mode},
+					"/etc/agent.conf": {Content: writeFileTextContent("hello"), Mode: "640", FollowLinks: true},
 				}
 			},
 		},
 		{
 			name: "rejects invalid octal mode",
 			configure: func(manifest *Manifest) {
-				mode := "0888"
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Text: &validText, Mode: &mode},
+					"/etc/agent.conf": {Content: writeFileTextContent("hello"), Mode: "0888", FollowLinks: true},
 				}
 			},
 			wantError: "mode must match",
@@ -700,10 +705,9 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 		{
 			name: "rejects symbolic mode",
 			configure: func(manifest *Manifest) {
-				mode := "u=rw"
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Text: &validText, Mode: &mode},
+					"/etc/agent.conf": {Content: writeFileTextContent("hello"), Mode: "u=rw", FollowLinks: true},
 				}
 			},
 			wantError: "mode must match",
@@ -711,13 +715,11 @@ func TestManifestWriteFilesValidation(t *testing.T) {
 		{
 			name: "rejects empty mode",
 			configure: func(manifest *Manifest) {
-				mode := ""
 				manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 				manifest.WriteFiles = WriteFiles{
-					"/etc/agent.conf": {Text: &validText, Mode: &mode},
+					"/etc/agent.conf": {Content: writeFileTextContent("hello"), Mode: "", FollowLinks: true},
 				}
 			},
-			wantError: "mode must match",
 		},
 	}
 
@@ -752,16 +754,16 @@ func TestResolvedWriteFilesResolvesRelativeHostPaths(t *testing.T) {
 	relativeHostPath := "files/agent.conf"
 	absoluteHostPath := "/tmp/host.conf"
 	manifest.WriteFiles = WriteFiles{
-		"/etc/a.conf": {Path: &relativeHostPath, Overwrite: &overwrite, FollowLinks: &followLinksFalse, WriteBack: &writeBackTrue},
-		"/etc/b.conf": {Text: &text, Chown: &chown, Mode: &mode, Overwrite: &overwriteTrue},
-		"/etc/c.conf": {Path: &absoluteHostPath},
+		"/etc/a.conf": {Content: writeFilePathContent(relativeHostPath), Overwrite: overwrite, FollowLinks: followLinksFalse, WriteBack: writeBackTrue},
+		"/etc/b.conf": {Content: writeFileTextContent(text), Chown: chown, Mode: mode, Overwrite: overwriteTrue, FollowLinks: true},
+		"/etc/c.conf": {Content: writeFilePathContent(absoluteHostPath), FollowLinks: true},
 	}
 
 	got := manifest.ResolvedWriteFiles()
 	want := []ResolvedWriteFile{
-		{GuestPath: "/etc/a.conf", HostPath: stringPtr("/tmp/work/files/agent.conf"), Overwrite: false, FollowLinks: false, WriteBack: true},
-		{GuestPath: "/etc/b.conf", Chown: &chown, Text: &text, Mode: &mode, Overwrite: true, FollowLinks: true},
-		{GuestPath: "/etc/c.conf", HostPath: &absoluteHostPath, Overwrite: false, FollowLinks: true},
+		{GuestPath: "/etc/a.conf", Content: writeFilePathContent("/tmp/work/files/agent.conf"), Overwrite: false, FollowLinks: false, WriteBack: true},
+		{GuestPath: "/etc/b.conf", Content: writeFileTextContent(text), Chown: chown, Mode: mode, Overwrite: true, FollowLinks: true},
+		{GuestPath: "/etc/c.conf", Content: writeFilePathContent(absoluteHostPath), Overwrite: false, FollowLinks: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected resolved write files: got %#v want %#v", got, want)
@@ -774,7 +776,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 		if err := manifest.Validate(); err != nil {
 			t.Fatalf("validate manifest: %v", err)
 		}
-		if manifest.Notifications.Command != nil {
+		if !manifest.Notifications.Command.IsZero() {
 			t.Fatalf("expected disabled notifications by default, got %#v", manifest.Notifications)
 		}
 	})
@@ -782,7 +784,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 	t.Run("accepts command path args and states", func(t *testing.T) {
 		manifest := validManifest()
 		manifest.Notifications = Notifications{
-			Command: &Command{
+			Command: Command{
 				Path: "bin/notify",
 				Args: []string{"--verbose"},
 			},
@@ -793,7 +795,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 		}
 
 		resolved := manifest.ResolvedNotifications()
-		if resolved.Command == nil {
+		if resolved.Command.IsZero() {
 			t.Fatal("expected resolved notification command")
 		}
 		if got, want := resolved.Command.Path, "/tmp/work/bin/notify"; got != want {
@@ -824,7 +826,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load manifest: %v", err)
 		}
-		if loaded.Notifications.Command == nil {
+		if loaded.Notifications.Command.IsZero() {
 			t.Fatal("expected notification command after load")
 		}
 		if got := loaded.Notifications.Command.Path; got != "--verbose" {
@@ -847,10 +849,10 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load manifest: %v", err)
 		}
-		if loaded.Notifications.Command == nil {
+		if loaded.Notifications.Command.IsZero() {
 			t.Fatal("expected notification command after load")
 		}
-		if got, want := *loaded.Notifications.Command, (Command{Path: "/bin/notify", Args: []string{"--state"}}); !reflect.DeepEqual(got, want) {
+		if got, want := loaded.Notifications.Command, (Command{Path: "/bin/notify", Args: []string{"--state"}}); !reflect.DeepEqual(got, want) {
 			t.Fatalf("unexpected loaded command: got %#v want %#v", got, want)
 		}
 		if got, want := loaded.Notifications.States, document.Notifications.States; !reflect.DeepEqual(got, want) {
@@ -1001,8 +1003,8 @@ func TestManifestValidatesQEMUGraphicsBackend(t *testing.T) {
 	for _, backend := range []string{"gtk", "cocoa"} {
 		t.Run("allows "+backend, func(t *testing.T) {
 			manifest := validManifest()
-			manifest.QEMU.Knobs.NoGraphic = boolPtr(false)
-			manifest.QEMU.Graphics = &QEMUGraphics{Backend: backend}
+			manifest.QEMU.Knobs.NoGraphic = false
+			manifest.QEMU.Graphics = QEMUGraphics{Backend: backend}
 
 			if err := manifest.Validate(); err != nil {
 				t.Fatalf("unexpected validation error: %v", err)
@@ -1012,8 +1014,8 @@ func TestManifestValidatesQEMUGraphicsBackend(t *testing.T) {
 
 	t.Run("rejects unsupported backend", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.QEMU.Knobs.NoGraphic = boolPtr(false)
-		manifest.QEMU.Graphics = &QEMUGraphics{Backend: "vnc"}
+		manifest.QEMU.Knobs.NoGraphic = false
+		manifest.QEMU.Graphics = QEMUGraphics{Backend: "vnc"}
 
 		err := manifest.Validate()
 		if err == nil || !strings.Contains(err.Error(), "manifest.qemu.graphics.backend must be one of gtk or cocoa") {
@@ -1289,7 +1291,7 @@ func TestLoadTreatsHeadlessGraphicsAsAbsentForTransport(t *testing.T) {
 			if got, want := loaded.QEMU.Devices.Network[0].Transport, "mmio"; got != want {
 				t.Fatalf("unexpected network transport: got %q want %q", got, want)
 			}
-			if loaded.QEMU.Graphics != nil {
+			if !loaded.QEMU.Graphics.IsZero() {
 				t.Fatalf("expected no qemu graphics for headless manifest, got %#v", loaded.QEMU.Graphics)
 			}
 		})
@@ -1299,7 +1301,6 @@ func TestLoadTreatsHeadlessGraphicsAsAbsentForTransport(t *testing.T) {
 func TestManifestNoGraphicDefaultsPreserveExplicitFalse(t *testing.T) {
 	t.Run("defaults omitted headless manifest to noGraphic", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.QEMU.Knobs.NoGraphic = nil
 
 		if err := manifest.Validate(); err != nil {
 			t.Fatalf("validate manifest: %v", err)
@@ -1322,20 +1323,20 @@ func TestManifestNoGraphicDefaultsPreserveExplicitFalse(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load manifest: %v", err)
 		}
-		if loaded.QEMU.Knobs.NoGraphic == nil || *loaded.QEMU.Knobs.NoGraphic {
-			t.Fatalf("expected explicit noGraphic=false to be preserved, got %#v", loaded.QEMU.Knobs.NoGraphic)
+		if loaded.QEMU.Knobs.NoGraphic {
+			t.Fatalf("expected noGraphic=false to be preserved, got %#v", loaded.QEMU.Knobs.NoGraphic)
 		}
 	})
 
 	t.Run("defaults typed graphics to graphical", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.QEMU.Knobs.NoGraphic = nil
-		manifest.QEMU.Graphics = &QEMUGraphics{Backend: "gtk"}
+		manifest.QEMU.Knobs.NoGraphic = false
+		manifest.QEMU.Graphics = QEMUGraphics{Backend: "gtk"}
 
 		if err := manifest.Validate(); err != nil {
 			t.Fatalf("validate manifest: %v", err)
 		}
-		if manifest.QEMU.Knobs.NoGraphic == nil || *manifest.QEMU.Knobs.NoGraphic {
+		if manifest.QEMU.Knobs.NoGraphic {
 			t.Fatalf("expected omitted noGraphic with graphics to default false, got %#v", manifest.QEMU.Knobs.NoGraphic)
 		}
 	})
@@ -1433,7 +1434,7 @@ func TestManifestVolumeValidation(t *testing.T) {
 	t.Run("allows label when auto creating ext4", func(t *testing.T) {
 		manifest := validManifest()
 		label := "persist"
-		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 256, AutoCreate: true, Label: &label}}
+		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 256, AutoCreate: true, Label: label}}
 
 		if err := manifest.Validate(); err != nil {
 			t.Fatalf("unexpected validation error: %v", err)
@@ -1442,7 +1443,7 @@ func TestManifestVolumeValidation(t *testing.T) {
 }
 
 func TestManifestAllowsRuntimeAndQEMUPassedCPUs(t *testing.T) {
-	for _, cpus := range []*int{nil, intPtr(0), intPtr(-1)} {
+	for _, cpus := range []CPUCount{{}, ExplicitCPUs(0), ExplicitCPUs(-1)} {
 		manifest := validManifest()
 		manifest.QEMU.SMP.CPUs = cpus
 

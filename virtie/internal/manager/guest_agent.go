@@ -297,13 +297,13 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		if err := m.writeGuestFile(client, file.GuestPath, payloadBase64); err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
-		if file.Chown != nil {
-			if err := m.chownGuestFile(ctx, client, file.GuestPath, *file.Chown); err != nil {
+		if file.Chown != "" {
+			if err := m.chownGuestFile(ctx, client, file.GuestPath, file.Chown); err != nil {
 				return &stageError{Stage: "guest file write", Err: err}
 			}
 		}
-		if file.Mode != nil {
-			if err := m.chmodGuestFile(ctx, client, file.GuestPath, *file.Mode); err != nil {
+		if file.Mode != "" {
+			if err := m.chmodGuestFile(ctx, client, file.GuestPath, file.Mode); err != nil {
 				return &stageError{Stage: "guest file write", Err: err}
 			}
 		}
@@ -343,7 +343,7 @@ func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manif
 		if err != nil {
 			return &stageError{Stage: "guest file write-back", Err: err}
 		}
-		if file.HostPath == nil {
+		if file.Content.Kind != manifest.WriteFileContentPath {
 			return &stageError{Stage: "guest file write-back", Err: fmt.Errorf("guest file %q has no host path", file.GuestPath)}
 		}
 		hostPath, err := writeBackHostPath(file)
@@ -359,10 +359,10 @@ func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manif
 }
 
 func guestFilePayloadBase64(file manifest.ResolvedWriteFile) (string, error) {
-	if file.Text != nil {
-		return base64.StdEncoding.EncodeToString([]byte(*file.Text)), nil
+	if file.Content.Kind == manifest.WriteFileContentText {
+		return base64.StdEncoding.EncodeToString([]byte(file.Content.Text)), nil
 	}
-	if file.HostPath == nil {
+	if file.Content.Kind != manifest.WriteFileContentPath {
 		return "", fmt.Errorf("guest file %q has no text or host path", file.GuestPath)
 	}
 
@@ -374,45 +374,45 @@ func guestFilePayloadBase64(file manifest.ResolvedWriteFile) (string, error) {
 }
 
 func readHostFileForGuest(file manifest.ResolvedWriteFile) ([]byte, error) {
-	if file.HostPath == nil {
+	if file.Content.Kind != manifest.WriteFileContentPath {
 		return nil, fmt.Errorf("guest file %q has no host path", file.GuestPath)
 	}
 	if !file.FollowLinks {
-		info, err := os.Lstat(*file.HostPath)
+		info, err := os.Lstat(file.Content.Path)
 		if err != nil {
-			return nil, fmt.Errorf("stat host file %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+			return nil, fmt.Errorf("stat host file %q for guest path %q: %w", file.Content.Path, file.GuestPath, err)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("host file %q for guest path %q is a symlink and followLinks is false", *file.HostPath, file.GuestPath)
+			return nil, fmt.Errorf("host file %q for guest path %q is a symlink and followLinks is false", file.Content.Path, file.GuestPath)
 		}
 	}
-	data, err := os.ReadFile(*file.HostPath)
+	data, err := os.ReadFile(file.Content.Path)
 	if err != nil {
-		return nil, fmt.Errorf("read host file %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+		return nil, fmt.Errorf("read host file %q for guest path %q: %w", file.Content.Path, file.GuestPath, err)
 	}
 	return data, nil
 }
 
 func writeBackHostPath(file manifest.ResolvedWriteFile) (string, error) {
-	if file.HostPath == nil {
+	if file.Content.Kind != manifest.WriteFileContentPath {
 		return "", fmt.Errorf("guest file %q has no host path", file.GuestPath)
 	}
-	info, err := os.Lstat(*file.HostPath)
+	info, err := os.Lstat(file.Content.Path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return *file.HostPath, nil
+			return file.Content.Path, nil
 		}
-		return "", fmt.Errorf("stat host file %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+		return "", fmt.Errorf("stat host file %q for guest path %q: %w", file.Content.Path, file.GuestPath, err)
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
-		return *file.HostPath, nil
+		return file.Content.Path, nil
 	}
 	if !file.FollowLinks {
-		return "", fmt.Errorf("host file %q for guest path %q is a symlink and followLinks is false", *file.HostPath, file.GuestPath)
+		return "", fmt.Errorf("host file %q for guest path %q is a symlink and followLinks is false", file.Content.Path, file.GuestPath)
 	}
-	resolvedPath, err := filepath.EvalSymlinks(*file.HostPath)
+	resolvedPath, err := filepath.EvalSymlinks(file.Content.Path)
 	if err != nil {
-		return "", fmt.Errorf("resolve host symlink %q for guest path %q: %w", *file.HostPath, file.GuestPath, err)
+		return "", fmt.Errorf("resolve host symlink %q for guest path %q: %w", file.Content.Path, file.GuestPath, err)
 	}
 	return resolvedPath, nil
 }
@@ -537,7 +537,7 @@ func (m *manager) mountWorkspaceCWD(ctx context.Context, client guestAgentClient
 	return nil
 }
 
-func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAgentClient, guestPath string, owner *string) error {
+func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAgentClient, guestPath string, owner string) error {
 	guestDir := path.Dir(guestPath)
 	exists, err := m.guestDirectoryExists(ctx, client, guestDir)
 	if err != nil {
@@ -567,10 +567,10 @@ func (m *manager) guestPathExists(ctx context.Context, client guestAgentClient, 
 	return status.ExitCode == 0, nil
 }
 
-func guestInstallDirectoryArgs(guestDir string, owner *string) []string {
+func guestInstallDirectoryArgs(guestDir string, owner string) []string {
 	args := []string{"-d"}
-	if owner != nil {
-		user, group, _ := strings.Cut(*owner, ":")
+	if owner != "" {
+		user, group, _ := strings.Cut(owner, ":")
 		if user != "" {
 			args = append(args, "-o", user)
 		}

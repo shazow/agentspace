@@ -86,8 +86,8 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 		Transport: rngTransport,
 	}.QemuParams(config)...)
 
-	if qemu.MachineID != nil && *qemu.MachineID != "" {
-		args = append(args, "-smbios", fmt.Sprintf("type=1,uuid=%s", *qemu.MachineID))
+	if qemu.MachineID != "" {
+		args = append(args, "-smbios", fmt.Sprintf("type=1,uuid=%s", qemu.MachineID))
 	}
 
 	if qemu.Console.SerialConsole {
@@ -107,8 +107,8 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	}
 	if qemu.NoGraphicEnabled() {
 		args = append(args, "-nographic")
-	} else if qemu.Graphics != nil {
-		displayArgs, err := qemuGraphicsArgs(*qemu.Graphics)
+	} else if !qemu.Graphics.IsZero() {
+		displayArgs, err := qemuGraphicsArgs(qemu.Graphics)
 		if err != nil {
 			return nil, err
 		}
@@ -211,8 +211,8 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 			driveParams = append(driveParams, fmt.Sprintf("aio=%s", block.AIO))
 		}
 		driveParams = append(driveParams, "discard=unmap")
-		if block.Cache != nil {
-			driveParams = append(driveParams, fmt.Sprintf("cache=%s", *block.Cache))
+		if block.Cache != "" {
+			driveParams = append(driveParams, fmt.Sprintf("cache=%s", block.Cache))
 		}
 		driveParams = append(driveParams, fmt.Sprintf("read-only=%s", onOff(block.ReadOnly)))
 
@@ -220,8 +220,8 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 			driver,
 			fmt.Sprintf("drive=%s", block.ID),
 		}
-		if block.Serial != nil {
-			deviceParams = append(deviceParams, fmt.Sprintf("serial=%s", *block.Serial))
+		if block.Serial != "" {
+			deviceParams = append(deviceParams, fmt.Sprintf("serial=%s", block.Serial))
 		}
 
 		args = append(args, "-drive", strings.Join(driveParams, ","))
@@ -246,8 +246,10 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 			fmt.Sprintf("netdev=%s", netdev.ID),
 			fmt.Sprintf("mac=%s", netdev.MacAddress),
 		}
-		if netdev.RomFile != nil {
-			deviceParams = append(deviceParams, fmt.Sprintf("romfile=%s", *netdev.RomFile))
+		if netdev.DisableROM {
+			deviceParams = append(deviceParams, "romfile=")
+		} else if netdev.RomFile != "" {
+			deviceParams = append(deviceParams, fmt.Sprintf("romfile=%s", netdev.RomFile))
 		}
 		if netdev.MQVectors > 0 {
 			deviceParams = append(deviceParams, "mq=on", fmt.Sprintf("vectors=%d", netdev.MQVectors))
@@ -276,9 +278,9 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	return args, nil
 }
 
-func qemuCPUCount(cpus *int) int {
-	if cpus != nil {
-		return *cpus
+func qemuCPUCount(cpus manifest.CPUCount) int {
+	if cpus.Set {
+		return cpus.Value
 	}
 	count := runtime.NumCPU()
 	if count < 1 {

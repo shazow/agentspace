@@ -61,16 +61,16 @@ func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner
 		return noopNotifier{}
 	}
 	notifications := manifest.Notifications
-	if notifications.Command == nil || notifications.Command.Path == "" {
+	if notifications.Command.IsZero() || notifications.Command.Path == "" {
 		return noopNotifier{}
 	}
 	if runner == nil {
 		runner = execNotificationRunner{}
 	}
 	dir := resolvedNotificationWorkingDir(manifest.Paths.WorkingDir)
-	command := *notifications.Command
-	command.Args = append([]string(nil), notifications.Command.Args...)
-	command.Env = append([]string(nil), notifications.Command.Env...)
+	command := notifications.Command
+	command.Args = append([]string(nil), command.Args...)
+	command.Env = append([]string(nil), command.Env...)
 
 	var states map[string]struct{}
 	if len(notifications.States) > 0 {

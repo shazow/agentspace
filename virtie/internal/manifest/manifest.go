@@ -7,6 +7,8 @@
 // volumes, QEMU binaries, and virtiofs daemons.
 package manifest
 
+import "time"
+
 type Manifest struct {
 	Identity      Identity        `json:"identity"`
 	Paths         Paths           `json:"paths"`
@@ -27,9 +29,22 @@ type Identity struct {
 }
 
 type Paths struct {
-	WorkingDir string  `json:"workingDir"`
-	LockPath   string  `json:"lockPath"`
-	RuntimeDir *string `json:"runtimeDir,omitempty"`
+	WorkingDir string     `json:"workingDir"`
+	LockPath   string     `json:"lockPath"`
+	RuntimeDir RuntimeDir `json:"runtimeDir,omitempty"`
+}
+
+type RuntimeDirMode int
+
+const (
+	RuntimeDirWorking RuntimeDirMode = iota
+	RuntimeDirXDG
+	RuntimeDirPath
+)
+
+type RuntimeDir struct {
+	Mode RuntimeDirMode `json:"mode,omitempty"`
+	Path string         `json:"path,omitempty"`
 }
 
 type Persistence struct {
@@ -39,10 +54,10 @@ type Persistence struct {
 }
 
 type SSH struct {
-	Argv          []string `json:"argv"`
-	User          string   `json:"user"`
-	RetryDelay    *float64 `json:"retryDelay,omitempty"`
-	Autoprovision bool     `json:"autoprovision,omitempty"`
+	Argv          []string      `json:"argv"`
+	User          string        `json:"user"`
+	RetryDelay    time.Duration `json:"retryDelay,omitempty"`
+	Autoprovision bool          `json:"autoprovision,omitempty"`
 }
 
 type VSockCIDRange struct {
@@ -64,7 +79,7 @@ type Volume struct {
 	SizeMiB       int      `json:"sizeMiB,omitempty"`
 	FSType        string   `json:"fsType,omitempty"`
 	AutoCreate    bool     `json:"autoCreate,omitempty"`
-	Label         *string  `json:"label,omitempty"`
+	Label         string   `json:"label,omitempty"`
 	MkfsExtraArgs []string `json:"mkfsExtraArgs,omitempty"`
 }
 
@@ -74,8 +89,12 @@ type Command struct {
 	Env  []string `json:"env,omitempty"`
 }
 
+func (c Command) IsZero() bool {
+	return c.Path == "" && len(c.Args) == 0 && len(c.Env) == 0
+}
+
 type Notifications struct {
-	Command *Command `json:"command,omitempty"`
+	Command Command  `json:"command,omitempty"`
 	States  []string `json:"states,omitempty"`
 }
 
@@ -97,26 +116,38 @@ type RunWithTunnel struct {
 }
 
 type WriteFile struct {
-	Chown       *string `json:"chown,omitempty"`
-	Text        *string `json:"text,omitempty"`
-	Mode        *string `json:"mode,omitempty"`
-	Overwrite   *bool   `json:"overwrite,omitempty"`
-	FollowLinks *bool   `json:"followLinks,omitempty"`
-	WriteBack   *bool   `json:"writeBack,omitempty"`
-	Path        *string `json:"path,omitempty"`
+	Chown       string           `json:"chown,omitempty"`
+	Mode        string           `json:"mode,omitempty"`
+	Overwrite   bool             `json:"overwrite,omitempty"`
+	FollowLinks bool             `json:"followLinks,omitempty"`
+	WriteBack   bool             `json:"writeBack,omitempty"`
+	Content     WriteFileContent `json:"content,omitempty"`
+}
+
+type WriteFileContentKind int
+
+const (
+	WriteFileContentNone WriteFileContentKind = iota
+	WriteFileContentText
+	WriteFileContentPath
+)
+
+type WriteFileContent struct {
+	Kind WriteFileContentKind `json:"kind,omitempty"`
+	Text string               `json:"text,omitempty"`
+	Path string               `json:"path,omitempty"`
 }
 
 type WriteFiles map[string]WriteFile
 
 type ResolvedWriteFile struct {
 	GuestPath   string
-	Chown       *string
-	Text        *string
-	Mode        *string
+	Chown       string
+	Mode        string
 	Overwrite   bool
 	FollowLinks bool
 	WriteBack   bool
-	HostPath    *string
+	Content     WriteFileContent
 }
 
 type ResolvedRunWithTunnel struct {

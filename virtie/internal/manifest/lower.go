@@ -2,12 +2,14 @@ package manifest
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
@@ -20,6 +22,10 @@ func (d Document) Manifest() (*Manifest, error) {
 	}
 	if d.Kernel.InitrdPath == "" {
 		return nil, fmt.Errorf("manifest.kernel.initrd_path is required")
+	}
+	retryDelay, err := lowerRetryDelay(d.SSH.RetryDelay)
+	if err != nil {
+		return nil, err
 	}
 
 	host := d.Host.withDefaults()
@@ -37,7 +43,7 @@ func (d Document) Manifest() (*Manifest, error) {
 		SSH: SSH{
 			Argv:          append([]string(nil), d.SSH.Exec...),
 			User:          d.SSH.User,
-			RetryDelay:    d.SSH.RetryDelay,
+			RetryDelay:    retryDelay,
 			Autoprovision: d.SSH.Autoprovision,
 		},
 		VSock: VSock{
@@ -66,9 +72,7 @@ func (d Document) Manifest() (*Manifest, error) {
 	if m.Paths.LockPath == "" {
 		m.Paths.LockPath = filepath.Join(m.Persistence.StateDir, m.Identity.HostName+".lock")
 	}
-	if m.Paths.RuntimeDir == nil {
-		m.Paths.RuntimeDir = stringPtr(m.Persistence.StateDir)
-	}
+	m.Paths.RuntimeDir = RuntimeDir{Mode: RuntimeDirPath, Path: m.Persistence.StateDir}
 	if m.SSH.User == "" {
 		m.SSH.User = defaultSSHUser
 	}
@@ -86,6 +90,16 @@ func (d Document) Manifest() (*Manifest, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+func lowerRetryDelay(seconds *float64) (time.Duration, error) {
+	if seconds == nil {
+		return time.Duration(defaultSSHRetryDelaySeconds * float64(time.Second)), nil
+	}
+	if math.IsNaN(*seconds) || math.IsInf(*seconds, 0) || *seconds < 0 {
+		return 0, fmt.Errorf("manifest.ssh.retry_delay must be a finite number greater than or equal to zero")
+	}
+	return time.Duration(*seconds * float64(time.Second)), nil
 }
 
 func (h HostInput) withDefaults() HostInput {
@@ -155,8 +169,9 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 	if sshReadySocket == "" {
 		sshReadySocket = defaultSSHReadySocket
 	}
-	noGraphic := graphics == nil
-	networks, err := lowerNetwork(d.Networks, d.QEMU.FwdTunnelExec, host, transport, d.Machine.VCPU)
+	noGraphic := graphics.IsZero()
+	cpus := lowerCPUCount(d.Machine.VCPU)
+	networks, err := lowerNetwork(d.Networks, d.QEMU.FwdTunnelExec, host, transport, cpus)
 	if err != nil {
 		return QEMU{}, err
 	}
@@ -183,7 +198,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 			Params:     kernelParams(host, d.Kernel),
 		},
 		SMP: QEMUSMP{
-			CPUs: d.Machine.VCPU,
+			CPUs: cpus,
 		},
 		Console: QEMUConsole{
 			StdioChardev:  true,
@@ -193,7 +208,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 			NoDefaults:     true,
 			NoUserConfig:   true,
 			NoReboot:       true,
-			NoGraphic:      &noGraphic,
+			NoGraphic:      noGraphic,
 			SeccompSandbox: d.QEMU.Seccomp,
 		},
 		Graphics: graphics,
@@ -222,7 +237,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 				Transport: transport,
 			},
 		},
-		MachineID:       d.Machine.ID,
+		MachineID:       stringValue(d.Machine.ID),
 		PassthroughArgs: qemuPassthroughArgs(d.QEMU, qemuExec),
 	}
 	if d.Machine.Type != "" && d.Machine.Type == machineType {
@@ -232,8 +247,15 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 	return qemu, nil
 }
 
-func qemuTransport(machineType string, mounts []MountInput, graphics *QEMUGraphics) string {
-	if !strings.HasPrefix(machineType, "microvm") || len(mounts) > 0 || graphics != nil {
+func lowerCPUCount(cpus *int) CPUCount {
+	if cpus == nil {
+		return CPUCount{}
+	}
+	return ExplicitCPUs(*cpus)
+}
+
+func qemuTransport(machineType string, mounts []MountInput, graphics QEMUGraphics) string {
+	if !strings.HasPrefix(machineType, "microvm") || len(mounts) > 0 || !graphics.IsZero() {
 		return "pci"
 	}
 	return "mmio"
@@ -325,7 +347,7 @@ func lowerVolumes(volumes []VolumeInput) []Volume {
 			SizeMiB:    volume.SizeMiB,
 			FSType:     volume.FSType,
 			AutoCreate: volume.AutoCreate,
-			Label:      volume.Label,
+			Label:      stringValue(volume.Label),
 		})
 	}
 	return result
@@ -339,12 +361,11 @@ func lowerBlocks(volumes []VolumeInput, host HostInput, transport string) []QEMU
 			ImagePath: volume.ImagePath,
 			AIO:       aioEngine(host),
 			ReadOnly:  volume.ReadOnly,
-			Serial:    volume.Serial,
+			Serial:    stringValue(volume.Serial),
 			Transport: transport,
 		}
 		if volume.Direct {
-			cache := "none"
-			block.Cache = &cache
+			block.Cache = "none"
 		}
 		blocks = append(blocks, block)
 	}
@@ -430,7 +451,7 @@ func lowerVirtioFSDaemons(mounts []MountInput) []VirtioFSDaemon {
 	return daemons
 }
 
-func lowerNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInput, transport string, vcpu *int) ([]QEMUNetDevice, error) {
+func lowerNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInput, transport string, cpus CPUCount) ([]QEMUNetDevice, error) {
 	if networks == nil {
 		networks = []NetworkInput{{}}
 	}
@@ -448,14 +469,13 @@ func lowerNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInpu
 		if mac == "" {
 			mac = defaultNetworkMAC
 		}
-		var romFile *string
+		disableROM := false
 		if transport == "pci" || (host.System != "x86_64-linux") {
-			empty := ""
-			romFile = &empty
+			disableROM = true
 		}
 		mqVectors := 0
-		if vcpu != nil && *vcpu > 1 && transport == "pci" {
-			mqVectors = 2**vcpu + 2
+		if cpus.Set && cpus.Value > 1 && transport == "pci" {
+			mqVectors = 2*cpus.Value + 2
 		}
 		forwardOptions, err := lowerForwardPorts(network.Forward, fwdTunnelExec, i)
 		if err != nil {
@@ -466,7 +486,7 @@ func lowerNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInpu
 			Backend:       backend,
 			MacAddress:    mac,
 			Transport:     transport,
-			RomFile:       romFile,
+			DisableROM:    disableROM,
 			NetdevOptions: forwardOptions,
 			MQVectors:     mqVectors,
 		})
@@ -607,23 +627,33 @@ func lowerWriteFiles(files []WriteFileInput) WriteFiles {
 	result := make(WriteFiles, len(files))
 	for _, file := range files {
 		result[file.GuestPath] = WriteFile{
-			Chown:       file.Chown,
-			Text:        file.Text,
-			Mode:        file.Mode,
-			Overwrite:   file.Overwrite,
-			FollowLinks: file.FollowLinks,
-			WriteBack:   file.WriteBack,
-			Path:        file.Path,
+			Chown:       stringValue(file.Chown),
+			Mode:        stringValue(file.Mode),
+			Overwrite:   boolValue(file.Overwrite),
+			FollowLinks: boolValueDefault(file.FollowLinks, true),
+			WriteBack:   boolValue(file.WriteBack),
+			Content:     lowerWriteFileContent(file),
 		}
 	}
 	return result
 }
 
-func lowerGraphics(graphics *GraphicsInput) *QEMUGraphics {
-	if graphics == nil || graphics.Backend == "" || graphics.Backend == "headless" {
-		return nil
+func lowerWriteFileContent(file WriteFileInput) WriteFileContent {
+	switch {
+	case file.Text != nil:
+		return WriteFileContent{Kind: WriteFileContentText, Text: *file.Text}
+	case file.Path != nil:
+		return WriteFileContent{Kind: WriteFileContentPath, Path: *file.Path}
+	default:
+		return WriteFileContent{}
 	}
-	return &QEMUGraphics{Backend: graphics.Backend}
+}
+
+func lowerGraphics(graphics *GraphicsInput) QEMUGraphics {
+	if graphics == nil || graphics.Backend == "" || graphics.Backend == "headless" {
+		return QEMUGraphics{}
+	}
+	return QEMUGraphics{Backend: graphics.Backend}
 }
 
 func lowerNotifications(notifications NotificationsInput) Notifications {
@@ -632,7 +662,7 @@ func lowerNotifications(notifications NotificationsInput) Notifications {
 	}
 	if len(notifications.Exec) > 0 {
 		command := commandFromExec(notifications.Exec)
-		result.Command = &command
+		result.Command = command
 	}
 	return result
 }
@@ -730,4 +760,22 @@ func boolOnOff(value bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func boolValue(value *bool) bool {
+	return value != nil && *value
+}
+
+func boolValueDefault(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
