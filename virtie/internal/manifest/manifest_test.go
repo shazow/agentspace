@@ -19,7 +19,7 @@ func TestLoadReadsFromReader(t *testing.T) {
 	document.QEMU.Exec = []string{"bin/qemu-system-x86_64"}
 	document.Kernel.Path = "boot/vmlinuz"
 	document.Kernel.InitrdPath = "boot/initrd"
-	document.Mounts = append(document.Mounts, MountFacts{
+	document.Mounts = append(document.Mounts, MountInput{
 		Type:          "9p",
 		SourcePath:    "shares/cache",
 		Tag:           "cache",
@@ -97,7 +97,7 @@ func TestDocumentWriteFilesFollowLinksLowersToManifest(t *testing.T) {
 	followLinks := false
 	writeBack := true
 	document := validDocument()
-	document.WriteFiles = []WriteFileFacts{
+	document.WriteFiles = []WriteFileInput{
 		{
 			GuestPath:   "/etc/source.conf",
 			Path:        stringPtr("source.conf"),
@@ -132,7 +132,7 @@ func TestDocumentRunWithTunnelLowersAndResolvesCommand(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
 
 	document := validDocument()
-	document.RunWithTunnel = []RunWithTunnelFacts{
+	document.RunWithTunnel = []RunWithTunnelInput{
 		{
 			SocketPath: "dbus-notifications.sock",
 			Exec: []string{
@@ -192,12 +192,12 @@ func TestDocumentRunWithTunnelLowersAndResolvesCommand(t *testing.T) {
 func TestDocumentRunWithTunnelValidation(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
-		tunnel  RunWithTunnelFacts
+		tunnel  RunWithTunnelInput
 		wantErr string
 	}{
 		{
 			name: "absolute socket",
-			tunnel: RunWithTunnelFacts{
+			tunnel: RunWithTunnelInput{
 				SocketPath: "/tmp/dbus.sock",
 				Exec:       []string{"proxy"},
 			},
@@ -205,7 +205,7 @@ func TestDocumentRunWithTunnelValidation(t *testing.T) {
 		},
 		{
 			name: "escaping socket",
-			tunnel: RunWithTunnelFacts{
+			tunnel: RunWithTunnelInput{
 				SocketPath: "../dbus.sock",
 				Exec:       []string{"proxy"},
 			},
@@ -213,7 +213,7 @@ func TestDocumentRunWithTunnelValidation(t *testing.T) {
 		},
 		{
 			name: "reserved var",
-			tunnel: RunWithTunnelFacts{
+			tunnel: RunWithTunnelInput{
 				SocketPath: "dbus.sock",
 				Exec:       []string{"proxy"},
 				Vars:       map[string]string{"Socket": "override"},
@@ -222,14 +222,14 @@ func TestDocumentRunWithTunnelValidation(t *testing.T) {
 		},
 		{
 			name: "missing exec",
-			tunnel: RunWithTunnelFacts{
+			tunnel: RunWithTunnelInput{
 				SocketPath: "dbus.sock",
 			},
 			wantErr: "exec is required",
 		},
 		{
 			name: "empty exec path",
-			tunnel: RunWithTunnelFacts{
+			tunnel: RunWithTunnelInput{
 				SocketPath: "dbus.sock",
 				Exec:       []string{""},
 			},
@@ -238,7 +238,7 @@ func TestDocumentRunWithTunnelValidation(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			document := validDocument()
-			document.RunWithTunnel = []RunWithTunnelFacts{tt.tunnel}
+			document.RunWithTunnel = []RunWithTunnelInput{tt.tunnel}
 			_, err := document.Manifest()
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("expected %q error, got %v", tt.wantErr, err)
@@ -353,7 +353,7 @@ func TestDocumentQEMUExecRendersTemplates(t *testing.T) {
 	t.Setenv("USER", "template-user")
 
 	document := validDocument()
-	document.Host = HostFacts{
+	document.Host = HostInput{
 		OS:     "linux",
 		Arch:   "x86_64",
 		System: "x86_64-linux",
@@ -834,7 +834,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 
 	t.Run("preserves through load", func(t *testing.T) {
 		document := validDocument()
-		document.Notifications = NotificationsFacts{
+		document.Notifications = NotificationsInput{
 			Exec:   []string{"/bin/notify", "--state"},
 			States: []string{"runtime:suspend"},
 		}
@@ -1052,7 +1052,7 @@ func TestLoadRejectsMalformedForwardEndpoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			document := validDocument()
-			document.Networks = []NetworkFacts{
+			document.Networks = []NetworkInput{
 				{
 					Forward: []ForwardPort{
 						{
@@ -1080,7 +1080,7 @@ func TestLoadRejectsMalformedForwardEndpoints(t *testing.T) {
 
 func TestLoadDefaultsForwardPortProtoAndFrom(t *testing.T) {
 	document := validDocument()
-	document.Networks = []NetworkFacts{
+	document.Networks = []NetworkInput{
 		{
 			Forward: []ForwardPort{
 				{
@@ -1141,7 +1141,7 @@ func TestLoadGuestForwardUsesTunnelExecTemplate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			document := validDocument()
 			document.QEMU.FwdTunnelExec = tt.fwdTunnelExec
-			document.Networks = []NetworkFacts{
+			document.Networks = []NetworkInput{
 				{
 					Forward: []ForwardPort{
 						{
@@ -1190,7 +1190,7 @@ func TestLoadGuestForwardRejectsLegacyTunnelExecEnvTokens(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			document := validDocument()
 			document.QEMU.FwdTunnelExec = tt.fwdTunnelExec
-			document.Networks = []NetworkFacts{
+			document.Networks = []NetworkInput{
 				{
 					Forward: []ForwardPort{
 						{
@@ -1241,7 +1241,7 @@ func TestLoadRejectsInvalidForwardOptions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			document := validDocument()
-			document.Networks = []NetworkFacts{
+			document.Networks = []NetworkInput{
 				{
 					Forward: []ForwardPort{tt.port},
 				},
@@ -1261,7 +1261,7 @@ func TestLoadRejectsInvalidForwardOptions(t *testing.T) {
 }
 
 func TestLoadTreatsHeadlessGraphicsAsAbsentForTransport(t *testing.T) {
-	for _, graphics := range []*GraphicsFacts{
+	for _, graphics := range []*GraphicsInput{
 		nil,
 		{Backend: "headless"},
 	} {
@@ -1311,7 +1311,7 @@ func TestManifestNoGraphicDefaultsPreserveExplicitFalse(t *testing.T) {
 
 	t.Run("preserves explicit false without typed graphics", func(t *testing.T) {
 		document := validDocument()
-		document.Graphics = &GraphicsFacts{Backend: "gtk"}
+		document.Graphics = &GraphicsInput{Backend: "gtk"}
 
 		data, err := json.Marshal(document)
 		if err != nil {
@@ -1457,22 +1457,22 @@ func validDocument() Document {
 		HostName:   "agent-sandbox",
 		WorkingDir: "/tmp/work",
 		StateDir:   ".virtie",
-		QEMU: QEMUFacts{
+		QEMU: QEMUInput{
 			Exec:           []string{"/bin/qemu-system-x86_64"},
 			Seccomp:        true,
 			MachineOptions: map[string]string{"accel": "kvm:tcg"},
 		},
-		Machine: MachineFacts{
+		Machine: MachineInput{
 			Type:   "microvm",
 			VCPU:   intPtr(2),
 			CPU:    "host",
 			Memory: 1024,
 		},
-		Kernel: KernelFacts{
+		Kernel: KernelInput{
 			Path:       "/tmp/vmlinuz",
 			InitrdPath: "/tmp/initrd",
 		},
-		Mounts: []MountFacts{
+		Mounts: []MountInput{
 			{
 				Type:          "virtiofs",
 				Tag:           "workspace",
@@ -1480,7 +1480,7 @@ func validDocument() Document {
 				VirtioFSDExec: []string{"/tmp/virtiofsd-workspace"},
 			},
 		},
-		Volumes: []VolumeFacts{
+		Volumes: []VolumeInput{
 			{
 				ImagePath:  "root.img",
 				SizeMiB:    256,
@@ -1488,14 +1488,14 @@ func validDocument() Document {
 				AutoCreate: true,
 			},
 		},
-		Networks: []NetworkFacts{
+		Networks: []NetworkInput{
 			{
 				ID:   "net0",
 				Type: "user",
 				MAC:  "02:02:00:00:00:01",
 			},
 		},
-		SSH: SSHFacts{
+		SSH: SSHInput{
 			Exec: []string{"/bin/ssh"},
 			User: "agent",
 		},
