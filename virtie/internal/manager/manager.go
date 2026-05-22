@@ -329,6 +329,13 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return &stageError{Stage: "tunnel startup", Err: err}
 	}
 	started = append(started, tunnelProcesses...)
+	tunnelSocketPaths := manifest.ResolvedRunWithTunnelSocketPaths()
+	if len(tunnelSocketPaths) > 0 {
+		m.logger.Info("waiting for tunnel sockets")
+		if err := m.waitForSockets(launchCtx, "tunnel startup", tunnelSocketPaths, started...); err != nil {
+			return err
+		}
+	}
 
 	virtiofsd, err := m.startVirtioFSDaemons(manifest)
 	if err != nil {
@@ -338,7 +345,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 
 	if len(virtioFSSocketPaths) > 0 {
 		m.logger.Info("waiting for virtiofs sockets")
-		if err := m.waitForSockets(launchCtx, virtioFSSocketPaths, started...); err != nil {
+		if err := m.waitForSockets(launchCtx, "virtiofs startup", virtioFSSocketPaths, started...); err != nil {
 			return err
 		}
 	}
@@ -691,7 +698,7 @@ func (m *manager) acquireCID(manifest *manifest.Manifest, cid int) (lock, error)
 	return lock, nil
 }
 
-func (m *manager) waitForSockets(ctx context.Context, socketPaths []string, watchers ...*managedProcess) error {
+func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths []string, watchers ...*managedProcess) error {
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -707,15 +714,15 @@ func (m *manager) waitForSockets(ctx context.Context, socketPaths []string, watc
 		select {
 		case err := <-errCh:
 			if err != nil {
-				return &stageError{Stage: "virtiofs startup", Err: err}
+				return &stageError{Stage: stage, Err: err}
 			}
 			return nil
 		case <-ticker.C:
-			if err := firstUnexpectedExit("virtiofs startup", watchers...); err != nil {
+			if err := firstUnexpectedExit(stage, watchers...); err != nil {
 				return err
 			}
 		case <-ctx.Done():
-			return &stageError{Stage: "virtiofs startup", Err: ctx.Err()}
+			return &stageError{Stage: stage, Err: ctx.Err()}
 		}
 	}
 }
