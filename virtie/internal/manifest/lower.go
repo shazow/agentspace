@@ -485,18 +485,30 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []MountInput, options LowerOptions) 
 			}
 		}
 		runs = append(runs, Run{
-			Name:       fmt.Sprintf("virtiofsd[%s]", mount.Tag),
-			Exec:       append([]string{m.resolvePath(bin)}, args...),
-			Env:        []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
-			SocketPath: mount.VirtioFS.Socket,
+			Name: fmt.Sprintf("virtiofsd[%s]", mount.Tag),
+			Exec: append([]string{m.resolvePath(bin)}, args...),
+			Env:  []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
 			Vars: map[string]any{
 				"Socket":      socketPath,
 				"MountTag":    mount.Tag,
 				"MountSource": m.resolvePath(mount.SourcePath),
 			},
 		})
+		m.addCleanupPath(mount.VirtioFS.Socket)
 	}
 	return runs, nil
+}
+
+func (m *Manifest) addCleanupPath(path string) {
+	if path == "" {
+		return
+	}
+	for _, existing := range m.CleanupPaths {
+		if existing == path {
+			return
+		}
+	}
+	m.CleanupPaths = append(m.CleanupPaths, path)
 }
 
 func lowerNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInput, transport string, cpus CPUCount) ([]QEMUNetDevice, error) {

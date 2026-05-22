@@ -28,6 +28,7 @@ type Manifest struct {
 	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
 	Notifications Notifications `json:"notifications,omitempty"`
 	Run           []Run         `json:"run,omitempty"`
+	CleanupPaths  []string      `json:"cleanupPaths,omitempty"`
 }
 
 type Identity struct {
@@ -106,11 +107,10 @@ type Notifications struct {
 }
 
 type Run struct {
-	Name       string         `json:"name,omitempty"`
-	Exec       []string       `json:"exec"`
-	Env        []string       `json:"env,omitempty"`
-	SocketPath string         `json:"socketPath,omitempty"`
-	Vars       map[string]any `json:"vars,omitempty"`
+	Name string         `json:"name,omitempty"`
+	Exec []string       `json:"exec"`
+	Env  []string       `json:"env,omitempty"`
+	Vars map[string]any `json:"vars,omitempty"`
 }
 
 type WriteFile struct {

@@ -88,6 +88,11 @@ func (m *Manifest) Validate() error {
 			return err
 		}
 	}
+	for i, path := range m.CleanupPaths {
+		if path == "" {
+			return fmt.Errorf("manifest.cleanupPaths[%d] must not be empty", i)
+		}
+	}
 
 	for i, share := range m.QEMU.Devices.VirtioFS {
 		switch {

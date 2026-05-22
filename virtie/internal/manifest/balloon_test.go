@@ -147,9 +147,8 @@ func validManifest() *Manifest {
 		},
 		Run: []Run{
 			{
-				Name:       "virtiofsd[workspace]",
-				Exec:       []string{"/tmp/virtiofsd-workspace"},
-				SocketPath: "fs.sock",
+				Name: "virtiofsd[workspace]",
+				Exec: []string{"/tmp/virtiofsd-workspace"},
 				Vars: map[string]any{
 					"Socket":      "/tmp/work/fs.sock",
 					"MountTag":    "workspace",
@@ -157,5 +156,6 @@ func validManifest() *Manifest {
 				},
 			},
 		},
+		CleanupPaths: []string{"fs.sock"},
 	}
 }

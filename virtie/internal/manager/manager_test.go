@@ -236,9 +236,11 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
 	cfg.Persistence.Directories = []string{"persist"}
 	cfg.QEMU.QMP.SocketPath = "qmp.sock"
 	cfg.QEMU.Devices.Block[0].ImagePath = "overlay.img"
+	cfg.CleanupPaths = []string{"sock-a", "sock-b", "cleanup.sock"}
 	cfg.Volumes = []manifest.Volume{
 		{
 			ImagePath:  "overlay.img",
@@ -249,16 +251,14 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 	cfg.Run = []manifest.Run{
 		{
-			Name:       "virtiofsd[ro-store]",
-			Exec:       []string{"/bin/virtiofsd-ro-store"},
-			SocketPath: "sock-a",
-			Vars:       map[string]any{"Socket": filepath.Join(tmpDir, "sock-a")},
+			Name: "virtiofsd[ro-store]",
+			Exec: []string{"/bin/virtiofsd-ro-store"},
+			Vars: map[string]any{"Socket": filepath.Join(tmpDir, ".virtie", "sock-a")},
 		},
 		{
-			Name:       "virtiofsd[workspace]",
-			Exec:       []string{"/bin/virtiofsd-workspace"},
-			SocketPath: "sock-b",
-			Vars:       map[string]any{"Socket": filepath.Join(tmpDir, "sock-b")},
+			Name: "virtiofsd[workspace]",
+			Exec: []string{"/bin/virtiofsd-workspace"},
+			Vars: map[string]any{"Socket": filepath.Join(tmpDir, ".virtie", "sock-b")},
 		},
 	}
 	cfg.QEMU.Devices.VirtioFS = []manifest.QEMUVirtioFSShare{
@@ -270,6 +270,17 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 
 	volumeImage := filepath.Join(tmpDir, "overlay.img")
+	cleanupPath := filepath.Join(tmpDir, ".virtie", "cleanup.sock")
+	untouchedPath := filepath.Join(tmpDir, ".virtie", "external.sock")
+	if err := os.MkdirAll(filepath.Dir(cleanupPath), 0o755); err != nil {
+		t.Fatalf("create cleanup directory: %v", err)
+	}
+	if err := os.WriteFile(cleanupPath, []byte("cleanup"), 0o600); err != nil {
+		t.Fatalf("write cleanup path: %v", err)
+	}
+	if err := os.WriteFile(untouchedPath, []byte("external"), 0o600); err != nil {
+		t.Fatalf("write external path: %v", err)
+	}
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -321,7 +332,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	if !containsString(runner.qemuArgs, "-qmp") {
 		t.Fatalf("expected qemu args to contain qmp socket: %v", runner.qemuArgs)
 	}
-	if !containsString(runner.qemuArgs, "unix:"+filepath.Join(tmpDir, "qmp.sock")+",server,nowait") {
+	if !containsString(runner.qemuArgs, "unix:"+filepath.Join(tmpDir, ".virtie", "qmp.sock")+",server,nowait") {
 		t.Fatalf("expected qemu args to contain resolved qmp socket path: %v", runner.qemuArgs)
 	}
 	if !containsString(runner.qemuArgs, "guest-cid=3") {
@@ -333,7 +344,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	if !containsString(runner.qemuArgs, "vhost-user-fs-pci,chardev=char-fs1,tag=workspace") {
 		t.Fatalf("expected qemu args to contain virtiofs share: %v", runner.qemuArgs)
 	}
-	if !containsString(runner.qemuArgs, "socket,path="+filepath.Join(tmpDir, "ready.sock")+",server=on,wait=off,id=ready_char") {
+	if !containsString(runner.qemuArgs, "socket,path="+filepath.Join(tmpDir, ".virtie", "ready.sock")+",server=on,wait=off,id=ready_char") {
 		t.Fatalf("expected qemu args to contain ssh readiness socket: %v", runner.qemuArgs)
 	}
 	if !containsString(runner.qemuArgs, "virtserialport,chardev=ready_char,name=virtie.ready") {
@@ -381,6 +392,12 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
 		t.Fatalf("expected launch to clear stale suspend state, stat err: %v", err)
+	}
+	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup path to be removed, stat err: %v", err)
+	}
+	if _, err := os.Stat(untouchedPath); err != nil {
+		t.Fatalf("expected unlisted path to remain: %v", err)
 	}
 	logs := logOutput.String()
 	for _, want := range []string{
@@ -520,13 +537,22 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
 	cfg.Persistence.StateDir = ".virtie"
 	cfg.Volumes[0].AutoCreate = false
 	cfg.QEMU.Devices.VirtioFS = nil
+	cfg.CleanupPaths = []string{"cleanup.sock"}
 	cfg.Run = []manifest.Run{
 		{
 			Exec: []string{"/bin/proxy"},
 		},
+	}
+	cleanupPath := filepath.Join(tmpDir, ".virtie", "cleanup.sock")
+	if err := os.MkdirAll(filepath.Dir(cleanupPath), 0o755); err != nil {
+		t.Fatalf("create cleanup directory: %v", err)
+	}
+	if err := os.WriteFile(cleanupPath, []byte("cleanup"), 0o600); err != nil {
+		t.Fatalf("write cleanup path: %v", err)
 	}
 
 	runner := &fakeRunner{
@@ -553,6 +579,9 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 	}
 	if containsString(runner.starts, "qemu") {
 		t.Fatalf("expected qemu not to start, got starts %v", runner.starts)
+	}
+	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup path to be removed before startup failure, stat err: %v", err)
 	}
 	if !strings.Contains(logOutput.String(), "stats:") {
 		t.Fatalf("expected normal launch cleanup to emit stats, got %q", logOutput.String())
@@ -611,6 +640,70 @@ func TestManagerLaunchStopsStartedRunsWhenLaterRunFails(t *testing.T) {
 	}
 	if containsString(runner.starts, "virtiofsd[workspace]") {
 		t.Fatalf("expected virtiofsd not to start after tunnel failure, got starts %v", runner.starts)
+	}
+}
+
+func TestManagerLaunchRemovesCleanupPathAfterQMPStartupFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Volumes[0].AutoCreate = false
+
+	cleanupPath := filepath.Join(tmpDir, "fs.sock")
+	waiter := &fakeSocketWaiter{
+		callback: func(paths []string) error {
+			if len(paths) == 1 && paths[0] == cleanupPath {
+				file, err := os.Create(cleanupPath)
+				if err != nil {
+					return err
+				}
+				return file.Close()
+			}
+			return errors.New("qmp did not start")
+		},
+	}
+	runner := &fakeRunner{}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      waiter,
+		qmpDialer:         &fakeQMPDialer{},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+	}
+
+	err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true})
+	if err == nil || !strings.Contains(err.Error(), "qmp did not start") {
+		t.Fatalf("expected qmp startup error, got %v", err)
+	}
+	if got, want := runner.starts, []string{"virtiofsd[workspace]", "qemu"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected start order: got %v want %v", got, want)
+	}
+	if got, want := runner.signals, []string{"qemu", "virtiofsd[workspace]"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup signals: got %v want %v", got, want)
+	}
+	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup path to be removed after qmp failure, stat err: %v", err)
+	}
+}
+
+func TestRemoveSocketPathsIgnoresMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "cleanup.sock")
+	missingPath := filepath.Join(tmpDir, "missing.sock")
+	if err := os.WriteFile(filePath, []byte("cleanup"), 0o600); err != nil {
+		t.Fatalf("write cleanup path: %v", err)
+	}
+
+	if err := removeSocketPaths([]string{filePath, missingPath}); err != nil {
+		t.Fatalf("remove socket paths: %v", err)
+	}
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup file to be removed, stat err: %v", err)
 	}
 }
 
@@ -2264,6 +2357,7 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 	defer listener.Close()
 	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
 	cfg.Run = nil
+	cfg.CleanupPaths = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2316,6 +2410,7 @@ func TestManagerLaunchRejectsMissingExternalVirtioFSSocket(t *testing.T) {
 	externalSocket := filepath.Join(tmpDir, "missing-virtiofs.sock")
 	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
 	cfg.Run = nil
+	cfg.CleanupPaths = nil
 
 	runner := &fakeRunner{}
 	manager := &manager{
@@ -2692,9 +2787,8 @@ func TestEffectiveSuspendSignalTimeoutIncludesMigrationAndTeardown(t *testing.T)
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Run = append(cfg.Run, manifest.Run{
-		Name:       "virtiofsd[cache]",
-		Exec:       []string{"/tmp/virtiofsd-cache"},
-		SocketPath: "cache.sock",
+		Name: "virtiofsd[cache]",
+		Exec: []string{"/tmp/virtiofsd-cache"},
 	})
 
 	manager := &manager{
@@ -3567,10 +3661,9 @@ func validManifest(workingDir string) *manifest.Manifest {
 		},
 		Run: []manifest.Run{
 			{
-				Name:       "virtiofsd[workspace]",
-				Exec:       []string{"/tmp/virtiofsd-workspace", "--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"},
-				Env:        []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
-				SocketPath: "fs.sock",
+				Name: "virtiofsd[workspace]",
+				Exec: []string{"/tmp/virtiofsd-workspace", "--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"},
+				Env:  []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
 				Vars: map[string]any{
 					"Socket":      filepath.Join(workingDir, "fs.sock"),
 					"MountTag":    "workspace",
@@ -3578,6 +3671,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 				},
 			},
 		},
+		CleanupPaths: []string{"fs.sock"},
 	}
 }
 
