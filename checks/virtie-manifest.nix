@@ -309,7 +309,7 @@ let
     true;
 
   _externalStoreSocket =
-    assert builtins.length externalStoreSocketManifest.mounts == 2;
+    assert builtins.length externalStoreSocketManifest.mounts == 3;
     assert builtins.any (
       mount:
       mount == {
@@ -321,6 +321,13 @@ let
         security_model = "none";
         cache = "auto";
       }
+    ) externalStoreSocketManifest.mounts;
+    assert builtins.any (
+      mount:
+      mount.tag == "workspace"
+      && mount.source == ".agentspace/workspace"
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace.sock"
+      && mount ? virtiofsd_exec
     ) externalStoreSocketManifest.mounts;
     assert builtins.any (
       mount:
@@ -391,6 +398,12 @@ let
       vmVirtieWorkspaces.config.systemd.tmpfiles.rules;
     assert builtins.any (
       share:
+      share.tag == "workspace"
+      && share.source == ".agentspace/workspace"
+      && share.mountPoint == "/home/agent/workspace"
+    ) vmVirtieWorkspaces.config.microvm.shares;
+    assert builtins.any (
+      share:
       share.tag == "workspace-agentspace"
       && share.source == "/home/shazow/projects/agentspace"
       && share.mountPoint == "/home/agent/workspace/agentspace"
@@ -404,6 +417,13 @@ let
     assert builtins.any (
       share: share.tag == "workspace_cwd" && share.source == "." && share.mountPoint == "/mnt/cwd"
     ) vmVirtieWorkspaces.config.microvm.shares;
+    assert builtins.any (
+      mount:
+      mount.tag == "workspace"
+      && mount.source == ".agentspace/workspace"
+      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace.sock"
+      && mount ? virtiofsd_exec
+    ) workspaceManifest.mounts;
     assert builtins.any (
       mount:
       mount.tag == "workspace-agentspace"

@@ -15,6 +15,14 @@ let
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
+  workspaceHostDir = "${persistenceStateDir}/workspace";
+  workspaceBaseShare = {
+    proto = "virtiofs";
+    tag = "workspace";
+    source = workspaceHostDir;
+    mountPoint = cfg.workspace.basedir;
+    securityModel = "mapped";
+  };
   workspaceKeyToTag = key: "workspace-${lib.replaceStrings [ "/" "." " " ] [ "-" "-" "-" ] key}";
   workspaceSpaces = lib.optionalAttrs cfg.workspace.enable cfg.workspace.spaces;
   workspaceShares = lib.mapAttrsToList (key: source: {
@@ -374,6 +382,9 @@ in
       ''
       + lib.optionalString (cfg.runWithTunnel != [ ]) ''
         ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg tunnelHostDir}
+      ''
+      + lib.optionalString cfg.workspace.enable ''
+        ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg workspaceHostDir}
       ''
       + lib.optionalString nixStoreShareUsesSocket ''
         if [ ! -S ${lib.escapeShellArg cfg.nixStoreShareSocket} ]; then
@@ -798,6 +809,9 @@ in
                 mountPoint = "/nix/.ro-store";
                 readOnly = true;
               }
+            ]
+            ++ lib.optionals cfg.workspace.enable [
+              workspaceBaseShare
             ]
             ++ lib.optionals (cfg.workspace.enable && cfg.workspace.addCurrentDir) [
               {
