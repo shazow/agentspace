@@ -144,6 +144,29 @@ func TestDocumentWriteFilesFollowLinksLowersToManifest(t *testing.T) {
 	}
 }
 
+func TestDocumentWriteFilesRejectsTextAndSource(t *testing.T) {
+	writeBack := true
+	document := validDocument()
+	document.WriteFiles = []WriteFileInput{
+		{
+			GuestPath: "/etc/source.conf",
+			Text:      stringPtr("inline"),
+			Path:      stringPtr("source.conf"),
+			WriteBack: &writeBack,
+		},
+	}
+
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+
+	_, err = Load(bytes.NewReader(data))
+	if err == nil || !strings.Contains(err.Error(), `manifest.writeFiles["/etc/source.conf"] must set exactly one of text or path`) {
+		t.Fatalf("expected exactly-one write_files validation error, got %v", err)
+	}
+}
+
 func TestDocumentRunWithTunnelLowersAndResolvesCommand(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
 

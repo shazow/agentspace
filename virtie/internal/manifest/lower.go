@@ -640,6 +640,8 @@ func lowerWriteFiles(files []WriteFileInput) WriteFiles {
 
 func lowerWriteFileContent(file WriteFileInput) WriteFileContent {
 	switch {
+	case file.Text != nil && file.Path != nil:
+		return WriteFileContent{Kind: WriteFileContentNone, Text: *file.Text, Path: *file.Path}
 	case file.Text != nil:
 		return WriteFileContent{Kind: WriteFileContentText, Text: *file.Text}
 	case file.Path != nil:
