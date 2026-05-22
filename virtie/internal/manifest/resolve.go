@@ -222,7 +222,6 @@ func (m *Manifest) ResolvedRuns(cid int) ([]ResolvedRun, error) {
 			Exec: exec,
 			Env:  env,
 			Dir:  m.Paths.WorkingDir,
-			Vars: cloneValueMap(run.Vars),
 		})
 	}
 	return runs, nil

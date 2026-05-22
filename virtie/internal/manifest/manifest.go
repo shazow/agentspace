@@ -153,5 +153,4 @@ type ResolvedRun struct {
 	Exec []string
 	Env  []string
 	Dir  string
-	Vars map[string]any
 }
