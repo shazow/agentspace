@@ -175,8 +175,10 @@ func testManifestJSON(workingDir string) string {
     {
       "type": "virtiofs",
       "tag": "workspace",
-      "virtiofsd_socket": "virtiofs.sock",
-      "virtiofsd_exec": ["/bin/virtiofsd"]
+      "virtiofs": {
+        "socket": "virtiofs.sock",
+        "bin": "/bin/virtiofsd"
+      }
     }
   ],
   "volumes": [

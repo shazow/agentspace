@@ -97,13 +97,13 @@ func (m *Manifest) Validate() error {
 		if daemon.SocketPath == "" {
 			return fmt.Errorf("manifest.virtiofs.daemons[%d].socketPath is required", i)
 		}
-		if daemon.Command.Path == "" {
-			return fmt.Errorf("manifest.virtiofs.daemons[%d].command.path is required", i)
+		if daemon.Bin == "" {
+			return fmt.Errorf("manifest.virtiofs.daemons[%d].bin is required", i)
 		}
 	}
 
-	for i, tunnel := range m.RunWithTunnel {
-		if err := validateRunWithTunnel(i, tunnel); err != nil {
+	for i, run := range m.Run {
+		if err := validateRun(i, run); err != nil {
 			return err
 		}
 	}
@@ -163,33 +163,28 @@ func (m *Manifest) Validate() error {
 	return nil
 }
 
-func validateRunWithTunnel(index int, tunnel RunWithTunnel) error {
+func validateRun(index int, run Run) error {
 	switch {
-	case tunnel.SocketPath == "":
-		return fmt.Errorf("manifest.runWithTunnel[%d].socketPath is required", index)
-	case filepath.IsAbs(tunnel.SocketPath):
-		return fmt.Errorf("manifest.runWithTunnel[%d].socketPath must be relative", index)
-	case pathEscapesBase(tunnel.SocketPath):
-		return fmt.Errorf("manifest.runWithTunnel[%d].socketPath must not contain '..'", index)
-	case len(tunnel.Exec) == 0:
-		return fmt.Errorf("manifest.runWithTunnel[%d].exec is required", index)
-	case tunnel.Exec[0] == "":
-		return fmt.Errorf("manifest.runWithTunnel[%d].exec[0] is required", index)
+	case len(run.Exec) == 0:
+		return fmt.Errorf("manifest.run[%d].exec is required", index)
+	case run.Exec[0] == "":
+		return fmt.Errorf("manifest.run[%d].exec[0] is required", index)
 	}
-	for key := range tunnel.Vars {
-		if key == "Socket" || key == "GuestSocket" || key == "Env" {
-			return fmt.Errorf("manifest.runWithTunnel[%d].vars key %q is reserved", index, key)
+	for key := range run.Vars {
+		if key == "CID" || key == "StateDir" || key == "Workspace" || key == "Env" {
+			return fmt.Errorf("manifest.run[%d].vars key %q is reserved", index, key)
 		}
 	}
 	context := executor.Context{
-		"Socket":      tunnel.SocketPath,
-		"GuestSocket": tunnel.SocketPath,
+		"CID":       "3",
+		"StateDir":  ".virtie",
+		"Workspace": "/workspace",
 	}
-	for key, value := range tunnel.Vars {
+	for key, value := range run.Vars {
 		context[key] = value
 	}
 	if _, err := executor.New(context); err != nil {
-		return fmt.Errorf("manifest.runWithTunnel[%d].vars: %w", index, err)
+		return fmt.Errorf("manifest.run[%d].vars: %w", index, err)
 	}
 	return nil
 }

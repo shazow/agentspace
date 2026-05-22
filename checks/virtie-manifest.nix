@@ -92,7 +92,7 @@ let
 
   invalidOldWorkspaceBaseDir = builtins.tryEval (
     (mkSandbox {
-      workspace.basedir = "/home/agent/workspace-old";
+      workspace.baseDir = "/home/agent/workspace-old";
     }).config.system.build.toplevel.drvPath
   );
 
@@ -165,7 +165,7 @@ let
     persistence.homeImage = null;
     workspace = {
       enable = true;
-      baseDir = "/home/agent/workspace";
+      guestDir = "/home/agent/workspace";
       addCurrentDir = true;
       spaces = {
         agentspace = "/home/shazow/projects/agentspace";
@@ -179,7 +179,7 @@ let
     swapSize = 1024;
     workspace = {
       enable = true;
-      baseDir = "/home/agent/workspace";
+      guestDir = "/home/agent/workspace";
     };
   };
 
@@ -211,21 +211,21 @@ let
     ];
   };
 
-  vmVirtieRunWithTunnel = mkSandbox {
+  vmVirtieRun = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = mkExecSSH {
       identityFile = sshKeys.virtie.identityFile;
     };
     persistence.homeImage = null;
-    runWithTunnel = [
+    run = [
       {
-        socket = "dbus-notifications.sock";
         exec = [
           "xdg-dbus-proxy"
           "{{.Env.DBUS_SESSION_BUS_ADDRESS}}"
-          "{{.Socket}}"
+          "{{.Config.workspace.hostDir}}/dbus-notifications.sock"
           "--filter"
           "--name={{.Name}}"
+          "--workspace={{.Workspace}}"
         ];
         vars.Name = "notifications";
       }
@@ -246,11 +246,11 @@ let
   workspaceManifest = vmVirtieWorkspaces.config.agentspace.sandbox.launch.virtieManifestData;
   fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
-  runWithTunnelManifest = vmVirtieRunWithTunnel.config.agentspace.sandbox.launch.virtieManifestData;
+  runManifest = vmVirtieRun.config.agentspace.sandbox.launch.virtieManifestData;
 
   virtiofsMounts = builtins.filter (mount: mount.type == "virtiofs") manifest.mounts;
   virtiofsDaemonMounts = builtins.filter (
-    mount: mount.type == "virtiofs" && mount ? virtiofsd_exec
+    mount: mount.type == "virtiofs" && mount.virtiofs ? bin
   ) manifest.mounts;
 
   _ =
@@ -296,7 +296,7 @@ let
     assert builtins.any (volume: volume.image == ".agentspace/nix-store-overlay.img") manifest.volumes;
     assert builtins.length virtiofsDaemonMounts > 0;
     assert builtins.all (
-      mount: mount.virtiofsd_socket != "" && builtins.head mount.virtiofsd_exec != ""
+      mount: mount.virtiofs.socket != "" && mount.virtiofs.bin != ""
     ) virtiofsDaemonMounts;
     assert builtins.any (mount: mount.tag == "workspace_cwd") virtiofsDaemonMounts;
     assert !(manifest ? vsock);
@@ -343,7 +343,9 @@ let
       mount == {
         type = "virtiofs";
         source = "/nix/store";
-        virtiofsd_socket = "/var/run/virtiofs-nix-store.sock";
+        virtiofs = {
+          socket = "/var/run/virtiofs-nix-store.sock";
+        };
         tag = "ro-store";
         read_only = true;
         security_model = "none";
@@ -354,18 +356,18 @@ let
       mount:
       mount.tag == "workspace"
       && mount.source == ".agentspace/workspace"
-      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace.sock"
-      && mount ? virtiofsd_exec
+      && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace.sock"
+      && mount.virtiofs ? bin
     ) externalStoreSocketManifest.mounts;
     assert builtins.any (
       mount:
       mount.tag == "workspace_cwd"
       && mount.source == "."
-      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
-      && mount ? virtiofsd_exec
+      && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
+      && mount.virtiofs ? bin
     ) externalStoreSocketManifest.mounts;
     assert builtins.all (
-      mount: mount.tag != "ro-store" || !(mount ? virtiofsd_exec)
+      mount: mount.tag != "ro-store" || !(mount.virtiofs ? bin)
     ) externalStoreSocketManifest.mounts;
     assert pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
       vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
@@ -414,14 +416,14 @@ let
       && mount.read_only == true
     ) extraSharesManifest.mounts;
     assert builtins.any (
-      mount: mount.tag == "tools" && mount.virtiofsd_socket != "" && mount ? virtiofsd_exec
+      mount: mount.tag == "tools" && mount.virtiofs.socket != "" && mount.virtiofs ? bin
     ) extraSharesManifest.mounts;
-    assert
-      !(builtins.any (mount: mount.tag == "cache" && mount ? virtiofsd_exec) extraSharesManifest.mounts);
+    assert !(builtins.any (mount: mount.tag == "cache" && mount ? virtiofs) extraSharesManifest.mounts);
     true;
 
   _workspace =
-    assert workspaceManifest.workspace.basedir == "/home/agent/workspace";
+    assert workspaceManifest.workspace.guest_dir == "/home/agent/workspace";
+    assert workspaceManifest.workspace.host_dir == ".agentspace/workspace";
     assert workspaceManifest.workspace.mount_cwd == true;
     assert vmVirtieWorkspaces.config.environment.sessionVariables.WORKSPACE == "/home/agent/workspace";
     assert builtins.elem "d /home/agent/workspace 0755 agent users -"
@@ -451,29 +453,29 @@ let
       mount:
       mount.tag == "workspace"
       && mount.source == ".agentspace/workspace"
-      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace.sock"
-      && mount ? virtiofsd_exec
+      && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace.sock"
+      && mount.virtiofs ? bin
     ) workspaceManifest.mounts;
     assert builtins.any (
       mount:
       mount.tag == "workspace-agentspace"
       && mount.source == "/home/shazow/projects/agentspace"
-      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace-agentspace.sock"
-      && mount ? virtiofsd_exec
+      && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace-agentspace.sock"
+      && mount.virtiofs ? bin
     ) workspaceManifest.mounts;
     assert builtins.any (
       mount:
       mount.tag == "workspace-project2-foo"
       && mount.source == "/home/shazow/foo"
-      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace-project2-foo.sock"
-      && mount ? virtiofsd_exec
+      && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace-project2-foo.sock"
+      && mount.virtiofs ? bin
     ) workspaceManifest.mounts;
     assert builtins.any (
       mount:
       mount.tag == "workspace_cwd"
       && mount.source == "."
-      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
-      && mount ? virtiofsd_exec
+      && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
+      && mount.virtiofs ? bin
     ) workspaceManifest.mounts;
     true;
 
@@ -523,36 +525,45 @@ let
       ];
     true;
 
-  _runWithTunnel =
+  _run =
     assert
-      runWithTunnelManifest.run_with_tunnel == [
+      runManifest.run == [
         {
-          socket = "dbus-notifications.sock";
           exec = [
             "xdg-dbus-proxy"
             "{{.Env.DBUS_SESSION_BUS_ADDRESS}}"
-            "{{.Socket}}"
+            "{{.Config.workspace.hostDir}}/dbus-notifications.sock"
             "--filter"
             "--name={{.Name}}"
+            "--workspace={{.Workspace}}"
           ];
-          vars.Name = "notifications";
+          vars = {
+            Name = "notifications";
+            Config = {
+              hostName = "agent-sandbox";
+              user = "agent";
+              workspace = {
+                enable = true;
+                guestDir = "/home/agent/workspace";
+                hostDir = ".agentspace/workspace";
+                addCurrentDir = true;
+                spaces = { };
+              };
+              persistence = {
+                baseDir = ".agentspace";
+                homeImage = null;
+                homeSize = 4096;
+                storeOverlay = "nix-store-overlay.img";
+                storeDisk = false;
+              };
+            };
+          };
         }
       ];
-    assert builtins.any (
-      share:
-      share.tag == "agentspace_tunnels"
-      && share.source == ".agentspace/tunnels"
-      && share.mountPoint == "/run/tunnels"
-    ) vmVirtieRunWithTunnel.config.microvm.shares;
-    assert builtins.any (
-      mount:
-      mount.tag == "agentspace_tunnels"
-      && mount.source == ".agentspace/tunnels"
-      && mount.virtiofsd_socket == "agent-sandbox-virtiofs-agentspace_tunnels.sock"
-      && mount ? virtiofsd_exec
-    ) runWithTunnelManifest.mounts;
-    assert pkgs.lib.hasInfix "mkdir -p .agentspace/tunnels"
-      vmVirtieRunWithTunnel.config.agentspace.sandbox.launch.commonInit;
+    assert !(runManifest ? run_with_tunnel);
+    assert !(builtins.any (share: share.tag == "agentspace_tunnels") vmVirtieRun.config.microvm.shares);
+    assert
+      !(pkgs.lib.hasInfix ".agentspace/tunnels" vmVirtieRun.config.agentspace.sandbox.launch.commonInit);
     true;
 in
 {
@@ -600,7 +611,7 @@ in
     assert _notifications;
     pkgs.runCommand "virtie-manifest-notifications-contract" { } "touch $out";
 
-  virtie-manifest-run-with-tunnel-contract =
-    assert _runWithTunnel;
-    pkgs.runCommand "virtie-manifest-run-with-tunnel-contract" { } "touch $out";
+  virtie-manifest-run-contract =
+    assert _run;
+    pkgs.runCommand "virtie-manifest-run-contract" { } "touch $out";
 }

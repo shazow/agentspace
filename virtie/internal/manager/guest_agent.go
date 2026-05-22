@@ -518,9 +518,9 @@ const (
 )
 
 func (m *manager) mountWorkspaceCWD(ctx context.Context, client guestAgentClient, launchManifest *manifest.Manifest) error {
-	baseDir := launchManifest.Workspace.BaseDir
+	baseDir := launchManifest.Workspace.GuestDir
 	if baseDir == "" {
-		return fmt.Errorf("workspace.basedir is required when workspace.mount_cwd is true")
+		return fmt.Errorf("workspace.guest_dir is required when workspace.mount_cwd is true")
 	}
 	name := filepath.Base(launchManifest.Paths.WorkingDir)
 	if name == "." || name == string(filepath.Separator) || name == "" {

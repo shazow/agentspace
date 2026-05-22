@@ -54,7 +54,7 @@ func (d Document) Manifest() (*Manifest, error) {
 		},
 		Notifications: lowerNotifications(d.Notifications),
 		Workspace:     lowerWorkspace(d.Workspace),
-		RunWithTunnel: lowerRunWithTunnel(d.RunWithTunnel),
+		Run:           lowerRun(d.Run),
 	}
 	if m.Identity.HostName == "" {
 		m.Identity.HostName = defaultHostName
@@ -398,7 +398,8 @@ func (m MountInput) effectiveType() string {
 
 func lowerWorkspace(workspace WorkspaceInput) Workspace {
 	return Workspace{
-		BaseDir:  workspace.BaseDir,
+		GuestDir: workspace.GuestDir,
+		HostDir:  workspace.HostDir,
 		MountCWD: workspace.MountCWD,
 	}
 }
@@ -408,7 +409,7 @@ func lowerVirtioFSMounts(mounts []MountInput, transport string) []QEMUVirtioFSSh
 	for i, mount := range mounts {
 		shares = append(shares, QEMUVirtioFSShare{
 			ID:         "fs" + strconv.Itoa(i),
-			SocketPath: mount.SocketPath,
+			SocketPath: mount.VirtioFS.Socket,
 			Tag:        mount.Tag,
 			Transport:  transport,
 		})
@@ -438,14 +439,27 @@ func lowerNinePMounts(mounts []MountInput, transport string) []QEMUNinePShare {
 func lowerVirtioFSDaemons(mounts []MountInput) []VirtioFSDaemon {
 	daemons := make([]VirtioFSDaemon, 0, len(mounts))
 	for _, mount := range mounts {
-		if mount.effectiveType() != "virtiofs" || len(mount.VirtioFSDExec) == 0 {
+		if mount.effectiveType() != "virtiofs" || mount.VirtioFS.Socket == "" {
 			continue
 		}
-		command := commandFromExec(mount.VirtioFSDExec)
+		bin := mount.VirtioFS.Bin
+		if bin == "" {
+			bin = "virtiofsd"
+		}
+		args := append([]string(nil), mount.VirtioFS.Args...)
+		if len(args) == 0 {
+			args = []string{
+				"--socket-path={{.Socket}}",
+				"--shared-dir={{.MountSource}}",
+				"--tag={{.MountTag}}",
+			}
+		}
 		daemons = append(daemons, VirtioFSDaemon{
 			Tag:        mount.Tag,
-			SocketPath: mount.SocketPath,
-			Command:    command,
+			SourcePath: mount.SourcePath,
+			SocketPath: mount.VirtioFS.Socket,
+			Bin:        bin,
+			Args:       args,
 		})
 	}
 	return daemons
@@ -669,13 +683,12 @@ func lowerNotifications(notifications NotificationsInput) Notifications {
 	return result
 }
 
-func lowerRunWithTunnel(tunnels []RunWithTunnelInput) []RunWithTunnel {
-	result := make([]RunWithTunnel, 0, len(tunnels))
-	for _, tunnel := range tunnels {
-		result = append(result, RunWithTunnel{
-			SocketPath: tunnel.SocketPath,
-			Exec:       append([]string(nil), tunnel.Exec...),
-			Vars:       cloneStringMap(tunnel.Vars),
+func lowerRun(runs []RunInput) []Run {
+	result := make([]Run, 0, len(runs))
+	for _, run := range runs {
+		result = append(result, Run{
+			Exec: append([]string(nil), run.Exec...),
+			Vars: cloneValueMap(run.Vars),
 		})
 	}
 	return result
@@ -696,6 +709,17 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
+}
+
+func cloneValueMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make(map[string]any, len(values))
 	for key, value := range values {
 		clone[key] = value
 	}

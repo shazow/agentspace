@@ -4,6 +4,74 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-22: generic run commands replace runWithTunnel
+
+### Who Is Affected
+
+- Consumers setting `agentspace.sandbox.runWithTunnel`.
+- Direct manifest producers setting `run_with_tunnel`.
+- Consumers setting `agentspace.sandbox.workspace.baseDir`.
+- Direct manifest producers setting `workspace.basedir`.
+- Direct manifest producers setting `mounts[].virtiofsd_socket` or
+  `mounts[].virtiofsd_exec`.
+
+### What Changed
+
+`runWithTunnel` and manifest `run_with_tunnel` were removed. Use
+`agentspace.sandbox.run` or manifest `[[run]]` for host-side processes managed
+for the VM lifetime. `run` starts before QEMU and is stopped with the VM, but it
+does not wait for socket readiness.
+
+The automatic tunnel directories were removed. `virtie` no longer creates
+`<persistence.baseDir>/tunnels`, no longer mounts it into the guest at
+`/run/tunnels`, and no longer provides `Socket` or `GuestSocket` tunnel
+template values. `SocketDir` is not a built-in; set it explicitly in `vars`
+when needed.
+
+Workspace paths were split:
+
+- `agentspace.sandbox.workspace.baseDir` -> `workspace.guestDir`
+- new `agentspace.sandbox.workspace.hostDir`
+- manifest `workspace.basedir` -> `workspace.guest_dir`
+- new manifest `workspace.host_dir`
+
+In `run[].exec`, `{{.Workspace}}` is the guest workspace path. Host paths should
+come from explicit vars, such as generated `{{.Config.workspace.hostDir}}`.
+
+Virtiofs mount daemon fields are now nested:
+
+- `mounts[].virtiofsd_socket` -> `mounts[].virtiofs.socket`
+- `mounts[].virtiofsd_exec` -> `mounts[].virtiofs.bin` and
+  `mounts[].virtiofs.args`
+
+When `virtiofs.socket` points at an existing socket, `virtie` uses it as
+externally managed. Otherwise it starts `virtiofs.bin` with `virtiofs.args`.
+
+### Migration Steps
+
+Move host-side socket or proxy commands into `run` and choose explicit host
+output paths:
+
+```nix
+agentspace.sandbox.run = [
+  {
+    vars.Name = "notifications";
+    vars.SocketDir = "/tmp/agentspace-sockets";
+    exec = [
+      "xdg-dbus-proxy"
+      "{{.Env.DBUS_SESSION_BUS_ADDRESS}}"
+      "{{.SocketDir}}/dbus-notifications.sock"
+      "--filter"
+      "--name={{.Name}}"
+    ];
+  }
+];
+```
+
+If the guest needs access to a produced socket, place it under an existing host
+share such as `workspace.hostDir` and refer to the corresponding guest path
+through `workspace.guestDir`.
+
 ## 2026-05-22: swapfile moved under WORKSPACE
 
 ### Who Is Affected

@@ -12,7 +12,7 @@ import (
 )
 
 // Context holds named values available to exec command templates.
-type Context map[string]string
+type Context map[string]any
 
 // Renderer renders exec command templates from a fixed context.
 type Renderer struct {
@@ -86,6 +86,10 @@ func contextEnv(context Context) ([]string, error) {
 	values := make(map[string]string, len(keys))
 	sources := make(map[string]string, len(keys))
 	for _, key := range keys {
+		value, ok := scalarEnvValue(context[key])
+		if !ok {
+			continue
+		}
 		envKey, err := EnvName(key)
 		if err != nil {
 			return nil, err
@@ -94,7 +98,7 @@ func contextEnv(context Context) ([]string, error) {
 			return nil, fmt.Errorf("exec template context keys %q and %q both produce environment name %q", source, key, envKey)
 		}
 		sources[envKey] = key
-		values[envKey] = context[key]
+		values[envKey] = value
 	}
 
 	keys = keys[:0]
@@ -108,6 +112,43 @@ func contextEnv(context Context) ([]string, error) {
 		env = append(env, key+"="+values[key])
 	}
 	return env, nil
+}
+
+func scalarEnvValue(value any) (string, bool) {
+	switch value := value.(type) {
+	case string:
+		return value, true
+	case bool:
+		return fmt.Sprint(value), true
+	case int:
+		return fmt.Sprint(value), true
+	case int8:
+		return fmt.Sprint(value), true
+	case int16:
+		return fmt.Sprint(value), true
+	case int32:
+		return fmt.Sprint(value), true
+	case int64:
+		return fmt.Sprint(value), true
+	case uint:
+		return fmt.Sprint(value), true
+	case uint8:
+		return fmt.Sprint(value), true
+	case uint16:
+		return fmt.Sprint(value), true
+	case uint32:
+		return fmt.Sprint(value), true
+	case uint64:
+		return fmt.Sprint(value), true
+	case float32:
+		return fmt.Sprint(value), true
+	case float64:
+		return fmt.Sprint(value), true
+	case fmt.Stringer:
+		return value.String(), true
+	default:
+		return "", false
+	}
 }
 
 func environMap(environ []string) map[string]string {

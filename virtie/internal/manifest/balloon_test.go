@@ -148,10 +148,9 @@ func validManifest() *Manifest {
 		VirtioFS: VirtioFS{Daemons: []VirtioFSDaemon{
 			{
 				Tag:        "workspace",
+				SourcePath: ".",
 				SocketPath: "fs.sock",
-				Command: Command{
-					Path: "/tmp/virtiofsd-workspace",
-				},
+				Bin:        "/tmp/virtiofsd-workspace",
 			},
 		}},
 	}

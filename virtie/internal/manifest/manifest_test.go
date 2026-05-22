@@ -42,7 +42,7 @@ func TestLoadReadsFromReader(t *testing.T) {
 		SecurityModel: "none",
 	})
 	document.Volumes[0].ImagePath = "images/root.img"
-	document.Mounts[0].VirtioFSDExec = []string{"bin/virtiofsd-workspace"}
+	document.Mounts[0].VirtioFS.Bin = "bin/virtiofsd-workspace"
 
 	data, err := json.Marshal(document)
 	if err != nil {
@@ -78,7 +78,7 @@ func TestLoadReadsFromReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve virtiofs daemons: %v", err)
 	}
-	if got, want := daemons[0].Command.Path, "/tmp/work/bin/virtiofsd-workspace"; got != want {
+	if got, want := daemons[0].Bin, "/tmp/work/bin/virtiofsd-workspace"; got != want {
 		t.Fatalf("unexpected daemon command path: got %q want %q", got, want)
 	}
 
@@ -167,21 +167,29 @@ func TestDocumentWriteFilesRejectsTextAndSource(t *testing.T) {
 	}
 }
 
-func TestDocumentRunWithTunnelLowersAndResolvesCommand(t *testing.T) {
+func TestDocumentRunLowersAndResolvesCommand(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
 
 	document := validDocument()
-	document.RunWithTunnel = []RunWithTunnelInput{
+	document.Workspace = WorkspaceInput{GuestDir: "/home/agent/workspace"}
+	document.Run = []RunInput{
 		{
-			SocketPath: "dbus-notifications.sock",
 			Exec: []string{
 				"xdg-dbus-proxy",
 				"{{.Env.DBUS_SESSION_BUS_ADDRESS}}",
-				"{{.Socket}}",
+				"{{.Config.workspace.hostDir}}/dbus-notifications.sock",
 				"--name={{.Name}}",
-				"--guest={{.GuestSocket}}",
+				"--workspace={{.Workspace}}",
+				"--cid={{.CID}}",
 			},
-			Vars: map[string]string{"Name": "notifications"},
+			Vars: map[string]any{
+				"Name": "notifications",
+				"Config": map[string]any{
+					"workspace": map[string]any{
+						"hostDir": "/tmp/work/.virtie/workspace",
+					},
+				},
+			},
 		},
 	}
 
@@ -190,94 +198,73 @@ func TestDocumentRunWithTunnelLowersAndResolvesCommand(t *testing.T) {
 		t.Fatalf("lower manifest: %v", err)
 	}
 
-	tunnels, err := loaded.ResolvedRunWithTunnels()
+	runs, err := loaded.ResolvedRuns(7)
 	if err != nil {
-		t.Fatalf("resolve run_with_tunnel: %v", err)
+		t.Fatalf("resolve run: %v", err)
 	}
-	if len(tunnels) != 1 {
-		t.Fatalf("expected one tunnel, got %#v", tunnels)
-	}
-	socketPath := filepath.Join("/tmp/work", ".virtie", "tunnels", "dbus-notifications.sock")
-	if got, want := tunnels[0].SocketPath, socketPath; got != want {
-		t.Fatalf("unexpected tunnel socket path: got %q want %q", got, want)
-	}
-	if got, want := tunnels[0].GuestSocketPath, "/run/tunnels/dbus-notifications.sock"; got != want {
-		t.Fatalf("unexpected guest tunnel socket path: got %q want %q", got, want)
+	if len(runs) != 1 {
+		t.Fatalf("expected one run, got %#v", runs)
 	}
 	wantExec := []string{
 		"xdg-dbus-proxy",
 		"unix:path=/run/user/1000/bus",
-		socketPath,
+		"/tmp/work/.virtie/workspace/dbus-notifications.sock",
 		"--name=notifications",
-		"--guest=/run/tunnels/dbus-notifications.sock",
+		"--workspace=/home/agent/workspace",
+		"--cid=7",
 	}
-	if got := tunnels[0].Exec; !reflect.DeepEqual(got, wantExec) {
-		t.Fatalf("unexpected tunnel exec: got %#v want %#v", got, wantExec)
+	if got := runs[0].Exec; !reflect.DeepEqual(got, wantExec) {
+		t.Fatalf("unexpected run exec: got %#v want %#v", got, wantExec)
 	}
-	if got, want := tunnels[0].Dir, filepath.Join("/tmp/work", ".virtie", "tunnels"); got != want {
-		t.Fatalf("unexpected tunnel dir: got %q want %q", got, want)
+	if got, want := runs[0].Dir, "/tmp/work"; got != want {
+		t.Fatalf("unexpected run dir: got %q want %q", got, want)
 	}
 	for _, want := range []string{
-		"SOCKET=" + socketPath,
-		"GUEST_SOCKET=/run/tunnels/dbus-notifications.sock",
+		"CID=7",
 		"NAME=notifications",
+		"WORKSPACE=/home/agent/workspace",
 	} {
-		if !slices.Contains(tunnels[0].Env, want) {
-			t.Fatalf("expected tunnel env %q in %#v", want, tunnels[0].Env)
+		if !slices.Contains(runs[0].Env, want) {
+			t.Fatalf("expected run env %q in %#v", want, runs[0].Env)
 		}
+	}
+	if slices.ContainsFunc(runs[0].Env, func(entry string) bool {
+		return strings.HasPrefix(entry, "CONFIG=")
+	}) {
+		t.Fatalf("structured vars should not be injected into env: %#v", runs[0].Env)
 	}
 }
 
-func TestDocumentRunWithTunnelValidation(t *testing.T) {
+func TestDocumentRunValidation(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
-		tunnel  RunWithTunnelInput
+		run     RunInput
 		wantErr string
 	}{
 		{
-			name: "absolute socket",
-			tunnel: RunWithTunnelInput{
-				SocketPath: "/tmp/dbus.sock",
-				Exec:       []string{"proxy"},
-			},
-			wantErr: "socketPath must be relative",
-		},
-		{
-			name: "escaping socket",
-			tunnel: RunWithTunnelInput{
-				SocketPath: "../dbus.sock",
-				Exec:       []string{"proxy"},
-			},
-			wantErr: "socketPath must not contain '..'",
-		},
-		{
 			name: "reserved var",
-			tunnel: RunWithTunnelInput{
-				SocketPath: "dbus.sock",
-				Exec:       []string{"proxy"},
-				Vars:       map[string]string{"Socket": "override"},
+			run: RunInput{
+				Exec: []string{"proxy"},
+				Vars: map[string]any{"Workspace": "override"},
 			},
-			wantErr: `vars key "Socket" is reserved`,
+			wantErr: `vars key "Workspace" is reserved`,
 		},
 		{
-			name: "missing exec",
-			tunnel: RunWithTunnelInput{
-				SocketPath: "dbus.sock",
-			},
+			name:    "missing exec",
+			run:     RunInput{},
 			wantErr: "exec is required",
 		},
 		{
 			name: "empty exec path",
-			tunnel: RunWithTunnelInput{
-				SocketPath: "dbus.sock",
-				Exec:       []string{""},
+			run: RunInput{
+				Exec: []string{""},
 			},
 			wantErr: "exec[0] is required",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			document := validDocument()
-			document.RunWithTunnel = []RunWithTunnelInput{tt.tunnel}
+			document.Run = []RunInput{tt.run}
 			_, err := document.Manifest()
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("expected %q error, got %v", tt.wantErr, err)
@@ -841,7 +828,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 			"qemu": {"exec": ["/bin/qemu-system-x86_64"]},
 			"machine": {"memory": 1024},
 			"kernel": {"path": "/tmp/vmlinuz", "initrd_path": "/tmp/initrd"},
-			"mounts": [{"type": "virtiofs", "tag": "workspace", "virtiofsd_socket": "fs.sock", "virtiofsd_exec": ["/tmp/virtiofsd-workspace"]}],
+			"mounts": [{"type": "virtiofs", "tag": "workspace", "virtiofs": {"socket": "fs.sock", "bin": "/tmp/virtiofsd-workspace"}}],
 			"volumes": [{"image": "root.img", "size": 256, "create": true}],
 			"notifications": {"exec": ["--verbose"]}
 		}`)
@@ -920,27 +907,19 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 
 func TestResolvedVirtioFSDaemonsRenderExecTemplates(t *testing.T) {
 	manifest := validManifest()
-	manifest.VirtioFS.Daemons[0].Command = Command{
-		Path: "bin/virtiofsd-{{.Tag}}",
-		Args: []string{"--socket-path={{.Socket}}", "--user={{.Env.USER}}"},
-		Env:  []string{"STATIC=1"},
-	}
+	manifest.VirtioFS.Daemons[0].Bin = "bin/virtiofsd-{{.MountTag}}"
+	manifest.VirtioFS.Daemons[0].Args = []string{"--socket-path={{.Socket}}", "--source={{.MountSource}}", "--user={{.Env.USER}}"}
 	t.Setenv("USER", "template-user")
 
 	daemons, err := manifest.ResolvedVirtioFSDaemons()
 	if err != nil {
 		t.Fatalf("resolve virtiofs daemons: %v", err)
 	}
-	if got, want := daemons[0].Command.Path, "/tmp/work/bin/virtiofsd-workspace"; got != want {
+	if got, want := daemons[0].Bin, "/tmp/work/bin/virtiofsd-workspace"; got != want {
 		t.Fatalf("unexpected daemon path: got %q want %q", got, want)
 	}
-	if got, want := daemons[0].Command.Args, []string{"--socket-path=/tmp/work/fs.sock", "--user=template-user"}; !reflect.DeepEqual(got, want) {
+	if got, want := daemons[0].Args, []string{"--socket-path=/tmp/work/fs.sock", "--source=/tmp/work", "--user=template-user"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected daemon args: got %#v want %#v", got, want)
-	}
-	for _, want := range []string{"STATIC=1", "SOCKET=/tmp/work/fs.sock", "TAG=workspace"} {
-		if !slices.Contains(daemons[0].Command.Env, want) {
-			t.Fatalf("expected daemon env %q in %#v", want, daemons[0].Command.Env)
-		}
 	}
 }
 
@@ -1498,10 +1477,12 @@ func validDocument() Document {
 		},
 		Mounts: []MountInput{
 			{
-				Type:          "virtiofs",
-				Tag:           "workspace",
-				SocketPath:    "fs.sock",
-				VirtioFSDExec: []string{"/tmp/virtiofsd-workspace"},
+				Type: "virtiofs",
+				Tag:  "workspace",
+				VirtioFS: VirtioFSInput{
+					Socket: "fs.sock",
+					Bin:    "/tmp/virtiofsd-workspace",
+				},
 			},
 		},
 		Volumes: []VolumeInput{
