@@ -96,6 +96,13 @@ let
     }).config.system.build.toplevel.drvPath
   );
 
+  invalidSwapWithoutWorkspace = builtins.tryEval (
+    (mkSandbox {
+      swapSize = 1024;
+      workspace.enable = false;
+    }).config.system.build.toplevel.drvPath
+  );
+
   vmVirtieCustomSSHExec = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = [
@@ -164,6 +171,15 @@ let
         agentspace = "/home/shazow/projects/agentspace";
         "project2/foo" = "/home/shazow/foo";
       };
+    };
+  };
+
+  vmVirtieSwap = mkSandbox {
+    persistence.homeImage = null;
+    swapSize = 1024;
+    workspace = {
+      enable = true;
+      baseDir = "/home/agent/workspace";
     };
   };
 
@@ -461,6 +477,14 @@ let
     ) workspaceManifest.mounts;
     true;
 
+  _swap =
+    assert builtins.any (
+      swap: swap.device == "/home/agent/workspace/swapfile" && swap.size == 1024
+    ) vmVirtieSwap.config.swapDevices;
+    assert !(builtins.any (swap: swap.device == "/swapfile") vmVirtieSwap.config.swapDevices);
+    assert !invalidSwapWithoutWorkspace.success;
+    true;
+
   _writeFiles =
     assert builtins.any (
       file:
@@ -567,6 +591,10 @@ in
   virtie-manifest-write-files-contract =
     assert _writeFiles;
     pkgs.runCommand "virtie-manifest-write-files-contract" { } "touch $out";
+
+  virtie-manifest-swap-contract =
+    assert _swap;
+    pkgs.runCommand "virtie-manifest-swap-contract" { } "touch $out";
 
   virtie-manifest-notifications-contract =
     assert _notifications;

@@ -16,6 +16,7 @@ let
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
   workspaceHostDir = "${persistenceStateDir}/workspace";
+  workspaceSwapFile = "${cfg.workspace.baseDir}/swapfile";
   workspaceBaseShare = {
     proto = "virtiofs";
     tag = "workspace";
@@ -666,6 +667,10 @@ in
             message = "agentspace.sandbox.workspace.basedir was renamed to agentspace.sandbox.workspace.baseDir.";
           }
           {
+            assertion = cfg.swapSize == 0 || cfg.workspace.enable;
+            message = "agentspace.sandbox.swapSize requires agentspace.sandbox.workspace.enable = true because the swapfile is created under WORKSPACE.";
+          }
+          {
             assertion =
               cfg.nixStoreShareSocket == null
               || (cfg.nixStoreShareSocket != "" && lib.hasPrefix "/" cfg.nixStoreShareSocket);
@@ -771,7 +776,7 @@ in
         security.sudo.wheelNeedsPassword = false;
         swapDevices = lib.optionals (cfg.swapSize > 0) [
           {
-            device = "/swapfile";
+            device = workspaceSwapFile;
             size = cfg.swapSize;
           }
         ];

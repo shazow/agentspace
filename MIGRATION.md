@@ -4,6 +4,28 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-22: swapfile moved under WORKSPACE
+
+### Who Is Affected
+
+- Consumers setting `agentspace.sandbox.swapSize`.
+- Consumers setting `agentspace.sandbox.swapSize` while disabling
+  `agentspace.sandbox.workspace.enable`.
+
+### What Changed
+
+When `swapSize > 0`, the generated swapfile is now
+`<workspace.baseDir>/swapfile` instead of `/swapfile`. This keeps large swap
+files out of the root overlay and places them on the host-backed WORKSPACE
+mount.
+
+`swapSize > 0` now requires `agentspace.sandbox.workspace.enable = true`.
+
+### Migration Steps
+
+If you use `swapSize`, keep workspace mounts enabled. The default
+configuration already does this.
+
 ## 2026-05-22: sandbox baseDir option spelling
 
 ### Who Is Affected
