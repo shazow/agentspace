@@ -1,14 +1,17 @@
 package manifest
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	shellquote "github.com/kballard/go-shellquote"
@@ -16,7 +19,13 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
+const virtioFSSocketProbeTimeout = 100 * time.Millisecond
+
 func (d Document) Manifest() (*Manifest, error) {
+	return d.ManifestWithOptions(LowerOptions{})
+}
+
+func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 	if d.Kernel.Path == "" {
 		return nil, fmt.Errorf("manifest.kernel.path is required")
 	}
@@ -54,7 +63,6 @@ func (d Document) Manifest() (*Manifest, error) {
 		},
 		Notifications: lowerNotifications(d.Notifications),
 		Workspace:     lowerWorkspace(d.Workspace),
-		RunWithTunnel: lowerRunWithTunnel(d.RunWithTunnel),
 	}
 	if m.Identity.HostName == "" {
 		m.Identity.HostName = defaultHostName
@@ -83,7 +91,11 @@ func (d Document) Manifest() (*Manifest, error) {
 	}
 	m.QEMU = qemu
 	m.Volumes = lowerVolumes(d.Volumes)
-	m.VirtioFS.Daemons = lowerVirtioFSDaemons(d.Mounts)
+	virtioFSRuns, err := m.lowerVirtioFSRuns(d.Mounts, options)
+	if err != nil {
+		return nil, err
+	}
+	m.Run = append(virtioFSRuns, lowerRun(d.Run)...)
 	m.WriteFiles = lowerWriteFiles(d.WriteFiles)
 
 	if err := m.Validate(); err != nil {
@@ -398,7 +410,8 @@ func (m MountInput) effectiveType() string {
 
 func lowerWorkspace(workspace WorkspaceInput) Workspace {
 	return Workspace{
-		BaseDir:  workspace.BaseDir,
+		GuestDir: workspace.GuestDir,
+		HostDir:  workspace.HostDir,
 		MountCWD: workspace.MountCWD,
 	}
 }
@@ -408,7 +421,7 @@ func lowerVirtioFSMounts(mounts []MountInput, transport string) []QEMUVirtioFSSh
 	for i, mount := range mounts {
 		shares = append(shares, QEMUVirtioFSShare{
 			ID:         "fs" + strconv.Itoa(i),
-			SocketPath: mount.SocketPath,
+			SocketPath: mount.VirtioFS.Socket,
 			Tag:        mount.Tag,
 			Transport:  transport,
 		})
@@ -435,20 +448,92 @@ func lowerNinePMounts(mounts []MountInput, transport string) []QEMUNinePShare {
 	return shares
 }
 
-func lowerVirtioFSDaemons(mounts []MountInput) []VirtioFSDaemon {
-	daemons := make([]VirtioFSDaemon, 0, len(mounts))
+func (m *Manifest) lowerVirtioFSRuns(mounts []MountInput, options LowerOptions) ([]Run, error) {
+	runs := make([]Run, 0, len(mounts))
 	for _, mount := range mounts {
-		if mount.effectiveType() != "virtiofs" || len(mount.VirtioFSDExec) == 0 {
+		if mount.effectiveType() != "virtiofs" || mount.VirtioFS.Socket == "" {
 			continue
 		}
-		command := commandFromExec(mount.VirtioFSDExec)
-		daemons = append(daemons, VirtioFSDaemon{
-			Tag:        mount.Tag,
-			SocketPath: mount.SocketPath,
-			Command:    command,
+		if mount.VirtioFS.Bin == "" && len(mount.VirtioFS.Args) == 0 {
+			continue
+		}
+		bin := mount.VirtioFS.Bin
+		if bin == "" {
+			bin = "virtiofsd"
+		}
+		socketPath, err := m.resolveSocketPath(mount.VirtioFS.Socket)
+		if err != nil {
+			return nil, err
+		}
+		if info, err := os.Stat(socketPath); err == nil {
+			if info.Mode()&os.ModeSocket == 0 {
+				if options.Logger != nil {
+					options.Logger.Warn("virtiofs socket path exists but is not a socket (possibly leftover from crash); starting virtiofsd anyway", "socket", socketPath)
+				}
+			} else {
+				stale, err := staleUnixSocket(socketPath)
+				if stale {
+					if options.Logger != nil {
+						options.Logger.Warn("virtiofs socket path exists but appears stale; starting virtiofsd anyway", "socket", socketPath, "error", err)
+					}
+				} else {
+					if err != nil && options.Logger != nil {
+						options.Logger.Warn("virtiofs socket liveness probe failed; assuming it is externally managed", "socket", socketPath, "error", err)
+					} else if options.Logger != nil {
+						options.Logger.Info("using existing virtiofs socket", "socket", socketPath)
+					}
+					continue
+				}
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("stat virtiofs socket %q: %w", socketPath, err)
+		}
+
+		args := append([]string(nil), mount.VirtioFS.Args...)
+		if len(args) == 0 {
+			args = []string{
+				"--socket-path={{.Socket}}",
+				"--shared-dir={{.MountSource}}",
+				"--tag={{.MountTag}}",
+			}
+		}
+		runs = append(runs, Run{
+			Name: fmt.Sprintf("virtiofsd[%s]", mount.Tag),
+			Exec: append([]string{m.resolvePath(bin)}, args...),
+			Env:  []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
+			Vars: map[string]any{
+				"Socket":      socketPath,
+				"MountTag":    mount.Tag,
+				"MountSource": m.resolvePath(mount.SourcePath),
+			},
 		})
+		m.addCleanupFile(mount.VirtioFS.Socket)
 	}
-	return daemons
+	return runs, nil
+}
+
+func staleUnixSocket(path string) (bool, error) {
+	conn, err := net.DialTimeout("unix", path, virtioFSSocketProbeTimeout)
+	if err == nil {
+		_ = conn.Close()
+		return false, nil
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT) {
+		return true, err
+	}
+	return false, err
+}
+
+func (m *Manifest) addCleanupFile(path string) {
+	if path == "" {
+		return
+	}
+	for _, existing := range m.CleanupFiles {
+		if existing == path {
+			return
+		}
+	}
+	m.CleanupFiles = append(m.CleanupFiles, path)
 }
 
 func lowerNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInput, transport string, cpus CPUCount) ([]QEMUNetDevice, error) {
@@ -669,13 +754,12 @@ func lowerNotifications(notifications NotificationsInput) Notifications {
 	return result
 }
 
-func lowerRunWithTunnel(tunnels []RunWithTunnelInput) []RunWithTunnel {
-	result := make([]RunWithTunnel, 0, len(tunnels))
-	for _, tunnel := range tunnels {
-		result = append(result, RunWithTunnel{
-			SocketPath: tunnel.SocketPath,
-			Exec:       append([]string(nil), tunnel.Exec...),
-			Vars:       cloneStringMap(tunnel.Vars),
+func lowerRun(runs []RunInput) []Run {
+	result := make([]Run, 0, len(runs))
+	for _, run := range runs {
+		result = append(result, Run{
+			Exec: append([]string(nil), run.Exec...),
+			Vars: cloneValueMap(run.Vars),
 		})
 	}
 	return result
@@ -696,6 +780,17 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
+}
+
+func cloneValueMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make(map[string]any, len(values))
 	for key, value := range values {
 		clone[key] = value
 	}

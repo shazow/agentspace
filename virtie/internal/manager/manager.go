@@ -167,15 +167,15 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	defer close(signalDone)
 	defer stopSignals()
 
-	managedSocketPaths, err := manifest.ResolvedSocketPaths()
-	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
 	virtioFSSocketPaths, err := manifest.ResolvedVirtioFSSocketPaths()
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	externalVirtioFSSocketPaths, err := manifest.ResolvedExternalVirtioFSSocketPaths()
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	cleanupFiles, err := manifest.ResolvedCleanupFiles()
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -228,23 +228,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err := ensureDirectories(manifest.ResolvedPersistenceDirectories()); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := ensureParentDirectories(managedSocketPaths); err != nil {
+	if err := ensureParentDirectories(cleanupFiles); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureParentDirectories([]string{qmpSocketPath}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
-	}
-	if len(manifest.RunWithTunnel) > 0 {
-		if err := ensureDirectories([]string{manifest.ResolvedTunnelDir()}); err != nil {
-			return &stageError{Stage: "preflight", Err: err}
-		}
-		tunnelSocketPaths := manifest.ResolvedRunWithTunnelSocketPaths()
-		if err := ensureParentDirectories(tunnelSocketPaths); err != nil {
-			return &stageError{Stage: "preflight", Err: err}
-		}
-		if err := removeSocketPaths(tunnelSocketPaths); err != nil {
-			return &stageError{Stage: "preflight", Err: err}
-		}
 	}
 	if guestAgentSocketPath != "" {
 		if err := ensureParentDirectories([]string{guestAgentSocketPath}); err != nil {
@@ -262,10 +250,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := removeSocketPaths(managedSocketPaths); err != nil {
+	if err := removeSocketPaths([]string{qmpSocketPath}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := removeSocketPaths([]string{qmpSocketPath}); err != nil {
+	if err := removeSocketPaths(cleanupFiles); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	if guestAgentSocketPath != "" {
@@ -305,15 +293,15 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if qmpClient != nil {
 			disconnectErr = qmpClient.Disconnect()
 		}
-		cleanupPaths := append([]string{qmpSocketPath}, managedSocketPaths...)
+		socketCleanupFiles := []string{qmpSocketPath}
 		if guestAgentSocketPath != "" {
-			cleanupPaths = append(cleanupPaths, guestAgentSocketPath)
+			socketCleanupFiles = append(socketCleanupFiles, guestAgentSocketPath)
 		}
 		if sshReadySocketPath != "" {
-			cleanupPaths = append(cleanupPaths, sshReadySocketPath)
+			socketCleanupFiles = append(socketCleanupFiles, sshReadySocketPath)
 		}
-		cleanupPaths = append(cleanupPaths, manifest.ResolvedRunWithTunnelSocketPaths()...)
-		cleanupErr := removeSocketPaths(cleanupPaths)
+		socketCleanupFiles = append(socketCleanupFiles, cleanupFiles...)
+		cleanupErr := removeSocketPaths(socketCleanupFiles)
 		if err == nil {
 			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
 		} else if featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {
@@ -323,17 +311,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 	}()
 
-	tunnelProcesses, err := m.startRunWithTunnels(launchCtx, manifest)
+	runProcesses, err := m.startRuns(cid, manifest)
 	if err != nil {
 		return err
 	}
-	started = append(started, tunnelProcesses...)
-
-	virtiofsd, err := m.startVirtioFSDaemons(manifest)
-	if err != nil {
-		return &stageError{Stage: "virtiofs startup", Err: err}
-	}
-	started = append(started, virtiofsd...)
+	started = append(started, runProcesses...)
 
 	if len(virtioFSSocketPaths) > 0 {
 		m.logger.Info("waiting for virtiofs sockets")
@@ -572,81 +554,39 @@ func (m *manager) startManagedProcess(spec processSpec) (*managedProcess, error)
 	return mp, nil
 }
 
-func (m *manager) startVirtioFSDaemons(manifest *manifest.Manifest) ([]*managedProcess, error) {
-	daemons, err := manifest.ResolvedVirtioFSDaemons()
+func (m *manager) startRuns(cid int, manifest *manifest.Manifest) ([]*managedProcess, error) {
+	runs, err := manifest.ResolvedRuns(cid)
 	if err != nil {
-		return nil, err
+		return nil, &stageError{Stage: "run startup", Err: err}
 	}
-	started := make([]*managedProcess, 0, len(daemons))
-
-	for _, daemon := range daemons {
-		name := "virtiofsd"
-		if daemon.Tag != "" {
-			name = fmt.Sprintf("virtiofsd[%s]", daemon.Tag)
-			m.logger.Info("starting virtiofsd", "tag", daemon.Tag)
-		} else {
-			m.logger.Info("starting virtiofsd")
-		}
-
-		env := append([]string(nil), daemon.Command.Env...)
-		env = append(env, fmt.Sprintf("VIRTIOFSD_SOCKET=%s", daemon.SocketPath))
-		process, err := m.startManagedProcess(processSpec{
-			Name:         name,
-			Path:         daemon.Command.Path,
-			Args:         daemon.Command.Args,
-			Dir:          manifest.Paths.WorkingDir,
-			Env:          env,
-			ProcessGroup: true,
-			Stdout:       os.Stderr,
-			Stderr:       os.Stderr,
-		})
-		if err != nil {
-			_ = m.stopAll(started)
-			return nil, err
-		}
-
-		started = append(started, process)
-	}
-
-	return started, nil
-}
-
-func (m *manager) startRunWithTunnels(ctx context.Context, manifest *manifest.Manifest) ([]*managedProcess, error) {
-	tunnels, err := manifest.ResolvedRunWithTunnels()
-	if err != nil {
-		return nil, &stageError{Stage: "tunnel startup", Err: err}
-	}
-	if len(tunnels) == 0 {
+	if len(runs) == 0 {
 		return nil, nil
 	}
 
-	started := make([]*managedProcess, 0, len(tunnels))
-	socketPaths := make([]string, 0, len(tunnels))
-	for _, tunnel := range tunnels {
-		name := fmt.Sprintf("run_with_tunnel[%s]", tunnel.GuestSocketPath)
-		m.logger.Info("starting run_with_tunnel", "socket", tunnel.SocketPath, "guest_socket", tunnel.GuestSocketPath)
+	started := make([]*managedProcess, 0, len(runs))
+	for i, run := range runs {
+		name := fmt.Sprintf("run[%d]", i)
+		if run.Name != "" {
+			name = run.Name
+			m.logger.Info("starting run", "name", name, "index", i)
+		} else {
+			m.logger.Info("starting run", "index", i)
+		}
 		process, err := m.startManagedProcess(processSpec{
 			Name:         name,
-			Path:         tunnel.Exec[0],
-			Args:         tunnel.Exec[1:],
-			Dir:          tunnel.Dir,
-			Env:          tunnel.Env,
+			Path:         run.Exec[0],
+			Args:         run.Exec[1:],
+			Dir:          run.Dir,
+			Env:          run.Env,
 			ProcessGroup: true,
 			Stdout:       os.Stderr,
 			Stderr:       os.Stderr,
 		})
 		if err != nil {
 			_ = m.stopAll(started)
-			return nil, &stageError{Stage: "tunnel startup", Err: err}
+			return nil, &stageError{Stage: "run startup", Err: err}
 		}
 		started = append(started, process)
-		socketPaths = append(socketPaths, tunnel.SocketPath)
-	}
-
-	m.logger.Info("waiting for tunnel sockets")
-	if err := m.waitForSockets(ctx, "tunnel startup", socketPaths, started...); err != nil {
-		_ = m.stopAll(started)
-		return nil, err
 	}
 
 	return started, nil

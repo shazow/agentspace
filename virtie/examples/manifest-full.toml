@@ -175,14 +175,13 @@ read_only = false  # Default: guest can write to the share
 
 # QEMU talks to virtiofsd through this socket. Keeping the socket named in the
 # manifest lets virtie wait for readiness and place it under state_dir.
-virtiofsd_socket = "workspace.sock"
+virtiofs.socket = "workspace.sock"
 
-# The daemon command is needed when virtie owns the host-side virtiofsd
-# lifecycle. Omit it for externally managed sockets; setting it means virtie
-# will start and stop the daemon with the VM. virtie injects the resolved socket
-# path into the daemon environment as VIRTIOFSD_SOCKET. Template values include
-# {{.Socket}}, {{.Tag}}, and {{.Env.USER}}.
-virtiofsd_exec = ["virtiofsd"]
+# When the socket already exists, virtie treats it as externally managed. When
+# it is missing, virtie starts virtiofsd with these values. Template values
+# include {{.Socket}}, {{.MountSource}}, {{.MountTag}}, and {{.Env.USER}}.
+virtiofs.bin = "virtiofsd"
+virtiofs.args = ["--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"]
 
 # Filesystem security and cache policy are backend-specific share behavior. The
 # defaults match the normal workspace share, while 9p and read-only store shares
@@ -190,20 +189,17 @@ virtiofsd_exec = ["virtiofsd"]
 security_model = "mapped"  # Options: mapped, none, passthrough (default: mapped)
 cache = "auto"  # Options: auto, always, none (default: auto)
 
-[[run_with_tunnel]]
-# Tunnel commands create Unix sockets under state_dir/tunnels on the host. That
-# directory can be shared into the guest, where agentspace mounts it at
-# /run/tunnels. The command runs with state_dir/tunnels as its working directory.
-socket = "dbus-notifications.sock"
+[[run]]
+# Run commands are host-side processes managed for the VM lifetime. They start
+# before QEMU and are stopped with the VM. virtie does not wait for command
+# readiness; socket paths should be explicit in vars when needed.
 
 # Additional template variables
-vars = { Namespace = "org.freedesktop.*" }
+vars = { Namespace = "org.freedesktop.*", SocketDir = ".virtie" }
 
-# Template values include {{.Socket}} for the resolved host socket path,
-# {{.GuestSocket}} for /run/tunnels/<socket>, vars entries, and {{.Env.USER}}.
-# The same values are injected into the command environment as SOCKET,
-# GUEST_SOCKET, and upper-snake-case vars.
-exec = ["xdg-dbus-proxy", "{{.Env.DBUS_SESSION_BUS_ADDRESS}}", "{{.Socket}}", "--filter", "--see={{.Namespace}}"]
+# Template values include {{.Workspace}} for the guest workspace path,
+# {{.StateDir}}, {{.CID}}, vars entries, and {{.Env.USER}}.
+exec = ["xdg-dbus-proxy", "{{.Env.DBUS_SESSION_BUS_ADDRESS}}", "{{.SocketDir}}/dbus-notifications.sock", "--filter", "--see={{.Namespace}}"]
 
 [[networks]]
 # Network devices default to QEMU user networking, but the manifest needs a

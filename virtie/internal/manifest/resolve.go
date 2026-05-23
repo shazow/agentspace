@@ -61,10 +61,10 @@ func (m *Manifest) resolveSocketPath(path string) (string, error) {
 	}
 }
 
-func (m *Manifest) ResolvedSocketPaths() ([]string, error) {
-	paths := make([]string, 0, len(m.VirtioFS.Daemons))
-	for _, daemon := range m.VirtioFS.Daemons {
-		resolved, err := m.resolveSocketPath(daemon.SocketPath)
+func (m *Manifest) ResolvedCleanupFiles() ([]string, error) {
+	paths := make([]string, 0, len(m.CleanupFiles))
+	for _, path := range m.CleanupFiles {
+		resolved, err := m.resolveSocketPath(path)
 		if err != nil {
 			return nil, err
 		}
@@ -86,19 +86,23 @@ func (m *Manifest) ResolvedVirtioFSSocketPaths() ([]string, error) {
 }
 
 func (m *Manifest) ResolvedExternalVirtioFSSocketPaths() ([]string, error) {
-	managedTags := make(map[string]struct{}, len(m.VirtioFS.Daemons))
-	for _, daemon := range m.VirtioFS.Daemons {
-		managedTags[daemon.Tag] = struct{}{}
+	cleanupFiles := make(map[string]struct{}, len(m.CleanupFiles))
+	for _, path := range m.CleanupFiles {
+		resolved, err := m.resolveSocketPath(path)
+		if err != nil {
+			return nil, err
+		}
+		cleanupFiles[resolved] = struct{}{}
 	}
 
 	paths := make([]string, 0, len(m.QEMU.Devices.VirtioFS))
 	for _, share := range m.QEMU.Devices.VirtioFS {
-		if _, managed := managedTags[share.Tag]; managed {
-			continue
-		}
 		resolved, err := m.resolveSocketPath(share.SocketPath)
 		if err != nil {
 			return nil, err
+		}
+		if _, managed := cleanupFiles[resolved]; managed {
+			continue
 		}
 		paths = append(paths, resolved)
 	}
@@ -125,18 +129,6 @@ func (m *Manifest) ResolvedGuestAgentSocketPath() (string, error) {
 
 func (m *Manifest) ResolvedSSHReadySocketPath() (string, error) {
 	return m.resolveSocketPath(m.QEMU.SSHReady.SocketPath)
-}
-
-func (m *Manifest) ResolvedTunnelDir() string {
-	return filepath.Join(m.ResolvedPersistenceStateDir(), "tunnels")
-}
-
-func (m *Manifest) ResolvedRunWithTunnelSocketPaths() []string {
-	paths := make([]string, 0, len(m.RunWithTunnel))
-	for _, tunnel := range m.RunWithTunnel {
-		paths = append(paths, filepath.Join(m.ResolvedTunnelDir(), tunnel.SocketPath))
-	}
-	return paths
 }
 
 func (m *Manifest) ResolvedQEMU() (QEMU, error) {
@@ -195,69 +187,38 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	return resolved, nil
 }
 
-func (m *Manifest) ResolvedVirtioFSDaemons() ([]VirtioFSDaemon, error) {
-	daemons := make([]VirtioFSDaemon, 0, len(m.VirtioFS.Daemons))
-	for _, daemon := range m.VirtioFS.Daemons {
-		resolved := daemon
-		socketPath, err := m.resolveSocketPath(daemon.SocketPath)
-		if err != nil {
-			return nil, err
-		}
-		resolved.SocketPath = socketPath
-		renderer, err := executor.New(executor.Context{
-			"Socket": socketPath,
-			"Tag":    daemon.Tag,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s].command: %w", daemon.Tag, err)
-		}
-		command, err := RenderCommand(daemon.Command, renderer)
-		if err != nil {
-			return nil, fmt.Errorf("manifest.virtiofs.daemons[%s].command: %w", daemon.Tag, err)
-		}
-		resolved.Command = Command{
-			Path: m.resolvePath(command.Path),
-			Args: command.Args,
-			Env:  command.Env,
-		}
-		daemons = append(daemons, resolved)
-	}
-	return daemons, nil
-}
-
-func (m *Manifest) ResolvedRunWithTunnels() ([]ResolvedRunWithTunnel, error) {
-	tunnels := make([]ResolvedRunWithTunnel, 0, len(m.RunWithTunnel))
-	tunnelDir := m.ResolvedTunnelDir()
-	for i, tunnel := range m.RunWithTunnel {
-		socketPath := filepath.Join(tunnelDir, tunnel.SocketPath)
-		guestSocketPath := filepath.Join("/run/tunnels", tunnel.SocketPath)
+func (m *Manifest) ResolvedRuns(cid int) ([]ResolvedRun, error) {
+	runs := make([]ResolvedRun, 0, len(m.Run))
+	for i, run := range m.Run {
 		context := executor.Context{
-			"Socket":      socketPath,
-			"GuestSocket": guestSocketPath,
+			"CID":       fmt.Sprintf("%d", cid),
+			"StateDir":  m.ResolvedPersistenceStateDir(),
+			"Workspace": m.Workspace.GuestDir,
 		}
-		for key, value := range tunnel.Vars {
+		for key, value := range run.Vars {
 			context[key] = value
 		}
 		renderer, err := executor.New(context)
 		if err != nil {
-			return nil, fmt.Errorf("manifest.runWithTunnel[%d].exec: %w", i, err)
+			return nil, fmt.Errorf("manifest.run[%d].exec: %w", i, err)
 		}
-		exec, err := renderer.RenderArgv(tunnel.Exec)
+		exec, err := renderer.RenderArgv(run.Exec)
 		if err != nil {
-			return nil, fmt.Errorf("manifest.runWithTunnel[%d].exec: %w", i, err)
+			return nil, fmt.Errorf("manifest.run[%d].exec: %w", i, err)
 		}
-		env := append([]string(nil), tunnel.Env...)
+		env, err := renderer.RenderArgv(run.Env)
+		if err != nil {
+			return nil, fmt.Errorf("manifest.run[%d].env: %w", i, err)
+		}
 		env = append(env, renderer.Env()...)
-		tunnels = append(tunnels, ResolvedRunWithTunnel{
-			SocketPath:      socketPath,
-			GuestSocketPath: guestSocketPath,
-			Exec:            exec,
-			Env:             env,
-			Dir:             tunnelDir,
-			Vars:            cloneStringMap(tunnel.Vars),
+		runs = append(runs, ResolvedRun{
+			Name: run.Name,
+			Exec: exec,
+			Env:  env,
+			Dir:  m.Paths.WorkingDir,
 		})
 	}
-	return tunnels, nil
+	return runs, nil
 }
 
 func (m *Manifest) ResolvedNotifications() Notifications {

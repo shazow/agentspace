@@ -4,24 +4,31 @@
 // and validation rules that keep the runtime assumptions consistent. The
 // package also resolves working-directory and runtime-directory paths into the
 // concrete host-side paths that the manager uses for sockets, lock files,
-// volumes, QEMU binaries, and virtiofs daemons.
+// volumes, QEMU binaries, and run processes.
 package manifest
 
-import "time"
+import (
+	"log/slog"
+	"time"
+)
+
+type LowerOptions struct {
+	Logger *slog.Logger
+}
 
 type Manifest struct {
-	Identity      Identity        `json:"identity"`
-	Paths         Paths           `json:"paths"`
-	Persistence   Persistence     `json:"persistence"`
-	SSH           SSH             `json:"ssh"`
-	QEMU          QEMU            `json:"qemu"`
-	Volumes       []Volume        `json:"volumes,omitempty"`
-	VSock         VSock           `json:"vsock"`
-	VirtioFS      VirtioFS        `json:"virtiofs"`
-	Workspace     Workspace       `json:"workspace,omitempty"`
-	WriteFiles    WriteFiles      `json:"writeFiles,omitempty"`
-	Notifications Notifications   `json:"notifications,omitempty"`
-	RunWithTunnel []RunWithTunnel `json:"runWithTunnel,omitempty"`
+	Identity      Identity      `json:"identity"`
+	Paths         Paths         `json:"paths"`
+	Persistence   Persistence   `json:"persistence"`
+	SSH           SSH           `json:"ssh"`
+	QEMU          QEMU          `json:"qemu"`
+	Volumes       []Volume      `json:"volumes,omitempty"`
+	VSock         VSock         `json:"vsock"`
+	Workspace     Workspace     `json:"workspace,omitempty"`
+	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
+	Notifications Notifications `json:"notifications,omitempty"`
+	Run           []Run         `json:"run,omitempty"`
+	CleanupFiles  []string      `json:"cleanupFiles,omitempty"`
 }
 
 type Identity struct {
@@ -70,7 +77,8 @@ type VSock struct {
 }
 
 type Workspace struct {
-	BaseDir  string `json:"baseDir,omitempty"`
+	GuestDir string `json:"guestDir,omitempty"`
+	HostDir  string `json:"hostDir,omitempty"`
 	MountCWD bool   `json:"mountCWD,omitempty"`
 }
 
@@ -98,21 +106,11 @@ type Notifications struct {
 	States  []string `json:"states,omitempty"`
 }
 
-type VirtioFSDaemon struct {
-	Tag        string  `json:"tag"`
-	SocketPath string  `json:"socketPath"`
-	Command    Command `json:"command"`
-}
-
-type VirtioFS struct {
-	Daemons []VirtioFSDaemon `json:"daemons"`
-}
-
-type RunWithTunnel struct {
-	SocketPath string            `json:"socketPath"`
-	Exec       []string          `json:"exec"`
-	Env        []string          `json:"env,omitempty"`
-	Vars       map[string]string `json:"vars,omitempty"`
+type Run struct {
+	Name string         `json:"name,omitempty"`
+	Exec []string       `json:"exec"`
+	Env  []string       `json:"env,omitempty"`
+	Vars map[string]any `json:"vars,omitempty"`
 }
 
 type WriteFile struct {
@@ -150,11 +148,9 @@ type ResolvedWriteFile struct {
 	Content     WriteFileContent
 }
 
-type ResolvedRunWithTunnel struct {
-	SocketPath      string
-	GuestSocketPath string
-	Exec            []string
-	Env             []string
-	Dir             string
-	Vars            map[string]string
+type ResolvedRun struct {
+	Name string
+	Exec []string
+	Env  []string
+	Dir  string
 }

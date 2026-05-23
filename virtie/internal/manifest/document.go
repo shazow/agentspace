@@ -14,24 +14,24 @@ const (
 )
 
 type Document struct {
-	HostName      string               `json:"host_name,omitempty" toml:"host_name"`
-	WorkingDir    string               `json:"working_dir,omitempty" toml:"working_dir"`
-	StateDir      string               `json:"state_dir,omitempty" toml:"state_dir"`
-	Host          HostInput            `json:"host,omitempty" toml:"host"`
-	QEMU          QEMUInput            `json:"qemu,omitempty" toml:"qemu"`
-	Machine       MachineInput         `json:"machine,omitempty" toml:"machine"`
-	Kernel        KernelInput          `json:"kernel" toml:"kernel"`
-	Graphics      *GraphicsInput       `json:"graphics,omitempty" toml:"graphics"`
-	Volumes       []VolumeInput        `json:"volumes,omitempty" toml:"volumes"`
-	Mounts        []MountInput         `json:"mounts,omitempty" toml:"mounts"`
-	Workspace     WorkspaceInput       `json:"workspace,omitempty" toml:"workspace"`
-	Networks      []NetworkInput       `json:"networks,omitempty" toml:"networks"`
-	Balloon       *BalloonInput        `json:"balloon,omitempty" toml:"balloon"`
-	SSH           SSHInput             `json:"ssh,omitempty" toml:"ssh"`
-	VSock         VSockInput           `json:"vsock,omitempty" toml:"vsock"`
-	WriteFiles    []WriteFileInput     `json:"write_files,omitempty" toml:"write_files"`
-	Notifications NotificationsInput   `json:"notifications,omitempty" toml:"notifications"`
-	RunWithTunnel []RunWithTunnelInput `json:"run_with_tunnel,omitempty" toml:"run_with_tunnel"`
+	HostName      string             `json:"host_name,omitempty" toml:"host_name"`
+	WorkingDir    string             `json:"working_dir,omitempty" toml:"working_dir"`
+	StateDir      string             `json:"state_dir,omitempty" toml:"state_dir"`
+	Host          HostInput          `json:"host,omitempty" toml:"host"`
+	QEMU          QEMUInput          `json:"qemu,omitempty" toml:"qemu"`
+	Machine       MachineInput       `json:"machine,omitempty" toml:"machine"`
+	Kernel        KernelInput        `json:"kernel" toml:"kernel"`
+	Graphics      *GraphicsInput     `json:"graphics,omitempty" toml:"graphics"`
+	Volumes       []VolumeInput      `json:"volumes,omitempty" toml:"volumes"`
+	Mounts        []MountInput       `json:"mounts,omitempty" toml:"mounts"`
+	Workspace     WorkspaceInput     `json:"workspace,omitempty" toml:"workspace"`
+	Networks      []NetworkInput     `json:"networks,omitempty" toml:"networks"`
+	Balloon       *BalloonInput      `json:"balloon,omitempty" toml:"balloon"`
+	SSH           SSHInput           `json:"ssh,omitempty" toml:"ssh"`
+	VSock         VSockInput         `json:"vsock,omitempty" toml:"vsock"`
+	WriteFiles    []WriteFileInput   `json:"write_files,omitempty" toml:"write_files"`
+	Notifications NotificationsInput `json:"notifications,omitempty" toml:"notifications"`
+	Run           []RunInput         `json:"run,omitempty" toml:"run"`
 }
 
 type HostInput struct {
@@ -82,18 +82,24 @@ type VolumeInput struct {
 }
 
 type MountInput struct {
-	Type          string   `json:"type,omitempty" toml:"type"`
-	Tag           string   `json:"tag" toml:"tag"`
-	SourcePath    string   `json:"source,omitempty" toml:"source"`
-	SocketPath    string   `json:"virtiofsd_socket,omitempty" toml:"virtiofsd_socket"`
-	ReadOnly      bool     `json:"read_only,omitempty" toml:"read_only"`
-	SecurityModel string   `json:"security_model,omitempty" toml:"security_model"`
-	Cache         string   `json:"cache,omitempty" toml:"cache"`
-	VirtioFSDExec []string `json:"virtiofsd_exec,omitempty" toml:"virtiofsd_exec"`
+	Type          string        `json:"type,omitempty" toml:"type"`
+	Tag           string        `json:"tag" toml:"tag"`
+	SourcePath    string        `json:"source,omitempty" toml:"source"`
+	ReadOnly      bool          `json:"read_only,omitempty" toml:"read_only"`
+	SecurityModel string        `json:"security_model,omitempty" toml:"security_model"`
+	Cache         string        `json:"cache,omitempty" toml:"cache"`
+	VirtioFS      VirtioFSInput `json:"virtiofs,omitempty" toml:"virtiofs"`
+}
+
+type VirtioFSInput struct {
+	Socket string   `json:"socket,omitempty" toml:"socket"`
+	Bin    string   `json:"bin,omitempty" toml:"bin"`
+	Args   []string `json:"args,omitempty" toml:"args"`
 }
 
 type WorkspaceInput struct {
-	BaseDir  string `json:"basedir,omitempty" toml:"basedir"`
+	GuestDir string `json:"guest_dir,omitempty" toml:"guest_dir"`
+	HostDir  string `json:"host_dir,omitempty" toml:"host_dir"`
 	MountCWD bool   `json:"mount_cwd,omitempty" toml:"mount_cwd"`
 }
 
@@ -166,8 +172,7 @@ type NotificationsInput struct {
 	States []string `json:"states,omitempty" toml:"states"`
 }
 
-type RunWithTunnelInput struct {
-	SocketPath string            `json:"socket" toml:"socket"`
-	Exec       []string          `json:"exec" toml:"exec"`
-	Vars       map[string]string `json:"vars,omitempty" toml:"vars"`
+type RunInput struct {
+	Exec []string       `json:"exec" toml:"exec"`
+	Vars map[string]any `json:"vars,omitempty" toml:"vars"`
 }

@@ -236,9 +236,11 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
 	cfg.Persistence.Directories = []string{"persist"}
 	cfg.QEMU.QMP.SocketPath = "qmp.sock"
 	cfg.QEMU.Devices.Block[0].ImagePath = "overlay.img"
+	cfg.CleanupFiles = []string{"sock-a", "sock-b", "cleanup.sock"}
 	cfg.Volumes = []manifest.Volume{
 		{
 			ImagePath:  "overlay.img",
@@ -247,20 +249,16 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 			AutoCreate: true,
 		},
 	}
-	cfg.VirtioFS.Daemons = []manifest.VirtioFSDaemon{
+	cfg.Run = []manifest.Run{
 		{
-			Tag:        "ro-store",
-			SocketPath: "sock-a",
-			Command: manifest.Command{
-				Path: "/bin/virtiofsd-ro-store",
-			},
+			Name: "virtiofsd[ro-store]",
+			Exec: []string{"/bin/virtiofsd-ro-store"},
+			Vars: map[string]any{"Socket": filepath.Join(tmpDir, ".virtie", "sock-a")},
 		},
 		{
-			Tag:        "workspace",
-			SocketPath: "sock-b",
-			Command: manifest.Command{
-				Path: "/bin/virtiofsd-workspace",
-			},
+			Name: "virtiofsd[workspace]",
+			Exec: []string{"/bin/virtiofsd-workspace"},
+			Vars: map[string]any{"Socket": filepath.Join(tmpDir, ".virtie", "sock-b")},
 		},
 	}
 	cfg.QEMU.Devices.VirtioFS = []manifest.QEMUVirtioFSShare{
@@ -272,6 +270,17 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 
 	volumeImage := filepath.Join(tmpDir, "overlay.img")
+	cleanupPath := filepath.Join(tmpDir, ".virtie", "cleanup.sock")
+	untouchedPath := filepath.Join(tmpDir, ".virtie", "external.sock")
+	if err := os.MkdirAll(filepath.Dir(cleanupPath), 0o755); err != nil {
+		t.Fatalf("create cleanup directory: %v", err)
+	}
+	if err := os.WriteFile(cleanupPath, []byte("cleanup"), 0o600); err != nil {
+		t.Fatalf("write cleanup file: %v", err)
+	}
+	if err := os.WriteFile(untouchedPath, []byte("external"), 0o600); err != nil {
+		t.Fatalf("write external path: %v", err)
+	}
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -323,7 +332,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	if !containsString(runner.qemuArgs, "-qmp") {
 		t.Fatalf("expected qemu args to contain qmp socket: %v", runner.qemuArgs)
 	}
-	if !containsString(runner.qemuArgs, "unix:"+filepath.Join(tmpDir, "qmp.sock")+",server,nowait") {
+	if !containsString(runner.qemuArgs, "unix:"+filepath.Join(tmpDir, ".virtie", "qmp.sock")+",server,nowait") {
 		t.Fatalf("expected qemu args to contain resolved qmp socket path: %v", runner.qemuArgs)
 	}
 	if !containsString(runner.qemuArgs, "guest-cid=3") {
@@ -335,7 +344,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	if !containsString(runner.qemuArgs, "vhost-user-fs-pci,chardev=char-fs1,tag=workspace") {
 		t.Fatalf("expected qemu args to contain virtiofs share: %v", runner.qemuArgs)
 	}
-	if !containsString(runner.qemuArgs, "socket,path="+filepath.Join(tmpDir, "ready.sock")+",server=on,wait=off,id=ready_char") {
+	if !containsString(runner.qemuArgs, "socket,path="+filepath.Join(tmpDir, ".virtie", "ready.sock")+",server=on,wait=off,id=ready_char") {
 		t.Fatalf("expected qemu args to contain ssh readiness socket: %v", runner.qemuArgs)
 	}
 	if !containsString(runner.qemuArgs, "virtserialport,chardev=ready_char,name=virtie.ready") {
@@ -384,6 +393,12 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
 		t.Fatalf("expected launch to clear stale suspend state, stat err: %v", err)
 	}
+	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup file to be removed, stat err: %v", err)
+	}
+	if _, err := os.Stat(untouchedPath); err != nil {
+		t.Fatalf("expected unlisted path to remain: %v", err)
+	}
 	logs := logOutput.String()
 	for _, want := range []string{
 		"creating volume image",
@@ -411,20 +426,18 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	})
 }
 
-func TestManagerLaunchStartsRunWithTunnels(t *testing.T) {
+func TestManagerLaunchStartsRunCommands(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Persistence.StateDir = ".virtie"
 	cfg.QEMU.QMP.SocketPath = "qmp.sock"
 	cfg.Volumes[0].AutoCreate = false
-	cfg.RunWithTunnel = []manifest.RunWithTunnel{
-		{
-			SocketPath: "dbus-notifications.sock",
-			Exec:       []string{"/bin/proxy", "--socket={{.Socket}}", "--guest={{.GuestSocket}}", "--name={{.Name}}"},
-			Vars:       map[string]string{"Name": "notifications"},
-		},
-	}
+	cfg.Workspace = manifest.Workspace{GuestDir: "/home/agent/workspace"}
+	cfg.Run = append(cfg.Run, manifest.Run{
+		Exec: []string{"/bin/proxy", "--workspace={{.Workspace}}", "--cid={{.CID}}", "--name={{.Name}}"},
+		Vars: map[string]any{"Name": "notifications"},
+	})
 
 	var eventsMu sync.Mutex
 	var events []string
@@ -469,37 +482,32 @@ func TestManagerLaunchStartsRunWithTunnels(t *testing.T) {
 	}
 
 	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true}); err != nil {
-		t.Fatalf("launch with run_with_tunnel: %v", err)
+		t.Fatalf("launch with run: %v", err)
 	}
 
-	tunnelName := "run_with_tunnel[/run/tunnels/dbus-notifications.sock]"
-	if !containsString(runner.starts, tunnelName) {
-		t.Fatalf("expected run_with_tunnel process start in %v", runner.starts)
+	runName := "run[1]"
+	if !containsString(runner.starts, runName) {
+		t.Fatalf("expected run process start in %v", runner.starts)
 	}
-	if got, want := runner.starts, []string{tunnelName, "virtiofsd[workspace]", "qemu", "ssh"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.starts, []string{"virtiofsd[workspace]", runName, "qemu", "ssh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
-	if got, want := runner.processDirs[tunnelName], filepath.Join(tmpDir, ".virtie", "tunnels"); got != want {
-		t.Fatalf("unexpected tunnel working directory: got %q want %q", got, want)
+	if got, want := runner.processDirs[runName], tmpDir; got != want {
+		t.Fatalf("unexpected run working directory: got %q want %q", got, want)
 	}
-	socketPath := filepath.Join(tmpDir, ".virtie", "tunnels", "dbus-notifications.sock")
-	if got, want := runner.tunnelArgs[tunnelName], []string{"--socket=" + socketPath, "--guest=/run/tunnels/dbus-notifications.sock", "--name=notifications"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected tunnel args: got %#v want %#v", got, want)
+	if got, want := runner.runArgs[runName], []string{"--workspace=/home/agent/workspace", "--cid=3", "--name=notifications"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected run args: got %#v want %#v", got, want)
 	}
 	for _, want := range []string{
-		"SOCKET=" + socketPath,
-		"GUEST_SOCKET=/run/tunnels/dbus-notifications.sock",
+		"CID=3",
 		"NAME=notifications",
+		"WORKSPACE=/home/agent/workspace",
 	} {
-		if !containsString(runner.tunnelEnv[tunnelName], want) {
-			t.Fatalf("expected tunnel env %q in %#v", want, runner.tunnelEnv[tunnelName])
+		if !containsString(runner.runEnv[runName], want) {
+			t.Fatalf("expected run env %q in %#v", want, runner.runEnv[runName])
 		}
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, ".virtie", "tunnels")); err != nil {
-		t.Fatalf("expected tunnel directory to exist: %v", err)
-	}
 	wantSocketWaits := [][]string{
-		{socketPath},
 		{filepath.Join(tmpDir, "fs.sock")},
 		{filepath.Join(tmpDir, "qmp.sock")},
 	}
@@ -513,9 +521,8 @@ func TestManagerLaunchStartsRunWithTunnels(t *testing.T) {
 	gotEvents := append([]string(nil), events...)
 	eventsMu.Unlock()
 	wantEvents := []string{
-		"start:" + tunnelName,
-		"wait:dbus-notifications.sock",
 		"start:virtiofsd[workspace]",
+		"start:" + runName,
 		"wait:fs.sock",
 		"start:qemu",
 		"wait:qmp.sock",
@@ -524,90 +531,84 @@ func TestManagerLaunchStartsRunWithTunnels(t *testing.T) {
 	if !reflect.DeepEqual(gotEvents, wantEvents) {
 		t.Fatalf("unexpected launch events: got %v want %v", gotEvents, wantEvents)
 	}
-	if !strings.Contains(logOutput.String(), "waiting for tunnel sockets") {
-		t.Fatalf("expected tunnel socket wait log, got %q", logOutput.String())
-	}
 }
 
-func TestManagerLaunchFailsWhenRunWithTunnelExitsBeforeSocketReady(t *testing.T) {
+func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
 	cfg.Persistence.StateDir = ".virtie"
 	cfg.Volumes[0].AutoCreate = false
-	cfg.RunWithTunnel = []manifest.RunWithTunnel{
+	cfg.QEMU.Devices.VirtioFS = nil
+	cfg.CleanupFiles = []string{"cleanup.sock"}
+	cfg.Run = []manifest.Run{
 		{
-			SocketPath: "dbus-notifications.sock",
-			Exec:       []string{"/bin/proxy"},
+			Exec: []string{"/bin/proxy"},
 		},
 	}
+	cleanupPath := filepath.Join(tmpDir, ".virtie", "cleanup.sock")
+	if err := os.MkdirAll(filepath.Dir(cleanupPath), 0o755); err != nil {
+		t.Fatalf("create cleanup directory: %v", err)
+	}
+	if err := os.WriteFile(cleanupPath, []byte("cleanup"), 0o600); err != nil {
+		t.Fatalf("write cleanup file: %v", err)
+	}
 
-	runner := &fakeRunner{runWithTunnelExitErr: errors.New("proxy exited")}
-	waiterStarted := make(chan struct{})
-	waiterRelease := make(chan struct{})
-	waiter := &fakeSocketWaiter{
-		callback: func(paths []string) error {
-			close(waiterStarted)
-			<-waiterRelease
-			return context.Canceled
+	runner := &fakeRunner{
+		startErrors: map[string]error{
+			"run[0]": errors.New("proxy start failed"),
 		},
 	}
 	var logOutput bytes.Buffer
 	manager := &manager{
 		locker:        &fileLocker{},
 		runner:        runner,
-		socketWaiter:  waiter,
+		socketWaiter:  &fakeSocketWaiter{},
 		logger:        slog.New(slog.NewTextHandler(&logOutput, nil)),
 		logWriter:     &logOutput,
 		shutdownDelay: 10 * time.Millisecond,
 	}
 
 	err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true})
-	close(waiterRelease)
-	if err == nil || !strings.Contains(err.Error(), "tunnel startup") {
-		t.Fatalf("expected tunnel startup error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "run startup") {
+		t.Fatalf("expected run startup error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "proxy exited") {
-		t.Fatalf("expected tunnel process error, got %v", err)
+	if !strings.Contains(err.Error(), "proxy start failed") {
+		t.Fatalf("expected run process error, got %v", err)
 	}
 	if containsString(runner.starts, "qemu") {
 		t.Fatalf("expected qemu not to start, got starts %v", runner.starts)
 	}
-	if containsString(runner.starts, "virtiofsd[workspace]") {
-		t.Fatalf("expected virtiofsd not to start before tunnel readiness, got starts %v", runner.starts)
-	}
-	select {
-	case <-waiterStarted:
-	case <-time.After(time.Second):
-		t.Fatal("expected socket waiter to run for tunnel readiness")
+	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup file to be removed before startup failure, stat err: %v", err)
 	}
 	if !strings.Contains(logOutput.String(), "stats:") {
 		t.Fatalf("expected normal launch cleanup to emit stats, got %q", logOutput.String())
 	}
 }
 
-func TestManagerLaunchStopsStartedRunWithTunnelsWhenLaterTunnelFails(t *testing.T) {
+func TestManagerLaunchStopsStartedRunsWhenLaterRunFails(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Persistence.StateDir = ".virtie"
 	cfg.Volumes[0].AutoCreate = false
-	cfg.RunWithTunnel = []manifest.RunWithTunnel{
+	cfg.QEMU.Devices.VirtioFS = nil
+	cfg.Run = []manifest.Run{
 		{
-			SocketPath: "one.sock",
-			Exec:       []string{"/bin/proxy-one"},
+			Exec: []string{"/bin/proxy-one"},
 		},
 		{
-			SocketPath: "two.sock",
-			Exec:       []string{"/bin/proxy-two"},
+			Exec: []string{"/bin/proxy-two"},
 		},
 	}
 
-	firstName := "run_with_tunnel[/run/tunnels/one.sock]"
-	secondName := "run_with_tunnel[/run/tunnels/two.sock]"
+	firstName := "run[0]"
+	secondName := "run[1]"
 	runner := &fakeRunner{
 		startErrors: map[string]error{
-			secondName: errors.New("start second tunnel failed"),
+			secondName: errors.New("start second run failed"),
 		},
 	}
 	waiter := &fakeSocketWaiter{callback: func(paths []string) error { return nil }}
@@ -622,8 +623,8 @@ func TestManagerLaunchStopsStartedRunWithTunnelsWhenLaterTunnelFails(t *testing.
 	}
 
 	err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true})
-	if err == nil || !strings.Contains(err.Error(), "tunnel startup") || !strings.Contains(err.Error(), "start second tunnel failed") {
-		t.Fatalf("expected second tunnel startup error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "run startup") || !strings.Contains(err.Error(), "start second run failed") {
+		t.Fatalf("expected second run startup error, got %v", err)
 	}
 	if got, want := runner.starts, []string{firstName, secondName}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
@@ -639,6 +640,70 @@ func TestManagerLaunchStopsStartedRunWithTunnelsWhenLaterTunnelFails(t *testing.
 	}
 	if containsString(runner.starts, "virtiofsd[workspace]") {
 		t.Fatalf("expected virtiofsd not to start after tunnel failure, got starts %v", runner.starts)
+	}
+}
+
+func TestManagerLaunchRemovesCleanupPathAfterQMPStartupFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Volumes[0].AutoCreate = false
+
+	cleanupPath := filepath.Join(tmpDir, "fs.sock")
+	waiter := &fakeSocketWaiter{
+		callback: func(paths []string) error {
+			if len(paths) == 1 && paths[0] == cleanupPath {
+				file, err := os.Create(cleanupPath)
+				if err != nil {
+					return err
+				}
+				return file.Close()
+			}
+			return errors.New("qmp did not start")
+		},
+	}
+	runner := &fakeRunner{}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      waiter,
+		qmpDialer:         &fakeQMPDialer{},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+	}
+
+	err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true})
+	if err == nil || !strings.Contains(err.Error(), "qmp did not start") {
+		t.Fatalf("expected qmp startup error, got %v", err)
+	}
+	if got, want := runner.starts, []string{"virtiofsd[workspace]", "qemu"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected start order: got %v want %v", got, want)
+	}
+	if got, want := runner.signals, []string{"qemu", "virtiofsd[workspace]"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup signals: got %v want %v", got, want)
+	}
+	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup file to be removed after qmp failure, stat err: %v", err)
+	}
+}
+
+func TestRemoveSocketPathsIgnoresMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "cleanup.sock")
+	missingPath := filepath.Join(tmpDir, "missing.sock")
+	if err := os.WriteFile(filePath, []byte("cleanup"), 0o600); err != nil {
+		t.Fatalf("write cleanup file: %v", err)
+	}
+
+	if err := removeSocketPaths([]string{filePath, missingPath}); err != nil {
+		t.Fatalf("remove socket paths: %v", err)
+	}
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup file to be removed, stat err: %v", err)
 	}
 }
 
@@ -1194,7 +1259,7 @@ func TestManagerMountsWorkspaceCWD(t *testing.T) {
 	cfg := validManifest(tmpDir)
 	cfg.Paths.WorkingDir = filepath.Join(tmpDir, "agentspace")
 	cfg.Workspace = manifest.Workspace{
-		BaseDir:  "/home/agent/workspace",
+		GuestDir: "/home/agent/workspace",
 		MountCWD: true,
 	}
 	guestAgent := &fakeGuestAgentClient{
@@ -2111,7 +2176,9 @@ func TestManagerLaunchSkipsGuestFilesOnResume(t *testing.T) {
 		t.Fatalf("write suspend state: %v", err)
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &fakeRunner{
+		finishInteractiveSSH: true,
+	}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -2291,7 +2358,8 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 	}
 	defer listener.Close()
 	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
-	cfg.VirtioFS.Daemons = nil
+	cfg.Run = nil
+	cfg.CleanupFiles = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2343,7 +2411,8 @@ func TestManagerLaunchRejectsMissingExternalVirtioFSSocket(t *testing.T) {
 	cfg.Volumes[0].AutoCreate = false
 	externalSocket := filepath.Join(tmpDir, "missing-virtiofs.sock")
 	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
-	cfg.VirtioFS.Daemons = nil
+	cfg.Run = nil
+	cfg.CleanupFiles = nil
 
 	runner := &fakeRunner{}
 	manager := &manager{
@@ -2368,7 +2437,7 @@ func TestManagerLaunchSkipsVirtioFSReadinessWhenNoVirtioFSDevices(t *testing.T) 
 	cfg.QEMU.Devices.VirtioFS = nil
 	cfg.QEMU.Devices.Block = nil
 	cfg.Volumes = nil
-	cfg.VirtioFS.Daemons = nil
+	cfg.Run = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2436,7 +2505,7 @@ func TestManagerLaunchWithOnlyNinePShareDoesNotWaitForVirtioFS(t *testing.T) {
 		},
 	}
 	cfg.Volumes = nil
-	cfg.VirtioFS.Daemons = nil
+	cfg.Run = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2719,12 +2788,9 @@ func TestManagerSuspendPreservesExistingSavedStateWithoutSignal(t *testing.T) {
 func TestEffectiveSuspendSignalTimeoutIncludesMigrationAndTeardown(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	cfg.VirtioFS.Daemons = append(cfg.VirtioFS.Daemons, manifest.VirtioFSDaemon{
-		Tag:        "cache",
-		SocketPath: "cache.sock",
-		Command: manifest.Command{
-			Path: "/tmp/virtiofsd-cache",
-		},
+	cfg.Run = append(cfg.Run, manifest.Run{
+		Name: "virtiofsd[cache]",
+		Exec: []string{"/tmp/virtiofsd-cache"},
 	})
 
 	manager := &manager{
@@ -3403,7 +3469,7 @@ func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest.QEMU.Devices.Block = nil
 	manifest.QEMU.Devices.Network = nil
 	manifest.Volumes = nil
-	manifest.VirtioFS.Daemons = nil
+	manifest.Run = nil
 
 	spec, err := buildQEMUSpec(manifest, 42)
 	if err != nil {
@@ -3457,12 +3523,14 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	}
 }
 
-func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
+func TestStartRunsUsesNamedVirtioFSRunEnv(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)
 
 	cfg := validManifest(t.TempDir())
 	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirXDG}
+	wantSocket := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "fs.sock")
+	cfg.Run[0].Vars["Socket"] = wantSocket
 
 	runner := &fakeRunner{}
 	manager := &manager{
@@ -3470,16 +3538,15 @@ func TestStartVirtioFSDaemonsInjectsResolvedSocketPathEnv(t *testing.T) {
 		runner: runner,
 	}
 
-	if _, err := manager.startVirtioFSDaemons(cfg); err != nil {
-		t.Fatalf("start virtiofs daemons: %v", err)
+	if _, err := manager.startRuns(3, cfg); err != nil {
+		t.Fatalf("start runs: %v", err)
 	}
 
-	wantSocket := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "fs.sock")
 	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIOFSD_SOCKET="+wantSocket) {
-		t.Fatalf("expected virtiofs daemon env to contain resolved socket path %q: %v", wantSocket, got)
+		t.Fatalf("expected virtiofs run env to contain resolved socket path %q: %v", wantSocket, got)
 	}
 	if !runner.processGroups["virtiofsd[workspace]"] {
-		t.Fatal("expected virtiofs daemon to run in its own process group")
+		t.Fatal("expected virtiofs run to run in its own process group")
 	}
 }
 
@@ -3594,15 +3661,19 @@ func validManifest(workingDir string) *manifest.Manifest {
 				AutoCreate: true,
 			},
 		},
-		VirtioFS: manifest.VirtioFS{Daemons: []manifest.VirtioFSDaemon{
+		Run: []manifest.Run{
 			{
-				Tag:        "workspace",
-				SocketPath: "fs.sock",
-				Command: manifest.Command{
-					Path: "/tmp/virtiofsd-workspace",
+				Name: "virtiofsd[workspace]",
+				Exec: []string{"/tmp/virtiofsd-workspace", "--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"},
+				Env:  []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
+				Vars: map[string]any{
+					"Socket":      filepath.Join(workingDir, "fs.sock"),
+					"MountTag":    "workspace",
+					"MountSource": workingDir,
 				},
 			},
-		}},
+		},
+		CleanupFiles: []string{"fs.sock"},
 	}
 }
 
@@ -3623,8 +3694,8 @@ type fakeRunner struct {
 	sshArgs                   [][]string
 	qemuArgs                  []string
 	qemuEnv                   []string
-	tunnelArgs                map[string][]string
-	tunnelEnv                 map[string][]string
+	runArgs                   map[string][]string
+	runEnv                    map[string][]string
 	virtiofsEnv               map[string][]string
 	processGroups             map[string]bool
 	processDirs               map[string]string
@@ -3637,7 +3708,6 @@ type fakeRunner struct {
 	transientSSHFailures      int
 	transientSSHOutputs       []string
 	authSSHFailures           int
-	runWithTunnelExitErr      error
 	startErrors               map[string]error
 	qemu                      *fakeProcess
 	onStart                   func(processSpec)
@@ -3726,18 +3796,15 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		}()
 		return process, nil
 	default:
-		if strings.HasPrefix(spec.Name, "run_with_tunnel[") {
-			if r.tunnelArgs == nil {
-				r.tunnelArgs = make(map[string][]string)
+		if strings.HasPrefix(spec.Name, "run[") {
+			if r.runArgs == nil {
+				r.runArgs = make(map[string][]string)
 			}
-			if r.tunnelEnv == nil {
-				r.tunnelEnv = make(map[string][]string)
+			if r.runEnv == nil {
+				r.runEnv = make(map[string][]string)
 			}
-			r.tunnelArgs[spec.Name] = append([]string(nil), spec.Args...)
-			r.tunnelEnv[spec.Name] = append([]string(nil), spec.Env...)
-			if r.runWithTunnelExitErr != nil {
-				return &fakeProcess{name: spec.Name, runner: r, done: closedErrorChannel(r.runWithTunnelExitErr)}, nil
-			}
+			r.runArgs[spec.Name] = append([]string(nil), spec.Args...)
+			r.runEnv[spec.Name] = append([]string(nil), spec.Env...)
 			return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
 		}
 		if strings.HasPrefix(spec.Name, "virtiofsd[") {

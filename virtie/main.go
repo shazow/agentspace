@@ -39,20 +39,22 @@ func (c *launchCommand) Execute(args []string) error {
 		return fmt.Errorf("remote command arguments require --ssh")
 	}
 
-	manifest, err := loadLaunchManifest(c.Manifest)
-	if err != nil {
-		return err
-	}
-
 	baseLogger := slog.Default()
 	discardLogger := slog.New(slog.DiscardHandler)
+	manifestLogger := discardLogger
 	manager.SetLogger(discardLogger)
 	balloon.SetLogger(discardLogger)
 	if len(c.Verbose) > 0 {
+		manifestLogger = baseLogger.With("package", "manifest")
 		manager.SetLogger(baseLogger.With("package", "manager"))
 	}
 	if len(c.Verbose) > 1 {
 		balloon.SetLogger(baseLogger.With("package", "balloon"))
+	}
+
+	manifest, err := loadLaunchManifest(c.Manifest, manifestLogger)
+	if err != nil {
+		return err
 	}
 
 	return manager.LaunchWithOptions(context.Background(), manifest, c.Args.RemoteCommand, manager.LaunchOptions{
@@ -78,25 +80,27 @@ func (c *suspendCommand) Execute(args []string) error {
 	return manager.Suspend(ctx, manifest)
 }
 
-func loadLaunchManifest(path string) (*manifest.Manifest, error) {
-	manifest, resolvedPath, data, err := loadManifestData(path)
+func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {
+	doc, resolvedPath, data, err := loadManifestDocumentData(path)
 	if err != nil {
 		return nil, err
 	}
-	if filepath.IsAbs(manifest.Paths.WorkingDir) {
-		return manifest, nil
+	workingDir := doc.WorkingDir
+	if workingDir == "" {
+		workingDir = "."
+	}
+	if !filepath.IsAbs(workingDir) {
+		resolvedWorkingDir, err := filepath.Abs(workingDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve manifest working directory %q: %w", workingDir, err)
+		}
+		doc.WorkingDir = resolvedWorkingDir
+		if err := writeManifestWorkingDir(resolvedPath, data, resolvedWorkingDir); err != nil {
+			return nil, err
+		}
 	}
 
-	workingDir, err := filepath.Abs(manifest.Paths.WorkingDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolve manifest working directory %q: %w", manifest.Paths.WorkingDir, err)
-	}
-	manifest.Paths.WorkingDir = workingDir
-
-	if err := writeManifestWorkingDir(resolvedPath, data, workingDir); err != nil {
-		return nil, err
-	}
-	return manifest, nil
+	return doc.ManifestWithOptions(manifest.LowerOptions{Logger: logger})
 }
 
 func loadManifest(path string) (*manifest.Manifest, error) {
@@ -105,21 +109,33 @@ func loadManifest(path string) (*manifest.Manifest, error) {
 }
 
 func loadManifestData(path string) (*manifest.Manifest, string, []byte, error) {
+	doc, resolvedPath, data, err := loadManifestDocumentData(path)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	manifest, err := doc.Manifest()
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("load manifest %q: %w", resolvedPath, err)
+	}
+	return manifest, resolvedPath, data, nil
+}
+
+func loadManifestDocumentData(path string) (manifest.Document, string, []byte, error) {
 	resolvedPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("resolve manifest path %q: %w", path, err)
+		return manifest.Document{}, "", nil, fmt.Errorf("resolve manifest path %q: %w", path, err)
 	}
 
 	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("open manifest %q: %w", resolvedPath, err)
+		return manifest.Document{}, "", nil, fmt.Errorf("open manifest %q: %w", resolvedPath, err)
 	}
-	manifest, err := manifest.LoadBytes(data, resolvedPath)
+	doc, err := manifest.DecodeDocumentBytes(data, resolvedPath)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("load manifest %q: %w", resolvedPath, err)
+		return manifest.Document{}, "", nil, fmt.Errorf("load manifest %q: %w", resolvedPath, err)
 	}
 
-	return manifest, resolvedPath, data, nil
+	return doc, resolvedPath, data, nil
 }
 
 func writeManifestWorkingDir(path string, data []byte, workingDir string) error {
@@ -174,7 +190,7 @@ func newParser() *flags.Parser {
 	if _, err := parser.AddCommand(
 		"launch",
 		"Launch a virtiofs + ssh sandbox session",
-		"Start the configured virtiofsd daemons, launch QEMU directly, then optionally attach over ssh.",
+		"Start configured host-side run processes, launch QEMU directly, then optionally attach over ssh.",
 		&launchCommand{},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)

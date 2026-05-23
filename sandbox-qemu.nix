@@ -15,13 +15,13 @@ let
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
-  workspaceHostDir = "${persistenceStateDir}/workspace";
-  workspaceSwapFile = "${cfg.workspace.baseDir}/swapfile";
+  workspaceHostDir = cfg.workspace.hostDir;
+  workspaceSwapFile = "${cfg.workspace.guestDir}/swapfile";
   workspaceBaseShare = {
     proto = "virtiofs";
     tag = "workspace";
     source = workspaceHostDir;
-    mountPoint = cfg.workspace.baseDir;
+    mountPoint = cfg.workspace.guestDir;
     securityModel = "mapped";
   };
   workspaceKeyToTag = key: "workspace-${lib.replaceStrings [ "/" "." " " ] [ "-" "-" "-" ] key}";
@@ -30,11 +30,9 @@ let
     proto = "virtiofs";
     tag = workspaceKeyToTag key;
     inherit source;
-    mountPoint = "${cfg.workspace.baseDir}/${key}";
+    mountPoint = "${cfg.workspace.guestDir}/${key}";
     securityModel = "mapped";
   }) workspaceSpaces;
-  tunnelGuestDir = "/run/tunnels";
-  tunnelHostDir = "${persistenceBaseDir}/tunnels";
 in
 {
   imports = [
@@ -162,18 +160,16 @@ in
         description = "Enable workspace-oriented host directory mounts.";
       };
 
-      baseDir = lib.mkOption {
+      guestDir = lib.mkOption {
         type = lib.types.str;
         default = "/home/${cfg.user}/workspace";
         description = "Guest directory containing workspace spaces and exported as WORKSPACE.";
       };
 
-      # TODO: Remove this after 2026-06-01
-      basedir = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        visible = false;
-        description = "Deprecated spelling of baseDir.";
+      hostDir = lib.mkOption {
+        type = lib.types.str;
+        default = "${persistenceStateDir}/workspace";
+        description = "Host directory backing the default workspace share.";
       };
 
       addCurrentDir = lib.mkOption {
@@ -199,40 +195,34 @@ in
       description = "Additional host directory shares mounted in the sandbox, using the microvm.shares schema.";
     };
 
-    runWithTunnel = lib.mkOption {
+    run = lib.mkOption {
       type = lib.types.listOf (
         lib.types.submodule (
           { ... }:
           {
             options = {
-              socket = lib.mkOption {
-                type = lib.types.str;
-                example = "dbus-notifications.sock";
-                description = "Socket path relative to ${tunnelGuestDir} in the guest and ${tunnelHostDir} on the host.";
-              };
-
               exec = lib.mkOption {
                 type = lib.types.nonEmptyListOf lib.types.str;
                 example = [
                   "xdg-dbus-proxy"
                   "{{.Env.DBUS_SESSION_BUS_ADDRESS}}"
-                  "{{.Socket}}"
+                  "{{.Config.workspace.hostDir}}/dbus-proxy.sock"
                   "--filter"
                 ];
-                description = "Host-side argv that creates the tunnel socket. Template variables include Socket, GuestSocket, vars entries, and Env.";
+                description = "Host-side argv run and managed by virtie. Template variables include Workspace, CID, StateDir, vars entries, and Env.";
               };
 
               vars = lib.mkOption {
-                type = lib.types.attrsOf lib.types.str;
+                type = lib.types.attrsOf lib.types.anything;
                 default = { };
-                description = "Additional string template variables exposed to this tunnel command.";
+                description = "Additional template variables exposed to this run command.";
               };
             };
           }
         )
       );
       default = [ ];
-      description = "Host-side commands that create Unix sockets shared into the guest under ${tunnelGuestDir}.";
+      description = "Host-side commands managed for the lifetime of the virtie launch.";
     };
 
     swapSize = lib.mkOption {
@@ -397,9 +387,6 @@ in
       commonInit = ''
         echo "🚀 Preparing Agent QEMU Sandbox..."
       ''
-      + lib.optionalString (cfg.runWithTunnel != [ ]) ''
-        ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg tunnelHostDir}
-      ''
       + lib.optionalString cfg.workspace.enable ''
         ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg workspaceHostDir}
       ''
@@ -518,18 +505,39 @@ in
 
       manifestWorkspace = lib.optionalAttrs cfg.workspace.enable (
         {
-          basedir = cfg.workspace.baseDir;
+          guest_dir = cfg.workspace.guestDir;
+          host_dir = cfg.workspace.hostDir;
         }
         // lib.optionalAttrs cfg.workspace.addCurrentDir {
           mount_cwd = true;
         }
       );
 
-      manifestRunWithTunnel = builtins.map (tunnel: {
-        socket = tunnel.socket;
-        exec = tunnel.exec;
-        vars = tunnel.vars;
-      }) cfg.runWithTunnel;
+      runConfigVars = {
+        user = cfg.user;
+        hostName = cfg.hostName;
+        workspace = {
+          enable = cfg.workspace.enable;
+          guestDir = cfg.workspace.guestDir;
+          hostDir = cfg.workspace.hostDir;
+          addCurrentDir = cfg.workspace.addCurrentDir;
+          spaces = cfg.workspace.spaces;
+        };
+        persistence = {
+          baseDir = cfg.persistence.baseDir;
+          homeImage = cfg.persistence.homeImage;
+          homeSize = cfg.persistence.homeSize;
+          storeOverlay = cfg.persistence.storeOverlay;
+          storeDisk = cfg.persistence.storeDisk;
+        };
+      };
+
+      manifestRun = builtins.map (run: {
+        exec = run.exec;
+        vars = run.vars // {
+          Config = runConfigVars;
+        };
+      }) cfg.run;
 
       manifestMounts =
         builtins.map (
@@ -542,13 +550,18 @@ in
             type = "virtiofs";
             tag = share.tag;
             source = share.source;
-            virtiofsd_socket = socketPath;
             read_only = share.readOnly;
             security_model = share.securityModel;
             cache = share.cache;
-          }
-          // lib.optionalAttrs (!(nixStoreShareUsesSocket && isNixStoreShare share)) {
-            virtiofsd_exec = [ (mkVirtioFSDaemonCommand share) ];
+            virtiofs = (
+              {
+                socket = socketPath;
+              }
+              // lib.optionalAttrs (!(nixStoreShareUsesSocket && isNixStoreShare share)) {
+                bin = mkVirtioFSDaemonCommand share;
+                args = [ ];
+              }
+            );
           }
         ) virtiofsShares
         ++ builtins.map (share: {
@@ -648,7 +661,7 @@ in
         }) config.microvm.interfaces;
         notifications = notificationManifest;
         write_files = manifestWriteFiles;
-        run_with_tunnel = manifestRunWithTunnel;
+        run = manifestRun;
       };
 
       tomlFormat = pkgs.formats.toml { };
@@ -663,10 +676,6 @@ in
             message = "agentspace.sandbox.persistence.basedir was renamed to agentspace.sandbox.persistence.baseDir.";
           }
           {
-            assertion = cfg.workspace.basedir == null;
-            message = "agentspace.sandbox.workspace.basedir was renamed to agentspace.sandbox.workspace.baseDir.";
-          }
-          {
             assertion = cfg.swapSize == 0 || cfg.workspace.enable;
             message = "agentspace.sandbox.swapSize requires agentspace.sandbox.workspace.enable = true because the swapfile is created under WORKSPACE.";
           }
@@ -675,15 +684,6 @@ in
               cfg.nixStoreShareSocket == null
               || (cfg.nixStoreShareSocket != "" && lib.hasPrefix "/" cfg.nixStoreShareSocket);
             message = "agentspace.sandbox.nixStoreShareSocket must be an absolute socket path when set.";
-          }
-          {
-            assertion = builtins.all (
-              tunnel:
-              tunnel.socket != ""
-              && !(lib.hasPrefix "/" tunnel.socket)
-              && builtins.match "(^|.*/)\\.\\.(/.*|$)" tunnel.socket == null
-            ) cfg.runWithTunnel;
-            message = "agentspace.sandbox.runWithTunnel.*.socket must be a non-empty relative path that does not contain '..'.";
           }
         ];
 
@@ -726,7 +726,7 @@ in
         };
 
         environment.sessionVariables = lib.mkIf cfg.workspace.enable {
-          WORKSPACE = cfg.workspace.baseDir;
+          WORKSPACE = cfg.workspace.guestDir;
         };
 
         # User Configuration
@@ -786,7 +786,7 @@ in
           "d /home/${cfg.user} 0700 ${cfg.user} users -"
         ]
         ++ lib.optionals cfg.workspace.enable [
-          "d ${cfg.workspace.baseDir} 0755 ${cfg.user} users -"
+          "d ${cfg.workspace.guestDir} 0755 ${cfg.user} users -"
         ];
 
         # Basic Package Set
@@ -852,15 +852,6 @@ in
               }
             ]
             ++ workspaceShares
-            ++ lib.optionals (cfg.runWithTunnel != [ ]) [
-              {
-                proto = "virtiofs";
-                tag = "agentspace_tunnels";
-                source = tunnelHostDir;
-                mountPoint = tunnelGuestDir;
-                securityModel = "mapped";
-              }
-            ]
             ++ cfg.shares;
 
           writableStoreOverlay = "/nix/.rw-store";

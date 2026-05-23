@@ -55,11 +55,11 @@ But to recap, here's a flake you can make to give it a try:
         # home-manager modules for the primary user:
         #homeModules = [];
 
-        # Optional host-side socket producers are shared into the guest at /run/tunnels.
-        #runWithTunnel = [
+        # Optional host-side processes managed with the VM.
+        #run = [
         #  {
-        #    socket = "dbus-notifications.sock";
-        #    exec = [ "xdg-dbus-proxy" "{{.Env.DBUS_SESSION_BUS_ADDRESS}}" "{{.Socket}}" "--filter" ];
+        #    vars.SocketDir = "/tmp/agentspace-sockets";
+        #    exec = [ "xdg-dbus-proxy" "{{.Env.DBUS_SESSION_BUS_ADDRESS}}" "{{.SocketDir}}/dbus-notifications.sock" "--filter" ];
         #  }
         #];
       };

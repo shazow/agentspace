@@ -479,8 +479,10 @@ let
         {
           type = "virtiofs";
           tag = "workspace";
-          virtiofsd_socket = "virtiofs.sock";
-          virtiofsd_exec = [ "${fakeTools}/bin/virtiofsd-workspace" ];
+          virtiofs = {
+            socket = "virtiofs.sock";
+            bin = "${fakeTools}/bin/virtiofsd-workspace";
+          };
         }
       ];
       write_files = [
