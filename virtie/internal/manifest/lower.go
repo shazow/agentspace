@@ -507,7 +507,7 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []MountInput, options LowerOptions) 
 				"MountSource": m.resolvePath(mount.SourcePath),
 			},
 		})
-		m.addCleanupPath(mount.VirtioFS.Socket)
+		m.addCleanupFile(mount.VirtioFS.Socket)
 	}
 	return runs, nil
 }
@@ -524,16 +524,16 @@ func staleUnixSocket(path string) (bool, error) {
 	return false, err
 }
 
-func (m *Manifest) addCleanupPath(path string) {
+func (m *Manifest) addCleanupFile(path string) {
 	if path == "" {
 		return
 	}
-	for _, existing := range m.CleanupPaths {
+	for _, existing := range m.CleanupFiles {
 		if existing == path {
 			return
 		}
 	}
-	m.CleanupPaths = append(m.CleanupPaths, path)
+	m.CleanupFiles = append(m.CleanupFiles, path)
 }
 
 func lowerNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInput, transport string, cpus CPUCount) ([]QEMUNetDevice, error) {

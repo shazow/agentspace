@@ -28,7 +28,7 @@ type Manifest struct {
 	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
 	Notifications Notifications `json:"notifications,omitempty"`
 	Run           []Run         `json:"run,omitempty"`
-	CleanupPaths  []string      `json:"cleanupPaths,omitempty"`
+	CleanupFiles  []string      `json:"cleanupFiles,omitempty"`
 }
 
 type Identity struct {

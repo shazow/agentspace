@@ -156,6 +156,6 @@ func validManifest() *Manifest {
 				},
 			},
 		},
-		CleanupPaths: []string{"fs.sock"},
+		CleanupFiles: []string{"fs.sock"},
 	}
 }

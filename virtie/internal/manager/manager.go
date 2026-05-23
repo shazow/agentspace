@@ -175,7 +175,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	cleanupPaths, err := manifest.ResolvedCleanupPaths()
+	cleanupFiles, err := manifest.ResolvedCleanupFiles()
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -228,7 +228,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err := ensureDirectories(manifest.ResolvedPersistenceDirectories()); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := ensureParentDirectories(cleanupPaths); err != nil {
+	if err := ensureParentDirectories(cleanupFiles); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := ensureParentDirectories([]string{qmpSocketPath}); err != nil {
@@ -253,7 +253,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err := removeSocketPaths([]string{qmpSocketPath}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := removeSocketPaths(cleanupPaths); err != nil {
+	if err := removeSocketPaths(cleanupFiles); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	if guestAgentSocketPath != "" {
@@ -293,15 +293,15 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if qmpClient != nil {
 			disconnectErr = qmpClient.Disconnect()
 		}
-		socketCleanupPaths := []string{qmpSocketPath}
+		socketCleanupFiles := []string{qmpSocketPath}
 		if guestAgentSocketPath != "" {
-			socketCleanupPaths = append(socketCleanupPaths, guestAgentSocketPath)
+			socketCleanupFiles = append(socketCleanupFiles, guestAgentSocketPath)
 		}
 		if sshReadySocketPath != "" {
-			socketCleanupPaths = append(socketCleanupPaths, sshReadySocketPath)
+			socketCleanupFiles = append(socketCleanupFiles, sshReadySocketPath)
 		}
-		socketCleanupPaths = append(socketCleanupPaths, cleanupPaths...)
-		cleanupErr := removeSocketPaths(socketCleanupPaths)
+		socketCleanupFiles = append(socketCleanupFiles, cleanupFiles...)
+		cleanupErr := removeSocketPaths(socketCleanupFiles)
 		if err == nil {
 			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
 		} else if featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {

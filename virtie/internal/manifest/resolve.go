@@ -61,9 +61,9 @@ func (m *Manifest) resolveSocketPath(path string) (string, error) {
 	}
 }
 
-func (m *Manifest) ResolvedCleanupPaths() ([]string, error) {
-	paths := make([]string, 0, len(m.CleanupPaths))
-	for _, path := range m.CleanupPaths {
+func (m *Manifest) ResolvedCleanupFiles() ([]string, error) {
+	paths := make([]string, 0, len(m.CleanupFiles))
+	for _, path := range m.CleanupFiles {
 		resolved, err := m.resolveSocketPath(path)
 		if err != nil {
 			return nil, err
@@ -86,13 +86,13 @@ func (m *Manifest) ResolvedVirtioFSSocketPaths() ([]string, error) {
 }
 
 func (m *Manifest) ResolvedExternalVirtioFSSocketPaths() ([]string, error) {
-	cleanupPaths := make(map[string]struct{}, len(m.CleanupPaths))
-	for _, path := range m.CleanupPaths {
+	cleanupFiles := make(map[string]struct{}, len(m.CleanupFiles))
+	for _, path := range m.CleanupFiles {
 		resolved, err := m.resolveSocketPath(path)
 		if err != nil {
 			return nil, err
 		}
-		cleanupPaths[resolved] = struct{}{}
+		cleanupFiles[resolved] = struct{}{}
 	}
 
 	paths := make([]string, 0, len(m.QEMU.Devices.VirtioFS))
@@ -101,7 +101,7 @@ func (m *Manifest) ResolvedExternalVirtioFSSocketPaths() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, managed := cleanupPaths[resolved]; managed {
+		if _, managed := cleanupFiles[resolved]; managed {
 			continue
 		}
 		paths = append(paths, resolved)

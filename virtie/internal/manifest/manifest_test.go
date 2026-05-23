@@ -209,8 +209,8 @@ func TestDocumentRunLowersAndResolvesCommand(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("expected one run, got %#v", runs)
 	}
-	if len(loaded.CleanupPaths) != 0 {
-		t.Fatalf("expected generic run not to add cleanup paths, got %#v", loaded.CleanupPaths)
+	if len(loaded.CleanupFiles) != 0 {
+		t.Fatalf("expected generic run not to add cleanup entries, got %#v", loaded.CleanupFiles)
 	}
 	runJSON, err := json.Marshal(loaded.Run[0])
 	if err != nil {
@@ -311,8 +311,8 @@ func TestDocumentVirtioFSUsesExistingSocketWithoutRun(t *testing.T) {
 	if len(manifest.Run) != 0 {
 		t.Fatalf("expected existing virtiofs socket to suppress generated run, got %#v", manifest.Run)
 	}
-	if len(manifest.CleanupPaths) != 0 {
-		t.Fatalf("expected external virtiofs socket not to add cleanup path, got %#v", manifest.CleanupPaths)
+	if len(manifest.CleanupFiles) != 0 {
+		t.Fatalf("expected external virtiofs socket not to add cleanup entry, got %#v", manifest.CleanupFiles)
 	}
 	if !strings.Contains(logOutput.String(), "using existing virtiofs socket") || !strings.Contains(logOutput.String(), socketPath) {
 		t.Fatalf("expected existing socket log for %q, got %q", socketPath, logOutput.String())
@@ -354,8 +354,8 @@ func TestDocumentVirtioFSStartsRunForStaleSocket(t *testing.T) {
 	if len(manifest.Run) != 1 || manifest.Run[0].Name != "virtiofsd[workspace]" {
 		t.Fatalf("expected generated virtiofs run, got %#v", manifest.Run)
 	}
-	if got, want := manifest.CleanupPaths, []string{"fs.sock"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected cleanup paths: got %#v want %#v", got, want)
+	if got, want := manifest.CleanupFiles, []string{"fs.sock"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup entries: got %#v want %#v", got, want)
 	}
 	if !strings.Contains(logOutput.String(), "appears stale") || !strings.Contains(logOutput.String(), socketPath) {
 		t.Fatalf("expected stale socket warning for %q, got %q", socketPath, logOutput.String())
@@ -384,15 +384,15 @@ func TestDocumentVirtioFSWarnsAndGeneratesRunForExistingNonSocket(t *testing.T) 
 	if len(manifest.Run) != 1 || manifest.Run[0].Name != "virtiofsd[workspace]" {
 		t.Fatalf("expected generated virtiofs run, got %#v", manifest.Run)
 	}
-	if got, want := manifest.CleanupPaths, []string{"fs.sock"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected cleanup paths: got %#v want %#v", got, want)
+	if got, want := manifest.CleanupFiles, []string{"fs.sock"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup entries: got %#v want %#v", got, want)
 	}
 	if !strings.Contains(logOutput.String(), "not a socket") || !strings.Contains(logOutput.String(), socketPath) {
 		t.Fatalf("expected non-socket warning for %q, got %q", socketPath, logOutput.String())
 	}
 }
 
-func TestDocumentManagedVirtioFSAddsCleanupPath(t *testing.T) {
+func TestDocumentManagedVirtioFSAddsCleanupFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	document := validDocument()
 	document.WorkingDir = tmpDir
@@ -402,16 +402,16 @@ func TestDocumentManagedVirtioFSAddsCleanupPath(t *testing.T) {
 		t.Fatalf("lower manifest: %v", err)
 	}
 
-	if got, want := manifest.CleanupPaths, []string{"fs.sock"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected cleanup paths: got %#v want %#v", got, want)
+	if got, want := manifest.CleanupFiles, []string{"fs.sock"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup entries: got %#v want %#v", got, want)
 	}
 
-	paths, err := manifest.ResolvedCleanupPaths()
+	paths, err := manifest.ResolvedCleanupFiles()
 	if err != nil {
-		t.Fatalf("resolve cleanup paths: %v", err)
+		t.Fatalf("resolve cleanup files: %v", err)
 	}
 	if got, want := paths, []string{filepath.Join(tmpDir, ".virtie", "fs.sock")}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected resolved cleanup paths: got %#v want %#v", got, want)
+		t.Fatalf("unexpected resolved cleanup files: got %#v want %#v", got, want)
 	}
 }
 
@@ -434,8 +434,8 @@ func TestDocumentExternalVirtioFSSocketIsNotAutoRemovedOnShutdown(t *testing.T) 
 	if err != nil {
 		t.Fatalf("lower manifest: %v", err)
 	}
-	if len(manifest.CleanupPaths) != 0 {
-		t.Fatalf("expected external virtiofs socket not to add cleanup path, got %#v", manifest.CleanupPaths)
+	if len(manifest.CleanupFiles) != 0 {
+		t.Fatalf("expected external virtiofs socket not to add cleanup entry, got %#v", manifest.CleanupFiles)
 	}
 }
 
@@ -672,7 +672,7 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			manifest := validManifest()
 			manifest.Paths.RuntimeDir = tt.runtimeDir
-			manifest.CleanupPaths = []string{tt.socketPath}
+			manifest.CleanupFiles = []string{tt.socketPath}
 			manifest.QEMU.Devices.VirtioFS[0].SocketPath = tt.socketPath
 			manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 			manifest.QEMU.SSHReady.SocketPath = "ssh-ready.sock"
@@ -682,12 +682,12 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 				manifest.QEMU.SSHReady.SocketPath = "/tmp/explicit-ready.sock"
 			}
 
-			cleanupPaths, err := manifest.ResolvedCleanupPaths()
+			cleanupFiles, err := manifest.ResolvedCleanupFiles()
 			if err != nil {
-				t.Fatalf("resolve cleanup paths: %v", err)
+				t.Fatalf("resolve cleanup files: %v", err)
 			}
-			if got, want := cleanupPaths, []string{tt.wantSocket}; !reflect.DeepEqual(got, want) {
-				t.Fatalf("unexpected cleanup paths: got %v want %v", got, want)
+			if got, want := cleanupFiles, []string{tt.wantSocket}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("unexpected cleanup files: got %v want %v", got, want)
 			}
 			virtioFSSocketPaths, err := manifest.ResolvedVirtioFSSocketPaths()
 			if err != nil {
@@ -736,12 +736,12 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 				t.Fatalf("unexpected qemu ssh readiness socket path: got %q want %q", got, want)
 			}
 
-			resolvedCleanupPaths, err := manifest.ResolvedCleanupPaths()
+			resolvedCleanupFiles, err := manifest.ResolvedCleanupFiles()
 			if err != nil {
-				t.Fatalf("resolve cleanup paths: %v", err)
+				t.Fatalf("resolve cleanup files: %v", err)
 			}
-			if got, want := resolvedCleanupPaths, []string{tt.wantSocket}; !reflect.DeepEqual(got, want) {
-				t.Fatalf("unexpected cleanup paths: got %v want %v", got, want)
+			if got, want := resolvedCleanupFiles, []string{tt.wantSocket}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("unexpected cleanup files: got %v want %v", got, want)
 			}
 		})
 	}
@@ -1040,19 +1040,19 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 	manifest := validManifest()
 	manifest.Run = nil
-	manifest.CleanupPaths = nil
+	manifest.CleanupFiles = nil
 	manifest.QEMU.Devices.VirtioFS[0].SocketPath = "/var/run/virtiofs-nix-store.sock"
 
 	if err := manifest.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
 
-	cleanupPaths, err := manifest.ResolvedCleanupPaths()
+	cleanupFiles, err := manifest.ResolvedCleanupFiles()
 	if err != nil {
-		t.Fatalf("resolve cleanup paths: %v", err)
+		t.Fatalf("resolve cleanup files: %v", err)
 	}
-	if len(cleanupPaths) != 0 {
-		t.Fatalf("unexpected cleanup paths: got %v want none", cleanupPaths)
+	if len(cleanupFiles) != 0 {
+		t.Fatalf("unexpected cleanup files: got %v want none", cleanupFiles)
 	}
 
 	virtioFSSocketPaths, err := manifest.ResolvedVirtioFSSocketPaths()
@@ -1075,7 +1075,7 @@ func TestManifestAllowsExternalVirtioFSSocket(t *testing.T) {
 func TestManifestExternalVirtioFSDetectionUsesCleanupOwnership(t *testing.T) {
 	manifest := validManifest()
 	manifest.Run = nil
-	manifest.CleanupPaths = []string{"fs.sock"}
+	manifest.CleanupFiles = []string{"fs.sock"}
 
 	externalSocketPaths, err := manifest.ResolvedExternalVirtioFSSocketPaths()
 	if err != nil {
@@ -1086,13 +1086,13 @@ func TestManifestExternalVirtioFSDetectionUsesCleanupOwnership(t *testing.T) {
 	}
 }
 
-func TestManifestRejectsEmptyCleanupPath(t *testing.T) {
+func TestManifestCleanupValidation(t *testing.T) {
 	manifest := validManifest()
-	manifest.CleanupPaths = []string{"cleanup.sock", ""}
+	manifest.CleanupFiles = []string{"cleanup.sock", ""}
 
 	err := manifest.Validate()
-	if err == nil || !strings.Contains(err.Error(), "manifest.cleanupPaths[1] must not be empty") {
-		t.Fatalf("expected empty cleanup path validation error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "manifest.cleanupFiles[1] must not be empty") {
+		t.Fatalf("expected empty cleanup file validation error, got %v", err)
 	}
 }
 
@@ -1541,7 +1541,7 @@ func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest.QEMU.Devices.Network = nil
 	manifest.Volumes = nil
 	manifest.Run = nil
-	manifest.CleanupPaths = nil
+	manifest.CleanupFiles = nil
 
 	if err := manifest.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)

@@ -240,7 +240,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	cfg.Persistence.Directories = []string{"persist"}
 	cfg.QEMU.QMP.SocketPath = "qmp.sock"
 	cfg.QEMU.Devices.Block[0].ImagePath = "overlay.img"
-	cfg.CleanupPaths = []string{"sock-a", "sock-b", "cleanup.sock"}
+	cfg.CleanupFiles = []string{"sock-a", "sock-b", "cleanup.sock"}
 	cfg.Volumes = []manifest.Volume{
 		{
 			ImagePath:  "overlay.img",
@@ -276,7 +276,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("create cleanup directory: %v", err)
 	}
 	if err := os.WriteFile(cleanupPath, []byte("cleanup"), 0o600); err != nil {
-		t.Fatalf("write cleanup path: %v", err)
+		t.Fatalf("write cleanup file: %v", err)
 	}
 	if err := os.WriteFile(untouchedPath, []byte("external"), 0o600); err != nil {
 		t.Fatalf("write external path: %v", err)
@@ -394,7 +394,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("expected launch to clear stale suspend state, stat err: %v", err)
 	}
 	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
-		t.Fatalf("expected cleanup path to be removed, stat err: %v", err)
+		t.Fatalf("expected cleanup file to be removed, stat err: %v", err)
 	}
 	if _, err := os.Stat(untouchedPath); err != nil {
 		t.Fatalf("expected unlisted path to remain: %v", err)
@@ -541,7 +541,7 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 	cfg.Persistence.StateDir = ".virtie"
 	cfg.Volumes[0].AutoCreate = false
 	cfg.QEMU.Devices.VirtioFS = nil
-	cfg.CleanupPaths = []string{"cleanup.sock"}
+	cfg.CleanupFiles = []string{"cleanup.sock"}
 	cfg.Run = []manifest.Run{
 		{
 			Exec: []string{"/bin/proxy"},
@@ -552,7 +552,7 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 		t.Fatalf("create cleanup directory: %v", err)
 	}
 	if err := os.WriteFile(cleanupPath, []byte("cleanup"), 0o600); err != nil {
-		t.Fatalf("write cleanup path: %v", err)
+		t.Fatalf("write cleanup file: %v", err)
 	}
 
 	runner := &fakeRunner{
@@ -581,7 +581,7 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 		t.Fatalf("expected qemu not to start, got starts %v", runner.starts)
 	}
 	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
-		t.Fatalf("expected cleanup path to be removed before startup failure, stat err: %v", err)
+		t.Fatalf("expected cleanup file to be removed before startup failure, stat err: %v", err)
 	}
 	if !strings.Contains(logOutput.String(), "stats:") {
 		t.Fatalf("expected normal launch cleanup to emit stats, got %q", logOutput.String())
@@ -687,7 +687,7 @@ func TestManagerLaunchRemovesCleanupPathAfterQMPStartupFailure(t *testing.T) {
 		t.Fatalf("unexpected cleanup signals: got %v want %v", got, want)
 	}
 	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
-		t.Fatalf("expected cleanup path to be removed after qmp failure, stat err: %v", err)
+		t.Fatalf("expected cleanup file to be removed after qmp failure, stat err: %v", err)
 	}
 }
 
@@ -696,7 +696,7 @@ func TestRemoveSocketPathsIgnoresMissing(t *testing.T) {
 	filePath := filepath.Join(tmpDir, "cleanup.sock")
 	missingPath := filepath.Join(tmpDir, "missing.sock")
 	if err := os.WriteFile(filePath, []byte("cleanup"), 0o600); err != nil {
-		t.Fatalf("write cleanup path: %v", err)
+		t.Fatalf("write cleanup file: %v", err)
 	}
 
 	if err := removeSocketPaths([]string{filePath, missingPath}); err != nil {
@@ -2176,7 +2176,9 @@ func TestManagerLaunchSkipsGuestFilesOnResume(t *testing.T) {
 		t.Fatalf("write suspend state: %v", err)
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &fakeRunner{
+		finishInteractiveSSH: true,
+	}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -2357,7 +2359,7 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 	defer listener.Close()
 	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
 	cfg.Run = nil
-	cfg.CleanupPaths = nil
+	cfg.CleanupFiles = nil
 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2410,7 +2412,7 @@ func TestManagerLaunchRejectsMissingExternalVirtioFSSocket(t *testing.T) {
 	externalSocket := filepath.Join(tmpDir, "missing-virtiofs.sock")
 	cfg.QEMU.Devices.VirtioFS[0].SocketPath = externalSocket
 	cfg.Run = nil
-	cfg.CleanupPaths = nil
+	cfg.CleanupFiles = nil
 
 	runner := &fakeRunner{}
 	manager := &manager{
@@ -3671,7 +3673,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 				},
 			},
 		},
-		CleanupPaths: []string{"fs.sock"},
+		CleanupFiles: []string{"fs.sock"},
 	}
 }
 

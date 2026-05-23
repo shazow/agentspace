@@ -88,9 +88,9 @@ func (m *Manifest) Validate() error {
 			return err
 		}
 	}
-	for i, path := range m.CleanupPaths {
+	for i, path := range m.CleanupFiles {
 		if path == "" {
-			return fmt.Errorf("manifest.cleanupPaths[%d] must not be empty", i)
+			return fmt.Errorf("manifest.cleanupFiles[%d] must not be empty", i)
 		}
 	}
 
