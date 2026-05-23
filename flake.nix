@@ -177,7 +177,10 @@
           ;
       };
 
-      legacyPackages.${system}.graphicalChecks = import ./checks/graphical.nix checkArgs;
+      legacyPackages.${system} = {
+        graphicalChecks = import ./checks/graphical.nix checkArgs;
+        realVMChecks = import ./checks/virtie-real-vm.nix checkArgs;
+      };
 
       apps.${system} = {
         default = self.apps.${system}.launch;

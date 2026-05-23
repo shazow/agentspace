@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -100,6 +101,212 @@ func TestQMPClientStopContAndQueryStatus(t *testing.T) {
 	assertQMPCommand(t, commands, "stop")
 	assertQMPCommand(t, commands, "query-status")
 	assertQMPCommand(t, commands, "cont")
+}
+
+func TestQMPClientDeliversEventsWhileWaitingForCommandResponse(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverConn.Close()
+
+		encoder := json.NewEncoder(serverConn)
+		decoder := json.NewDecoder(serverConn)
+		if err := encoder.Encode(map[string]any{
+			"QMP": map[string]any{
+				"version": map[string]any{
+					"qemu":    map[string]any{"major": 8, "minor": 2, "micro": 0},
+					"package": "",
+				},
+				"capabilities": []string{},
+			},
+		}); err != nil {
+			return
+		}
+
+		var handshake map[string]any
+		if err := decoder.Decode(&handshake); err != nil {
+			return
+		}
+		if err := encoder.Encode(map[string]any{"return": map[string]any{}}); err != nil {
+			return
+		}
+
+		var command map[string]any
+		if err := decoder.Decode(&command); err != nil {
+			return
+		}
+		if err := encoder.Encode(map[string]any{"event": "SUSPEND"}); err != nil {
+			return
+		}
+		_ = encoder.Encode(map[string]any{
+			"return": map[string]any{
+				"running":    false,
+				"singlestep": false,
+				"status":     "suspended",
+			},
+		})
+	}()
+
+	monitor := &deadlineSocketMonitor{
+		conn:    clientConn,
+		decoder: json.NewDecoder(clientConn),
+		timeout: time.Second,
+	}
+	if err := monitor.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	client := &socketMonitorClient{
+		monitor: monitor,
+		raw:     rawQMP.NewMonitor(monitor),
+	}
+	defer client.Disconnect()
+
+	events, err := client.Events(context.Background())
+	if err != nil {
+		t.Fatalf("events: %v", err)
+	}
+	status, err := client.QueryStatus(time.Second)
+	if err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != "suspended" {
+		t.Fatalf("unexpected status: got %q want suspended", status)
+	}
+
+	select {
+	case event := <-events:
+		if event.Event != "SUSPEND" {
+			t.Fatalf("unexpected event: %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for qmp event")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for qmp test server")
+	}
+}
+
+func TestQMPClientClosesMonitorAfterCommandTimeout(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+
+	firstCommandRead := make(chan struct{})
+	allowLateResponse := make(chan struct{})
+	secondCommandRead := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverConn.Close()
+
+		encoder := json.NewEncoder(serverConn)
+		decoder := json.NewDecoder(serverConn)
+		if err := encoder.Encode(map[string]any{
+			"QMP": map[string]any{
+				"version": map[string]any{
+					"qemu":    map[string]any{"major": 8, "minor": 2, "micro": 0},
+					"package": "",
+				},
+				"capabilities": []string{},
+			},
+		}); err != nil {
+			return
+		}
+
+		var handshake map[string]any
+		if err := decoder.Decode(&handshake); err != nil {
+			return
+		}
+		if err := encoder.Encode(map[string]any{"return": map[string]any{}}); err != nil {
+			return
+		}
+
+		var command map[string]any
+		if err := decoder.Decode(&command); err != nil {
+			return
+		}
+		close(firstCommandRead)
+		<-allowLateResponse
+		if err := encoder.Encode(map[string]any{
+			"return": map[string]any{
+				"running":    true,
+				"singlestep": false,
+				"status":     "running",
+			},
+		}); err != nil {
+			return
+		}
+
+		if err := decoder.Decode(&command); err == nil {
+			secondCommandRead <- struct{}{}
+		}
+	}()
+
+	monitor := &deadlineSocketMonitor{
+		conn:    clientConn,
+		decoder: json.NewDecoder(clientConn),
+		timeout: time.Second,
+	}
+	if err := monitor.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	client := &socketMonitorClient{
+		monitor: monitor,
+		raw:     rawQMP.NewMonitor(monitor),
+	}
+	defer client.Disconnect()
+
+	_, err := client.QueryStatus(10 * time.Millisecond)
+	if err == nil {
+		t.Fatal("expected qmp command timeout")
+	}
+	select {
+	case <-firstCommandRead:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first qmp command")
+	}
+
+	close(allowLateResponse)
+	_, err = client.QueryStatus(time.Second)
+	if err == nil {
+		t.Fatal("expected closed qmp monitor after command timeout")
+	}
+
+	select {
+	case <-secondCommandRead:
+		t.Fatal("expected qmp monitor to reject commands after timeout")
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for qmp test server to exit")
+	}
+}
+
+func TestDeadlineSocketMonitorCommandTimeoutCoversWrite(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	close(done)
+	monitor := &deadlineSocketMonitor{
+		conn:      clientConn,
+		responses: make(chan qmpResponse),
+		done:      done,
+		timeout:   10 * time.Millisecond,
+	}
+
+	_, err := monitor.Run(bytes.Repeat([]byte("x"), 1024*1024))
+	if err == nil {
+		t.Fatal("expected qmp command write timeout")
+	}
+	if !isTimeoutError(err) {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
 }
 
 func TestQMPClientMigrationCommands(t *testing.T) {

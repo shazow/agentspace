@@ -19,6 +19,8 @@ type suspendState struct {
 	QMPSocketPath string    `json:"qmpSocketPath"`
 	VMStatePath   string    `json:"vmStatePath,omitempty"`
 	CID           int       `json:"cid,omitempty"`
+	RunState      string    `json:"runState,omitempty"`
+	Source        string    `json:"source,omitempty"`
 	Timestamp     time.Time `json:"timestamp"`
 	Status        string    `json:"status"`
 }

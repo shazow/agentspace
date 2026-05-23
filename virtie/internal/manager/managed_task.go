@@ -51,6 +51,13 @@ func (g *managedTaskGroup) Add(task *managedTask) {
 	g.tasks = append(g.tasks, task)
 }
 
+func (g *managedTaskGroup) AddGroup(tasks managedTaskGroup) {
+	if g == nil {
+		return
+	}
+	g.tasks = append(g.tasks, tasks.tasks...)
+}
+
 func (g *managedTaskGroup) Stop() error {
 	if g == nil {
 		return nil

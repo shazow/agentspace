@@ -123,8 +123,11 @@ let
         def handle(conn):
             global status
             global migration_status
+            event_sent = False
+            send_lock = threading.Lock()
             def send(message):
-                conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
+                with send_lock:
+                    conn.sendall(json.dumps(message).encode("utf-8") + b"\r\n")
 
             send(
                 {
@@ -137,6 +140,22 @@ let
                     }
                 }
             )
+
+            def guest_suspend_watcher():
+                global status
+                nonlocal event_sent
+                request_path = os.path.join(state_dir, "request-guest-suspend")
+                while not event_sent:
+                    if os.path.exists(request_path):
+                        with status_lock:
+                            status = "suspended"
+                        event_sent = True
+                        touch("qemu-guest-suspended")
+                        send({"event": "SUSPEND"})
+                        return
+                    threading.Event().wait(0.05)
+
+            threading.Thread(target=guest_suspend_watcher, daemon=True).start()
 
             decoder = json.JSONDecoder()
             buffer = ""
@@ -177,6 +196,11 @@ let
                         with status_lock:
                             status = "running"
                         touch("qemu-resumed")
+                        send({"return": {}})
+                    elif command == "system_wakeup":
+                        with status_lock:
+                            status = "running"
+                        touch("qemu-woke")
                         send({"return": {}})
                     elif command == "migrate":
                         uri = message.get("arguments", {}).get("uri", "")
@@ -579,6 +603,12 @@ in
             cat "$manifest_file" >&2
           fi
         done
+        for suspend_file in "$tmpdir"/*/.agentspace/virtie-fake.suspend.json; do
+          if [ -f "$suspend_file" ]; then
+            echo "== $suspend_file ==" >&2
+            cat "$suspend_file" >&2
+          fi
+        done
       fi
       if [ -n "''${launch_pid:-}" ]; then
         kill "$launch_pid" 2>/dev/null || true
@@ -741,12 +771,83 @@ in
     test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.vmstate"
     test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json"
 
+    guest_suspend_workspace_dir="$tmpdir/guest-suspend-workspace"
+    guest_suspend_log="$tmpdir/virtie-guest-suspend.log"
+    guest_suspend_resume_log="$tmpdir/virtie-guest-suspend-resume.log"
+    mkdir -p "$guest_suspend_workspace_dir"
+    cd "$guest_suspend_workspace_dir"
+    printf '%s' 'host payload' > host-write-file
+
+    ${launchScript} >"$guest_suspend_log" 2>&1 &
+    launch_pid=$!
+
+    for _ in $(seq 1 100); do
+      if [ -S .agentspace/qmp.sock ] && [ -f .agentspace/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    touch "$guest_suspend_workspace_dir/state/request-guest-suspend"
+    for _ in $(seq 1 100); do
+      if [ -f state/qemu-guest-suspended ] && [ -f .agentspace/virtie-fake.suspend.json ] && [ ! -e .agentspace/virtie-fake.pid ]; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    test -f "$guest_suspend_workspace_dir/state/qemu-guest-suspended"
+    test -f "$guest_suspend_workspace_dir/state/qemu-migrated"
+    test -f "$guest_suspend_workspace_dir/.agentspace/virtie-fake.vmstate"
+    test -f "$guest_suspend_workspace_dir/.agentspace/virtie-fake.suspend.json"
+    test ! -e "$guest_suspend_workspace_dir/.agentspace/virtie-fake.pid"
+    grep -F '"status": "saved"' "$guest_suspend_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
+    grep -F '"runState": "suspended"' "$guest_suspend_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
+    grep -F '"source": "guest-suspend"' "$guest_suspend_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
+
+    if ! wait "$launch_pid"; then
+      echo "virtie-launch-e2e: guest self-suspend launch exited non-zero" >&2
+      cat "$guest_suspend_log" >&2
+      exit 1
+    fi
+    unset launch_pid
+
+    rm -f "$guest_suspend_workspace_dir/state/request-guest-suspend"
+    guest_suspend_manifest="$guest_suspend_workspace_dir/.agentspace/virtie-fake.json"
+    ${virtiePackage}/bin/virtie launch --ssh --resume=auto --manifest="$guest_suspend_manifest" >"$guest_suspend_resume_log" 2>&1 &
+    resume_pid=$!
+    for _ in $(seq 1 100); do
+      if [ -f "$guest_suspend_workspace_dir/state/qemu-migrate-incoming" ] && [ -f "$guest_suspend_workspace_dir/state/qemu-resumed" ] && [ -f "$guest_suspend_workspace_dir/state/qemu-woke" ] && [ -f "$guest_suspend_workspace_dir/state/ssh-session-started" ]; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    test -f "$guest_suspend_workspace_dir/state/qemu-incoming-defer"
+    test -f "$guest_suspend_workspace_dir/state/qemu-migrate-incoming"
+    test -f "$guest_suspend_workspace_dir/state/qemu-resumed"
+    test -f "$guest_suspend_workspace_dir/state/qemu-woke"
+    grep -Fx '3' "$guest_suspend_workspace_dir/state/qemu-vsock-cid" >/dev/null
+
+    touch "$guest_suspend_workspace_dir/state/ssh-session-finished"
+    if ! wait "$resume_pid"; then
+      echo "virtie-launch-e2e: guest self-suspend resume exited non-zero" >&2
+      cat "$guest_suspend_resume_log" >&2
+      exit 1
+    fi
+    unset resume_pid
+    test ! -e "$guest_suspend_workspace_dir/.agentspace/virtie-fake.pid"
+    test ! -e "$guest_suspend_workspace_dir/.agentspace/virtie-fake.vmstate"
+    test ! -e "$guest_suspend_workspace_dir/.agentspace/virtie-fake.suspend.json"
+
     mkdir -p "$out"
     cp "$launch_log" "$out/virtie.log"
     cp "$command_log" "$out/virtie-command.log"
     cp "$no_ssh_log" "$out/virtie-no-ssh.log"
     cp "$disk_log" "$out/virtie-disk.log"
     cp "$disk_resume_log" "$out/virtie-disk-resume.log"
+    cp "$guest_suspend_log" "$out/virtie-guest-suspend.log"
+    cp "$guest_suspend_resume_log" "$out/virtie-guest-suspend-resume.log"
   '';
 
   virtie-ssh-auth-failure-e2e = pkgs.runCommand "virtie-ssh-auth-failure-e2e" { } ''

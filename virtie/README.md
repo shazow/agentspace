@@ -38,7 +38,9 @@ minimal manifest and a full manifest with default-valued fields included.
   `virtie suspend` validates that PID and sends `SIGTSTP` as a caught control
   signal; the launch process saves QEMU migration state through its existing
   QMP connection, then exits.
-- `virtie launch --resume=force` restores from state saved by `virtie suspend`;
+- Guest suspend-to-RAM also saves QEMU migration state when QMP emits
+  `SUSPEND`, then exits the launch process.
+- `virtie launch --resume=force` restores from saved suspend state;
   `--resume=auto` restores when saved state exists and otherwise launches fresh.
 - Records saved suspend state under the persistence state directory.
 - Tears down guest and host-side processes in a defined order on exit or
@@ -69,6 +71,8 @@ host process environment is available as `.Env` on every surface.
   `SIGTSTP` signal is an internal control shim used by `virtie suspend`, not a
   terminal/job-control suspend. Live pause/resume and `SIGCONT` resume are not
   supported.
+- Guest suspend support covers QMP `SUSPEND` / suspend-to-RAM. Guest
+  hibernation via QMP `SUSPEND_DISK` is not handled as virtie saved state.
 - `virtie` assumes the surrounding Nix flow has already resolved guest image
   inputs, package paths, and host capability facts when using generated
   manifests.
