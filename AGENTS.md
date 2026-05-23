@@ -1,6 +1,15 @@
 # Agent Instructions
 
-- Specification and progress is tracked in `.specs/*.md`
+## Layout
+
+- The remote origin project is https://github.com/shazow/agentspace
+- Project root contains the Nix flake and VM/check definitions.
+- The `virtie/` directory is a separate Go module; run Go commands such as `go test ./...` from `virtie/`, not the repository root.
+- Specifications and progress are tracked in `.specs/*.md`.
+- Summary: The agentspace flake builds the VM image, wraps helper scripts, and produces `manifest.toml` which feeds into `virtie` that manages running everything. There are three API surfaces: Agentspace nix module, manifest.toml, and virtie commandline.
+
+## Process
+
 - When testing nix builds, clean up `./result` symlinks after completion with `unlink` command.
 - This project should prioritize working on NixOS, but ideally also support macOS. Surface any concerns that may break macOS compatibility.
 - Backward-incompatible changes are acceptable when justified. When changing the consumer API, document it in `MIGRATION.md`.

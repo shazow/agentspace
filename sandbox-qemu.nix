@@ -206,10 +206,10 @@ in
                 example = [
                   "xdg-dbus-proxy"
                   "{{.Env.DBUS_SESSION_BUS_ADDRESS}}"
-                  "{{.Config.workspace.hostDir}}/dbus-proxy.sock"
+                  "{{.Workspace.HostPath}}/dbus-proxy.sock"
                   "--filter"
                 ];
-                description = "Host-side argv run and managed by virtie. Template variables include Workspace, CID, StateDir, vars entries, and Env.";
+                description = "Host-side argv run and managed by virtie. Template variables include Workspace.GuestPath, Workspace.HostPath, CID, StateDir, vars entries, and Env.";
               };
 
               vars = lib.mkOption {

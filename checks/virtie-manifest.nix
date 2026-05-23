@@ -222,10 +222,10 @@ let
         exec = [
           "xdg-dbus-proxy"
           "{{.Env.DBUS_SESSION_BUS_ADDRESS}}"
-          "{{.Config.workspace.hostDir}}/dbus-notifications.sock"
+          "{{.Workspace.HostPath}}/dbus-notifications.sock"
           "--filter"
           "--name={{.Name}}"
-          "--workspace={{.Workspace}}"
+          "--workspace={{.Workspace.GuestPath}}"
         ];
         vars.Name = "notifications";
       }
@@ -532,10 +532,10 @@ let
           exec = [
             "xdg-dbus-proxy"
             "{{.Env.DBUS_SESSION_BUS_ADDRESS}}"
-            "{{.Config.workspace.hostDir}}/dbus-notifications.sock"
+            "{{.Workspace.HostPath}}/dbus-notifications.sock"
             "--filter"
             "--name={{.Name}}"
-            "--workspace={{.Workspace}}"
+            "--workspace={{.Workspace.GuestPath}}"
           ];
           vars = {
             Name = "notifications";
