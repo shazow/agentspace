@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
@@ -156,15 +158,24 @@ func validateRun(index int, run Run) error {
 	case run.Exec[0] == "":
 		return fmt.Errorf("manifest.run[%d].exec[0] is required", index)
 	}
+	if err := validateRunTemplates(index, "exec", run.Exec); err != nil {
+		return err
+	}
+	if err := validateRunTemplates(index, "env", run.Env); err != nil {
+		return err
+	}
 	for key := range run.Vars {
 		if key == "CID" || key == "StateDir" || key == "Workspace" || key == "Env" {
 			return fmt.Errorf("manifest.run[%d].vars key %q is reserved", index, key)
 		}
 	}
 	context := executor.Context{
-		"CID":       "3",
-		"StateDir":  ".virtie",
-		"Workspace": "/workspace",
+		"CID":      "3",
+		"StateDir": ".virtie",
+		"Workspace": templateWorkspace{
+			GuestPath: "/workspace",
+			HostPath:  "/host/workspace",
+		},
 	}
 	for key, value := range run.Vars {
 		context[key] = value
@@ -173,6 +184,57 @@ func validateRun(index int, run Run) error {
 		return fmt.Errorf("manifest.run[%d].vars: %w", index, err)
 	}
 	return nil
+}
+
+func validateRunTemplates(index int, field string, values []string) error {
+	for i, value := range values {
+		tmpl, err := template.New("exec").Parse(value)
+		if err != nil {
+			continue
+		}
+		if templateUsesBareWorkspace(tmpl.Tree.Root) {
+			return fmt.Errorf("manifest.run[%d].%s[%d] uses {{.Workspace}}; use {{.Workspace.GuestPath}} or {{.Workspace.HostPath}}", index, field, i)
+		}
+	}
+	return nil
+}
+
+func templateUsesBareWorkspace(node parse.Node) bool {
+	switch node := node.(type) {
+	case nil:
+		return false
+	case *parse.ListNode:
+		for _, child := range node.Nodes {
+			if templateUsesBareWorkspace(child) {
+				return true
+			}
+		}
+	case *parse.ActionNode:
+		return templateUsesBareWorkspace(node.Pipe)
+	case *parse.IfNode:
+		return templateUsesBareWorkspace(node.Pipe) || templateUsesBareWorkspace(node.List) || templateUsesBareWorkspace(node.ElseList)
+	case *parse.RangeNode:
+		return templateUsesBareWorkspace(node.Pipe) || templateUsesBareWorkspace(node.List) || templateUsesBareWorkspace(node.ElseList)
+	case *parse.WithNode:
+		return templateUsesBareWorkspace(node.Pipe) || templateUsesBareWorkspace(node.List) || templateUsesBareWorkspace(node.ElseList)
+	case *parse.PipeNode:
+		for _, command := range node.Cmds {
+			if templateUsesBareWorkspace(command) {
+				return true
+			}
+		}
+	case *parse.CommandNode:
+		for _, arg := range node.Args {
+			if templateUsesBareWorkspace(arg) {
+				return true
+			}
+		}
+	case *parse.FieldNode:
+		return len(node.Ident) == 1 && node.Ident[0] == "Workspace"
+	case *parse.VariableNode:
+		return len(node.Ident) == 1 && node.Ident[0] == "Workspace"
+	}
+	return false
 }
 
 func pathEscapesBase(path string) bool {

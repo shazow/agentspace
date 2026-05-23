@@ -82,6 +82,11 @@ type Workspace struct {
 	MountCWD bool   `json:"mountCWD,omitempty"`
 }
 
+type templateWorkspace struct {
+	GuestPath string
+	HostPath  string
+}
+
 type Volume struct {
 	ImagePath     string   `json:"imagePath"`
 	SizeMiB       int      `json:"sizeMiB,omitempty"`

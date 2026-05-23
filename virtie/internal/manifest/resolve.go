@@ -191,9 +191,12 @@ func (m *Manifest) ResolvedRuns(cid int) ([]ResolvedRun, error) {
 	runs := make([]ResolvedRun, 0, len(m.Run))
 	for i, run := range m.Run {
 		context := executor.Context{
-			"CID":       fmt.Sprintf("%d", cid),
-			"StateDir":  m.ResolvedPersistenceStateDir(),
-			"Workspace": m.Workspace.GuestDir,
+			"CID":      fmt.Sprintf("%d", cid),
+			"StateDir": m.ResolvedPersistenceStateDir(),
+			"Workspace": templateWorkspace{
+				GuestPath: m.Workspace.GuestDir,
+				HostPath:  m.Workspace.HostDir,
+			},
 		}
 		for key, value := range run.Vars {
 			context[key] = value

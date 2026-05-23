@@ -174,16 +174,19 @@ func TestDocumentRunLowersAndResolvesCommand(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
 
 	document := validDocument()
-	document.Workspace = WorkspaceInput{GuestDir: "/home/agent/workspace"}
+	document.Workspace = WorkspaceInput{
+		GuestDir: "/home/agent/workspace",
+		HostDir:  "/tmp/work/.virtie/workspace",
+	}
 	document.Mounts = nil
 	document.Run = []RunInput{
 		{
 			Exec: []string{
 				"xdg-dbus-proxy",
 				"{{.Env.DBUS_SESSION_BUS_ADDRESS}}",
-				"{{.Config.workspace.hostDir}}/dbus-notifications.sock",
+				"{{.Workspace.HostPath}}/dbus-notifications.sock",
 				"--name={{.Name}}",
-				"--workspace={{.Workspace}}",
+				"--workspace={{.Workspace.GuestPath}}",
 				"--cid={{.CID}}",
 			},
 			Vars: map[string]any{
@@ -236,11 +239,15 @@ func TestDocumentRunLowersAndResolvesCommand(t *testing.T) {
 	for _, want := range []string{
 		"CID=7",
 		"NAME=notifications",
-		"WORKSPACE=/home/agent/workspace",
 	} {
 		if !slices.Contains(runs[0].Env, want) {
 			t.Fatalf("expected run env %q in %#v", want, runs[0].Env)
 		}
+	}
+	if slices.ContainsFunc(runs[0].Env, func(entry string) bool {
+		return strings.HasPrefix(entry, "WORKSPACE=")
+	}) {
+		t.Fatalf("structured workspace should not produce scalar env in %#v", runs[0].Env)
 	}
 	if slices.ContainsFunc(runs[0].Env, func(entry string) bool {
 		return strings.HasPrefix(entry, "CONFIG=")
@@ -262,6 +269,13 @@ func TestDocumentRunValidation(t *testing.T) {
 				Vars: map[string]any{"Workspace": "override"},
 			},
 			wantErr: `vars key "Workspace" is reserved`,
+		},
+		{
+			name: "bare workspace template",
+			run: RunInput{
+				Exec: []string{"proxy", "{{.Workspace}}"},
+			},
+			wantErr: `uses {{.Workspace}}; use {{.Workspace.GuestPath}} or {{.Workspace.HostPath}}`,
 		},
 		{
 			name:    "missing exec",

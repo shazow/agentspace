@@ -35,8 +35,11 @@ Workspace paths were split:
 - manifest `workspace.basedir` -> `workspace.guest_dir`
 - new manifest `workspace.host_dir`
 
-In `run[].exec`, `{{.Workspace}}` is the guest workspace path. Host paths should
-come from explicit vars, such as generated `{{.Config.workspace.hostDir}}`.
+In `run[].exec`, `{{.Workspace.GuestPath}}` is the guest workspace path and
+`{{.Workspace.HostPath}}` is the host workspace path. The former scalar
+`{{.Workspace}}` value was removed. Generated `{{.Config.workspace.hostDir}}`
+remains available for compatibility, but new templates should use
+`{{.Workspace.HostPath}}`.
 
 Virtiofs mount daemon fields are now nested:
 

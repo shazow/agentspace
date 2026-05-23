@@ -435,7 +435,7 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 	cfg.Volumes[0].AutoCreate = false
 	cfg.Workspace = manifest.Workspace{GuestDir: "/home/agent/workspace"}
 	cfg.Run = append(cfg.Run, manifest.Run{
-		Exec: []string{"/bin/proxy", "--workspace={{.Workspace}}", "--cid={{.CID}}", "--name={{.Name}}"},
+		Exec: []string{"/bin/proxy", "--workspace={{.Workspace.GuestPath}}", "--cid={{.CID}}", "--name={{.Name}}"},
 		Vars: map[string]any{"Name": "notifications"},
 	})
 
@@ -501,10 +501,14 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 	for _, want := range []string{
 		"CID=3",
 		"NAME=notifications",
-		"WORKSPACE=/home/agent/workspace",
 	} {
 		if !containsString(runner.runEnv[runName], want) {
 			t.Fatalf("expected run env %q in %#v", want, runner.runEnv[runName])
+		}
+	}
+	for _, entry := range runner.runEnv[runName] {
+		if strings.HasPrefix(entry, "WORKSPACE=") {
+			t.Fatalf("structured workspace should not produce scalar env in %#v", runner.runEnv[runName])
 		}
 	}
 	wantSocketWaits := [][]string{

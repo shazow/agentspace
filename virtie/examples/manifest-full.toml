@@ -197,8 +197,9 @@ cache = "auto"  # Options: auto, always, none (default: auto)
 # Additional template variables
 vars = { Namespace = "org.freedesktop.*", SocketDir = ".virtie" }
 
-# Template values include {{.Workspace}} for the guest workspace path,
-# {{.StateDir}}, {{.CID}}, vars entries, and {{.Env.USER}}.
+# Template values include {{.Workspace.GuestPath}} for the guest workspace path,
+# {{.Workspace.HostPath}} for the host workspace path, {{.StateDir}}, {{.CID}},
+# vars entries, and {{.Env.USER}}.
 exec = ["xdg-dbus-proxy", "{{.Env.DBUS_SESSION_BUS_ADDRESS}}", "{{.SocketDir}}/dbus-notifications.sock", "--filter", "--see={{.Namespace}}"]
 
 [[networks]]
