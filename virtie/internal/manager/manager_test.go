@@ -85,6 +85,7 @@ func TestGuestInstallDirectoryArgs(t *testing.T) {
 	tests := []struct {
 		name     string
 		chown    string
+		mode     string
 		expected []string
 	}{
 		{
@@ -111,11 +112,16 @@ func TestGuestInstallDirectoryArgs(t *testing.T) {
 			chown:    ":users",
 			expected: []string{"-d", "-g", "users", "/etc/virtie"},
 		},
+		{
+			name:     "mode",
+			mode:     "0640",
+			expected: []string{"-d", "-m", "0750", "/etc/virtie"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := guestInstallDirectoryArgs("/etc/virtie", tt.chown); !reflect.DeepEqual(got, tt.expected) {
+			if got := guestInstallDirectoryArgs("/etc/virtie", tt.chown, tt.mode); !reflect.DeepEqual(got, tt.expected) {
 				t.Fatalf("unexpected install args: got %#v want %#v", got, tt.expected)
 			}
 		})
@@ -1341,12 +1347,18 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	guestAgent := &fakeGuestAgentClient{
 		record: record,
 		execStatuses: []guestExecStatus{
-			{Exited: true, ExitCode: 1},
-			{Exited: true},
-			{Exited: true},
-			{Exited: true},
-			{Exited: true, ExitCode: 1},
-			{Exited: true},
+			{Exited: true, ExitCode: 1}, // test -d /etc/virtie
+			{Exited: true},              // test -d /etc
+			{Exited: true},              // install -d /etc/virtie
+			{Exited: true},              // chown /etc/virtie/inline
+			{Exited: true},              // chmod /etc/virtie/inline
+			{Exited: true, ExitCode: 1}, // test -d /var/lib/virtie
+			{Exited: true, ExitCode: 1}, // test -d /var/lib
+			{Exited: true, ExitCode: 1}, // test -d /var
+			{Exited: true},              // test -d /
+			{Exited: true},              // install -d /var
+			{Exited: true},              // install -d /var/lib
+			{Exited: true},              // install -d /var/lib/virtie
 		},
 	}
 	manager := &manager{
@@ -1381,8 +1393,13 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 			captureOutput: true,
 		},
 		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/etc"},
+			captureOutput: true,
+		},
+		{
 			path:          guestInstallPath,
-			args:          []string{"-d", "-o", "agent", "-g", "users", "/etc/virtie"},
+			args:          []string{"-d", "-o", "agent", "-g", "users", "-m", "0750", "/etc/virtie"},
 			captureOutput: true,
 		},
 		{
@@ -1398,6 +1415,31 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 		{
 			path:          guestTestPath,
 			args:          []string{"-d", "/var/lib/virtie"},
+			captureOutput: true,
+		},
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/var/lib"},
+			captureOutput: true,
+		},
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/var"},
+			captureOutput: true,
+		},
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/"},
+			captureOutput: true,
+		},
+		{
+			path:          guestInstallPath,
+			args:          []string{"-d", "/var"},
+			captureOutput: true,
+		},
+		{
+			path:          guestInstallPath,
+			args:          []string{"-d", "/var/lib"},
 			captureOutput: true,
 		},
 		{
@@ -1884,6 +1926,101 @@ func TestManagerLaunchSkipsGuestFileWhenOverwriteFalseAndPathExists(t *testing.T
 	}
 }
 
+func TestManagerLaunchCreatesAllMissingGuestParentDirectoriesWithOwnerAndMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	text := "nested"
+	chown := "agent:users"
+	mode := "0640"
+	overwrite := true
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/virtie/nested/new": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: text}, Chown: chown, Mode: mode, Overwrite: overwrite, FollowLinks: true},
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{
+			{Exited: true, ExitCode: 1}, // test -d /etc/virtie/nested
+			{Exited: true, ExitCode: 1}, // test -d /etc/virtie
+			{Exited: true},              // test -d /etc
+			{Exited: true},              // install -d /etc/virtie
+			{Exited: true},              // install -d /etc/virtie/nested
+			{Exited: true},              // chown file
+			{Exited: true},              // chmod file
+		},
+	}
+	manager := &manager{
+		logger:            slog.New(slog.DiscardHandler),
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		sshRetryDelay:     0,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: 100 * time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	if err := manager.launch(context.Background(), cfg, nil); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+
+	if got, want := guestAgent.execs, []guestExecCall{
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/etc/virtie/nested"},
+			captureOutput: true,
+		},
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/etc/virtie"},
+			captureOutput: true,
+		},
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/etc"},
+			captureOutput: true,
+		},
+		{
+			path:          guestInstallPath,
+			args:          []string{"-d", "-o", "agent", "-g", "users", "-m", "0750", "/etc/virtie"},
+			captureOutput: true,
+		},
+		{
+			path:          guestInstallPath,
+			args:          []string{"-d", "-o", "agent", "-g", "users", "-m", "0750", "/etc/virtie/nested"},
+			captureOutput: true,
+		},
+		{
+			path:          guestChownPath,
+			args:          []string{"agent:users", "/etc/virtie/nested/new"},
+			captureOutput: true,
+		},
+		{
+			path:          guestChmodPath,
+			args:          []string{"0640", "/etc/virtie/nested/new"},
+			captureOutput: true,
+		},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected guest execs: got %#v want %#v", got, want)
+	}
+	if got, want := guestAgent.writes["/etc/virtie/nested/new"], "bmVzdGVk"; got != want {
+		t.Fatalf("unexpected guest write text: got %q want %q", got, want)
+	}
+}
+
 func TestManagerLaunchWritesGuestFileWhenOverwriteFalseAndPathMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -2041,8 +2178,9 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 	}
 	guestAgent := &fakeGuestAgentClient{
 		execStatuses: []guestExecStatus{
-			{Exited: true, ExitCode: 1},
-			{Exited: true, ExitCode: 1, ErrData: "aW5zdGFsbCBmYWlsZWQ="},
+			{Exited: true, ExitCode: 1}, // test -d /etc/virtie
+			{Exited: true},              // test -d /etc
+			{Exited: true, ExitCode: 1, ErrData: "aW5zdGFsbCBmYWlsZWQ="}, // install -d /etc/virtie
 		},
 	}
 	manager := &manager{
@@ -2072,6 +2210,11 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 		{
 			path:          guestTestPath,
 			args:          []string{"-d", "/etc/virtie"},
+			captureOutput: true,
+		},
+		{
+			path:          guestTestPath,
+			args:          []string{"-d", "/etc"},
 			captureOutput: true,
 		},
 		{
