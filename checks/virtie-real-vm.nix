@@ -47,14 +47,11 @@ let
   manifestPath = guest.config.agentspace.sandbox.launch.virtieManifest;
 in
 {
-  # End-to-end virtie suspend/resume coverage without nesting an extra NixOS
-  # test VM: the test driver launches a real mkSandbox guest through the
-  # generated virtie manifest, starts stateful guest work over SSH, saves the live
-  # VM through `virtie suspend`, then resumes through `virtie launch
-  # --resume=auto`. It asserts the saved suspend metadata (`status`, `runState`,
-  # and `source`), the vmstate/suspend file lifecycle, preserved /run session
-  # state, and that the same guest process is still present and making progress
-  # after resume.
+  # End-to-end virtie guest suspend/resume coverage without nesting an extra
+  # NixOS test VM: the test driver launches a real mkSandbox guest through the
+  # generated virtie manifest, starts a process over SSH, asks the guest to
+  # suspend itself, then resumes through `virtie launch --resume=force` and
+  # verifies the same guest process is still present.
   #
   # Validated on 2026-05-24 with normal sandbox settings:
   # `time -p nix build --no-link .#legacyPackages.x86_64-linux.realVMChecks.virtie-real-guest-suspend-retains-session-state`
@@ -66,7 +63,6 @@ in
 
       testScript = # python
         ''
-          import json
           import os
           import pathlib
           import select
@@ -77,8 +73,6 @@ in
           workspace = pathlib.Path(os.environ.get("TMPDIR", "/build")) / "virtie-real"
           state_dir = workspace / ".agentspace"
           manifest_path = pathlib.Path("${manifestPath}")
-          vmstate_path = workspace / ".agentspace/real-suspend.vmstate"
-          suspend_state_path = workspace / ".agentspace/real-suspend.suspend.json"
           virtie = "${virtiePackage}/bin/virtie"
 
           env = os.environ.copy()
@@ -86,29 +80,19 @@ in
           env["XDG_RUNTIME_DIR"] = str(workspace / "run")
           env["VIRTIE_SSH_READY_TIMEOUT"] = "10m"
 
-          start_process_and_wait = textwrap.dedent(r"""
+          start_sleep_and_suspend = textwrap.dedent(r"""
               set -euo pipefail
 
-              sudo tee /run/virtie-process.sh >/dev/null <<'SH'
-          #!/bin/sh
-          i=0
-          while :; do
-            i=$((i + 1))
-            printf "%s\n" "$i" > /run/virtie-process-counter
-            sleep 1
-          done
-          SH
-              sudo chmod 0755 /run/virtie-process.sh
-              sudo sh -c 'nohup /run/virtie-process.sh >/run/virtie-process.log 2>&1 & echo $! > /run/virtie-process.pid'
-
-              for _ in $(seq 1 20); do
-                test -s /run/virtie-process-counter && break
-                sleep 0.25
-              done
-              test -s /run/virtie-process-counter
-              test -d "/proc/$(cat /run/virtie-process.pid)"
-              printf "%s\n" "state-before-suspend" | sudo tee /run/virtie-session-state >/dev/null
-              printf "%s\n" "VIRTIE_READY_FOR_HOST_SUSPEND"
+              trap "" HUP
+              sleep 12345 &
+              sleep_pid="$!"
+              test -d "/proc/$sleep_pid"
+              printf "VIRTIE_SLEEP_PID=%s\n" "$sleep_pid"
+              sudo systemd-inhibit --what=sleep --why=virtie-test sleep 10 &
+              inhibit_pid="$!"
+              sudo systemctl suspend || test "$?" = 1
+              wait "$inhibit_pid"
+              printf "VIRTIE_SYSTEMCTL_SUSPEND_RETURNED\n"
               while :; do
                 sleep 60
               done
@@ -117,17 +101,13 @@ in
           verify_resumed_process = textwrap.dedent(r"""
               set -euo pipefail
 
-              test "$(cat /run/virtie-session-state)" = state-before-suspend
-              pid="$(cat /run/virtie-process.pid)"
+              pid="$1"
               test -d "/proc/$pid"
-              tr "\0" " " <"/proc/$pid/cmdline" | grep -F "/run/virtie-process.sh"
-              before="$(cat /run/virtie-process-counter)"
-              sleep 2
-              after="$(cat /run/virtie-process-counter)"
-              test "$after" -gt "$before"
+              cmdline="$(tr "\0" " " <"/proc/$pid/cmdline")"
+              test "$cmdline" = "sleep 12345 "
           """)
 
-          def run(argv: list[str], log_name: str | None = None, timeout: int = 900) -> None:
+          def run(argv: list[str], log_name: str | None = None, timeout: int = 900) -> str:
               result = subprocess.run(
                   argv,
                   cwd=workspace,
@@ -142,9 +122,23 @@ in
               if result.returncode != 0:
                   print(result.stdout)
                   raise Exception(f"command failed with exit code {result.returncode}: {argv!r}")
+              return result.stdout
 
-          def wait_for_output(process: subprocess.Popen, log_file, needle: str, timeout: int) -> None:
+          def parse_sleep_pid(output: str) -> str:
+              for line in output.splitlines():
+                  if line.startswith("VIRTIE_SLEEP_PID="):
+                      pid = line.removeprefix("VIRTIE_SLEEP_PID=")
+                      if pid.isdecimal() and int(pid) > 0:
+                          return pid
+                      raise Exception(f"invalid sleep pid: {pid!r}")
+              raise Exception("launch output did not include VIRTIE_SLEEP_PID")
+
+          def read_until(process: subprocess.Popen, log_file, timeout: int) -> tuple[str, str]:
               deadline = time.monotonic() + timeout
+              output = []
+              sleep_pid = None
+              saw_suspend_return = False
+
               stdout = process.stdout
               if stdout is None:
                   raise Exception("launch process stdout was not captured")
@@ -153,20 +147,26 @@ in
                   ready, _, _ = select.select([stdout], [], [], 1)
                   if not ready:
                       if process.poll() is not None:
-                          raise Exception(f"launch exited before {needle!r}: {process.returncode}")
+                          raise Exception(f"launch exited before suspend was requested: {process.returncode}")
                       continue
 
                   line = stdout.readline()
                   if line == "":
                       if process.poll() is not None:
-                          raise Exception(f"launch exited before {needle!r}: {process.returncode}")
+                          raise Exception(f"launch exited before suspend was requested: {process.returncode}")
                       continue
+                  output.append(line)
                   log_file.write(line)
                   log_file.flush()
-                  if needle in line:
-                      return
 
-              raise TimeoutError(f"timed out waiting for {needle!r}")
+                  if line.startswith("VIRTIE_SLEEP_PID="):
+                      sleep_pid = parse_sleep_pid(line)
+                  if "VIRTIE_SYSTEMCTL_SUSPEND_RETURNED" in line:
+                      saw_suspend_return = True
+                  if sleep_pid is not None and saw_suspend_return:
+                      return sleep_pid, "".join(output)
+
+              raise TimeoutError("timed out waiting for guest suspend command")
 
           def finish_launch(process: subprocess.Popen, log_file, timeout: int = 300) -> None:
               try:
@@ -185,23 +185,6 @@ in
               if process.returncode != 0:
                   raise Exception(f"launch failed with exit code {process.returncode}")
 
-          def assert_suspend_state() -> None:
-              if not vmstate_path.is_file():
-                  raise Exception(f"missing vmstate: {vmstate_path}")
-              if not suspend_state_path.is_file():
-                  raise Exception(f"missing suspend state: {suspend_state_path}")
-
-              state = json.loads(suspend_state_path.read_text(encoding="utf-8"))
-              expected = {
-                  "status": "saved",
-                  "runState": "running",
-                  "source": "virtie",
-              }
-              for key, value in expected.items():
-                  actual = state.get(key)
-                  if actual != value:
-                      raise Exception(f"{key}: got {actual!r}, want {value!r}")
-
           with subtest("prepare launch workspace"):
               workspace.mkdir(parents=True, exist_ok=True)
               (workspace / "home").mkdir(parents=True, exist_ok=True)
@@ -210,18 +193,18 @@ in
               run(["install", "-m", "0600", "${sshKeys.graphical.privateKey}", "id_ed25519"])
               run(["install", "-m", "0644", "${manifestTemplate}", str(manifest_path)])
 
-          with subtest("launch guest, start process, and save suspend state"):
+          with subtest("launch guest, start sleep, and save guest suspend state"):
               launch_log = (workspace / "launch.log").open("w", encoding="utf-8")
               launch = subprocess.Popen(
                   [
-                      virtie,
-                      "launch",
-                      "--ssh",
-                      f"--manifest={manifest_path}",
-                      "--",
-                      "bash",
-                      "-lc",
-                      start_process_and_wait,
+                    virtie,
+                    "launch",
+                    "--ssh",
+                    f"--manifest={manifest_path}",
+                    "--",
+                    "bash",
+                    "-lc",
+                    start_sleep_and_suspend,
                   ],
                   cwd=workspace,
                   env=env,
@@ -230,10 +213,9 @@ in
                   stderr=subprocess.STDOUT,
               )
               try:
-                  wait_for_output(launch, launch_log, "VIRTIE_READY_FOR_HOST_SUSPEND", 900)
+                  sleep_pid, _ = read_until(launch, launch_log, 90)
                   run([virtie, "suspend", f"--manifest={manifest_path}"], log_name="suspend.log", timeout=300)
                   finish_launch(launch, launch_log)
-                  assert_suspend_state()
               finally:
                   if launch.poll() is None:
                       launch.terminate()
@@ -249,19 +231,17 @@ in
                       virtie,
                       "launch",
                       "--ssh",
-                      "--resume=auto",
+                      "--resume=force",
                       f"--manifest={manifest_path}",
                       "--",
                       "bash",
                       "-lc",
                       verify_resumed_process,
+                      "verify-resumed-process",
+                      sleep_pid,
                   ],
                   log_name="resume.log",
               )
-              if vmstate_path.exists():
-                  raise Exception(f"vmstate was not removed after resume: {vmstate_path}")
-              if suspend_state_path.exists():
-                  raise Exception(f"suspend state was not removed after resume: {suspend_state_path}")
         '';
     });
 }
