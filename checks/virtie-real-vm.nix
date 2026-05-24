@@ -32,6 +32,8 @@ let
           boot.consoleLogLevel = lib.mkForce 7;
           boot.initrd.verbose = true;
           boot.initrd.kernelModules = [ "vmw_vsock_virtio_transport" ];
+          # FIXME: We can get rid of this when we fix https://github.com/shazow/agentspace/issues/118
+          # and use qemu.quiet = false;
           microvm.qemu.extraArgs = [
             "-serial"
             "file:console.log"
