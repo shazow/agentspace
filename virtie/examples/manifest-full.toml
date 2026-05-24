@@ -61,6 +61,7 @@ machine_options = { accel = "kvm:tcg", pcie = "on" }  # Default: Derived for hos
 # stable socket paths. Paths are relative to state_dir.
 qmp_socket = "qmp.sock"  # Default: "qmp.sock"
 guest_agent_socket = "qga.sock"  # Default: "qga.sock"
+suspend_socket = "suspend.sock"  # Optional virtio-serial guest suspend request socket
 
 [machine]
 # The machine profile is the backend-neutral VM shape virtie should run. For

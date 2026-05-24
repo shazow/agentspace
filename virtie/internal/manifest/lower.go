@@ -233,6 +233,9 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		SSHReady: QEMUSSHReady{
 			SocketPath: sshReadySocket,
 		},
+		GuestSuspend: QEMUSuspend{
+			SocketPath: d.QEMU.SuspendSocket,
+		},
 		Devices: QEMUDevices{
 			RNG: QEMURNGDevice{
 				ID:        "rng0",

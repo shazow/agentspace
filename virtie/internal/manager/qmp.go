@@ -17,6 +17,7 @@ const (
 	defaultQMPRetryDelay       = 200 * time.Millisecond
 	defaultQMPConnectTimeout   = 500 * time.Millisecond
 	defaultQMPQuitTimeout      = 500 * time.Millisecond
+	defaultQMPResumeTimeout    = 5 * time.Second
 	defaultQMPMigrationTimeout = 30 * time.Second
 )
 

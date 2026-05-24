@@ -15,10 +15,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -197,6 +199,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	guestSuspendSocketPath, err := manifest.ResolvedGuestSuspendSocketPath()
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
 	volumes := manifest.ResolvedVolumes()
 
 	lock, err := m.locker.Acquire(manifest.ResolvedLockPath())
@@ -250,6 +256,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
+	if guestSuspendSocketPath != "" {
+		if err := ensureParentDirectories([]string{guestSuspendSocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
+	}
 	if err := ensureExistingSocketPaths(externalVirtioFSSocketPaths); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -269,6 +280,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	if sshReadySocketPath != "" {
 		if err := removeSocketPaths([]string{sshReadySocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
+	}
+	if guestSuspendSocketPath != "" {
+		if err := removeSocketPaths([]string{guestSuspendSocketPath}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
@@ -305,6 +321,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 		if sshReadySocketPath != "" {
 			socketCleanupFiles = append(socketCleanupFiles, sshReadySocketPath)
+		}
+		if guestSuspendSocketPath != "" {
+			socketCleanupFiles = append(socketCleanupFiles, guestSuspendSocketPath)
 		}
 		socketCleanupFiles = append(socketCleanupFiles, cleanupFiles...)
 		cleanupErr := removeSocketPaths(socketCleanupFiles)
@@ -363,11 +382,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if err := m.waitForMigration(launchCtx, qmpClient); err != nil {
 			return &stageError{Stage: "restore", Err: err}
 		}
-		if err := qmpClient.Cont(m.effectiveQMPCommandTimeout()); err != nil {
+		if err := qmpClient.Cont(m.effectiveQMPResumeTimeout()); err != nil {
 			return &stageError{Stage: "restore", Err: err}
 		}
 		if resumeState.needsWakeup() {
-			if err := qmpClient.SystemWakeup(m.effectiveQMPCommandTimeout()); err != nil {
+			if err := qmpClient.SystemWakeup(m.effectiveQMPResumeTimeout()); err != nil {
 				return &stageError{Stage: "restore", Err: err}
 			}
 		}
@@ -382,6 +401,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return writeBackOnExit
 	})
 	featureTasks.Add(m.startQMPSuspendWatcher(launchCtx, qmpClient, suspendRequests))
+	featureTasks.Add(m.startGuestSuspendWatcher(launchCtx, guestSuspendSocketPath, suspendRequests))
 	if err := m.handlePendingSuspendRequest(launchCtx, suspendRequests, suspendHandler); err != nil {
 		return err
 	}
@@ -513,7 +533,7 @@ func ensureSavedVMStateAvailable(state *suspendState) error {
 }
 
 func (state suspendState) needsWakeup() bool {
-	return state.RunState == "suspended" || state.Source == "guest-suspend"
+	return state.RunState == "suspended"
 }
 
 func (m *manager) acquireLaunchCID(manifest *manifest.Manifest, state *suspendState) (int, lock, error) {
@@ -577,6 +597,66 @@ func (m *manager) startQMPSuspendWatcher(ctx context.Context, client qmpClient, 
 			}
 		}
 	})
+}
+
+func (m *manager) startGuestSuspendWatcher(ctx context.Context, socketPath string, suspendRequests chan<- suspendRequest) *managedTask {
+	if socketPath == "" {
+		return nil
+	}
+	return startManagedTask(ctx, func(ctx context.Context) error {
+		retryDelay := m.qmpRetryDelay
+		if retryDelay <= 0 {
+			retryDelay = defaultQMPRetryDelay
+		}
+		dialer := net.Dialer{}
+		for {
+			conn, err := dialer.DialContext(ctx, "unix", socketPath)
+			if err == nil {
+				if err := m.readGuestSuspendRequests(ctx, conn, suspendRequests); err != nil && ctx.Err() == nil && m.logger != nil {
+					m.logger.Info("guest suspend socket disconnected", "socket", socketPath, "err", err)
+				}
+			} else if ctx.Err() == nil && m.logger != nil {
+				m.logger.Info("guest suspend socket unavailable", "socket", socketPath, "err", err)
+			}
+
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(retryDelay):
+			}
+		}
+	})
+}
+
+func (m *manager) readGuestSuspendRequests(ctx context.Context, conn net.Conn, suspendRequests chan<- suspendRequest) error {
+	done := make(chan struct{})
+	defer close(done)
+	defer conn.Close()
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+
+	buffer := make([]byte, 1024)
+	for {
+		n, err := conn.Read(buffer)
+		if n > 0 && strings.TrimSpace(string(buffer[:n])) != "" {
+			select {
+			case suspendRequests <- suspendRequest{RunState: "running", Source: "guest-suspend"}:
+			default:
+			}
+			return nil
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+	}
 }
 
 type managedProcess struct {
@@ -803,6 +883,14 @@ func (m *manager) effectiveQMPMigrationTimeout() time.Duration {
 
 func (m *manager) effectiveQMPCommandTimeout() time.Duration {
 	return m.effectiveQMPConnectTimeout()
+}
+
+func (m *manager) effectiveQMPResumeTimeout() time.Duration {
+	timeout := m.effectiveQMPCommandTimeout()
+	if timeout < defaultQMPResumeTimeout {
+		return defaultQMPResumeTimeout
+	}
+	return timeout
 }
 
 type launchSuspendHandler struct {

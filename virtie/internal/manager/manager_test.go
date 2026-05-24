@@ -3280,6 +3280,60 @@ func TestManagerLaunchResumeForceWakesGuestSuspendedState(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchResumeForceSkipsWakeupForRunningGuestSuspendState(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Volumes[0].AutoCreate = false
+	statePath := vmStatePath(cfg)
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	if err := os.WriteFile(statePath, []byte("saved state"), 0o644); err != nil {
+		t.Fatalf("write vm state: %v", err)
+	}
+	if err := writeSuspendStateData(cfg, suspendState{
+		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
+		VMStatePath:   statePath,
+		CID:           3,
+		RunState:      "running",
+		Source:        "guest-suspend",
+		Status:        "saved",
+	}); err != nil {
+		t.Fatalf("write suspend state: %v", err)
+	}
+
+	runner := &fakeRunner{finishInteractiveSSH: true}
+	qmpClient := &fakeQMPClient{
+		status: "paused",
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		sshRetryDelay:       0,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+	}
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce, SSH: true}); err != nil {
+		t.Fatalf("launch resume: %v", err)
+	}
+	if qmpClient.migrateIncomingCalls != 1 || qmpClient.contCalls != 1 {
+		t.Fatalf("unexpected restore qmp calls: migrate-incoming=%d cont=%d", qmpClient.migrateIncomingCalls, qmpClient.contCalls)
+	}
+	if qmpClient.systemWakeupCalls != 0 {
+		t.Fatalf("unexpected system_wakeup calls: got %d", qmpClient.systemWakeupCalls)
+	}
+}
+
 func TestManagerLaunchResumeForceSavesSuspendDuringRestoredSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -3528,6 +3582,67 @@ func TestWaitForSessionPrefersQueuedSuspendOverCleanExit(t *testing.T) {
 	}
 }
 
+func TestGuestSuspendSocketRequestTriggersSavedRunningState(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "suspend.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen on suspend socket: %v", err)
+	}
+	defer listener.Close()
+	if unixListener, ok := listener.(*net.UnixListener); ok {
+		if err := unixListener.SetDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Fatalf("set suspend listener deadline: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	suspendRequests := make(chan suspendRequest, 1)
+	manager := &manager{
+		logger:        slog.New(slog.DiscardHandler),
+		qmpRetryDelay: time.Millisecond,
+	}
+	task := manager.startGuestSuspendWatcher(ctx, socketPath, suspendRequests)
+	defer task.Stop()
+
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("accept suspend socket: %v", err)
+	}
+	if _, err := conn.Write([]byte("suspend\n")); err != nil {
+		t.Fatalf("write suspend request: %v", err)
+	}
+	conn.Close()
+
+	select {
+	case request := <-suspendRequests:
+		if request.RunState != "running" || request.Source != "guest-suspend" {
+			t.Fatalf("unexpected suspend request: %+v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for guest suspend request")
+	}
+
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	qmpClient := &fakeQMPClient{status: "running"}
+	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7, nil, nil)
+	if err := handler.saveAndExit(context.Background(), suspendRequest{RunState: "running", Source: "guest-suspend"}); !errors.Is(err, errSavedSuspendExit) {
+		t.Fatalf("expected saved suspend exit, got %v", err)
+	}
+	state, err := readSuspendState(cfg)
+	if err != nil {
+		t.Fatalf("read suspend state: %v", err)
+	}
+	if state.RunState != "running" || state.Source != "guest-suspend" {
+		t.Fatalf("unexpected suspend state: %+v", state)
+	}
+	if qmpClient.stopCalls != 1 || qmpClient.migrateCalls != 1 {
+		t.Fatalf("expected stop then migrate, got stop=%d migrate=%d", qmpClient.stopCalls, qmpClient.migrateCalls)
+	}
+}
+
 func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
 	tmpDir := t.TempDir()
 	manifest := &manifest.Manifest{
@@ -3757,6 +3872,7 @@ func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 	manifest.QEMU.SSHReady.SocketPath = "ready.sock"
+	manifest.QEMU.GuestSuspend.SocketPath = "suspend.sock"
 
 	spec, err := buildQEMUSpec(manifest, 42)
 	if err != nil {
@@ -3780,6 +3896,15 @@ func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
 	}
 	if !containsString(spec.Args, "virtserialport,chardev=ready_char,name=virtie.ready") {
 		t.Fatalf("expected qemu args to include ssh readiness port: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "socket,path=/tmp/work/suspend.sock,server=on,wait=off,id=suspend_char") {
+		t.Fatalf("expected qemu args to include guest suspend chardev: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "virtio-serial-pci,id=suspend-serial") {
+		t.Fatalf("expected qemu args to include guest suspend serial device: %v", spec.Args)
+	}
+	if !containsString(spec.Args, "virtserialport,chardev=suspend_char,name=virtie.suspend") {
+		t.Fatalf("expected qemu args to include guest suspend port: %v", spec.Args)
 	}
 }
 

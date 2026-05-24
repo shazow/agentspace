@@ -74,7 +74,7 @@ Acceptance criteria:
 - Current public manifest contract:
   - `virtie` accepts the supported snake_case manifest shape as TOML for human-authored manifests and JSON for generated wrappers.
   - Top-level identity and path fields are `host_name`, `working_dir`, and `state_dir`.
-  - `qemu` contains `exec`, optional `fwd_tunnel_exec`, optional `user`, `seccomp`, `machine_options`, `qmp_socket`, and `guest_agent_socket`; QEMU is the only implemented backend.
+  - `qemu` contains `exec`, optional `fwd_tunnel_exec`, optional `user`, `seccomp`, `machine_options`, `qmp_socket`, `guest_agent_socket`, and `suspend_socket`; QEMU is the only implemented backend.
   - `machine` contains `type`, optional `id`, `memory`, optional `vcpu`, optional `cpu`, and `kvm`; `kernel` contains `path`, `initrd_path`, optional `params`, and `serial_console`.
   - Optional `graphics.backend` supports `headless`, `gtk`, and `cocoa`. Graphical GTK launches emit `-display gtk,gl=off`, `virtio-vga`, `qemu-xhci`, `usb-tablet`, and `usb-kbd`; Cocoa launches emit `-display cocoa`, `virtio-gpu`, `qemu-xhci`, `usb-tablet`, and `usb-kbd`.
   - `ssh` contains `exec`, `user`, optional `ready_socket`, optional `retry_delay`, and optional `autoprovision`.
@@ -101,6 +101,7 @@ Acceptance criteria:
 - Implementation notes:
   - `govmm/qemu` is used as a typed device-argument helper, not as the process launcher.
   - QMP is used for monitor readiness, graceful shutdown, disk-backed suspend/resume, and optional runtime balloon control, not for SSH readiness.
+  - Microvm guest `systemctl suspend` is intercepted in the generated NixOS guest and writes to the virtio-serial `virtie.suspend` port. Virtie saves that request as `source = "guest-suspend"` with `runState = "running"` and performs `stop` before migration.
   - `virtie launch --resume=no` is the default fresh launch mode.
   - `virtie launch --ssh` attaches SSH; without `--ssh`, launch still drains SSH readiness, then prints the SSH command and waits for VM exit or suspend.
   - `virtie launch --resume=auto` restores saved state when valid state is present and otherwise launches fresh.

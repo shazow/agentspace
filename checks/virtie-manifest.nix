@@ -267,6 +267,7 @@ let
     assert !(manifest.qemu ? machine_options);
     assert manifest.state_dir == ".agentspace";
     assert manifest.qemu.qmp_socket == "qmp.sock";
+    assert manifest.qemu.suspend_socket == "suspend.sock";
     assert manifest.machine.memory == 4096;
     assert !(manifest.machine ? vcpu);
     assert manifest.graphics.backend == "headless";

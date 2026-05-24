@@ -541,6 +541,26 @@ func TestDocumentSSHReadySocketDefaultAndEnable(t *testing.T) {
 	}
 }
 
+func TestDocumentSuspendSocketLowersToManifest(t *testing.T) {
+	document := validDocument()
+	document.QEMU.SuspendSocket = "suspend.sock"
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest with suspend socket: %v", err)
+	}
+	if got, want := manifest.QEMU.GuestSuspend.SocketPath, "suspend.sock"; got != want {
+		t.Fatalf("unexpected suspend socket: got %q want %q", got, want)
+	}
+	socketPath, err := manifest.ResolvedGuestSuspendSocketPath()
+	if err != nil {
+		t.Fatalf("resolve suspend socket path: %v", err)
+	}
+	if got, want := socketPath, "/tmp/work/.virtie/suspend.sock"; got != want {
+		t.Fatalf("unexpected resolved suspend socket: got %q want %q", got, want)
+	}
+}
+
 func TestDocumentSSHExecDefaultsToEmpty(t *testing.T) {
 	document := validDocument()
 	document.SSH.Exec = nil
@@ -627,58 +647,64 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 	setXDGTestRuntimeDir(t, runtimeDir)
 
 	tests := []struct {
-		name       string
-		runtimeDir RuntimeDir
-		socketPath string
-		wantSocket string
-		wantQMP    string
-		wantQGA    string
-		wantReady  string
+		name        string
+		runtimeDir  RuntimeDir
+		socketPath  string
+		wantSocket  string
+		wantQMP     string
+		wantQGA     string
+		wantReady   string
+		wantSuspend string
 	}{
 		{
-			name:       "legacy working dir",
-			runtimeDir: RuntimeDir{},
-			socketPath: "fs.sock",
-			wantSocket: "/tmp/work/fs.sock",
-			wantQMP:    "/tmp/work/qmp.sock",
-			wantQGA:    "/tmp/work/qga.sock",
-			wantReady:  "/tmp/work/ssh-ready.sock",
+			name:        "legacy working dir",
+			runtimeDir:  RuntimeDir{},
+			socketPath:  "fs.sock",
+			wantSocket:  "/tmp/work/fs.sock",
+			wantQMP:     "/tmp/work/qmp.sock",
+			wantQGA:     "/tmp/work/qga.sock",
+			wantReady:   "/tmp/work/ssh-ready.sock",
+			wantSuspend: "/tmp/work/suspend.sock",
 		},
 		{
-			name:       "default runtime dir",
-			runtimeDir: RuntimeDir{Mode: RuntimeDirXDG},
-			socketPath: "fs.sock",
-			wantSocket: filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "fs.sock"),
-			wantQMP:    filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qmp.sock"),
-			wantQGA:    filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qga.sock"),
-			wantReady:  filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "ssh-ready.sock"),
+			name:        "default runtime dir",
+			runtimeDir:  RuntimeDir{Mode: RuntimeDirXDG},
+			socketPath:  "fs.sock",
+			wantSocket:  filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "fs.sock"),
+			wantQMP:     filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qmp.sock"),
+			wantQGA:     filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "qga.sock"),
+			wantReady:   filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "ssh-ready.sock"),
+			wantSuspend: filepath.Join(runtimeDir, "agentspace", "agent-sandbox", "suspend.sock"),
 		},
 		{
-			name:       "relative runtime dir",
-			runtimeDir: RuntimeDir{Mode: RuntimeDirPath, Path: "runtime"},
-			socketPath: "fs.sock",
-			wantSocket: "/tmp/work/runtime/fs.sock",
-			wantQMP:    "/tmp/work/runtime/qmp.sock",
-			wantQGA:    "/tmp/work/runtime/qga.sock",
-			wantReady:  "/tmp/work/runtime/ssh-ready.sock",
+			name:        "relative runtime dir",
+			runtimeDir:  RuntimeDir{Mode: RuntimeDirPath, Path: "runtime"},
+			socketPath:  "fs.sock",
+			wantSocket:  "/tmp/work/runtime/fs.sock",
+			wantQMP:     "/tmp/work/runtime/qmp.sock",
+			wantQGA:     "/tmp/work/runtime/qga.sock",
+			wantReady:   "/tmp/work/runtime/ssh-ready.sock",
+			wantSuspend: "/tmp/work/runtime/suspend.sock",
 		},
 		{
-			name:       "absolute runtime dir",
-			runtimeDir: RuntimeDir{Mode: RuntimeDirPath, Path: "/tmp/runtime"},
-			socketPath: "fs.sock",
-			wantSocket: "/tmp/runtime/fs.sock",
-			wantQMP:    "/tmp/runtime/qmp.sock",
-			wantQGA:    "/tmp/runtime/qga.sock",
-			wantReady:  "/tmp/runtime/ssh-ready.sock",
+			name:        "absolute runtime dir",
+			runtimeDir:  RuntimeDir{Mode: RuntimeDirPath, Path: "/tmp/runtime"},
+			socketPath:  "fs.sock",
+			wantSocket:  "/tmp/runtime/fs.sock",
+			wantQMP:     "/tmp/runtime/qmp.sock",
+			wantQGA:     "/tmp/runtime/qga.sock",
+			wantReady:   "/tmp/runtime/ssh-ready.sock",
+			wantSuspend: "/tmp/runtime/suspend.sock",
 		},
 		{
-			name:       "absolute socket path bypasses runtime dir",
-			runtimeDir: RuntimeDir{Mode: RuntimeDirXDG},
-			socketPath: "/tmp/explicit-fs.sock",
-			wantSocket: "/tmp/explicit-fs.sock",
-			wantQMP:    "/tmp/explicit-qmp.sock",
-			wantQGA:    "/tmp/explicit-qga.sock",
-			wantReady:  "/tmp/explicit-ready.sock",
+			name:        "absolute socket path bypasses runtime dir",
+			runtimeDir:  RuntimeDir{Mode: RuntimeDirXDG},
+			socketPath:  "/tmp/explicit-fs.sock",
+			wantSocket:  "/tmp/explicit-fs.sock",
+			wantQMP:     "/tmp/explicit-qmp.sock",
+			wantQGA:     "/tmp/explicit-qga.sock",
+			wantReady:   "/tmp/explicit-ready.sock",
+			wantSuspend: "/tmp/explicit-suspend.sock",
 		},
 	}
 
@@ -690,10 +716,12 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			manifest.QEMU.Devices.VirtioFS[0].SocketPath = tt.socketPath
 			manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 			manifest.QEMU.SSHReady.SocketPath = "ssh-ready.sock"
+			manifest.QEMU.GuestSuspend.SocketPath = "suspend.sock"
 			if tt.name == "absolute socket path bypasses runtime dir" {
 				manifest.QEMU.QMP.SocketPath = "/tmp/explicit-qmp.sock"
 				manifest.QEMU.GuestAgent.SocketPath = "/tmp/explicit-qga.sock"
 				manifest.QEMU.SSHReady.SocketPath = "/tmp/explicit-ready.sock"
+				manifest.QEMU.GuestSuspend.SocketPath = "/tmp/explicit-suspend.sock"
 			}
 
 			cleanupFiles, err := manifest.ResolvedCleanupFiles()
@@ -732,6 +760,13 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			if sshReadySocketPath != tt.wantReady {
 				t.Fatalf("unexpected ssh readiness socket path: got %q want %q", sshReadySocketPath, tt.wantReady)
 			}
+			guestSuspendSocketPath, err := manifest.ResolvedGuestSuspendSocketPath()
+			if err != nil {
+				t.Fatalf("resolve guest suspend socket path: %v", err)
+			}
+			if guestSuspendSocketPath != tt.wantSuspend {
+				t.Fatalf("unexpected guest suspend socket path: got %q want %q", guestSuspendSocketPath, tt.wantSuspend)
+			}
 
 			qemu, err := manifest.ResolvedQEMU()
 			if err != nil {
@@ -748,6 +783,9 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 			}
 			if got, want := qemu.SSHReady.SocketPath, tt.wantReady; got != want {
 				t.Fatalf("unexpected qemu ssh readiness socket path: got %q want %q", got, want)
+			}
+			if got, want := qemu.GuestSuspend.SocketPath, tt.wantSuspend; got != want {
+				t.Fatalf("unexpected qemu guest suspend socket path: got %q want %q", got, want)
 			}
 
 			resolvedCleanupFiles, err := manifest.ResolvedCleanupFiles()
