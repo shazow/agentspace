@@ -42,7 +42,7 @@ func (m *manager) installSSHAutoprovisionKey(ctx context.Context, launchManifest
 	defer client.Disconnect()
 
 	plan := sshtools.NewAuthorizedKeysInstallPlan(launchManifest.SSH.User, key.AuthorizedKey)
-	if err := m.installGuestFileDirectory(ctx, client, plan.AuthorizedKeysPath, plan.Owner); err != nil {
+	if err := m.installGuestFileDirectory(ctx, client, plan.AuthorizedKeysPath, plan.Owner, "0700"); err != nil {
 		return &stageError{Stage: "ssh autoprovision", Err: err}
 	}
 	if err := m.chownGuestFile(ctx, client, plan.SSHDir, plan.Owner); err != nil {

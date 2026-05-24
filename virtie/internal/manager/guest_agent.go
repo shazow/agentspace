@@ -291,7 +291,7 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		if err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
-		if err := m.installGuestFileDirectory(ctx, client, file.GuestPath, file.Chown); err != nil {
+		if err := m.installGuestFileDirectory(ctx, client, file.GuestPath, file.Chown, file.Mode); err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
 		if err := m.writeGuestFile(client, file.GuestPath, payloadBase64); err != nil {
@@ -537,18 +537,44 @@ func (m *manager) mountWorkspaceCWD(ctx context.Context, client guestAgentClient
 	return nil
 }
 
-func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAgentClient, guestPath string, owner string) error {
-	guestDir := path.Dir(guestPath)
-	exists, err := m.guestDirectoryExists(ctx, client, guestDir)
-	if err != nil {
-		return err
-	}
-	if exists {
+// installGuestFileDirectory ensures that the parent directory for guestPath exists.
+// It walks upward until it finds an existing ancestor, then creates only the
+// missing directories from top to bottom. owner and mode are passed to install(1)
+// for newly-created directories only; existing directories are left unchanged.
+// mode is expected to be a file mode and is converted to a directory mode by
+// adding execute bits wherever read bits are set.
+func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAgentClient, guestPath string, owner string, mode string) error {
+	guestDir := path.Clean(path.Dir(guestPath))
+	if guestDir == "." || guestDir == "/" {
 		return nil
 	}
 
-	args := guestInstallDirectoryArgs(guestDir, owner)
-	return m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, args, guestDir)
+	missingDirs := make([]string, 0, 4)
+	current := guestDir
+	for {
+		exists, err := m.guestDirectoryExists(ctx, client, current)
+		if err != nil {
+			return err
+		}
+		if exists {
+			break
+		}
+		missingDirs = append(missingDirs, current)
+		parent := path.Dir(current)
+		if parent == current {
+			return fmt.Errorf("resolve existing parent for %q", guestDir)
+		}
+		current = parent
+	}
+
+	for i := len(missingDirs) - 1; i >= 0; i-- {
+		dir := missingDirs[i]
+		args := guestInstallDirectoryArgs(dir, owner, mode)
+		if err := m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, args, dir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *manager) guestDirectoryExists(ctx context.Context, client guestAgentClient, guestDir string) (bool, error) {
@@ -567,7 +593,7 @@ func (m *manager) guestPathExists(ctx context.Context, client guestAgentClient, 
 	return status.ExitCode == 0, nil
 }
 
-func guestInstallDirectoryArgs(guestDir string, owner string) []string {
+func guestInstallDirectoryArgs(guestDir string, owner string, mode string) []string {
 	args := []string{"-d"}
 	if owner != "" {
 		user, group, _ := strings.Cut(owner, ":")
@@ -578,7 +604,32 @@ func guestInstallDirectoryArgs(guestDir string, owner string) []string {
 			args = append(args, "-g", group)
 		}
 	}
+	if mode != "" {
+		args = append(args, "-m", guestDirectoryMode(mode))
+	}
 	return append(args, guestDir)
+}
+
+func guestDirectoryMode(mode string) string {
+	prefix := ""
+	digits := mode
+	if strings.HasPrefix(mode, "0") {
+		prefix = "0"
+		digits = mode[1:]
+	}
+	if len(digits) != 3 {
+		return mode
+	}
+
+	out := make([]byte, 3)
+	for i := 0; i < 3; i++ {
+		d := digits[i] - '0'
+		if d&0b100 != 0 {
+			d |= 0b001
+		}
+		out[i] = '0' + d
+	}
+	return prefix + string(out)
 }
 
 func (m *manager) chownGuestFile(ctx context.Context, client guestAgentClient, guestPath string, owner string) error {

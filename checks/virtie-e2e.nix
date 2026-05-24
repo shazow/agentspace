@@ -618,7 +618,7 @@ in
     grep -Fx '/etc/virtie/inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
     grep -Fx '/var/lib/virtie/host' "$workspace_dir/state/guest-agent-closes" >/dev/null
     grep -Fx '/run/current-system/sw/bin/test -d /etc/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/install -d -o agent -g users /etc/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/install -d -o agent -g users -m 0750 /etc/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     grep -Fx '/run/current-system/sw/bin/chown agent:users /etc/virtie/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtie/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     grep -Fx '/run/current-system/sw/bin/test -d /var/lib/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
