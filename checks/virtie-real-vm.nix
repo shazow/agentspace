@@ -22,47 +22,20 @@ let
       storeDisk = true;
     };
     machine.memory = 768;
-    # This check runs a guest VM from inside another VM. In this environment the
-    # normal mkSandbox defaults try the KVM path (`accel=kvm:tcg`, host CPU) and
-    # QEMU reaches QMP but the guest never reports SSH readiness. Forcing an
-    # explicit CPU makes virtie avoid `-enable-kvm`, and forcing `accel=tcg`
-    # keeps QEMU out of nested KVM entirely. The serial log confirmed the image
-    # was also failing before userspace when `pit=off`: Linux had no PIT/HPET/PM
-    # timer source for early TSC calibration under TCG. The remaining machine
-    # options mirror microvm's x86 defaults for the devices this test uses:
-    # `pcie=on` is needed for the PCI virtio devices, `acpi=on`/`rtc=on` keep
-    # platform plumbing available, `pit=on` keeps early boot timers available,
-    # `pic=off`/`usb=off` keep the microvm device model minimal, and
-    # `mem-merge=on` preserves the normal memory behavior.
+    # Keep a serial log available for debugging failed VM boots. The test uses
+    # virtie's normal QEMU/KVM/vsock path, so sandboxed Nix builds need
+    # /dev/kvm and /dev/vhost-vsock exposed by the daemon.
     extraModules = [
       (
         { lib, pkgs, ... }:
         {
           boot.consoleLogLevel = lib.mkForce 7;
           boot.initrd.verbose = true;
-          boot.kernelParams = lib.mkAfter [
-            "console=ttyS0"
-            "earlyprintk=ttyS0"
-            "udev.log_level=7"
-          ];
           boot.initrd.kernelModules = [ "vmw_vsock_virtio_transport" ];
-          microvm.cpu = "max";
           microvm.qemu.extraArgs = [
             "-serial"
             "file:console.log"
           ];
-          systemd.services.virtie-ssh-signal.serviceConfig.ExecStartPre =
-            "${pkgs.coreutils}/bin/sleep 5";
-          microvm.qemu.machineOpts = {
-            accel = "tcg";
-            mem-merge = "on";
-            acpi = "on";
-            pit = "on";
-            pic = "off";
-            pcie = "on";
-            rtc = "on";
-            usb = "off";
-          };
         }
       )
     ];
@@ -81,9 +54,9 @@ in
   # state, and that the same guest process is still present and making progress
   # after resume.
   #
-  # Validated on 2026-05-23 with:
-  # `time -p sudo nix build --no-link --option sandbox false .#legacyPackages.x86_64-linux.realVMChecks.virtie-real-guest-suspend-retains-session-state`
-  # Runtime: 54.71s wall clock.
+  # Validated on 2026-05-24 with normal sandbox settings:
+  # `time -p nix build --no-link .#legacyPackages.x86_64-linux.realVMChecks.virtie-real-guest-suspend-retains-session-state`
+  # Runtime: 152.37s wall clock.
   virtie-real-guest-suspend-retains-session-state =
     (pkgs.testers.runNixOSTest {
       name = "virtie-real-guest-suspend-retains-session-state";
@@ -288,8 +261,5 @@ in
               if suspend_state_path.exists():
                   raise Exception(f"suspend state was not removed after resume: {suspend_state_path}")
         '';
-    }).overrideTestDerivation
-      (_: {
-        __noChroot = true;
-      });
+    });
 }

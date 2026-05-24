@@ -725,6 +725,13 @@ in
           "vm.vfs_cache_pressure" = 1000; # Default: 100
         };
 
+        # Give nix sandbox access to devices needed to launch more VMs, since we're building
+        # a recursive VM environment.
+        nix.settings.sandbox-paths = [
+          "/dev/kvm"
+          "/dev/vhost-vsock"
+        ];
+
         environment.sessionVariables = lib.mkIf cfg.workspace.enable {
           WORKSPACE = cfg.workspace.guestDir;
         };
