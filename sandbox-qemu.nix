@@ -16,11 +16,7 @@ let
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
   resolvedSerialMode =
-    if cfg.serial != null then
-      cfg.serial
-    else if config.microvm.qemu.serialConsole then
-      "console"
-    else if cfg.quiet then
+    if cfg.quiet then
       "off"
     else
       "print";
@@ -76,22 +72,6 @@ in
       type = lib.types.bool;
       default = true;
       description = "Quiet kernel output. Disable to debug boot issues.";
-    };
-
-    serial = lib.mkOption {
-      type = lib.types.nullOr (
-        lib.types.enum [
-          "off"
-          "print"
-          "console"
-        ]
-      );
-      default = null;
-      description = ''
-        Serial output mode. Null defaults to off when quiet is true and print
-        when quiet is false. Set console to request an interactive serial
-        console.
-      '';
     };
 
     machine = {
@@ -852,7 +832,7 @@ in
           socket = "qmp.sock";
           hypervisor = "qemu";
 
-          qemu.serialConsole = lib.mkDefault (cfg.serial == "console");
+          qemu.serialConsole = lib.mkDefault false;
 
           interfaces = [
             {

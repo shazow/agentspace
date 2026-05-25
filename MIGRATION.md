@@ -298,6 +298,23 @@ For boot logs without an interactive serial prompt, use:
 serial = "print"
 ```
 
+## 2026-05-25: `agentspace.sandbox.serial` removed
+
+### Who Is Affected
+
+- Consumers setting `agentspace.sandbox.serial` in `mkSandbox`.
+
+### What Changed
+
+The Nix sandbox layer no longer exposes a serial mode override. Generated
+manifests derive `kernel.serial` from `agentspace.sandbox.quiet`: quiet
+sandboxes emit `serial = "off"`, and `quiet = false` emits `serial = "print"`.
+
+### Migration Steps
+
+Remove `agentspace.sandbox.serial`. To choose a serial mode explicitly, set
+`kernel.serial` in the `virtie` manifest instead.
+
 ## 2026-05-18: Default launch SSH is no longer quiet
 
 ### Who Is Affected

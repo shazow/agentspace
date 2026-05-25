@@ -29,27 +29,6 @@ let
     persistence.homeImage = null;
   };
 
-  vmQuietDisabledSerialOff = mkSandbox {
-    quiet = false;
-    serial = "off";
-    persistence.homeImage = null;
-  };
-
-  vmQuietDisabledSerialConsole = mkSandbox {
-    quiet = false;
-    serial = "console";
-    persistence.homeImage = null;
-  };
-
-  vmMicrovmSerialConsole = mkSandbox {
-    persistence.homeImage = null;
-    extraModules = [
-      {
-        microvm.qemu.serialConsole = true;
-      }
-    ];
-  };
-
   vmVirtieFeatureRich = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = mkExecSSH {
@@ -359,15 +338,6 @@ let
     assert vmQuietDisabled.config.agentspace.sandbox.launch.virtieManifestData.kernel.serial == "print";
     assert vmQuietDisabled.config.systemd.services."serial-getty@ttyS0".enable == false;
     assert vmQuietDisabled.config.systemd.services."serial-getty@ttyAMA0".enable == false;
-    assert
-      vmQuietDisabledSerialOff.config.agentspace.sandbox.launch.virtieManifestData.kernel.serial == "off";
-    assert
-      vmQuietDisabledSerialConsole.config.agentspace.sandbox.launch.virtieManifestData.kernel.serial
-      == "console";
-    assert vmQuietDisabledSerialConsole.config.microvm.qemu.serialConsole == true;
-    assert
-      vmMicrovmSerialConsole.config.agentspace.sandbox.launch.virtieManifestData.kernel.serial
-      == "console";
     true;
 
   _fixedMachine =
