@@ -112,6 +112,69 @@ func TestLoadRejectsTrailingData(t *testing.T) {
 	}
 }
 
+func TestKernelSerialModesLowerToQEMUConsole(t *testing.T) {
+	tests := []struct {
+		name               string
+		serial             string
+		wantSerial         bool
+		wantLoweringErrMsg string
+	}{
+		{
+			name: "default off",
+		},
+		{
+			name:       "print",
+			serial:     KernelSerialPrint,
+			wantSerial: true,
+		},
+		{
+			name:       "console",
+			serial:     KernelSerialConsole,
+			wantSerial: true,
+		},
+		{
+			name:               "invalid",
+			serial:             "verbose",
+			wantLoweringErrMsg: "manifest.kernel.serial must be one of off, print, or console",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.Host = HostInput{
+				OS:     "linux",
+				Arch:   "x86_64",
+				System: "x86_64-linux",
+			}
+			document.Kernel.Serial = tt.serial
+
+			loaded, err := document.Manifest()
+			if tt.wantLoweringErrMsg != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantLoweringErrMsg) {
+					t.Fatalf("expected lowering error %q, got %v", tt.wantLoweringErrMsg, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("lower manifest: %v", err)
+			}
+
+			qemu := loaded.QEMU
+			if got := qemu.Console.StdioChardev; got != tt.wantSerial {
+				t.Fatalf("unexpected stdio chardev: got %v want %v", got, tt.wantSerial)
+			}
+			if got := qemu.Console.SerialConsole; got != tt.wantSerial {
+				t.Fatalf("unexpected serial console: got %v want %v", got, tt.wantSerial)
+			}
+			hasKernelConsole := strings.Contains(qemu.Kernel.Params, "console=ttyS0")
+			if hasKernelConsole != tt.wantSerial {
+				t.Fatalf("unexpected kernel params: got %q want console=%v", qemu.Kernel.Params, tt.wantSerial)
+			}
+		})
+	}
+}
+
 func TestDocumentWriteFilesFollowLinksLowersToManifest(t *testing.T) {
 	followLinks := false
 	writeBack := true

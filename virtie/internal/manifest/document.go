@@ -1,6 +1,10 @@
 package manifest
 
 const (
+	KernelSerialOff     = "off"
+	KernelSerialPrint   = "print"
+	KernelSerialConsole = "console"
+
 	defaultHostName      = "virtie"
 	defaultWorkingDir    = "."
 	defaultBaseDir       = ".virtie"
@@ -60,10 +64,10 @@ type MachineInput struct {
 }
 
 type KernelInput struct {
-	Path          string   `json:"path" toml:"path"`
-	InitrdPath    string   `json:"initrd_path" toml:"initrd_path"`
-	Params        []string `json:"params,omitempty" toml:"params"`
-	SerialConsole bool     `json:"serial_console,omitempty" toml:"serial_console"`
+	Path       string   `json:"path" toml:"path"`
+	InitrdPath string   `json:"initrd_path" toml:"initrd_path"`
+	Params     []string `json:"params,omitempty" toml:"params"`
+	Serial     string   `json:"serial,omitempty" toml:"serial"`
 }
 
 type GraphicsInput struct {

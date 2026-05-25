@@ -262,6 +262,42 @@ file generated from the same manifest data.
 Update any path assertions, file globs, or tooling that expects
 `virtie-<host>.json` to use `virtie-<host>.toml` instead.
 
+## 2026-05-25: `kernel.serial_console` replaced by `kernel.serial`
+
+### Who Is Affected
+
+- Consumers writing `virtie` manifests directly.
+- Tooling that generates or validates `virtie` manifests.
+
+### What Changed
+
+The `kernel.serial_console` boolean manifest field was removed. Use
+`kernel.serial` instead:
+
+```toml
+[kernel]
+serial = "off"      # no serial output
+serial = "print"    # stream serial output without an interactive guest prompt
+serial = "console"  # full interactive serial console configuration
+```
+
+Generated agentspace sandboxes default to `serial = "off"` when
+`agentspace.sandbox.quiet = true` and `serial = "print"` when
+`agentspace.sandbox.quiet = false`.
+
+### Migration Steps
+
+```diff
+- serial_console = true
++ serial = "console"
+```
+
+For boot logs without an interactive serial prompt, use:
+
+```toml
+serial = "print"
+```
+
 ## 2026-05-18: Default launch SSH is no longer quiet
 
 ### Who Is Affected
