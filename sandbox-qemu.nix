@@ -15,11 +15,7 @@ let
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
-  resolvedSerialMode =
-    if cfg.quiet then
-      "off"
-    else
-      "print";
+  resolvedSerialMode = if cfg.quiet then "off" else "print";
   workspaceHostDir = cfg.workspace.hostDir;
   workspaceSwapFile = "${cfg.workspace.guestDir}/swapfile";
   workspaceBaseShare = {
