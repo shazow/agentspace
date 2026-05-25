@@ -33,6 +33,19 @@ let
     mountPoint = "${cfg.workspace.guestDir}/${key}";
     securityModel = "mapped";
   }) workspaceSpaces;
+  virtieGuestSuspend = pkgs.writeShellScriptBin "virtie-guest-suspend" ''
+    set -euo pipefail
+
+    port=/dev/virtio-ports/virtie.suspend
+    if [ ! -e "$port" ]; then
+      echo "virtie suspend port is not available: $port" >&2
+      exit 1
+    fi
+
+    exec 3<>"$port"
+    printf 'suspend\n' >&3
+    ${pkgs.coreutils}/bin/cat <&3 >/dev/null
+  '';
 in
 {
   imports = [
@@ -603,6 +616,7 @@ in
           seccomp = canSandbox;
           qmp_socket = if config.microvm.socket != null then config.microvm.socket else "qmp.sock";
           guest_agent_socket = "qga.sock";
+          suspend_socket = "suspend.sock";
         }
         // lib.optionalAttrs (config.microvm.user != null) {
           user = config.microvm.user;
@@ -725,6 +739,13 @@ in
           "vm.vfs_cache_pressure" = 1000; # Default: 100
         };
 
+        # Give nix sandbox access to devices needed to launch more VMs, since we're building
+        # a recursive VM environment.
+        nix.settings.sandbox-paths = [
+          "/dev/kvm"
+          "/dev/vhost-vsock"
+        ];
+
         environment.sessionVariables = lib.mkIf cfg.workspace.enable {
           WORKSPACE = cfg.workspace.guestDir;
         };
@@ -771,6 +792,10 @@ in
             ${pkgs.coreutils}/bin/echo SSH-READY > /dev/virtio-ports/virtie.ready
           '';
         };
+        systemd.services.systemd-suspend.serviceConfig.ExecStart = lib.mkForce [
+          ""
+          "${virtieGuestSuspend}/bin/virtie-guest-suspend"
+        ];
         services.qemuGuest.enable = true;
 
         security.sudo.wheelNeedsPassword = false;
@@ -792,6 +817,7 @@ in
         # Basic Package Set
         environment.systemPackages = [
           agentspace-logout
+          virtieGuestSuspend
         ]
         ++ (with pkgs; [
           bashInteractive

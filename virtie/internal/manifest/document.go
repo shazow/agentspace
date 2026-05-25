@@ -48,6 +48,7 @@ type QEMUInput struct {
 	MachineOptions   map[string]string `json:"machine_options,omitempty" toml:"machine_options"`
 	QMPSocket        string            `json:"qmp_socket,omitempty" toml:"qmp_socket"`
 	GuestAgentSocket string            `json:"guest_agent_socket,omitempty" toml:"guest_agent_socket"`
+	SuspendSocket    string            `json:"suspend_socket,omitempty" toml:"suspend_socket"`
 }
 
 type MachineInput struct {

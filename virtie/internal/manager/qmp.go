@@ -17,6 +17,7 @@ const (
 	defaultQMPRetryDelay       = 200 * time.Millisecond
 	defaultQMPConnectTimeout   = 500 * time.Millisecond
 	defaultQMPQuitTimeout      = 500 * time.Millisecond
+	defaultQMPResumeTimeout    = 5 * time.Second
 	defaultQMPMigrationTimeout = 30 * time.Second
 )
 
@@ -24,10 +25,12 @@ type qmpClient interface {
 	WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error
 	Stop(timeout time.Duration) error
 	Cont(timeout time.Duration) error
+	SystemWakeup(timeout time.Duration) error
 	QueryStatus(timeout time.Duration) (string, error)
 	MigrateToFile(timeout time.Duration, path string) error
 	MigrateIncoming(timeout time.Duration, path string) error
 	QueryMigrate(timeout time.Duration) (string, error)
+	Events(ctx context.Context) (<-chan doQMP.Event, error)
 	Quit(timeout time.Duration) error
 	Disconnect() error
 }
@@ -141,6 +144,19 @@ func (c *socketMonitorClient) Cont(timeout time.Duration) error {
 	return err
 }
 
+func (c *socketMonitorClient) SystemWakeup(timeout time.Duration) error {
+	err := c.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {
+		if err := monitor.SystemWakeup(); err != nil {
+			return fmt.Errorf("qmp system_wakeup: %w", err)
+		}
+		return nil
+	})
+	if isTimeoutError(err) {
+		return fmt.Errorf("qmp system_wakeup timed out after %s", timeout)
+	}
+	return err
+}
+
 func (c *socketMonitorClient) QueryStatus(timeout time.Duration) (string, error) {
 	var status string
 	err := c.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {
@@ -155,6 +171,13 @@ func (c *socketMonitorClient) QueryStatus(timeout time.Duration) (string, error)
 		return "", fmt.Errorf("qmp query-status timed out after %s", timeout)
 	}
 	return status, err
+}
+
+func (c *socketMonitorClient) Events(ctx context.Context) (<-chan doQMP.Event, error) {
+	if c == nil || c.monitor == nil {
+		return nil, doQMP.ErrEventsNotSupported
+	}
+	return c.monitor.Events(ctx)
 }
 
 func (c *socketMonitorClient) MigrateToFile(timeout time.Duration, path string) error {
@@ -221,10 +244,20 @@ func (c *socketMonitorClient) withTimeout(timeout time.Duration, fn func() error
 }
 
 type deadlineSocketMonitor struct {
-	conn    net.Conn
-	decoder *json.Decoder
-	timeout time.Duration
-	mu      sync.Mutex
+	conn      net.Conn
+	decoder   *json.Decoder
+	timeout   time.Duration
+	commandMu sync.Mutex
+	events    chan doQMP.Event
+	responses chan qmpResponse
+	done      chan struct{}
+	errMu     sync.Mutex
+	err       error
+}
+
+type qmpResponse struct {
+	message json.RawMessage
+	err     error
 }
 
 func newDeadlineSocketMonitor(ctx context.Context, network string, addr string, timeout time.Duration) (*deadlineSocketMonitor, error) {
@@ -242,9 +275,6 @@ func newDeadlineSocketMonitor(ctx context.Context, network string, addr string, 
 }
 
 func (m *deadlineSocketMonitor) Connect() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	return m.withDeadline(func() error {
 		var banner struct {
 			QMP struct {
@@ -264,8 +294,14 @@ func (m *deadlineSocketMonitor) Connect() error {
 			return err
 		}
 
-		_, err = m.readResponseLocked()
-		return err
+		if _, err := m.readResponse(); err != nil {
+			return err
+		}
+		m.events = make(chan doQMP.Event, 16)
+		m.responses = make(chan qmpResponse, 1)
+		m.done = make(chan struct{})
+		go m.readLoop()
+		return nil
 	})
 }
 
@@ -273,31 +309,100 @@ func (m *deadlineSocketMonitor) Disconnect() error {
 	if m == nil || m.conn == nil {
 		return nil
 	}
-	return m.conn.Close()
+	err := m.conn.Close()
+	if m.done != nil {
+		<-m.done
+	}
+	return err
 }
 
 func (m *deadlineSocketMonitor) Run(command []byte) ([]byte, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.commandMu.Lock()
+	defer m.commandMu.Unlock()
 
-	var response []byte
-	err := m.withDeadline(func() error {
-		if _, err := m.conn.Write(appendQMPDelimiter(command)); err != nil {
-			return err
+	var timeout <-chan time.Time
+	if m.timeout > 0 {
+		if err := m.conn.SetDeadline(time.Now().Add(m.timeout)); err != nil {
+			return nil, err
 		}
+		defer m.conn.SetDeadline(time.Time{})
 
-		var err error
-		response, err = m.readResponseLocked()
-		return err
-	})
-	if err != nil {
+		timer := time.NewTimer(m.timeout)
+		defer timer.Stop()
+		timeout = timer.C
+	}
+
+	if _, err := m.conn.Write(appendQMPDelimiter(command)); err != nil {
+		if isTimeoutError(err) {
+			m.closeAfterTimeout()
+			return nil, timeoutError{op: "qmp command", timeout: m.timeout}
+		}
 		return nil, err
 	}
-	return response, nil
+
+	select {
+	case response, ok := <-m.responses:
+		if !ok {
+			if err := m.readError(); err != nil {
+				if isTimeoutError(err) {
+					return nil, timeoutError{op: "qmp command", timeout: m.timeout}
+				}
+				return nil, err
+			}
+			return nil, errors.New("qmp monitor disconnected")
+		}
+		if response.err != nil {
+			return nil, response.err
+		}
+		return response.message, nil
+	case <-timeout:
+		m.closeAfterTimeout()
+		return nil, timeoutError{op: "qmp command", timeout: m.timeout}
+	case <-m.done:
+		if err := m.readError(); err != nil {
+			if isTimeoutError(err) {
+				return nil, timeoutError{op: "qmp command", timeout: m.timeout}
+			}
+			return nil, err
+		}
+		return nil, errors.New("qmp monitor disconnected")
+	}
 }
 
-func (m *deadlineSocketMonitor) Events(context.Context) (<-chan doQMP.Event, error) {
-	return nil, doQMP.ErrEventsNotSupported
+func (m *deadlineSocketMonitor) closeAfterTimeout() {
+	_ = m.conn.Close()
+	if m.done != nil {
+		<-m.done
+	}
+}
+
+func (m *deadlineSocketMonitor) Events(ctx context.Context) (<-chan doQMP.Event, error) {
+	if m == nil || m.events == nil {
+		return nil, doQMP.ErrEventsNotSupported
+	}
+	if ctx == nil {
+		return m.events, nil
+	}
+	events := make(chan doQMP.Event)
+	go func() {
+		defer close(events)
+		for {
+			select {
+			case event, ok := <-m.events:
+				if !ok {
+					return
+				}
+				select {
+				case events <- event:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return events, nil
 }
 
 func (m *deadlineSocketMonitor) setTimeout(timeout time.Duration) {
@@ -321,7 +426,7 @@ func (m *deadlineSocketMonitor) withDeadline(fn func() error) error {
 	return fn()
 }
 
-func (m *deadlineSocketMonitor) readResponseLocked() ([]byte, error) {
+func (m *deadlineSocketMonitor) readResponse() ([]byte, error) {
 	for {
 		var message json.RawMessage
 		if err := m.decoder.Decode(&message); err != nil {
@@ -346,6 +451,75 @@ func (m *deadlineSocketMonitor) readResponseLocked() ([]byte, error) {
 		}
 		return message, nil
 	}
+}
+
+func (m *deadlineSocketMonitor) readLoop() {
+	defer close(m.done)
+	defer close(m.events)
+	defer close(m.responses)
+
+	for {
+		var message json.RawMessage
+		if err := m.decoder.Decode(&message); err != nil {
+			m.setReadError(err)
+			return
+		}
+
+		var envelope struct {
+			Event string `json:"event,omitempty"`
+			Error *struct {
+				Class string `json:"class"`
+				Desc  string `json:"desc"`
+			} `json:"error,omitempty"`
+		}
+		if err := json.Unmarshal(message, &envelope); err != nil {
+			m.responses <- qmpResponse{err: err}
+			continue
+		}
+		if envelope.Event != "" {
+			var event doQMP.Event
+			if err := json.Unmarshal(message, &event); err != nil {
+				m.responses <- qmpResponse{err: err}
+				continue
+			}
+			m.events <- event
+			continue
+		}
+		if envelope.Error != nil && envelope.Error.Desc != "" {
+			m.responses <- qmpResponse{err: errors.New(envelope.Error.Desc)}
+			continue
+		}
+		m.responses <- qmpResponse{message: message}
+	}
+}
+
+func (m *deadlineSocketMonitor) setReadError(err error) {
+	m.errMu.Lock()
+	defer m.errMu.Unlock()
+	m.err = err
+}
+
+func (m *deadlineSocketMonitor) readError() error {
+	m.errMu.Lock()
+	defer m.errMu.Unlock()
+	return m.err
+}
+
+type timeoutError struct {
+	op      string
+	timeout time.Duration
+}
+
+func (e timeoutError) Error() string {
+	return fmt.Sprintf("%s timed out after %s", e.op, e.timeout)
+}
+
+func (e timeoutError) Timeout() bool {
+	return true
+}
+
+func (e timeoutError) Temporary() bool {
+	return true
 }
 
 func appendQMPDelimiter(command []byte) []byte {

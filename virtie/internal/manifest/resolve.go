@@ -131,6 +131,10 @@ func (m *Manifest) ResolvedSSHReadySocketPath() (string, error) {
 	return m.resolveSocketPath(m.QEMU.SSHReady.SocketPath)
 }
 
+func (m *Manifest) ResolvedGuestSuspendSocketPath() (string, error) {
+	return m.resolveSocketPath(m.QEMU.GuestSuspend.SocketPath)
+}
+
 func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved := m.QEMU
 	resolved.BinaryPath = m.resolvePath(resolved.BinaryPath)
@@ -155,6 +159,12 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 		return QEMU{}, err
 	}
 	resolved.SSHReady.SocketPath = sshReadySocketPath
+
+	guestSuspendSocketPath, err := m.resolveSocketPath(resolved.GuestSuspend.SocketPath)
+	if err != nil {
+		return QEMU{}, err
+	}
+	resolved.GuestSuspend.SocketPath = guestSuspendSocketPath
 
 	resolved.Machine.Options = append([]string(nil), resolved.Machine.Options...)
 

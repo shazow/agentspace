@@ -144,6 +144,18 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 		)
 	}
 
+	if qemu.GuestSuspend.SocketPath != "" {
+		serialDriver, err := guestAgentSerialDriver(qemu.Devices.VSOCK.Transport)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args,
+			"-chardev", fmt.Sprintf("socket,path=%s,server=on,wait=off,id=suspend_char", qemu.GuestSuspend.SocketPath),
+			"-device", fmt.Sprintf("%s,id=suspend-serial", serialDriver),
+			"-device", "virtserialport,chardev=suspend_char,name=virtie.suspend",
+		)
+	}
+
 	switch qemu.Memory.Backend {
 	case "", "default":
 		// No extra memory object required.
