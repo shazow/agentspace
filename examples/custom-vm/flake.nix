@@ -42,7 +42,7 @@
         path = "${gondolin-alpine}/vmlinuz-virt"
         initrd_path = "${gondolin-alpine}/initramfs.cpio.lz4"
         params = [ "root=/dev/vda", "rw" ]
-        serial_console = true
+        serial = "console"
 
         [ssh]
         ready_socket = ""

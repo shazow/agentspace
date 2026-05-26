@@ -24,6 +24,11 @@ let
     persistence.homeImage = null;
   };
 
+  vmQuietDisabled = mkSandbox {
+    quiet = false;
+    persistence.homeImage = null;
+  };
+
   vmVirtieFeatureRich = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = mkExecSSH {
@@ -234,6 +239,7 @@ let
 
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtieManifestData;
+  quietDisabledKernelParams = vmQuietDisabled.config.microvm.kernelParams;
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
@@ -311,12 +317,27 @@ let
     assert defaultManifest.ssh.autoprovision == true;
     assert defaultManifest.ssh.ready_socket == "ready.sock";
     assert vmDefault.config.microvm.virtiofsd.group == null;
+    assert vmDefault.config.microvm.qemu.serialConsole == false;
+    assert defaultManifest.kernel.serial == "off";
+    assert builtins.elem "quiet" vmDefault.config.microvm.kernelParams;
+    assert builtins.elem "udev.log_level=3" vmDefault.config.microvm.kernelParams;
     assert !(builtins.elem "-q" defaultManifest.ssh.exec);
     assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
       defaultManifest.ssh.exec;
     assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);
     assert defaultManifest.write_files == [ ];
     assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;
+    true;
+
+  _quietDisabled =
+    assert !(builtins.elem "quiet" quietDisabledKernelParams);
+    assert !(builtins.elem "udev.log_level=3" quietDisabledKernelParams);
+    assert vmQuietDisabled.config.boot.consoleLogLevel != 0;
+    assert vmQuietDisabled.config.boot.initrd.verbose != false;
+    assert vmQuietDisabled.config.microvm.qemu.serialConsole == false;
+    assert vmQuietDisabled.config.agentspace.sandbox.launch.virtieManifestData.kernel.serial == "print";
+    assert vmQuietDisabled.config.systemd.services."serial-getty@ttyS0".enable == false;
+    assert vmQuietDisabled.config.systemd.services."serial-getty@ttyAMA0".enable == false;
     true;
 
   _fixedMachine =
@@ -574,6 +595,10 @@ in
   virtie-manifest-default-ssh-contract =
     assert _defaultSSH;
     pkgs.runCommand "virtie-manifest-default-ssh-contract" { } "touch $out";
+
+  virtie-manifest-quiet-disabled-contract =
+    assert _quietDisabled;
+    pkgs.runCommand "virtie-manifest-quiet-disabled-contract" { } "touch $out";
 
   virtie-manifest-balloon-contract =
     assert _balloon;

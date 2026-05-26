@@ -187,6 +187,10 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 	if err != nil {
 		return QEMU{}, err
 	}
+	serialMode, err := kernelSerialMode(d.Kernel)
+	if err != nil {
+		return QEMU{}, err
+	}
 
 	qemu := QEMU{
 		BinaryPath: binaryPath,
@@ -213,8 +217,8 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 			CPUs: cpus,
 		},
 		Console: QEMUConsole{
-			StdioChardev:  true,
-			SerialConsole: d.Kernel.SerialConsole,
+			StdioChardev:  serialMode != KernelSerialOff,
+			SerialConsole: serialMode != KernelSerialOff,
 		},
 		Knobs: QEMUKnobs{
 			NoDefaults:     true,
@@ -338,7 +342,7 @@ func memoryBackend(host HostInput, virtiofsMounts []MountInput) string {
 
 func kernelParams(host HostInput, kernel KernelInput) string {
 	params := make([]string, 0, len(kernel.Params)+3)
-	if kernel.SerialConsole {
+	if mode, _ := kernelSerialMode(kernel); mode != KernelSerialOff {
 		switch host.System {
 		case "x86_64-linux":
 			params = append(params, "earlyprintk=ttyS0 console=ttyS0")
@@ -349,6 +353,17 @@ func kernelParams(host HostInput, kernel KernelInput) string {
 	params = append(params, "reboot=t", "panic=-1")
 	params = append(params, kernel.Params...)
 	return strings.Join(params, " ")
+}
+
+func kernelSerialMode(kernel KernelInput) (string, error) {
+	switch kernel.Serial {
+	case "":
+		return KernelSerialOff, nil
+	case KernelSerialOff, KernelSerialPrint, KernelSerialConsole:
+		return kernel.Serial, nil
+	default:
+		return "", fmt.Errorf("manifest.kernel.serial must be one of off, print, or console")
+	}
 }
 
 func lowerVolumes(volumes []VolumeInput) []Volume {

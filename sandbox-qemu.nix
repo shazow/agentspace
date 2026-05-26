@@ -15,6 +15,7 @@ let
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
+  resolvedSerialMode = if cfg.quiet then "off" else "print";
   workspaceHostDir = cfg.workspace.hostDir;
   workspaceSwapFile = "${cfg.workspace.guestDir}/swapfile";
   workspaceBaseShare = {
@@ -61,6 +62,12 @@ in
       type = lib.types.str;
       default = "agent-sandbox";
       description = "Hostname for the guest VM.";
+    };
+
+    quiet = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Quiet kernel output. Disable to debug boot issues.";
     };
 
     machine = {
@@ -628,7 +635,7 @@ in
           path = "${config.microvm.kernel.out}/${pkgs.stdenv.hostPlatform.linux-kernel.target}";
           initrd_path = config.microvm.initrdPath;
           params = config.microvm.kernelParams;
-          serial_console = config.microvm.qemu.serialConsole;
+          serial = resolvedSerialMode;
         };
         graphics = {
           backend = if config.microvm.graphics.enable then config.microvm.graphics.backend else "headless";
@@ -697,15 +704,17 @@ in
         networking.hostName = cfg.hostName;
         nixpkgs.config.allowUnfree = true;
         services.logrotate.enable = false;
+        systemd.services."serial-getty@ttyS0".enable = lib.mkIf (resolvedSerialMode == "print") false;
+        systemd.services."serial-getty@ttyAMA0".enable = lib.mkIf (resolvedSerialMode == "print") false;
 
         # Boot & Kernel
         boot.kernel.sysctl."kernel.unprivileged_userns_clone" = 1;
-        boot.kernelParams = [
+        boot.kernelParams = lib.mkIf cfg.quiet [
           "quiet"
           "udev.log_level=3"
         ];
-        boot.consoleLogLevel = 0;
-        boot.initrd.verbose = false;
+        boot.consoleLogLevel = lib.mkIf cfg.quiet 0;
+        boot.initrd.verbose = lib.mkIf cfg.quiet false;
         boot.tmp.useTmpfs = false;
 
         # Some workspace-backed filesystems (like FUSE) reject chgrp/chown on
@@ -819,7 +828,7 @@ in
           socket = "qmp.sock";
           hypervisor = "qemu";
 
-          qemu.serialConsole = false;
+          qemu.serialConsole = lib.mkDefault false;
 
           interfaces = [
             {

@@ -3532,6 +3532,44 @@ func TestBuildQEMUSpecUsesRuntimeCPUCountWhenOmitted(t *testing.T) {
 	}
 }
 
+func TestBuildQEMUSpecAddsSerialConsoleArgsOnlyWhenEnabled(t *testing.T) {
+	tests := []struct {
+		name            string
+		console         manifest.QEMUConsole
+		wantConsoleArgs bool
+	}{
+		{
+			name: "disabled",
+		},
+		{
+			name: "enabled",
+			console: manifest.QEMUConsole{
+				StdioChardev:  true,
+				SerialConsole: true,
+			},
+			wantConsoleArgs: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validManifest("/tmp/work")
+			cfg.QEMU.Console = tt.console
+
+			spec, err := buildQEMUSpec(cfg, 42)
+			if err != nil {
+				t.Fatalf("build qemu spec: %v", err)
+			}
+			if got := containsString(spec.Args, "stdio,id=stdio,signal=off"); got != tt.wantConsoleArgs {
+				t.Fatalf("unexpected stdio chardev presence: got %v want %v args=%v", got, tt.wantConsoleArgs, spec.Args)
+			}
+			if got := containsString(spec.Args, "chardev:stdio"); got != tt.wantConsoleArgs {
+				t.Fatalf("unexpected serial console presence: got %v want %v args=%v", got, tt.wantConsoleArgs, spec.Args)
+			}
+		})
+	}
+}
+
 func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"

@@ -14,7 +14,7 @@
 - This project should prioritize working on NixOS, but ideally also support macOS. Surface any concerns that may break macOS compatibility.
 - Backward-incompatible changes are acceptable when justified. When changing the consumer API, document it in `MIGRATION.md`.
 - When launching a VM, ensure we allocate less memory than is available, and choose an available CID (the default may be taken).
-- When debugging QEMU serial console output, add `-serial file:console.log` to pipe the output.
+- When debugging VM boot failures, use `mkSandbox { quiet = false; ... }` in agentspace or `kernel.serial = "print"` in the virtie manifest.
 
 ## Code Style
 
@@ -30,6 +30,7 @@
 
 ## Commits
 
+- Run `nix fmt` before committing nix changes.
 - Consider committing major component changes separately if the changes work stand-alone. Order the commits incrementally so that they work as a unit.
 
 Commit message style:

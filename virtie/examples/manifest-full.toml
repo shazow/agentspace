@@ -102,9 +102,10 @@ initrd_path = "/tmp/initrd"
 # for the standard generated sandbox.
 params = []  # Default: virtie adds required runtime params only
 
-# Serial console support changes both QEMU wiring and kernel console params.
-# It is useful for debugging boot failures, but noisy for normal sandbox use.
-serial_console = false  # Default: no serial console params
+# Serial controls QEMU serial wiring and kernel console params. "print" streams
+# kernel and init output without implying an interactive guest login prompt;
+# "console" is for full serial-console guest configurations.
+serial = "off"  # Options: off, print, console (default: off)
 
 [graphics]
 # Graphics switches QEMU out of headless mode and selects the host display
