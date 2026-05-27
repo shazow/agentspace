@@ -326,6 +326,12 @@ let
       defaultManifest.ssh.exec;
     assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);
     assert defaultManifest.write_files == [ ];
+    assert builtins.any (
+      mount:
+      mount.tag == "ro-store"
+      && mount.virtiofs ? bin
+      && pkgs.lib.hasInfix "--sandbox=none" (builtins.readFile mount.virtiofs.bin)
+    ) defaultManifest.mounts;
     assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;
     true;
 

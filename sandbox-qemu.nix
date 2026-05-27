@@ -452,7 +452,7 @@ in
             --shared-dir="''${VIRTIOFSD_SOURCE-${lib.escapeShellArg source}}" \
             "''${opt_rlimit[@]}" \
             --thread-pool-size ${toString config.microvm.virtiofsd.threadPoolSize} \
-            --posix-acl --xattr \
+            ${if tag == "ro-store" then "--xattr --sandbox=none" else "--posix-acl --xattr"} \
             --cache=${cache} \
             ${
               lib.optionalString (
