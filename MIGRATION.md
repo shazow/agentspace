@@ -14,7 +14,7 @@ flake output, manifest contract, or generated wrapper behavior changes.
 ### What Changed
 
 The virtie manifest no longer uses polymorphic mount entries. Mounts are now
-grouped by backend under `mounts.virtiofs` and `mounts."9p"`. Common fields
+grouped by backend under `mounts.virtiofs` and `mounts.9p`. Common fields
 stay on each mount entry, while backend-specific fields stay nested under the
 backend name.
 
@@ -34,17 +34,17 @@ Move old `[[mounts]]` entries to the backend-specific array:
  virtiofs.args = ["--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"]
 ```
 
-Move 9p entries to `[[mounts."9p"]]` and nest 9p-specific options:
+Move 9p entries to `[[mounts.9p]]` and nest 9p-specific options:
 
 ```toml
 -[[mounts]]
 -type = "9p"
-+[[mounts."9p"]]
++[[mounts.9p]]
  tag = "cache"
  source = ".cache"
  read_only = true
 -security_model = "mapped"
-+"9p".security_model = "mapped"
++9p.security_model = "mapped"
 ```
 
 ## 2026-05-22: generic run commands replace runWithTunnel

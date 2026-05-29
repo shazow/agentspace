@@ -182,14 +182,14 @@ virtiofs.socket = "workspace.sock"
 virtiofs.bin = "virtiofsd"
 virtiofs.args = ["--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"]
 
-[[mounts."9p"]]
+[[mounts.9p]]
 tag = "cache"
 source = ".cache"
 read_only = false
 
 # 9p filesystem security policy is backend-specific, so it lives under the
 # nested 9p table.
-"9p".security_model = "mapped"  # Options: mapped, none, passthrough (default: mapped)
+9p.security_model = "mapped"  # Options: mapped, none, passthrough (default: mapped)
 
 [[run]]
 # Run commands are host-side processes managed for the VM lifetime. They start
