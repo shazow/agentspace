@@ -38,14 +38,15 @@ func TestLoadReadsFromReader(t *testing.T) {
 	document.QEMU.Exec = []string{"bin/qemu-system-x86_64"}
 	document.Kernel.Path = "boot/vmlinuz"
 	document.Kernel.InitrdPath = "boot/initrd"
-	document.Mounts = append(document.Mounts, MountInput{
-		Type:          "9p",
-		SourcePath:    "shares/cache",
-		Tag:           "cache",
-		SecurityModel: "none",
+	document.Mounts.NineP = append(document.Mounts.NineP, NinePMountInput{
+		MountInput: MountInput{
+			SourcePath: "shares/cache",
+			Tag:        "cache",
+		},
+		NineP: NinePInput{SecurityModel: "none"},
 	})
 	document.Volumes[0].ImagePath = "images/root.img"
-	document.Mounts[0].VirtioFS.Bin = "bin/virtiofsd-workspace"
+	document.Mounts.VirtioFS[0].VirtioFS.Bin = "bin/virtiofsd-workspace"
 
 	data, err := json.Marshal(document)
 	if err != nil {
@@ -241,7 +242,7 @@ func TestDocumentRunLowersAndResolvesCommand(t *testing.T) {
 		GuestDir: "/home/agent/workspace",
 		HostDir:  "/tmp/work/.virtie/workspace",
 	}
-	document.Mounts = nil
+	document.Mounts = MountsInput{}
 	document.Run = []RunInput{
 		{
 			Exec: []string{
@@ -1071,7 +1072,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 			"qemu": {"exec": ["/bin/qemu-system-x86_64"]},
 			"machine": {"memory": 1024},
 			"kernel": {"path": "/tmp/vmlinuz", "initrd_path": "/tmp/initrd"},
-			"mounts": [{"type": "virtiofs", "tag": "workspace", "virtiofs": {"socket": "fs.sock", "bin": "/tmp/virtiofsd-workspace"}}],
+			"mounts": {"virtiofs": [{"tag": "workspace", "virtiofs": {"socket": "fs.sock", "bin": "/tmp/virtiofsd-workspace"}}]},
 			"volumes": [{"image": "root.img", "size": 256, "create": true}],
 			"notifications": {"exec": ["--verbose"]}
 		}`)
@@ -1187,6 +1188,59 @@ func TestResolvedVirtioFSRunsRenderExecTemplates(t *testing.T) {
 	}
 	if got, want := runs[0].Exec[1:], []string{"--socket-path=/tmp/work/fs.sock", "--source=/tmp/work", "--user=template-user"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected run args: got %#v want %#v", got, want)
+	}
+}
+
+func TestDocumentMountDefaults(t *testing.T) {
+	document := validDocument()
+	document.Mounts = MountsInput{
+		VirtioFS: []VirtioFSMountInput{
+			{
+				MountInput: MountInput{
+					Tag:        "workspace",
+					SourcePath: ".",
+				},
+				VirtioFS: VirtioFSInput{
+					Socket: "fs.sock",
+					Args:   []string{"--socket-path={{.Socket}}"},
+				},
+			},
+		},
+		NineP: []NinePMountInput{
+			{
+				MountInput: MountInput{
+					Tag:        "cache",
+					SourcePath: "cache",
+				},
+			},
+		},
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := manifest.Run[0].Exec[0], "/tmp/work/virtiofsd"; got != want {
+		t.Fatalf("unexpected default virtiofs binary: got %q want %q", got, want)
+	}
+	if got, want := manifest.QEMU.Devices.NineP[0].SecurityModel, "mapped"; got != want {
+		t.Fatalf("unexpected default 9p security model: got %q want %q", got, want)
+	}
+
+	document.Mounts.VirtioFS[0].VirtioFS = VirtioFSInput{
+		Socket: "fs.sock",
+		Bin:    "/tmp/virtiofsd-workspace",
+	}
+	manifest, err = document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := manifest.Run[0].Exec[1:], []string{
+		"--socket-path={{.Socket}}",
+		"--shared-dir={{.MountSource}}",
+		"--tag={{.MountTag}}",
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected default virtiofs args: got %#v want %#v", got, want)
 	}
 }
 
@@ -1542,7 +1596,7 @@ func TestLoadTreatsHeadlessGraphicsAsAbsentForTransport(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			document := validDocument()
-			document.Mounts = nil
+			document.Mounts = MountsInput{}
 			document.Graphics = graphics
 
 			data, err := json.Marshal(document)
@@ -1743,13 +1797,16 @@ func validDocument() Document {
 			Path:       "/tmp/vmlinuz",
 			InitrdPath: "/tmp/initrd",
 		},
-		Mounts: []MountInput{
-			{
-				Type: "virtiofs",
-				Tag:  "workspace",
-				VirtioFS: VirtioFSInput{
-					Socket: "fs.sock",
-					Bin:    "/tmp/virtiofsd-workspace",
+		Mounts: MountsInput{
+			VirtioFS: []VirtioFSMountInput{
+				{
+					MountInput: MountInput{
+						Tag: "workspace",
+					},
+					VirtioFS: VirtioFSInput{
+						Socket: "fs.sock",
+						Bin:    "/tmp/virtiofsd-workspace",
+					},
 				},
 			},
 		},

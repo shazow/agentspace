@@ -165,11 +165,9 @@ read_only = false  # Default: attach writable
 label = "root"  # Default: no filesystem label
 direct = false  # Default: backend cache policy
 
-[[mounts]]
-# Mounts are shared host directories. virtiofs is the default because it is the
-# normal agentspace path; an explicit tag is still required because the guest
-# uses it to identify what to mount.
-type = "virtiofs"  # Options: virtiofs, 9p (default: virtiofs)
+[[mounts.virtiofs]]
+# Mounts are shared host directories. The section name selects the backend, so
+# each entry only carries common mount fields plus its backend-specific table.
 tag = "workspace"
 source = "."
 read_only = false  # Default: guest can write to the share
@@ -184,11 +182,14 @@ virtiofs.socket = "workspace.sock"
 virtiofs.bin = "virtiofsd"
 virtiofs.args = ["--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"]
 
-# Filesystem security and cache policy are backend-specific share behavior. The
-# defaults match the normal workspace share, while 9p and read-only store shares
-# may need different values.
-security_model = "mapped"  # Options: mapped, none, passthrough (default: mapped)
-cache = "auto"  # Options: auto, always, none (default: auto)
+[[mounts.9p]]
+tag = "cache"
+source = ".cache"
+read_only = false
+
+# 9p filesystem security policy is backend-specific, so it lives under the
+# nested 9p table.
+9p.security_model = "mapped"  # Options: mapped, none, passthrough (default: mapped)
 
 [[run]]
 # Run commands are host-side processes managed for the VM lifetime. They start

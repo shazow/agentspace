@@ -546,20 +546,17 @@ in
         };
       }) cfg.run;
 
-      manifestMounts =
-        builtins.map (
+      manifestMounts = {
+        virtiofs = builtins.map (
           share:
           let
             socketPath =
               if nixStoreShareUsesSocket && isNixStoreShare share then cfg.nixStoreShareSocket else share.socket;
           in
           {
-            type = "virtiofs";
             tag = share.tag;
             source = share.source;
             read_only = share.readOnly;
-            security_model = share.securityModel;
-            cache = share.cache;
             virtiofs = (
               {
                 socket = socketPath;
@@ -570,14 +567,16 @@ in
               }
             );
           }
-        ) virtiofsShares
-        ++ builtins.map (share: {
-          type = "9p";
+        ) virtiofsShares;
+        "9p" = builtins.map (share: {
           tag = share.tag;
           source = share.source;
           read_only = share.readOnly;
-          security_model = share.securityModel;
+          "9p" = {
+            security_model = share.securityModel;
+          };
         }) ninepShares;
+      };
 
       manifestWriteFiles = lib.mapAttrsToList (
         guestPath: file:

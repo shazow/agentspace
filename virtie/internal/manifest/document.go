@@ -27,7 +27,7 @@ type Document struct {
 	Kernel        KernelInput        `json:"kernel" toml:"kernel"`
 	Graphics      *GraphicsInput     `json:"graphics,omitempty" toml:"graphics"`
 	Volumes       []VolumeInput      `json:"volumes,omitempty" toml:"volumes"`
-	Mounts        []MountInput       `json:"mounts,omitempty" toml:"mounts"`
+	Mounts        MountsInput        `json:"mounts,omitempty" toml:"mounts"`
 	Workspace     WorkspaceInput     `json:"workspace,omitempty" toml:"workspace"`
 	Networks      []NetworkInput     `json:"networks,omitempty" toml:"networks"`
 	Balloon       *BalloonInput      `json:"balloon,omitempty" toml:"balloon"`
@@ -85,20 +85,41 @@ type VolumeInput struct {
 	Serial     *string `json:"serial,omitempty" toml:"serial"`
 }
 
+type MountsInput struct {
+	VirtioFS []VirtioFSMountInput `json:"virtiofs,omitempty" toml:"virtiofs"`
+	NineP    []NinePMountInput    `json:"9p,omitempty" toml:"9p"`
+}
+
+func (m MountsInput) Len() int {
+	return len(m.VirtioFS) + len(m.NineP)
+}
+
 type MountInput struct {
-	Type          string        `json:"type,omitempty" toml:"type"`
-	Tag           string        `json:"tag" toml:"tag"`
-	SourcePath    string        `json:"source,omitempty" toml:"source"`
-	ReadOnly      bool          `json:"read_only,omitempty" toml:"read_only"`
-	SecurityModel string        `json:"security_model,omitempty" toml:"security_model"`
-	Cache         string        `json:"cache,omitempty" toml:"cache"`
-	VirtioFS      VirtioFSInput `json:"virtiofs,omitempty" toml:"virtiofs"`
+	Tag        string `json:"tag" toml:"tag"`
+	SourcePath string `json:"source,omitempty" toml:"source"`
+	ReadOnly   bool   `json:"read_only,omitempty" toml:"read_only"`
+}
+
+type VirtioFSMountInput struct {
+	MountInput
+
+	VirtioFS VirtioFSInput `json:"virtiofs,omitempty" toml:"virtiofs"`
 }
 
 type VirtioFSInput struct {
 	Socket string   `json:"socket,omitempty" toml:"socket"`
 	Bin    string   `json:"bin,omitempty" toml:"bin"`
 	Args   []string `json:"args,omitempty" toml:"args"`
+}
+
+type NinePMountInput struct {
+	MountInput
+
+	NineP NinePInput `json:"9p,omitempty" toml:"9p"`
+}
+
+type NinePInput struct {
+	SecurityModel string `json:"security_model,omitempty" toml:"security_model"`
 }
 
 type WorkspaceInput struct {

@@ -475,16 +475,18 @@ let
           label = null;
         }
       ];
-      mounts = [
-        {
-          type = "virtiofs";
-          tag = "workspace";
-          virtiofs = {
-            socket = "virtiofs.sock";
-            bin = "${fakeTools}/bin/virtiofsd-workspace";
-          };
-        }
-      ];
+      mounts = {
+        virtiofs = [
+          {
+            tag = "workspace";
+            virtiofs = {
+              socket = "virtiofs.sock";
+              bin = "${fakeTools}/bin/virtiofsd-workspace";
+            };
+          }
+        ];
+        "9p" = [ ];
+      };
       write_files = [
         {
           guest_path = "/etc/virtie/inline";
