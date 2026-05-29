@@ -91,7 +91,7 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 	}
 	m.QEMU = qemu
 	m.Volumes = lowerVolumes(d.Volumes)
-	virtioFSRuns, err := m.lowerVirtioFSRuns(d.Mounts, options)
+	virtioFSRuns, err := m.lowerVirtioFSRuns(d.Mounts.VirtioFS, options)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,6 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 	}
 	graphics := lowerGraphics(d.Graphics)
 	transport := qemuTransport(machineType, d.Mounts, graphics)
-	virtiofsMounts := filterMounts(d.Mounts, "virtiofs")
 	memorySize := d.Machine.Memory
 	if memorySize == 0 {
 		memorySize = defaultMemorySizeMiB
@@ -205,8 +204,8 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		},
 		Memory: QEMUMemory{
 			SizeMiB: memorySize,
-			Backend: memoryBackend(host, virtiofsMounts),
-			Shared:  len(virtiofsMounts) > 0,
+			Backend: memoryBackend(host, d.Mounts.VirtioFS),
+			Shared:  len(d.Mounts.VirtioFS) > 0,
 		},
 		Kernel: QEMUKernel{
 			Path:       d.Kernel.Path,
@@ -244,8 +243,8 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 			},
 			I8042:    host.System == "x86_64-linux",
 			Balloon:  lowerBalloon(d.Balloon, transport),
-			VirtioFS: lowerVirtioFSMounts(virtiofsMounts, transport),
-			NineP:    lowerNinePMounts(filterMounts(d.Mounts, "9p"), transport),
+			VirtioFS: lowerVirtioFSMounts(d.Mounts.VirtioFS, transport),
+			NineP:    lowerNinePMounts(d.Mounts.NineP, transport),
 			Block:    lowerBlocks(d.Volumes, host, transport),
 			Network:  networks,
 			VSOCK: QEMUVSOCKDevice{
@@ -270,8 +269,8 @@ func lowerCPUCount(cpus *int) CPUCount {
 	return ExplicitCPUs(*cpus)
 }
 
-func qemuTransport(machineType string, mounts []MountInput, graphics QEMUGraphics) string {
-	if !strings.HasPrefix(machineType, "microvm") || len(mounts) > 0 || !graphics.IsZero() {
+func qemuTransport(machineType string, mounts MountsInput, graphics QEMUGraphics) string {
+	if !strings.HasPrefix(machineType, "microvm") || mounts.Len() > 0 || !graphics.IsZero() {
 		return "pci"
 	}
 	return "mmio"
@@ -333,7 +332,7 @@ func defaultCPUModel(host HostInput) string {
 	return "host"
 }
 
-func memoryBackend(host HostInput, virtiofsMounts []MountInput) string {
+func memoryBackend(host HostInput, virtiofsMounts []VirtioFSMountInput) string {
 	if host.OS == "linux" && len(virtiofsMounts) > 0 {
 		return "memfd"
 	}
@@ -406,23 +405,6 @@ func aioEngine(host HostInput) string {
 	return "threads"
 }
 
-func filterMounts(mounts []MountInput, mountType string) []MountInput {
-	result := make([]MountInput, 0, len(mounts))
-	for _, mount := range mounts {
-		if mount.effectiveType() == mountType {
-			result = append(result, mount)
-		}
-	}
-	return result
-}
-
-func (m MountInput) effectiveType() string {
-	if m.Type == "" {
-		return "virtiofs"
-	}
-	return m.Type
-}
-
 func lowerWorkspace(workspace WorkspaceInput) Workspace {
 	return Workspace{
 		GuestDir: workspace.GuestDir,
@@ -431,7 +413,7 @@ func lowerWorkspace(workspace WorkspaceInput) Workspace {
 	}
 }
 
-func lowerVirtioFSMounts(mounts []MountInput, transport string) []QEMUVirtioFSShare {
+func lowerVirtioFSMounts(mounts []VirtioFSMountInput, transport string) []QEMUVirtioFSShare {
 	shares := make([]QEMUVirtioFSShare, 0, len(mounts))
 	for i, mount := range mounts {
 		shares = append(shares, QEMUVirtioFSShare{
@@ -444,10 +426,10 @@ func lowerVirtioFSMounts(mounts []MountInput, transport string) []QEMUVirtioFSSh
 	return shares
 }
 
-func lowerNinePMounts(mounts []MountInput, transport string) []QEMUNinePShare {
+func lowerNinePMounts(mounts []NinePMountInput, transport string) []QEMUNinePShare {
 	shares := make([]QEMUNinePShare, 0, len(mounts))
 	for i, mount := range mounts {
-		securityModel := mount.SecurityModel
+		securityModel := mount.NineP.SecurityModel
 		if securityModel == "" {
 			securityModel = "mapped"
 		}
@@ -463,10 +445,10 @@ func lowerNinePMounts(mounts []MountInput, transport string) []QEMUNinePShare {
 	return shares
 }
 
-func (m *Manifest) lowerVirtioFSRuns(mounts []MountInput, options LowerOptions) ([]Run, error) {
+func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerOptions) ([]Run, error) {
 	runs := make([]Run, 0, len(mounts))
 	for _, mount := range mounts {
-		if mount.effectiveType() != "virtiofs" || mount.VirtioFS.Socket == "" {
+		if mount.VirtioFS.Socket == "" {
 			continue
 		}
 		if mount.VirtioFS.Bin == "" && len(mount.VirtioFS.Args) == 0 {

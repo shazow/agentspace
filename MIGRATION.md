@@ -4,6 +4,49 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-29: typed virtie mount manifest sections
+
+### Who Is Affected
+
+- Direct virtie manifest producers setting `mounts` as a list of entries with
+  `type = "virtiofs"` or `type = "9p"`.
+
+### What Changed
+
+The virtie manifest no longer uses polymorphic mount entries. Mounts are now
+grouped by backend under `mounts.virtiofs` and `mounts."9p"`. Common fields
+stay on each mount entry, while backend-specific fields stay nested under the
+backend name.
+
+### Migration Steps
+
+Move old `[[mounts]]` entries to the backend-specific array:
+
+```toml
+-[[mounts]]
+-type = "virtiofs"
++[[mounts.virtiofs]]
+ tag = "workspace"
+ source = "."
+ read_only = false
+ virtiofs.socket = "workspace.sock"
+ virtiofs.bin = "virtiofsd"
+ virtiofs.args = ["--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"]
+```
+
+Move 9p entries to `[[mounts."9p"]]` and nest 9p-specific options:
+
+```toml
+-[[mounts]]
+-type = "9p"
++[[mounts."9p"]]
+ tag = "cache"
+ source = ".cache"
+ read_only = true
+-security_model = "mapped"
++"9p".security_model = "mapped"
+```
+
 ## 2026-05-22: generic run commands replace runWithTunnel
 
 ### Who Is Affected
