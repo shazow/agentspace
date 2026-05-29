@@ -94,8 +94,8 @@ kvm = true  # Default: Enabled on Linux when supported
 # virtie cannot infer the guest kernel/initrd: these are build artifacts from
 # the surrounding system. They must be explicit so launch is decoupled from Nix
 # evaluation and can also work with hand-written manifests.
-path = "/tmp/vmlinuz"
-initrd_path = "/tmp/initrd"
+path = "/run/booted-system/kernel"
+initrd_path = "/run/booted-system/initrd"
 
 # Kernel params are the guest boot contract. This remains configurable for
 # debugging, console policy, and guest feature flags, but empty should be enough
