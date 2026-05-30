@@ -60,6 +60,10 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	args = append(args, "-m", fmt.Sprintf("%d", qemu.Memory.Size))
 	args = append(args, "-smp", fmt.Sprintf("%d", qemuCPUCount(qemu.SMP.CPUs)))
 
+	for i := 0; i < qemu.Hotplug.PCIEPorts; i++ {
+		args = append(args, "-device", fmt.Sprintf("pcie-root-port,id=pcie.hotplug.%d,bus=pcie.0,chassis=%d,slot=%d", i, i+1, i+1))
+	}
+
 	if qemu.Knobs.NoDefaults {
 		args = append(args, "-nodefaults")
 	}
@@ -119,10 +123,6 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	}
 
 	args = append(args, "-qmp", fmt.Sprintf("unix:%s,server,nowait", qemu.QMP.SocketPath))
-
-	for i := 0; i < qemu.Hotplug.PCIEPorts; i++ {
-		args = append(args, "-device", fmt.Sprintf("pcie-root-port,id=pcie.hotplug.%d,bus=pcie.0,chassis=%d,slot=%d", i, i+1, i+1))
-	}
 
 	if qemu.GuestAgent.SocketPath != "" {
 		serialDriver, err := guestAgentSerialDriver(qemu.Devices.VSOCK.Transport)

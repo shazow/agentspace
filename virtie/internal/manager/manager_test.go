@@ -3468,8 +3468,16 @@ func TestBuildQEMUSpecAddsPCIEHotplugPorts(t *testing.T) {
 		"pcie-root-port,id=pcie.hotplug.0,bus=pcie.0,chassis=1,slot=1",
 		"pcie-root-port,id=pcie.hotplug.1,bus=pcie.0,chassis=2,slot=2",
 	} {
-		if !containsString(spec.Args, want) {
+		portIndex := indexStringContaining(spec.Args, want)
+		if portIndex == -1 {
 			t.Fatalf("expected qemu args to include hotplug port %q: %v", want, spec.Args)
+		}
+		rngIndex := indexStringContaining(spec.Args, "virtio-rng-pci")
+		if rngIndex == -1 {
+			t.Fatalf("expected qemu args to include pci rng device: %v", spec.Args)
+		}
+		if portIndex > rngIndex {
+			t.Fatalf("expected hotplug port %q before auto-addressed rng device: %v", want, spec.Args)
 		}
 	}
 }
