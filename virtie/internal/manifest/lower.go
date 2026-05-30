@@ -276,7 +276,7 @@ func lowerCPUCount(cpus *int) CPUCount {
 }
 
 func qemuTransport(machineType string, mounts MountsInput, graphics QEMUGraphics) string {
-	if !strings.HasPrefix(machineType, "microvm") || mounts.Len() > 0 || !graphics.IsZero() {
+	if !strings.HasPrefix(machineType, "microvm") || mounts.RequiresPCI() || !graphics.IsZero() {
 		return "pci"
 	}
 	return "mmio"

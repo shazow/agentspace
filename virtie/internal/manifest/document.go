@@ -84,8 +84,8 @@ type GraphicsInput struct {
 
 type MountsInput []MountEntry
 
-func (m MountsInput) Len() int {
-	return len(m)
+func (m MountsInput) RequiresPCI() bool {
+	return len(m.VirtioFS()) > 0 || len(m.NineP()) > 0
 }
 
 type MountEntry interface {

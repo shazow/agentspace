@@ -1821,6 +1821,99 @@ func TestLoadTreatsHeadlessGraphicsAsAbsentForTransport(t *testing.T) {
 	}
 }
 
+func TestManifestTransportSelectionForMicroVM(t *testing.T) {
+	imageMount := ImageMountInput{
+		SourcePath: "root.img",
+		Image: ImageInput{
+			Size:       256,
+			FSType:     "ext4",
+			AutoCreate: true,
+		},
+	}
+
+	tests := []struct {
+		name          string
+		mounts        MountsInput
+		graphics      *GraphicsInput
+		wantTransport string
+		wantPCIE      string
+	}{
+		{
+			name:          "image only keeps mmio",
+			mounts:        MountsInput{imageMount},
+			wantTransport: "mmio",
+			wantPCIE:      "pcie=off",
+		},
+		{
+			name: "virtiofs forces pci",
+			mounts: MountsInput{
+				imageMount,
+				VirtioFSMountInput{
+					MountInput: MountInput{Tag: "workspace"},
+					VirtioFS:   VirtioFSInput{Socket: "fs.sock"},
+				},
+			},
+			wantTransport: "pci",
+			wantPCIE:      "pcie=on",
+		},
+		{
+			name: "9p forces pci",
+			mounts: MountsInput{
+				imageMount,
+				NinePMountInput{
+					MountInput: MountInput{
+						Tag:        "cache",
+						SourcePath: "cache",
+					},
+				},
+			},
+			wantTransport: "pci",
+			wantPCIE:      "pcie=on",
+		},
+		{
+			name:          "graphics forces pci",
+			mounts:        MountsInput{imageMount},
+			graphics:      &GraphicsInput{Backend: "gtk"},
+			wantTransport: "pci",
+			wantPCIE:      "pcie=on",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.Host = HostInput{
+				OS:     "linux",
+				Arch:   "x86_64",
+				System: "x86_64-linux",
+			}
+			document.QEMU.MachineOptions = nil
+			document.Mounts = tt.mounts
+			document.Graphics = tt.graphics
+
+			manifest, err := document.Manifest()
+			if err != nil {
+				t.Fatalf("lower manifest: %v", err)
+			}
+			if got := manifest.QEMU.Devices.RNG.Transport; got != tt.wantTransport {
+				t.Fatalf("unexpected rng transport: got %q want %q", got, tt.wantTransport)
+			}
+			if got := manifest.QEMU.Devices.Network[0].Transport; got != tt.wantTransport {
+				t.Fatalf("unexpected network transport: got %q want %q", got, tt.wantTransport)
+			}
+			if got := manifest.QEMU.Devices.Block[0].Transport; got != tt.wantTransport {
+				t.Fatalf("unexpected block transport: got %q want %q", got, tt.wantTransport)
+			}
+			if got := manifest.QEMU.Devices.Mounts[0].Block.Transport; got != tt.wantTransport {
+				t.Fatalf("unexpected ordered mount block transport: got %q want %q", got, tt.wantTransport)
+			}
+			if !slices.Contains(manifest.QEMU.Machine.Options, tt.wantPCIE) {
+				t.Fatalf("expected machine options to contain %q, got %#v", tt.wantPCIE, manifest.QEMU.Machine.Options)
+			}
+		})
+	}
+}
+
 func TestManifestNoGraphicDefaultsPreserveExplicitFalse(t *testing.T) {
 	t.Run("defaults omitted headless manifest to noGraphic", func(t *testing.T) {
 		manifest := validManifest()
