@@ -406,41 +406,40 @@ func lowerBlocks(volumes []ImageMountInput, host HostInput, transport string) []
 
 func lowerQEMUMounts(mounts MountsInput, host HostInput, transport string) []QEMUMountDevice {
 	devices := make([]QEMUMountDevice, 0, len(mounts))
-	virtioFSIndex := 0
-	ninePIndex := 0
-	blockIndex := 0
+	ctx := mountLowerContext{
+		host:      host,
+		transport: transport,
+	}
 	for _, mount := range mounts {
-		switch typed := mount.(type) {
-		case VirtioFSMountInput:
-			devices = append(devices, lowerQEMUVirtioFSMount(typed, virtioFSIndex, transport))
-			virtioFSIndex++
-		case *VirtioFSMountInput:
-			if typed == nil {
-				continue
-			}
-			devices = append(devices, lowerQEMUVirtioFSMount(*typed, virtioFSIndex, transport))
-			virtioFSIndex++
-		case NinePMountInput:
-			devices = append(devices, lowerQEMUNinePMount(typed, ninePIndex, transport))
-			ninePIndex++
-		case *NinePMountInput:
-			if typed == nil {
-				continue
-			}
-			devices = append(devices, lowerQEMUNinePMount(*typed, ninePIndex, transport))
-			ninePIndex++
-		case ImageMountInput:
-			devices = append(devices, lowerQEMUImageMount(typed, blockIndex, host, transport))
-			blockIndex++
-		case *ImageMountInput:
-			if typed == nil {
-				continue
-			}
-			devices = append(devices, lowerQEMUImageMount(*typed, blockIndex, host, transport))
-			blockIndex++
-		}
+		devices = append(devices, mount.lowerQEMUMount(&ctx))
 	}
 	return devices
+}
+
+type mountLowerContext struct {
+	host           HostInput
+	transport      string
+	virtioFSIndex  int
+	ninePIndex     int
+	blockDiskIndex int
+}
+
+func (mount VirtioFSMountInput) lowerQEMUMount(ctx *mountLowerContext) QEMUMountDevice {
+	device := lowerQEMUVirtioFSMount(mount, ctx.virtioFSIndex, ctx.transport)
+	ctx.virtioFSIndex++
+	return device
+}
+
+func (mount NinePMountInput) lowerQEMUMount(ctx *mountLowerContext) QEMUMountDevice {
+	device := lowerQEMUNinePMount(mount, ctx.ninePIndex, ctx.transport)
+	ctx.ninePIndex++
+	return device
+}
+
+func (mount ImageMountInput) lowerQEMUMount(ctx *mountLowerContext) QEMUMountDevice {
+	device := lowerQEMUImageMount(mount, ctx.blockDiskIndex, ctx.host, ctx.transport)
+	ctx.blockDiskIndex++
+	return device
 }
 
 func lowerQEMUVirtioFSMount(mount VirtioFSMountInput, index int, transport string) QEMUMountDevice {

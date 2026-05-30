@@ -1,12 +1,6 @@
 package manifest
 
-import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-
-	"github.com/shazow/agentspace/virtie/internal/units"
-)
+import "github.com/shazow/agentspace/virtie/internal/units"
 
 const (
 	KernelSerialOff     = "off"
@@ -94,6 +88,7 @@ func (m MountsInput) Len() int {
 type MountEntry interface {
 	mountEntry()
 	mountType() string
+	lowerQEMUMount(*mountLowerContext) QEMUMountDevice
 }
 
 const (
@@ -102,197 +97,50 @@ const (
 	MountTypeImage    = "image"
 )
 
+var mountRegistry = taggedRegistry[MountEntry]{
+	taggedValue[MountEntry, VirtioFSMountInput](MountTypeVirtioFS),
+	taggedValue[MountEntry, NinePMountInput](MountTypeNineP),
+	taggedValue[MountEntry, ImageMountInput](MountTypeImage),
+}
+
 func (m MountsInput) VirtioFS() []VirtioFSMountInput {
-	mounts := make([]VirtioFSMountInput, 0, len(m))
-	for _, mount := range m {
-		switch typed := mount.(type) {
-		case VirtioFSMountInput:
-			mounts = append(mounts, typed)
-		case *VirtioFSMountInput:
-			if typed != nil {
-				mounts = append(mounts, *typed)
-			}
-		}
-	}
-	return mounts
+	return filterMounts[VirtioFSMountInput](m)
 }
 
 func (m MountsInput) NineP() []NinePMountInput {
-	mounts := make([]NinePMountInput, 0, len(m))
-	for _, mount := range m {
-		switch typed := mount.(type) {
-		case NinePMountInput:
-			mounts = append(mounts, typed)
-		case *NinePMountInput:
-			if typed != nil {
-				mounts = append(mounts, *typed)
-			}
-		}
-	}
-	return mounts
+	return filterMounts[NinePMountInput](m)
 }
 
 func (m MountsInput) Image() []ImageMountInput {
-	mounts := make([]ImageMountInput, 0, len(m))
-	for _, mount := range m {
-		switch typed := mount.(type) {
-		case ImageMountInput:
-			mounts = append(mounts, typed)
-		case *ImageMountInput:
-			if typed != nil {
-				mounts = append(mounts, *typed)
-			}
-		}
-	}
-	return mounts
+	return filterMounts[ImageMountInput](m)
 }
 
 func (m *MountsInput) UnmarshalJSON(data []byte) error {
-	var rawMounts []json.RawMessage
-	if err := json.Unmarshal(data, &rawMounts); err != nil {
-		return err
-	}
-	mounts := make(MountsInput, 0, len(rawMounts))
-	for i, raw := range rawMounts {
-		mount, err := decodeJSONMount(raw, i)
-		if err != nil {
-			return err
-		}
-		mounts = append(mounts, mount)
-	}
+	mounts, err := decodeTaggedJSONList(data, "manifest.mounts", mountRegistry)
 	*m = mounts
-	return nil
+	return err
 }
 
 func (m MountsInput) MarshalJSON() ([]byte, error) {
-	values := make([]any, 0, len(m))
-	for _, mount := range m {
-		value, err := mountMarshalValue(mount)
-		if err != nil {
-			return nil, err
-		}
-		values = append(values, value)
-	}
-	return json.Marshal(values)
+	return marshalTaggedJSONList(m, func(mount MountEntry) string {
+		return mount.mountType()
+	})
 }
 
 func (m *MountsInput) UnmarshalTOML(data any) error {
-	var rawMounts []map[string]any
-	switch values := data.(type) {
-	case []map[string]any:
-		rawMounts = values
-	case []any:
-		rawMounts = make([]map[string]any, 0, len(values))
-		for i, value := range values {
-			raw, ok := value.(map[string]any)
-			if !ok {
-				return fmt.Errorf("manifest.mounts[%d] must be a table", i)
-			}
-			rawMounts = append(rawMounts, raw)
-		}
-	default:
-		return fmt.Errorf("manifest.mounts must be an array of tables")
-	}
-	mounts := make(MountsInput, 0, len(rawMounts))
-	for i, raw := range rawMounts {
-		mount, err := decodeMapMount(raw, i)
-		if err != nil {
-			return err
-		}
-		mounts = append(mounts, mount)
-	}
+	mounts, err := decodeTaggedTOMLList(data, "manifest.mounts", mountRegistry)
 	*m = mounts
-	return nil
+	return err
 }
 
-func decodeJSONMount(data []byte, index int) (MountEntry, error) {
-	var header struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(data, &header); err != nil {
-		return nil, fmt.Errorf("manifest.mounts[%d]: %w", index, err)
-	}
-	return decodeMountData(data, header.Type, index)
-}
-
-func decodeMapMount(data map[string]any, index int) (MountEntry, error) {
-	rawType, ok := data["type"].(string)
-	if !ok {
-		return nil, fmt.Errorf("manifest.mounts[%d].type must be one of virtiofs, 9p, or image", index)
-	}
-	encoded, err := json.Marshal(data)
-	if err != nil {
-		return nil, fmt.Errorf("manifest.mounts[%d]: %w", index, err)
-	}
-	return decodeMountData(encoded, rawType, index)
-}
-
-func decodeMountData(data []byte, mountType string, index int) (MountEntry, error) {
-	switch mountType {
-	case MountTypeVirtioFS:
-		var mount VirtioFSMountInput
-		if err := decodeMountJSON(data, &mount); err != nil {
-			return nil, fmt.Errorf("manifest.mounts[%d]: %w", index, err)
+func filterMounts[T MountEntry](mounts MountsInput) []T {
+	filtered := make([]T, 0, len(mounts))
+	for _, mount := range mounts {
+		if typed, ok := mount.(T); ok {
+			filtered = append(filtered, typed)
 		}
-		return mount, nil
-	case MountTypeNineP:
-		var mount NinePMountInput
-		if err := decodeMountJSON(data, &mount); err != nil {
-			return nil, fmt.Errorf("manifest.mounts[%d]: %w", index, err)
-		}
-		return mount, nil
-	case MountTypeImage:
-		var mount ImageMountInput
-		if err := decodeMountJSON(data, &mount); err != nil {
-			return nil, fmt.Errorf("manifest.mounts[%d]: %w", index, err)
-		}
-		return mount, nil
-	default:
-		return nil, fmt.Errorf("manifest.mounts[%d].type must be one of virtiofs, 9p, or image", index)
 	}
-}
-
-func decodeMountJSON(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	return decoder.Decode(target)
-}
-
-func mountMarshalValue(mount MountEntry) (any, error) {
-	switch typed := mount.(type) {
-	case VirtioFSMountInput:
-		typed.Type = MountTypeVirtioFS
-		return typed, nil
-	case *VirtioFSMountInput:
-		if typed == nil {
-			return nil, fmt.Errorf("unsupported nil mount input")
-		}
-		value := *typed
-		value.Type = MountTypeVirtioFS
-		return value, nil
-	case NinePMountInput:
-		typed.Type = MountTypeNineP
-		return typed, nil
-	case *NinePMountInput:
-		if typed == nil {
-			return nil, fmt.Errorf("unsupported nil mount input")
-		}
-		value := *typed
-		value.Type = MountTypeNineP
-		return value, nil
-	case ImageMountInput:
-		typed.Type = MountTypeImage
-		return typed, nil
-	case *ImageMountInput:
-		if typed == nil {
-			return nil, fmt.Errorf("unsupported nil mount input")
-		}
-		value := *typed
-		value.Type = MountTypeImage
-		return value, nil
-	default:
-		return nil, fmt.Errorf("unsupported mount input type %T", mount)
-	}
+	return filtered
 }
 
 type MountInput struct {
