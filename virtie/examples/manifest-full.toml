@@ -160,12 +160,11 @@ read_only = false  # Default: attach writable
 # provisioning step. The size and filesystem matter because virtie can only
 # create supported filesystems, and changing them after creation does not
 # rewrite an existing image.
-[mounts.image.image]
-size = 4096  # Default: Minimum auto-created image size
-fs = "ext4"  # Options: ext4 (default: ext4)
-create = true  # Default: Use existing image only
-label = "root"  # Default: no filesystem label
-direct = false  # Default: backend cache policy
+image.size = 4096  # Default: Minimum auto-created image size
+image.fs = "ext4"  # Options: ext4 (default: ext4)
+image.create = true  # Default: Use existing image only
+image.label = "root"  # Default: no filesystem label
+image.direct = false  # Default: backend cache policy
 
 [[mounts.virtiofs]]
 # Mounts are shared host directories. The section name selects the backend, so
