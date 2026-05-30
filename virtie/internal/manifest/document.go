@@ -1,6 +1,9 @@
 package manifest
 
-import "github.com/shazow/agentspace/virtie/internal/units"
+import (
+	"github.com/shazow/agentspace/virtie/internal/manifest/tagged"
+	"github.com/shazow/agentspace/virtie/internal/units"
+)
 
 const (
 	KernelSerialOff     = "off"
@@ -97,10 +100,10 @@ const (
 	MountTypeImage    = "image"
 )
 
-var mountRegistry = taggedRegistry[MountEntry]{
-	taggedValue[MountEntry, VirtioFSMountInput](MountTypeVirtioFS),
-	taggedValue[MountEntry, NinePMountInput](MountTypeNineP),
-	taggedValue[MountEntry, ImageMountInput](MountTypeImage),
+var mountRegistry = tagged.Registry[MountEntry]{
+	tagged.Value[MountEntry, VirtioFSMountInput](MountTypeVirtioFS),
+	tagged.Value[MountEntry, NinePMountInput](MountTypeNineP),
+	tagged.Value[MountEntry, ImageMountInput](MountTypeImage),
 }
 
 func (m MountsInput) VirtioFS() []VirtioFSMountInput {
@@ -116,19 +119,19 @@ func (m MountsInput) Image() []ImageMountInput {
 }
 
 func (m *MountsInput) UnmarshalJSON(data []byte) error {
-	mounts, err := decodeTaggedJSONList(data, "manifest.mounts", mountRegistry)
+	mounts, err := tagged.DecodeJSONList(data, "manifest.mounts", mountRegistry)
 	*m = mounts
 	return err
 }
 
 func (m MountsInput) MarshalJSON() ([]byte, error) {
-	return marshalTaggedJSONList(m, func(mount MountEntry) string {
+	return tagged.MarshalJSONList(m, func(mount MountEntry) string {
 		return mount.mountType()
 	})
 }
 
 func (m *MountsInput) UnmarshalTOML(data any) error {
-	mounts, err := decodeTaggedTOMLList(data, "manifest.mounts", mountRegistry)
+	mounts, err := tagged.DecodeTOMLList(data, "manifest.mounts", mountRegistry)
 	*m = mounts
 	return err
 }
