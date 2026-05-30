@@ -4,6 +4,51 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-29: virtie image disks moved under mounts
+
+### Who Is Affected
+
+- Direct virtie manifest producers using top-level `[[volumes]]`.
+- Consumers reading generated manifests and expecting a top-level `volumes`
+  array.
+
+### What Changed
+
+The virtie manifest no longer accepts top-level `[[volumes]]`. Disk images are
+now a mount backend under `[[mounts.image]]`. The image path uses the common
+mount field `source`, read-only state remains common, and image-specific
+settings are nested under `image`.
+
+Nix `mkSandbox` users can now set `agentspace.sandbox.volumes` and
+`agentspace.sandbox.forwardPorts` directly. Existing lower-level
+`microvm.volumes`, `microvm.shares`, and `microvm.forwardPorts` definitions are
+still merged into the evaluated sandbox.
+
+### Migration Steps
+
+Move each `[[volumes]]` entry to `[[mounts.image]]`:
+
+```toml
+-[[volumes]]
+-image = ".virtie/root.img"
+-read_only = false
+-size = 4096
+-fs = "ext4"
+-create = true
+-label = "root"
+-direct = false
++[[mounts.image]]
++source = ".virtie/root.img"
++read_only = false
++
++[mounts.image.image]
++size = 4096
++fs = "ext4"
++create = true
++label = "root"
++direct = false
+```
+
 ## 2026-05-29: typed virtie mount manifest sections
 
 ### Who Is Affected

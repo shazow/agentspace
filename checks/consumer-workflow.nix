@@ -108,10 +108,11 @@ let
     assert builtins.elem "./id_ed25519" manifest.ssh.exec;
     assert manifest.machine.memory == 512;
     assert manifest.machine.vcpu == 16;
-    assert builtins.any (volume: volume.image == "/var/lib/agentspace/home.img") manifest.volumes;
+    assert !(manifest ? volumes);
+    assert builtins.any (volume: volume.source == "/var/lib/agentspace/home.img") manifest.mounts.image;
     assert builtins.any (
-      volume: volume.image == "/var/lib/agentspace/nix-store-overlay.img"
-    ) manifest.volumes;
+      volume: volume.source == "/var/lib/agentspace/nix-store-overlay.img"
+    ) manifest.mounts.image;
     true;
 in
 {

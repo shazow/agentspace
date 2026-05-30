@@ -149,19 +149,21 @@ autoprovision = true  # Default: false
 # CID space; narrowing it too much can make launch fail under concurrency.
 cid_range = { min = 3, max = 65535 }  # Default: Full allocatable CID range
 
-[[volumes]]
-# Volumes attach host disk images to the guest. The image path is necessary
-# because virtie creates and validates the host file before QEMU starts.
-image = ".virtie/root.img"
+[[mounts.image]]
+# Image mounts attach host disk images to the guest. The source path is
+# necessary because virtie creates and validates the host file before QEMU
+# starts.
+source = ".virtie/root.img"
+read_only = false  # Default: attach writable
 
 # Auto-creation lets a manifest describe persistent storage without a separate
 # provisioning step. The size and filesystem matter because virtie can only
 # create supported filesystems, and changing them after creation does not
 # rewrite an existing image.
+[mounts.image.image]
 size = 4096  # Default: Minimum auto-created image size
 fs = "ext4"  # Options: ext4 (default: ext4)
 create = true  # Default: Use existing image only
-read_only = false  # Default: attach writable
 label = "root"  # Default: no filesystem label
 direct = false  # Default: backend cache policy
 

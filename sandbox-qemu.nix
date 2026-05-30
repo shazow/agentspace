@@ -202,6 +202,18 @@ in
       description = "Additional host directory shares mounted in the sandbox, using the microvm.shares schema.";
     };
 
+    volumes = lib.mkOption {
+      type = options.microvm.volumes.type;
+      default = [ ];
+      description = "Additional disk images attached to the sandbox, using the microvm.volumes schema.";
+    };
+
+    forwardPorts = lib.mkOption {
+      type = options.microvm.forwardPorts.type;
+      default = [ ];
+      description = "Additional user-network port forwards for the sandbox, using the microvm.forwardPorts schema.";
+    };
+
     run = lib.mkOption {
       type = lib.types.listOf (
         lib.types.submodule (
@@ -475,26 +487,27 @@ in
         ];
       };
 
-      mkManifestVolume =
-        volume:
-        {
-          image = volume.image;
+      mkManifestImageMount = volume: {
+        source = volume.image;
+        read_only = volume.readOnly;
+        image = {
           size = volume.size;
           fs = volume.fsType;
           create = volume.autoCreate;
-          read_only = volume.readOnly;
           direct = volume.direct;
         }
         // lib.optionalAttrs (volume.label != null) { label = volume.label; }
         // lib.optionalAttrs (volume.serial != null) { serial = volume.serial; };
-      manifestVolumes =
+      };
+      manifestImageMounts =
         lib.optionals cfg.persistence.storeDisk [
           {
-            image = config.microvm.storeDisk;
+            source = config.microvm.storeDisk;
             read_only = true;
+            image = { };
           }
         ]
-        ++ builtins.map mkManifestVolume config.microvm.volumes;
+        ++ builtins.map mkManifestImageMount config.microvm.volumes;
 
       manifestForwardPorts = builtins.map (
         {
@@ -576,6 +589,7 @@ in
             security_model = share.securityModel;
           };
         }) ninepShares;
+        image = manifestImageMounts;
       };
 
       manifestWriteFiles = lib.mapAttrsToList (
@@ -656,7 +670,6 @@ in
             {
               enabled = false;
             };
-        volumes = manifestVolumes;
         mounts = manifestMounts;
         workspace = manifestWorkspace;
         networks = builtins.map (interface: {
@@ -879,7 +892,10 @@ in
               size = cfg.persistence.homeSize;
               autoCreate = true;
             }
-          ];
+          ]
+          ++ cfg.volumes;
+
+          forwardPorts = cfg.forwardPorts;
         };
       }
     ]

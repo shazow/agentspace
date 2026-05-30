@@ -26,7 +26,6 @@ type Document struct {
 	Machine       MachineInput       `json:"machine,omitempty" toml:"machine"`
 	Kernel        KernelInput        `json:"kernel" toml:"kernel"`
 	Graphics      *GraphicsInput     `json:"graphics,omitempty" toml:"graphics"`
-	Volumes       []VolumeInput      `json:"volumes,omitempty" toml:"volumes"`
 	Mounts        MountsInput        `json:"mounts,omitempty" toml:"mounts"`
 	Workspace     WorkspaceInput     `json:"workspace,omitempty" toml:"workspace"`
 	Networks      []NetworkInput     `json:"networks,omitempty" toml:"networks"`
@@ -74,20 +73,10 @@ type GraphicsInput struct {
 	Backend string `json:"backend,omitempty" toml:"backend"`
 }
 
-type VolumeInput struct {
-	ImagePath  string  `json:"image" toml:"image"`
-	SizeMiB    int     `json:"size,omitempty" toml:"size"`
-	FSType     string  `json:"fs,omitempty" toml:"fs"`
-	AutoCreate bool    `json:"create,omitempty" toml:"create"`
-	Label      *string `json:"label,omitempty" toml:"label"`
-	ReadOnly   bool    `json:"read_only,omitempty" toml:"read_only"`
-	Direct     bool    `json:"direct,omitempty" toml:"direct"`
-	Serial     *string `json:"serial,omitempty" toml:"serial"`
-}
-
 type MountsInput struct {
 	VirtioFS []VirtioFSMountInput `json:"virtiofs,omitempty" toml:"virtiofs"`
 	NineP    []NinePMountInput    `json:"9p,omitempty" toml:"9p"`
+	Image    []ImageMountInput    `json:"image,omitempty" toml:"image"`
 }
 
 func (m MountsInput) Len() int {
@@ -120,6 +109,21 @@ type NinePMountInput struct {
 
 type NinePInput struct {
 	SecurityModel string `json:"security_model,omitempty" toml:"security_model"`
+}
+
+type ImageMountInput struct {
+	SourcePath string     `json:"source" toml:"source"`
+	ReadOnly   bool       `json:"read_only,omitempty" toml:"read_only"`
+	Image      ImageInput `json:"image,omitempty" toml:"image"`
+}
+
+type ImageInput struct {
+	SizeMiB    int     `json:"size,omitempty" toml:"size"`
+	FSType     string  `json:"fs,omitempty" toml:"fs"`
+	AutoCreate bool    `json:"create,omitempty" toml:"create"`
+	Label      *string `json:"label,omitempty" toml:"label"`
+	Direct     bool    `json:"direct,omitempty" toml:"direct"`
+	Serial     *string `json:"serial,omitempty" toml:"serial"`
 }
 
 type WorkspaceInput struct {

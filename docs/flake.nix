@@ -25,7 +25,7 @@
             { lib, ... }:
             {
               # Documentation-only shim for the upstream microvm share schema
-              # reused by agentspace.sandbox.shares.
+              # reused by agentspace.sandbox.* passthrough options.
               options.microvm.shares = lib.mkOption {
                 type = lib.types.listOf (
                   lib.types.submodule {
@@ -78,6 +78,113 @@
                         type = lib.types.str;
                         default = "";
                         description = "Host-side virtiofsd socket path for virtiofs shares.";
+                      };
+                    };
+                  }
+                );
+                default = [ ];
+                internal = true;
+              };
+              options.microvm.volumes = lib.mkOption {
+                type = lib.types.listOf (
+                  lib.types.submodule {
+                    options = {
+                      image = lib.mkOption {
+                        type = lib.types.str;
+                        description = "Host path to the disk image.";
+                      };
+                      mountPoint = lib.mkOption {
+                        type = lib.types.str;
+                        description = "Guest mount point for the disk image.";
+                      };
+                      size = lib.mkOption {
+                        type = lib.types.ints.positive;
+                        default = 256;
+                        description = "Image size in MiB when auto-created.";
+                      };
+                      fsType = lib.mkOption {
+                        type = lib.types.str;
+                        default = "ext4";
+                        description = "Filesystem type for auto-created images.";
+                      };
+                      autoCreate = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether virtie should create the image if it is missing.";
+                      };
+                      readOnly = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether QEMU attaches the image read-only.";
+                      };
+                      direct = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = "Whether to request direct image cache policy.";
+                      };
+                      label = lib.mkOption {
+                        type = lib.types.nullOr lib.types.str;
+                        default = null;
+                        description = "Optional filesystem label for auto-created images.";
+                      };
+                      serial = lib.mkOption {
+                        type = lib.types.nullOr lib.types.str;
+                        default = null;
+                        description = "Optional QEMU block device serial.";
+                      };
+                    };
+                  }
+                );
+                default = [ ];
+                internal = true;
+              };
+              options.microvm.forwardPorts = lib.mkOption {
+                type = lib.types.listOf (
+                  lib.types.submodule {
+                    options = {
+                      proto = lib.mkOption {
+                        type = lib.types.enum [
+                          "tcp"
+                          "udp"
+                        ];
+                        default = "tcp";
+                        description = "Forwarded protocol.";
+                      };
+                      from = lib.mkOption {
+                        type = lib.types.enum [
+                          "host"
+                          "guest"
+                        ];
+                        default = "host";
+                        description = "Forwarding direction.";
+                      };
+                      host = lib.mkOption {
+                        type = lib.types.submodule {
+                          options = {
+                            address = lib.mkOption {
+                              type = lib.types.str;
+                              default = "127.0.0.1";
+                            };
+                            port = lib.mkOption {
+                              type = lib.types.port;
+                            };
+                          };
+                        };
+                        description = "Host endpoint.";
+                      };
+                      guest = lib.mkOption {
+                        type = lib.types.submodule {
+                          options = {
+                            address = lib.mkOption {
+                              type = lib.types.str;
+                              default = "127.0.0.1";
+                            };
+                            port = lib.mkOption {
+                              type = lib.types.port;
+                            };
+                          };
+                        };
+                        description = "Guest endpoint.";
                       };
                     };
                   }
