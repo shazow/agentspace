@@ -4,6 +4,55 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-05-30: ordered tagged virtie mounts restored
+
+### Who Is Affected
+
+- Direct virtie manifest producers using the grouped `[[mounts.virtiofs]]`,
+  `[[mounts.9p]]`, or `[[mounts.image]]` sections.
+- Consumers reading generated manifests and expecting `mounts` to be a table of
+  backend-specific arrays.
+
+### What Changed
+
+The virtie manifest uses an ordered `[[mounts]]` array again. Each entry carries
+`type = "virtiofs"`, `type = "9p"`, or `type = "image"` while backend-specific
+settings remain nested under the backend name. The grouped mount format is no
+longer accepted.
+
+### Migration Steps
+
+Move each grouped mount entry into `[[mounts]]` and add its backend type:
+
+```toml
+-[[mounts.virtiofs]]
++[[mounts]]
++type = "virtiofs"
+ tag = "workspace"
+ source = "."
+ read_only = false
+ virtiofs.socket = "workspace.sock"
+```
+
+```toml
+-[[mounts.9p]]
++[[mounts]]
++type = "9p"
+ tag = "cache"
+ source = ".cache"
+ 9p.security_model = "mapped"
+```
+
+```toml
+-[[mounts.image]]
++[[mounts]]
++type = "image"
+ source = ".virtie/root.img"
+ image.size = 4096
+ image.fs = "ext4"
+ image.create = true
+```
+
 ## 2026-05-29: virtie image disks moved under mounts
 
 ### Who Is Affected

@@ -106,6 +106,7 @@ type QEMUDevices struct {
 	VirtioFS []QEMUVirtioFSShare `json:"virtiofs,omitempty"`
 	NineP    []QEMUNinePShare    `json:"9p,omitempty"`
 	Block    []QEMUBlockDevice   `json:"block,omitempty"`
+	Mounts   []QEMUMountDevice   `json:"mounts,omitempty"`
 	Network  []QEMUNetDevice     `json:"network,omitempty"`
 	VSOCK    QEMUVSOCKDevice     `json:"vsock"`
 }
@@ -139,6 +140,13 @@ type QEMUBlockDevice struct {
 	ReadOnly  bool   `json:"readOnly,omitempty"`
 	Serial    string `json:"serial,omitempty"`
 	Transport string `json:"transport"`
+}
+
+type QEMUMountDevice struct {
+	Type     string             `json:"type"`
+	VirtioFS *QEMUVirtioFSShare `json:"virtiofs,omitempty"`
+	NineP    *QEMUNinePShare    `json:"9p,omitempty"`
+	Block    *QEMUBlockDevice   `json:"block,omitempty"`
 }
 
 type QEMUNetDevice struct {

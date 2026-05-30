@@ -38,15 +38,19 @@ func TestLoadReadsFromReader(t *testing.T) {
 	document.QEMU.Exec = []string{"bin/qemu-system-x86_64"}
 	document.Kernel.Path = "boot/vmlinuz"
 	document.Kernel.InitrdPath = "boot/initrd"
-	document.Mounts.NineP = append(document.Mounts.NineP, NinePMountInput{
+	document.Mounts = append(document.Mounts, NinePMountInput{
 		MountInput: MountInput{
 			SourcePath: "shares/cache",
 			Tag:        "cache",
 		},
 		NineP: NinePInput{SecurityModel: "none"},
 	})
-	document.Mounts.Image[0].SourcePath = "images/root.img"
-	document.Mounts.VirtioFS[0].VirtioFS.Bin = "bin/virtiofsd-workspace"
+	imageMount := document.Mounts[1].(ImageMountInput)
+	imageMount.SourcePath = "images/root.img"
+	document.Mounts[1] = imageMount
+	virtioFSMount := document.Mounts[0].(VirtioFSMountInput)
+	virtioFSMount.VirtioFS.Bin = "bin/virtiofsd-workspace"
+	document.Mounts[0] = virtioFSMount
 
 	data, err := json.Marshal(document)
 	if err != nil {
@@ -548,6 +552,151 @@ func TestLoadTOMLExamples(t *testing.T) {
 				t.Fatalf("load example: %v", err)
 			}
 		})
+	}
+}
+
+func TestDecodeDocumentOrderedTaggedMounts(t *testing.T) {
+	data := []byte(`
+[kernel]
+path = "/tmp/vmlinuz"
+initrd_path = "/tmp/initrd"
+
+[[mounts]]
+type = "9p"
+tag = "cache"
+source = ".cache"
+9p.security_model = "none"
+
+[[mounts]]
+type = "virtiofs"
+tag = "workspace"
+source = "."
+virtiofs.socket = "workspace.sock"
+
+[[mounts]]
+type = "image"
+source = "root.img"
+image.size = 256
+image.fs = "ext4"
+image.create = true
+`)
+	document, err := DecodeDocumentBytes(data, "manifest.toml")
+	if err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if len(document.Mounts) != 3 {
+		t.Fatalf("unexpected mount count: got %d want 3", len(document.Mounts))
+	}
+	if _, ok := document.Mounts[0].(NinePMountInput); !ok {
+		t.Fatalf("expected first mount to be 9p, got %T", document.Mounts[0])
+	}
+	if _, ok := document.Mounts[1].(VirtioFSMountInput); !ok {
+		t.Fatalf("expected second mount to be virtiofs, got %T", document.Mounts[1])
+	}
+	if _, ok := document.Mounts[2].(ImageMountInput); !ok {
+		t.Fatalf("expected third mount to be image, got %T", document.Mounts[2])
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := len(manifest.QEMU.Devices.Mounts), 3; got != want {
+		t.Fatalf("unexpected lowered mount count: got %d want %d", got, want)
+	}
+	for i, want := range []string{MountTypeNineP, MountTypeVirtioFS, MountTypeImage} {
+		if got := manifest.QEMU.Devices.Mounts[i].Type; got != want {
+			t.Fatalf("unexpected lowered mount type at %d: got %q want %q", i, got, want)
+		}
+	}
+}
+
+func TestDecodeDocumentRejectsInvalidTaggedMounts(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		data    string
+		file    string
+		wantErr string
+	}{
+		{
+			name:    "missing type",
+			file:    "manifest.json",
+			data:    `{"kernel":{"path":"/tmp/vmlinuz","initrd_path":"/tmp/initrd"},"mounts":[{"tag":"workspace"}]}`,
+			wantErr: "manifest.mounts[0].type must be one of virtiofs, 9p, or image",
+		},
+		{
+			name:    "unknown type",
+			file:    "manifest.json",
+			data:    `{"kernel":{"path":"/tmp/vmlinuz","initrd_path":"/tmp/initrd"},"mounts":[{"type":"sshfs","tag":"workspace"}]}`,
+			wantErr: "manifest.mounts[0].type must be one of virtiofs, 9p, or image",
+		},
+		{
+			name:    "unknown backend field",
+			file:    "manifest.json",
+			data:    `{"kernel":{"path":"/tmp/vmlinuz","initrd_path":"/tmp/initrd"},"mounts":[{"type":"virtiofs","tag":"workspace","virtiofs":{"socket":"fs.sock"},"extra":true}]}`,
+			wantErr: "unknown field",
+		},
+		{
+			name: "grouped toml mounts",
+			file: "manifest.toml",
+			data: `[kernel]
+path = "/tmp/vmlinuz"
+initrd_path = "/tmp/initrd"
+
+[[mounts.virtiofs]]
+tag = "workspace"
+virtiofs.socket = "fs.sock"
+`,
+			wantErr: "manifest.mounts must be an array of tables",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DecodeDocumentBytes([]byte(tt.data), tt.file)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected %q error, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestUpdateWorkingDirBytesPreservesTaggedMounts(t *testing.T) {
+	data := []byte(`
+[kernel]
+path = "/tmp/vmlinuz"
+initrd_path = "/tmp/initrd"
+
+[[mounts]]
+type = "virtiofs"
+tag = "workspace"
+source = "."
+virtiofs.socket = "workspace.sock"
+
+[[mounts]]
+type = "image"
+source = "root.img"
+image.size = 256
+image.fs = "ext4"
+image.create = true
+`)
+	updated, err := UpdateWorkingDirBytes(data, "manifest.toml", "/tmp/work")
+	if err != nil {
+		t.Fatalf("update working dir: %v", err)
+	}
+	document, err := DecodeDocumentBytes(updated, "manifest.toml")
+	if err != nil {
+		t.Fatalf("decode updated manifest: %v\n%s", err, updated)
+	}
+	if document.WorkingDir != "/tmp/work" {
+		t.Fatalf("unexpected working dir: got %q want /tmp/work", document.WorkingDir)
+	}
+	if got, want := len(document.Mounts), 2; got != want {
+		t.Fatalf("unexpected mount count: got %d want %d", got, want)
+	}
+	if _, ok := document.Mounts[0].(VirtioFSMountInput); !ok {
+		t.Fatalf("expected first mount to remain virtiofs, got %T", document.Mounts[0])
+	}
+	if _, ok := document.Mounts[1].(ImageMountInput); !ok {
+		t.Fatalf("expected second mount to remain image, got %T", document.Mounts[1])
 	}
 }
 
@@ -1089,10 +1238,10 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 			"qemu": {"exec": ["/bin/qemu-system-x86_64"]},
 			"machine": {"memory": 1024},
 			"kernel": {"path": "/tmp/vmlinuz", "initrd_path": "/tmp/initrd"},
-			"mounts": {
-				"virtiofs": [{"tag": "workspace", "virtiofs": {"socket": "fs.sock", "bin": "/tmp/virtiofsd-workspace"}}],
-				"image": [{"source": "root.img", "image": {"size": 256, "create": true}}]
-			},
+			"mounts": [
+				{"type": "virtiofs", "tag": "workspace", "virtiofs": {"socket": "fs.sock", "bin": "/tmp/virtiofsd-workspace"}},
+				{"type": "image", "source": "root.img", "image": {"size": 256, "create": true}}
+			],
 			"notifications": {"exec": ["--verbose"]}
 		}`)
 		loaded, err := Load(bytes.NewReader(data))
@@ -1213,24 +1362,20 @@ func TestResolvedVirtioFSRunsRenderExecTemplates(t *testing.T) {
 func TestDocumentMountDefaults(t *testing.T) {
 	document := validDocument()
 	document.Mounts = MountsInput{
-		VirtioFS: []VirtioFSMountInput{
-			{
-				MountInput: MountInput{
-					Tag:        "workspace",
-					SourcePath: ".",
-				},
-				VirtioFS: VirtioFSInput{
-					Socket: "fs.sock",
-					Args:   []string{"--socket-path={{.Socket}}"},
-				},
+		VirtioFSMountInput{
+			MountInput: MountInput{
+				Tag:        "workspace",
+				SourcePath: ".",
+			},
+			VirtioFS: VirtioFSInput{
+				Socket: "fs.sock",
+				Args:   []string{"--socket-path={{.Socket}}"},
 			},
 		},
-		NineP: []NinePMountInput{
-			{
-				MountInput: MountInput{
-					Tag:        "cache",
-					SourcePath: "cache",
-				},
+		NinePMountInput{
+			MountInput: MountInput{
+				Tag:        "cache",
+				SourcePath: "cache",
 			},
 		},
 	}
@@ -1246,10 +1391,12 @@ func TestDocumentMountDefaults(t *testing.T) {
 		t.Fatalf("unexpected default 9p security model: got %q want %q", got, want)
 	}
 
-	document.Mounts.VirtioFS[0].VirtioFS = VirtioFSInput{
+	virtioFSMount := document.Mounts[0].(VirtioFSMountInput)
+	virtioFSMount.VirtioFS = VirtioFSInput{
 		Socket: "fs.sock",
 		Bin:    "/tmp/virtiofsd-workspace",
 	}
+	document.Mounts[0] = virtioFSMount
 	manifest, err = document.Manifest()
 	if err != nil {
 		t.Fatalf("lower manifest: %v", err)
@@ -1817,25 +1964,21 @@ func validDocument() Document {
 			InitrdPath: "/tmp/initrd",
 		},
 		Mounts: MountsInput{
-			VirtioFS: []VirtioFSMountInput{
-				{
-					MountInput: MountInput{
-						Tag: "workspace",
-					},
-					VirtioFS: VirtioFSInput{
-						Socket: "fs.sock",
-						Bin:    "/tmp/virtiofsd-workspace",
-					},
+			VirtioFSMountInput{
+				MountInput: MountInput{
+					Tag: "workspace",
+				},
+				VirtioFS: VirtioFSInput{
+					Socket: "fs.sock",
+					Bin:    "/tmp/virtiofsd-workspace",
 				},
 			},
-			Image: []ImageMountInput{
-				{
-					SourcePath: "root.img",
-					Image: ImageInput{
-						Size:       256,
-						FSType:     "ext4",
-						AutoCreate: true,
-					},
+			ImageMountInput{
+				SourcePath: "root.img",
+				Image: ImageInput{
+					Size:       256,
+					FSType:     "ext4",
+					AutoCreate: true,
 				},
 			},
 		},

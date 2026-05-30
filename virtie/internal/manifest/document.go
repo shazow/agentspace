@@ -1,6 +1,12 @@
 package manifest
 
-import "github.com/shazow/agentspace/virtie/internal/units"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+
+	"github.com/shazow/agentspace/virtie/internal/units"
+)
 
 const (
 	KernelSerialOff     = "off"
@@ -79,14 +85,202 @@ type GraphicsInput struct {
 	Backend string `json:"backend,omitempty" toml:"backend"`
 }
 
-type MountsInput struct {
-	VirtioFS []VirtioFSMountInput `json:"virtiofs,omitempty" toml:"virtiofs"`
-	NineP    []NinePMountInput    `json:"9p,omitempty" toml:"9p"`
-	Image    []ImageMountInput    `json:"image,omitempty" toml:"image"`
-}
+type MountsInput []MountEntry
 
 func (m MountsInput) Len() int {
-	return len(m.VirtioFS) + len(m.NineP)
+	return len(m)
+}
+
+type MountEntry interface {
+	mountEntry()
+	mountType() string
+}
+
+const (
+	MountTypeVirtioFS = "virtiofs"
+	MountTypeNineP    = "9p"
+	MountTypeImage    = "image"
+)
+
+func (m MountsInput) VirtioFS() []VirtioFSMountInput {
+	mounts := make([]VirtioFSMountInput, 0, len(m))
+	for _, mount := range m {
+		switch typed := mount.(type) {
+		case VirtioFSMountInput:
+			mounts = append(mounts, typed)
+		case *VirtioFSMountInput:
+			if typed != nil {
+				mounts = append(mounts, *typed)
+			}
+		}
+	}
+	return mounts
+}
+
+func (m MountsInput) NineP() []NinePMountInput {
+	mounts := make([]NinePMountInput, 0, len(m))
+	for _, mount := range m {
+		switch typed := mount.(type) {
+		case NinePMountInput:
+			mounts = append(mounts, typed)
+		case *NinePMountInput:
+			if typed != nil {
+				mounts = append(mounts, *typed)
+			}
+		}
+	}
+	return mounts
+}
+
+func (m MountsInput) Image() []ImageMountInput {
+	mounts := make([]ImageMountInput, 0, len(m))
+	for _, mount := range m {
+		switch typed := mount.(type) {
+		case ImageMountInput:
+			mounts = append(mounts, typed)
+		case *ImageMountInput:
+			if typed != nil {
+				mounts = append(mounts, *typed)
+			}
+		}
+	}
+	return mounts
+}
+
+func (m *MountsInput) UnmarshalJSON(data []byte) error {
+	var rawMounts []json.RawMessage
+	if err := json.Unmarshal(data, &rawMounts); err != nil {
+		return err
+	}
+	mounts := make(MountsInput, 0, len(rawMounts))
+	for i, raw := range rawMounts {
+		mount, err := decodeJSONMount(raw, i)
+		if err != nil {
+			return err
+		}
+		mounts = append(mounts, mount)
+	}
+	*m = mounts
+	return nil
+}
+
+func (m MountsInput) MarshalJSON() ([]byte, error) {
+	values := make([]any, 0, len(m))
+	for _, mount := range m {
+		value, err := mountMarshalValue(mount)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return json.Marshal(values)
+}
+
+func (m *MountsInput) UnmarshalTOML(data any) error {
+	rawMounts, ok := data.([]map[string]any)
+	if !ok {
+		return fmt.Errorf("manifest.mounts must be an array of tables")
+	}
+	mounts := make(MountsInput, 0, len(rawMounts))
+	for i, raw := range rawMounts {
+		mount, err := decodeMapMount(raw, i)
+		if err != nil {
+			return err
+		}
+		mounts = append(mounts, mount)
+	}
+	*m = mounts
+	return nil
+}
+
+func decodeJSONMount(data []byte, index int) (MountEntry, error) {
+	var header struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return nil, fmt.Errorf("manifest.mounts[%d]: %w", index, err)
+	}
+	return decodeMountData(data, header.Type, index)
+}
+
+func decodeMapMount(data map[string]any, index int) (MountEntry, error) {
+	rawType, ok := data["type"].(string)
+	if !ok {
+		return nil, fmt.Errorf("manifest.mounts[%d].type must be one of virtiofs, 9p, or image", index)
+	}
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("manifest.mounts[%d]: %w", index, err)
+	}
+	return decodeMountData(encoded, rawType, index)
+}
+
+func decodeMountData(data []byte, mountType string, index int) (MountEntry, error) {
+	switch mountType {
+	case MountTypeVirtioFS:
+		var mount VirtioFSMountInput
+		if err := decodeMountJSON(data, &mount); err != nil {
+			return nil, fmt.Errorf("manifest.mounts[%d]: %w", index, err)
+		}
+		return mount, nil
+	case MountTypeNineP:
+		var mount NinePMountInput
+		if err := decodeMountJSON(data, &mount); err != nil {
+			return nil, fmt.Errorf("manifest.mounts[%d]: %w", index, err)
+		}
+		return mount, nil
+	case MountTypeImage:
+		var mount ImageMountInput
+		if err := decodeMountJSON(data, &mount); err != nil {
+			return nil, fmt.Errorf("manifest.mounts[%d]: %w", index, err)
+		}
+		return mount, nil
+	default:
+		return nil, fmt.Errorf("manifest.mounts[%d].type must be one of virtiofs, 9p, or image", index)
+	}
+}
+
+func decodeMountJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(target)
+}
+
+func mountMarshalValue(mount MountEntry) (any, error) {
+	switch typed := mount.(type) {
+	case VirtioFSMountInput:
+		typed.Type = MountTypeVirtioFS
+		return typed, nil
+	case *VirtioFSMountInput:
+		if typed == nil {
+			return nil, fmt.Errorf("unsupported nil mount input")
+		}
+		value := *typed
+		value.Type = MountTypeVirtioFS
+		return value, nil
+	case NinePMountInput:
+		typed.Type = MountTypeNineP
+		return typed, nil
+	case *NinePMountInput:
+		if typed == nil {
+			return nil, fmt.Errorf("unsupported nil mount input")
+		}
+		value := *typed
+		value.Type = MountTypeNineP
+		return value, nil
+	case ImageMountInput:
+		typed.Type = MountTypeImage
+		return typed, nil
+	case *ImageMountInput:
+		if typed == nil {
+			return nil, fmt.Errorf("unsupported nil mount input")
+		}
+		value := *typed
+		value.Type = MountTypeImage
+		return value, nil
+	default:
+		return nil, fmt.Errorf("unsupported mount input type %T", mount)
+	}
 }
 
 type MountInput struct {
@@ -96,10 +290,15 @@ type MountInput struct {
 }
 
 type VirtioFSMountInput struct {
+	Type string `json:"type" toml:"type"`
 	MountInput
 
 	VirtioFS VirtioFSInput `json:"virtiofs,omitempty" toml:"virtiofs"`
 }
+
+func (VirtioFSMountInput) mountEntry() {}
+
+func (VirtioFSMountInput) mountType() string { return MountTypeVirtioFS }
 
 type VirtioFSInput struct {
 	Socket string   `json:"socket,omitempty" toml:"socket"`
@@ -108,20 +307,30 @@ type VirtioFSInput struct {
 }
 
 type NinePMountInput struct {
+	Type string `json:"type" toml:"type"`
 	MountInput
 
 	NineP NinePInput `json:"9p,omitempty" toml:"9p"`
 }
+
+func (NinePMountInput) mountEntry() {}
+
+func (NinePMountInput) mountType() string { return MountTypeNineP }
 
 type NinePInput struct {
 	SecurityModel string `json:"security_model,omitempty" toml:"security_model"`
 }
 
 type ImageMountInput struct {
+	Type       string     `json:"type" toml:"type"`
 	SourcePath string     `json:"source" toml:"source"`
 	ReadOnly   bool       `json:"read_only,omitempty" toml:"read_only"`
 	Image      ImageInput `json:"image,omitempty" toml:"image"`
 }
+
+func (ImageMountInput) mountEntry() {}
+
+func (ImageMountInput) mountType() string { return MountTypeImage }
 
 type ImageInput struct {
 	Size       units.MiB `json:"size,omitempty" toml:"size"`

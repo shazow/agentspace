@@ -317,8 +317,9 @@ let
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
   runManifest = vmVirtieRun.config.agentspace.sandbox.launch.virtieManifestData;
 
-  virtiofsMounts = manifest.mounts.virtiofs;
-  ninePMounts = manifest.mounts."9p";
+  mountsOfType = type: manifest: builtins.filter (mount: mount.type == type) manifest.mounts;
+  virtiofsMounts = mountsOfType "virtiofs" manifest;
+  ninePMounts = mountsOfType "9p" manifest;
   virtiofsDaemonMounts = builtins.filter (mount: mount.virtiofs ? bin) virtiofsMounts;
 
   _ =
@@ -344,7 +345,7 @@ let
     assert builtins.length virtiofsMounts > 0;
     assert ninePMounts == [ ];
     assert !(manifest ? volumes);
-    assert builtins.length manifest.mounts.image > 0;
+    assert builtins.length (mountsOfType "image" manifest) > 0;
     assert builtins.length manifest.networks > 0;
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.after == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
@@ -362,9 +363,9 @@ let
     assert manifest.ssh.ready_socket == "ready.sock";
     assert !(manifest.ssh ? retry_delay_ms);
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.exec;
-    assert builtins.any (
-      volume: volume.source == ".agentspace/nix-store-overlay.img"
-    ) manifest.mounts.image;
+    assert builtins.any (volume: volume.source == ".agentspace/nix-store-overlay.img") (
+      mountsOfType "image" manifest
+    );
     assert builtins.length virtiofsDaemonMounts > 0;
     assert builtins.all (
       mount: mount.virtiofs.socket != "" && mount.virtiofs.bin != ""
@@ -423,11 +424,12 @@ let
     true;
 
   _externalStoreSocket =
-    assert builtins.length externalStoreSocketManifest.mounts.virtiofs == 3;
-    assert externalStoreSocketManifest.mounts."9p" == [ ];
+    assert builtins.length (mountsOfType "virtiofs" externalStoreSocketManifest) == 3;
+    assert (mountsOfType "9p" externalStoreSocketManifest) == [ ];
     assert builtins.any (
       mount:
       mount == {
+        type = "virtiofs";
         source = "/nix/store";
         virtiofs = {
           socket = "/var/run/virtiofs-nix-store.sock";
@@ -435,24 +437,24 @@ let
         tag = "ro-store";
         read_only = true;
       }
-    ) externalStoreSocketManifest.mounts.virtiofs;
+    ) (mountsOfType "virtiofs" externalStoreSocketManifest);
     assert builtins.any (
       mount:
       mount.tag == "workspace"
       && mount.source == ".agentspace/workspace"
       && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace.sock"
       && mount.virtiofs ? bin
-    ) externalStoreSocketManifest.mounts.virtiofs;
+    ) (mountsOfType "virtiofs" externalStoreSocketManifest);
     assert builtins.any (
       mount:
       mount.tag == "workspace_cwd"
       && mount.source == "."
       && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
       && mount.virtiofs ? bin
-    ) externalStoreSocketManifest.mounts.virtiofs;
-    assert builtins.all (
-      mount: mount.tag != "ro-store" || !(mount.virtiofs ? bin)
-    ) externalStoreSocketManifest.mounts.virtiofs;
+    ) (mountsOfType "virtiofs" externalStoreSocketManifest);
+    assert builtins.all (mount: mount.tag != "ro-store" || !(mount.virtiofs ? bin)) (
+      mountsOfType "virtiofs" externalStoreSocketManifest
+    );
     assert pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
       vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
     assert pkgs.lib.hasInfix
@@ -489,18 +491,18 @@ let
     true;
 
   _extraShares =
-    assert builtins.length extraSharesManifest.mounts."9p" == 1;
+    assert builtins.length (mountsOfType "9p" extraSharesManifest) == 1;
     assert builtins.any (
       mount:
       mount.source == ".agentspace-test/cache"
       && mount.tag == "cache"
       && mount."9p".security_model == "mapped"
       && mount.read_only == true
-    ) extraSharesManifest.mounts."9p";
+    ) (mountsOfType "9p" extraSharesManifest);
     assert builtins.any (
       mount: mount.tag == "tools" && mount.virtiofs.socket != "" && mount.virtiofs ? bin
-    ) extraSharesManifest.mounts.virtiofs;
-    assert !(builtins.any (mount: mount.tag == "cache") extraSharesManifest.mounts.virtiofs);
+    ) (mountsOfType "virtiofs" extraSharesManifest);
+    assert !(builtins.any (mount: mount.tag == "cache") (mountsOfType "virtiofs" extraSharesManifest));
     true;
 
   _extraImagesAndPorts =
@@ -514,13 +516,13 @@ let
       && mount.image.create == true
       && mount.image.direct == true
       && mount.image.serial == "cfg-data"
-    ) extraImagesAndPortsManifest.mounts.image;
+    ) (mountsOfType "image" extraImagesAndPortsManifest);
     assert builtins.any (
       mount:
       mount.source == ".agentspace-test/microvm.img"
       && mount.image.size == 256
       && mount.image.create == true
-    ) extraImagesAndPortsManifest.mounts.image;
+    ) (mountsOfType "image" extraImagesAndPortsManifest);
     assert builtins.any (
       network:
       builtins.any (
@@ -577,28 +579,28 @@ let
       && mount.source == ".agentspace/workspace"
       && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace.sock"
       && mount.virtiofs ? bin
-    ) workspaceManifest.mounts.virtiofs;
+    ) (mountsOfType "virtiofs" workspaceManifest);
     assert builtins.any (
       mount:
       mount.tag == "workspace-agentspace"
       && mount.source == "/home/shazow/projects/agentspace"
       && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace-agentspace.sock"
       && mount.virtiofs ? bin
-    ) workspaceManifest.mounts.virtiofs;
+    ) (mountsOfType "virtiofs" workspaceManifest);
     assert builtins.any (
       mount:
       mount.tag == "workspace-project2-foo"
       && mount.source == "/home/shazow/foo"
       && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace-project2-foo.sock"
       && mount.virtiofs ? bin
-    ) workspaceManifest.mounts.virtiofs;
+    ) (mountsOfType "virtiofs" workspaceManifest);
     assert builtins.any (
       mount:
       mount.tag == "workspace_cwd"
       && mount.source == "."
       && mount.virtiofs.socket == "agent-sandbox-virtiofs-workspace_cwd.sock"
       && mount.virtiofs ? bin
-    ) workspaceManifest.mounts.virtiofs;
+    ) (mountsOfType "virtiofs" workspaceManifest);
     true;
 
   _swap =

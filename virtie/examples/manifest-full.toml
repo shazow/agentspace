@@ -149,7 +149,8 @@ autoprovision = true  # Default: false
 # CID space; narrowing it too much can make launch fail under concurrency.
 cid_range = { min = 3, max = 65535 }  # Default: Full allocatable CID range
 
-[[mounts.image]]
+[[mounts]]
+type = "image"
 # Image mounts attach host disk images to the guest. The source path is
 # necessary because virtie creates and validates the host file before QEMU
 # starts.
@@ -166,9 +167,10 @@ image.create = true  # Default: Use existing image only
 image.label = "root"  # Default: no filesystem label
 image.direct = false  # Default: backend cache policy
 
-[[mounts.virtiofs]]
-# Mounts are shared host directories. The section name selects the backend, so
-# each entry only carries common mount fields plus its backend-specific table.
+[[mounts]]
+type = "virtiofs"
+# Mounts are shared host directories. The type selects the backend, so each
+# entry only carries common mount fields plus its backend-specific table.
 tag = "workspace"
 source = "."
 read_only = false  # Default: guest can write to the share
@@ -183,7 +185,8 @@ virtiofs.socket = "workspace.sock"
 virtiofs.bin = "virtiofsd"
 virtiofs.args = ["--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"]
 
-[[mounts.9p]]
+[[mounts]]
+type = "9p"
 tag = "cache"
 source = ".cache"
 read_only = false
