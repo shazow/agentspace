@@ -649,6 +649,17 @@ virtiofs.socket = "fs.sock"
 `,
 			wantErr: "manifest.mounts must be an array of tables",
 		},
+		{
+			name: "non-table toml mount",
+			file: "manifest.toml",
+			data: `mounts = ["bad"]
+
+[kernel]
+path = "/tmp/vmlinuz"
+initrd_path = "/tmp/initrd"
+`,
+			wantErr: "manifest.mounts[0] must be a table",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := DecodeDocumentBytes([]byte(tt.data), tt.file)
@@ -656,6 +667,29 @@ virtiofs.socket = "fs.sock"
 				t.Fatalf("expected %q error, got %v", tt.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestDecodeDocumentAllowsEmptyTOMLMounts(t *testing.T) {
+	data := []byte(`mounts = []
+
+[kernel]
+path = "/tmp/vmlinuz"
+initrd_path = "/tmp/initrd"
+`)
+	document, err := DecodeDocumentBytes(data, "manifest.toml")
+	if err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if got := len(document.Mounts); got != 0 {
+		t.Fatalf("unexpected mount count: got %d want 0", got)
+	}
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got := len(manifest.QEMU.Devices.Mounts); got != 0 {
+		t.Fatalf("unexpected lowered mount count: got %d want 0", got)
 	}
 }
 

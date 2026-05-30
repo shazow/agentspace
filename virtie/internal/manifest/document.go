@@ -177,8 +177,20 @@ func (m MountsInput) MarshalJSON() ([]byte, error) {
 }
 
 func (m *MountsInput) UnmarshalTOML(data any) error {
-	rawMounts, ok := data.([]map[string]any)
-	if !ok {
+	var rawMounts []map[string]any
+	switch values := data.(type) {
+	case []map[string]any:
+		rawMounts = values
+	case []any:
+		rawMounts = make([]map[string]any, 0, len(values))
+		for i, value := range values {
+			raw, ok := value.(map[string]any)
+			if !ok {
+				return fmt.Errorf("manifest.mounts[%d] must be a table", i)
+			}
+			rawMounts = append(rawMounts, raw)
+		}
+	default:
 		return fmt.Errorf("manifest.mounts must be an array of tables")
 	}
 	mounts := make(MountsInput, 0, len(rawMounts))
