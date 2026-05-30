@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
 const (
@@ -19,7 +20,7 @@ const (
 	defaultVSockCIDStart        = 3
 	defaultVSockCIDEnd          = 65535
 	defaultVolumeFSType         = "ext4"
-	minAutoVolumeSizeMiB        = 256
+	minAutoVolumeSize           = units.MiB(256)
 )
 
 var writeFileModePattern = regexp.MustCompile(`^0?[0-7]{3}$`)
@@ -46,7 +47,7 @@ func (m *Manifest) applyDefaults() {
 		}
 	}
 
-	applyBalloonDefaults(m.QEMU.Memory.SizeMiB, m.QEMU.Devices.Balloon)
+	applyBalloonDefaults(m.QEMU.Memory.Size, m.QEMU.Devices.Balloon)
 }
 
 func (m *Manifest) Validate() error {
@@ -123,7 +124,7 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
-	if err := validateBalloonDevice(m.QEMU.Memory.SizeMiB, m.QEMU.Devices.Balloon); err != nil {
+	if err := validateBalloonDevice(m.QEMU.Memory.Size, m.QEMU.Devices.Balloon); err != nil {
 		return err
 	}
 
@@ -132,19 +133,19 @@ func (m *Manifest) Validate() error {
 	}
 	for i, volume := range m.Volumes {
 		if volume.AutoCreate && volume.ImagePath == "" {
-			return fmt.Errorf("manifest.volumes[%d].imagePath is required", i)
+			return fmt.Errorf("manifest.mounts.image[%d].source is required", i)
 		}
-		if volume.AutoCreate && volume.SizeMiB <= 0 {
-			return fmt.Errorf("manifest.volumes[%d].sizeMiB must be greater than zero when autoCreate is true", i)
+		if volume.AutoCreate && volume.Size <= 0 {
+			return fmt.Errorf("manifest.mounts.image[%d].image.size must be greater than zero when image.create is true", i)
 		}
-		if volume.AutoCreate && volume.SizeMiB < minAutoVolumeSizeMiB {
-			return fmt.Errorf("manifest.volumes[%d].sizeMiB must be at least %d when autoCreate is true", i, minAutoVolumeSizeMiB)
+		if volume.AutoCreate && volume.Size < minAutoVolumeSize {
+			return fmt.Errorf("manifest.mounts.image[%d].image.size must be at least %d when image.create is true", i, minAutoVolumeSize)
 		}
 		if volume.AutoCreate && volume.FSType != defaultVolumeFSType {
-			return fmt.Errorf("manifest.volumes[%d].fsType must be %q when autoCreate is true", i, defaultVolumeFSType)
+			return fmt.Errorf("manifest.mounts.image[%d].image.fs must be %q when image.create is true", i, defaultVolumeFSType)
 		}
 		if volume.AutoCreate && len(volume.MkfsExtraArgs) > 0 {
-			return fmt.Errorf("manifest.volumes[%d].mkfsExtraArgs is not supported when autoCreate is true", i)
+			return fmt.Errorf("manifest.mounts.image[%d].image.mkfs_extra_args is not supported when image.create is true", i)
 		}
 	}
 

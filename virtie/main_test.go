@@ -181,13 +181,13 @@ func testManifestJSON(workingDir string) string {
           "bin": "/bin/virtiofsd"
         }
       }
+    ],
+    "image": [
+      {
+        "source": "overlay.img"
+      }
     ]
-  },
-  "volumes": [
-    {
-      "image": "overlay.img"
-    }
-  ]
+  }
 }
 `
 }

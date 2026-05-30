@@ -1,6 +1,9 @@
 package manifest
 
-import "github.com/shazow/agentspace/virtie/internal/balloon"
+import (
+	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/units"
+)
 
 type QEMU struct {
 	BinaryPath      string         `json:"binaryPath"`
@@ -32,9 +35,9 @@ type QEMUCPU struct {
 }
 
 type QEMUMemory struct {
-	SizeMiB int    `json:"sizeMiB"`
-	Backend string `json:"backend,omitempty"`
-	Shared  bool   `json:"shared,omitempty"`
+	Size    units.MiB `json:"sizeMiB"`
+	Backend string    `json:"backend,omitempty"`
+	Shared  bool      `json:"shared,omitempty"`
 }
 
 type QEMUKernel struct {

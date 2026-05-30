@@ -76,7 +76,7 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 	if m.Persistence.StateDir == "" {
 		m.Persistence.StateDir = m.Persistence.BaseDir
 	}
-	m.Persistence.Directories = persistenceDirectories(d.Volumes, m.Persistence.StateDir)
+	m.Persistence.Directories = persistenceDirectories(d.Mounts.Image, m.Persistence.StateDir)
 	if m.Paths.LockPath == "" {
 		m.Paths.LockPath = filepath.Join(m.Persistence.StateDir, m.Identity.HostName+".lock")
 	}
@@ -90,7 +90,7 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 		return nil, err
 	}
 	m.QEMU = qemu
-	m.Volumes = lowerVolumes(d.Volumes)
+	m.Volumes = lowerVolumes(d.Mounts.Image)
 	virtioFSRuns, err := m.lowerVirtioFSRuns(d.Mounts.VirtioFS, options)
 	if err != nil {
 		return nil, err
@@ -136,7 +136,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 	transport := qemuTransport(machineType, d.Mounts, graphics)
 	memorySize := d.Machine.Memory
 	if memorySize == 0 {
-		memorySize = defaultMemorySizeMiB
+		memorySize = defaultMemorySize
 	}
 	cpuModel := d.Machine.CPU
 	if cpuModel == "" {
@@ -203,7 +203,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 			EnableKVM: enableKVM,
 		},
 		Memory: QEMUMemory{
-			SizeMiB: memorySize,
+			Size:    memorySize,
 			Backend: memoryBackend(host, d.Mounts.VirtioFS),
 			Shared:  len(d.Mounts.VirtioFS) > 0,
 		},
@@ -245,7 +245,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 			Balloon:  lowerBalloon(d.Balloon, transport),
 			VirtioFS: lowerVirtioFSMounts(d.Mounts.VirtioFS, transport),
 			NineP:    lowerNinePMounts(d.Mounts.NineP, transport),
-			Block:    lowerBlocks(d.Volumes, host, transport),
+			Block:    lowerBlocks(d.Mounts.Image, host, transport),
 			Network:  networks,
 			VSOCK: QEMUVSOCKDevice{
 				ID:        "vsock0",
@@ -365,32 +365,32 @@ func kernelSerialMode(kernel KernelInput) (string, error) {
 	}
 }
 
-func lowerVolumes(volumes []VolumeInput) []Volume {
+func lowerVolumes(volumes []ImageMountInput) []Volume {
 	result := make([]Volume, 0, len(volumes))
 	for _, volume := range volumes {
 		result = append(result, Volume{
-			ImagePath:  volume.ImagePath,
-			SizeMiB:    volume.SizeMiB,
-			FSType:     volume.FSType,
-			AutoCreate: volume.AutoCreate,
-			Label:      stringValue(volume.Label),
+			ImagePath:  volume.SourcePath,
+			Size:       volume.Image.Size,
+			FSType:     volume.Image.FSType,
+			AutoCreate: volume.Image.AutoCreate,
+			Label:      stringValue(volume.Image.Label),
 		})
 	}
 	return result
 }
 
-func lowerBlocks(volumes []VolumeInput, host HostInput, transport string) []QEMUBlockDevice {
+func lowerBlocks(volumes []ImageMountInput, host HostInput, transport string) []QEMUBlockDevice {
 	blocks := make([]QEMUBlockDevice, 0, len(volumes))
 	for i, volume := range volumes {
 		block := QEMUBlockDevice{
 			ID:        "vd" + string(rune('a'+i)),
-			ImagePath: volume.ImagePath,
+			ImagePath: volume.SourcePath,
 			AIO:       aioEngine(host),
 			ReadOnly:  volume.ReadOnly,
-			Serial:    stringValue(volume.Serial),
+			Serial:    stringValue(volume.Image.Serial),
 			Transport: transport,
 		}
-		if volume.Direct {
+		if volume.Image.Direct {
 			block.Cache = "none"
 		}
 		blocks = append(blocks, block)
@@ -680,13 +680,13 @@ func lowerBalloon(facts *BalloonInput, transport string) *balloon.Device {
 	}
 	if facts.Controller != nil {
 		device.Controller = &balloon.ControllerConfig{
-			MinActualMiB:             facts.Controller.MinActualMiB,
-			MaxActualMiB:             facts.Controller.MaxActualMiB,
-			GrowBelowAvailableMiB:    facts.Controller.GrowBelowAvailableMiB,
-			ReclaimAboveAvailableMiB: facts.Controller.ReclaimAboveAvailableMiB,
-			StepMiB:                  facts.Controller.StepMiB,
-			PollIntervalSeconds:      facts.Controller.PollIntervalSeconds,
-			ReclaimHoldoffSeconds:    facts.Controller.ReclaimHoldoffSeconds,
+			MinActual:             facts.Controller.MinActual,
+			MaxActual:             facts.Controller.MaxActual,
+			GrowBelowAvailable:    facts.Controller.GrowBelowAvailable,
+			ReclaimAboveAvailable: facts.Controller.ReclaimAboveAvailable,
+			Step:                  facts.Controller.Step,
+			PollIntervalSeconds:   facts.Controller.PollIntervalSeconds,
+			ReclaimHoldoffSeconds: facts.Controller.ReclaimHoldoffSeconds,
 		}
 	}
 	if device == nil {
@@ -794,13 +794,13 @@ func cloneValueMap(values map[string]any) map[string]any {
 	return clone
 }
 
-func persistenceDirectories(volumes []VolumeInput, stateDir string) []string {
+func persistenceDirectories(volumes []ImageMountInput, stateDir string) []string {
 	dirs := []string{stateDir}
 	for _, volume := range volumes {
-		if volume.ImagePath == "" {
+		if volume.SourcePath == "" {
 			continue
 		}
-		dir := filepath.Dir(volume.ImagePath)
+		dir := filepath.Dir(volume.SourcePath)
 		if dir == "." {
 			continue
 		}

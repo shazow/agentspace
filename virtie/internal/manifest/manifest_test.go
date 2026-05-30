@@ -45,7 +45,7 @@ func TestLoadReadsFromReader(t *testing.T) {
 		},
 		NineP: NinePInput{SecurityModel: "none"},
 	})
-	document.Volumes[0].ImagePath = "images/root.img"
+	document.Mounts.Image[0].SourcePath = "images/root.img"
 	document.Mounts.VirtioFS[0].VirtioFS.Bin = "bin/virtiofsd-workspace"
 
 	data, err := json.Marshal(document)
@@ -89,7 +89,7 @@ func TestLoadReadsFromReader(t *testing.T) {
 	if got, want := loaded.ResolvedVolumes(), []Volume{
 		{
 			ImagePath:  "/tmp/work/images/root.img",
-			SizeMiB:    256,
+			Size:       256,
 			FSType:     "ext4",
 			AutoCreate: true,
 		},
@@ -110,6 +110,23 @@ func TestLoadRejectsTrailingData(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unexpected trailing data") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsLegacyTopLevelVolumes(t *testing.T) {
+	data := []byte(`{
+		"host_name": "agent-sandbox",
+		"working_dir": "/tmp/work",
+		"state_dir": ".virtie",
+		"ssh": {"exec": ["/bin/ssh"], "user": "agent"},
+		"qemu": {"exec": ["/bin/qemu-system-x86_64"]},
+		"kernel": {"path": "/tmp/vmlinuz", "initrd_path": "/tmp/initrd"},
+		"volumes": [{"image": "root.img", "size": 256, "create": true}]
+	}`)
+
+	_, err := Load(bytes.NewReader(data))
+	if err == nil || !strings.Contains(err.Error(), `unknown field "volumes"`) {
+		t.Fatalf("expected legacy volumes decode error, got %v", err)
 	}
 }
 
@@ -1072,8 +1089,10 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 			"qemu": {"exec": ["/bin/qemu-system-x86_64"]},
 			"machine": {"memory": 1024},
 			"kernel": {"path": "/tmp/vmlinuz", "initrd_path": "/tmp/initrd"},
-			"mounts": {"virtiofs": [{"tag": "workspace", "virtiofs": {"socket": "fs.sock", "bin": "/tmp/virtiofsd-workspace"}}]},
-			"volumes": [{"image": "root.img", "size": 256, "create": true}],
+			"mounts": {
+				"virtiofs": [{"tag": "workspace", "virtiofs": {"socket": "fs.sock", "bin": "/tmp/virtiofsd-workspace"}}],
+				"image": [{"source": "root.img", "image": {"size": 256, "create": true}}]
+			},
 			"notifications": {"exec": ["--verbose"]}
 		}`)
 		loaded, err := Load(bytes.NewReader(data))
@@ -1702,40 +1721,40 @@ func TestManifestVolumeValidation(t *testing.T) {
 
 	t.Run("requires image path when auto creating", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.Volumes = []Volume{{ImagePath: "", SizeMiB: 256, AutoCreate: true}}
+		manifest.Volumes = []Volume{{ImagePath: "", Size: 256, AutoCreate: true}}
 
 		err := manifest.Validate()
-		if err == nil || !strings.Contains(err.Error(), "manifest.volumes[0].imagePath is required") {
+		if err == nil || !strings.Contains(err.Error(), "manifest.mounts.image[0].source is required") {
 			t.Fatalf("expected auto-create image path validation error, got %v", err)
 		}
 	})
 
 	t.Run("requires size when auto creating", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 0, AutoCreate: true}}
+		manifest.Volumes = []Volume{{ImagePath: "root.img", Size: 0, AutoCreate: true}}
 
 		err := manifest.Validate()
-		if err == nil || !strings.Contains(err.Error(), "manifest.volumes[0].sizeMiB must be greater than zero") {
+		if err == nil || !strings.Contains(err.Error(), "manifest.mounts.image[0].image.size must be greater than zero") {
 			t.Fatalf("expected auto-create size validation error, got %v", err)
 		}
 	})
 
 	t.Run("rejects auto-created volumes below minimum size", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 255, AutoCreate: true}}
+		manifest.Volumes = []Volume{{ImagePath: "root.img", Size: 255, AutoCreate: true}}
 
 		err := manifest.Validate()
-		if err == nil || !strings.Contains(err.Error(), "manifest.volumes[0].sizeMiB must be at least 256") {
+		if err == nil || !strings.Contains(err.Error(), "manifest.mounts.image[0].image.size must be at least 256") {
 			t.Fatalf("expected auto-create minimum size validation error, got %v", err)
 		}
 	})
 
 	t.Run("rejects non-ext4 filesystem when auto creating", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 256, FSType: "xfs", AutoCreate: true}}
+		manifest.Volumes = []Volume{{ImagePath: "root.img", Size: 256, FSType: "xfs", AutoCreate: true}}
 
 		err := manifest.Validate()
-		if err == nil || !strings.Contains(err.Error(), `manifest.volumes[0].fsType must be "ext4"`) {
+		if err == nil || !strings.Contains(err.Error(), `manifest.mounts.image[0].image.fs must be "ext4"`) {
 			t.Fatalf("expected auto-create fsType validation error, got %v", err)
 		}
 	})
@@ -1744,13 +1763,13 @@ func TestManifestVolumeValidation(t *testing.T) {
 		manifest := validManifest()
 		manifest.Volumes = []Volume{{
 			ImagePath:     "root.img",
-			SizeMiB:       256,
+			Size:          256,
 			AutoCreate:    true,
 			MkfsExtraArgs: []string{"-E", "discard"},
 		}}
 
 		err := manifest.Validate()
-		if err == nil || !strings.Contains(err.Error(), "manifest.volumes[0].mkfsExtraArgs is not supported") {
+		if err == nil || !strings.Contains(err.Error(), "manifest.mounts.image[0].image.mkfs_extra_args is not supported") {
 			t.Fatalf("expected auto-create mkfsExtraArgs validation error, got %v", err)
 		}
 	})
@@ -1758,7 +1777,7 @@ func TestManifestVolumeValidation(t *testing.T) {
 	t.Run("allows label when auto creating ext4", func(t *testing.T) {
 		manifest := validManifest()
 		label := "persist"
-		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 256, AutoCreate: true, Label: label}}
+		manifest.Volumes = []Volume{{ImagePath: "root.img", Size: 256, AutoCreate: true, Label: label}}
 
 		if err := manifest.Validate(); err != nil {
 			t.Fatalf("unexpected validation error: %v", err)
@@ -1809,13 +1828,15 @@ func validDocument() Document {
 					},
 				},
 			},
-		},
-		Volumes: []VolumeInput{
-			{
-				ImagePath:  "root.img",
-				SizeMiB:    256,
-				FSType:     "ext4",
-				AutoCreate: true,
+			Image: []ImageMountInput{
+				{
+					SourcePath: "root.img",
+					Image: ImageInput{
+						Size:       256,
+						FSType:     "ext4",
+						AutoCreate: true,
+					},
+				},
 			},
 		},
 		Networks: []NetworkInput{

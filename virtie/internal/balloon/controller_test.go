@@ -11,13 +11,13 @@ import (
 func TestEvaluateGrowsGuestMemory(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	config := ControllerConfig{
-		MinActualMiB:             256,
-		MaxActualMiB:             1024,
-		GrowBelowAvailableMiB:    128,
-		ReclaimAboveAvailableMiB: 768,
-		StepMiB:                  128,
-		PollIntervalSeconds:      5,
-		ReclaimHoldoffSeconds:    30,
+		MinActual:             256,
+		MaxActual:             1024,
+		GrowBelowAvailable:    128,
+		ReclaimAboveAvailable: 768,
+		Step:                  128,
+		PollIntervalSeconds:   5,
+		ReclaimHoldoffSeconds: 30,
 	}
 	state := &controllerState{startedAt: now.Add(-time.Minute)}
 
@@ -40,13 +40,13 @@ func TestEvaluateGrowsGuestMemory(t *testing.T) {
 func TestEvaluateReclaimsAfterHoldoff(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	config := ControllerConfig{
-		MinActualMiB:             256,
-		MaxActualMiB:             1024,
-		GrowBelowAvailableMiB:    128,
-		ReclaimAboveAvailableMiB: 768,
-		StepMiB:                  128,
-		PollIntervalSeconds:      5,
-		ReclaimHoldoffSeconds:    30,
+		MinActual:             256,
+		MaxActual:             1024,
+		GrowBelowAvailable:    128,
+		ReclaimAboveAvailable: 768,
+		Step:                  128,
+		PollIntervalSeconds:   5,
+		ReclaimHoldoffSeconds: 30,
 	}
 	state := &controllerState{startedAt: now.Add(-time.Minute)}
 
@@ -77,13 +77,13 @@ func TestEvaluateReclaimsAfterHoldoff(t *testing.T) {
 func TestEvaluateNoopsWithinHysteresis(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	config := ControllerConfig{
-		MinActualMiB:             256,
-		MaxActualMiB:             1024,
-		GrowBelowAvailableMiB:    128,
-		ReclaimAboveAvailableMiB: 768,
-		StepMiB:                  128,
-		PollIntervalSeconds:      5,
-		ReclaimHoldoffSeconds:    30,
+		MinActual:             256,
+		MaxActual:             1024,
+		GrowBelowAvailable:    128,
+		ReclaimAboveAvailable: 768,
+		Step:                  128,
+		PollIntervalSeconds:   5,
+		ReclaimHoldoffSeconds: 30,
 	}
 	state := &controllerState{
 		startedAt:           now.Add(-time.Minute),
@@ -109,13 +109,13 @@ func TestEvaluateNoopsWithinHysteresis(t *testing.T) {
 func TestEvaluateRejectsStaleStats(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	config := ControllerConfig{
-		MinActualMiB:             256,
-		MaxActualMiB:             1024,
-		GrowBelowAvailableMiB:    128,
-		ReclaimAboveAvailableMiB: 768,
-		StepMiB:                  128,
-		PollIntervalSeconds:      5,
-		ReclaimHoldoffSeconds:    30,
+		MinActual:             256,
+		MaxActual:             1024,
+		GrowBelowAvailable:    128,
+		ReclaimAboveAvailable: 768,
+		Step:                  128,
+		PollIntervalSeconds:   5,
+		ReclaimHoldoffSeconds: 30,
 	}
 	state := &controllerState{startedAt: now.Add(-time.Minute)}
 
@@ -132,13 +132,13 @@ func TestEvaluateRejectsStaleStats(t *testing.T) {
 func TestEvaluateRejectsUnavailableStats(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	config := ControllerConfig{
-		MinActualMiB:             256,
-		MaxActualMiB:             1024,
-		GrowBelowAvailableMiB:    128,
-		ReclaimAboveAvailableMiB: 768,
-		StepMiB:                  128,
-		PollIntervalSeconds:      5,
-		ReclaimHoldoffSeconds:    30,
+		MinActual:             256,
+		MaxActual:             1024,
+		GrowBelowAvailable:    128,
+		ReclaimAboveAvailable: 768,
+		Step:                  128,
+		PollIntervalSeconds:   5,
+		ReclaimHoldoffSeconds: 30,
 	}
 	state := &controllerState{startedAt: now.Add(-11 * time.Second)}
 
@@ -151,13 +151,13 @@ func TestEvaluateRejectsUnavailableStats(t *testing.T) {
 func TestEvaluateClampsToBounds(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	config := ControllerConfig{
-		MinActualMiB:             256,
-		MaxActualMiB:             1024,
-		GrowBelowAvailableMiB:    128,
-		ReclaimAboveAvailableMiB: 768,
-		StepMiB:                  256,
-		PollIntervalSeconds:      5,
-		ReclaimHoldoffSeconds:    30,
+		MinActual:             256,
+		MaxActual:             1024,
+		GrowBelowAvailable:    128,
+		ReclaimAboveAvailable: 768,
+		Step:                  256,
+		PollIntervalSeconds:   5,
+		ReclaimHoldoffSeconds: 30,
 	}
 	state := &controllerState{startedAt: now.Add(-time.Minute)}
 
@@ -266,13 +266,13 @@ func TestControllerNotifiesAfterSuccessfulResize(t *testing.T) {
 		DeviceID:   "balloon0",
 		QMPTimeout: time.Second,
 		Config: ControllerConfig{
-			MinActualMiB:             1024,
-			MaxActualMiB:             8192,
-			GrowBelowAvailableMiB:    128,
-			ReclaimAboveAvailableMiB: 4096,
-			StepMiB:                  2048,
-			PollIntervalSeconds:      1,
-			ReclaimHoldoffSeconds:    1,
+			MinActual:             1024,
+			MaxActual:             8192,
+			GrowBelowAvailable:    128,
+			ReclaimAboveAvailable: 4096,
+			Step:                  2048,
+			PollIntervalSeconds:   1,
+			ReclaimHoldoffSeconds: 1,
 		},
 		Notifier: notifications,
 		Now:      func() time.Time { return now },
@@ -333,13 +333,13 @@ func TestControllerDoesNotNotifyWhenResizeIsNotApplied(t *testing.T) {
 		DeviceID:   "balloon0",
 		QMPTimeout: time.Second,
 		Config: ControllerConfig{
-			MinActualMiB:             1024,
-			MaxActualMiB:             8192,
-			GrowBelowAvailableMiB:    128,
-			ReclaimAboveAvailableMiB: 4096,
-			StepMiB:                  2048,
-			PollIntervalSeconds:      1,
-			ReclaimHoldoffSeconds:    1,
+			MinActual:             1024,
+			MaxActual:             8192,
+			GrowBelowAvailable:    128,
+			ReclaimAboveAvailable: 4096,
+			Step:                  2048,
+			PollIntervalSeconds:   1,
+			ReclaimHoldoffSeconds: 1,
 		},
 		Notifier: notifications,
 		Now:      func() time.Time { return now },

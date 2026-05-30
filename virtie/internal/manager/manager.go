@@ -1305,7 +1305,7 @@ func ensureVolumeImages(volumes []manifest.Volume, logger *slog.Logger) error {
 			return fmt.Errorf("stat volume image %q: %w", volume.ImagePath, err)
 		}
 
-		logger.Info("creating volume image", "path", volume.ImagePath, "size_mib", volume.SizeMiB, "fs_type", volume.FSType)
+		logger.Info("creating volume image", "path", volume.ImagePath, "size_mib", volume.Size, "fs_type", volume.FSType)
 		if err := createVolumeImage(volume); err != nil {
 			return err
 		}
@@ -1315,7 +1315,7 @@ func ensureVolumeImages(volumes []manifest.Volume, logger *slog.Logger) error {
 }
 
 func createVolumeImage(volume manifest.Volume) error {
-	sizeBytes := int64(volume.SizeMiB) * 1024 * 1024
+	sizeBytes := volume.Size.Bytes()
 	file, err := os.OpenFile(volume.ImagePath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return fmt.Errorf("create volume image %q: %w", volume.ImagePath, err)

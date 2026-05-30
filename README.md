@@ -49,6 +49,11 @@ But to recap, here's a flake you can make to give it a try:
         #machine.vcpu = 8; # Default: Use all available cores (recommended unless you want a slow VM)
         machine.memory = 8 * 1024;
 
+        # Additional mounts and port forwards can be configured directly:
+        #shares = [];
+        #volumes = [];
+        #forwardPorts = [];
+
         # NixOS modules
         #extraModules = [];
 

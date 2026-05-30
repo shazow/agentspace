@@ -26,6 +26,7 @@ import (
 	"github.com/diskfs/go-diskfs/filesystem"
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
 const testMiB int64 = 1024 * 1024
@@ -250,7 +251,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	cfg.Volumes = []manifest.Volume{
 		{
 			ImagePath:  "overlay.img",
-			SizeMiB:    256,
+			Size:       256,
 			FSType:     "ext4",
 			AutoCreate: true,
 		},
@@ -721,7 +722,7 @@ func TestCreateVolumeImageCreatesNativeExt4(t *testing.T) {
 	label := "persist"
 	for _, tt := range []struct {
 		name      string
-		sizeMiB   int
+		sizeMiB   units.MiB
 		label     string
 		wantLabel string
 	}{
@@ -735,7 +736,7 @@ func TestCreateVolumeImageCreatesNativeExt4(t *testing.T) {
 
 			err := createVolumeImage(manifest.Volume{
 				ImagePath:  imagePath,
-				SizeMiB:    tt.sizeMiB,
+				Size:       tt.sizeMiB,
 				FSType:     "ext4",
 				AutoCreate: true,
 				Label:      tt.label,
@@ -746,7 +747,7 @@ func TestCreateVolumeImageCreatesNativeExt4(t *testing.T) {
 
 			if info, err := os.Stat(imagePath); err != nil {
 				t.Fatalf("expected volume image to exist: %v", err)
-			} else if got, want := info.Size(), int64(tt.sizeMiB)*testMiB; got != want {
+			} else if got, want := info.Size(), tt.sizeMiB.Bytes(); got != want {
 				t.Fatalf("unexpected volume size: got %d want %d", got, want)
 			}
 
@@ -787,7 +788,7 @@ func TestCreateVolumeImageRunsChattrBeforeSizingImage(t *testing.T) {
 	imagePath := filepath.Join(tmpDir, "volume.img")
 	if err := createVolumeImage(manifest.Volume{
 		ImagePath:  imagePath,
-		SizeMiB:    256,
+		Size:       256,
 		FSType:     "ext4",
 		AutoCreate: true,
 	}); err != nil {
@@ -3776,7 +3777,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 				EnableKVM: true,
 			},
 			Memory: manifest.QEMUMemory{
-				SizeMiB: 1024,
+				Size:    1024,
 				Backend: "memfd",
 				Shared:  true,
 			},
@@ -3841,7 +3842,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 		Volumes: []manifest.Volume{
 			{
 				ImagePath:  "root.img",
-				SizeMiB:    256,
+				Size:       256,
 				FSType:     "ext4",
 				AutoCreate: true,
 			},

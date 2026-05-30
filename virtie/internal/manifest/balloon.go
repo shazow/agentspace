@@ -4,13 +4,14 @@ import (
 	"fmt"
 
 	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
-func applyBalloonDefaults(memoryMiB int, device *balloon.Device) {
-	balloon.ApplyDefaults(memoryMiB, device)
+func applyBalloonDefaults(memory units.MiB, device *balloon.Device) {
+	balloon.ApplyDefaults(memory, device)
 }
 
-func validateBalloonDevice(memoryMiB int, device *balloon.Device) error {
+func validateBalloonDevice(memory units.MiB, device *balloon.Device) error {
 	if device == nil {
 		return nil
 	}
@@ -20,7 +21,7 @@ func validateBalloonDevice(memoryMiB int, device *balloon.Device) error {
 		return fmt.Errorf("manifest.qemu.devices.balloon.transport must be one of pci, mmio, or ccw")
 	}
 
-	if err := balloon.ValidateController(memoryMiB, device.Controller); err != nil {
+	if err := balloon.ValidateController(memory, device.Controller); err != nil {
 		return fmt.Errorf("manifest.qemu.devices.balloon.controller.%s", err)
 	}
 

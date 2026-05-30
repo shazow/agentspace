@@ -162,6 +162,67 @@ let
     ];
   };
 
+  vmVirtieExtraImagesAndPorts = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
+    persistence.homeImage = null;
+    volumes = [
+      {
+        image = ".agentspace-test/data.img";
+        mountPoint = "/mnt/data";
+        size = 512;
+        fsType = "ext4";
+        autoCreate = true;
+        readOnly = true;
+        direct = true;
+        serial = "cfg-data";
+      }
+    ];
+    forwardPorts = [
+      {
+        proto = "tcp";
+        from = "host";
+        host = {
+          address = "127.0.0.1";
+          port = 2222;
+        };
+        guest = {
+          address = "127.0.0.1";
+          port = 22;
+        };
+      }
+    ];
+    extraModules = [
+      {
+        microvm.volumes = [
+          {
+            image = ".agentspace-test/microvm.img";
+            mountPoint = "/mnt/microvm";
+            size = 256;
+            fsType = "ext4";
+            autoCreate = true;
+          }
+        ];
+        microvm.forwardPorts = [
+          {
+            proto = "udp";
+            from = "guest";
+            host = {
+              address = "127.0.0.1";
+              port = 5353;
+            };
+            guest = {
+              address = "127.0.0.1";
+              port = 5353;
+            };
+          }
+        ];
+      }
+    ];
+  };
+
   vmVirtieWorkspaces = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = mkExecSSH {
@@ -249,6 +310,8 @@ let
   configFileManifest = vmVirtieConfigFile.config.agentspace.sandbox.launch.virtieManifestData;
   homeSSHPathsManifest = vmVirtieHomeSSHPaths.config.agentspace.sandbox.launch.virtieManifestData;
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
+  extraImagesAndPortsManifest =
+    vmVirtieExtraImagesAndPorts.config.agentspace.sandbox.launch.virtieManifestData;
   workspaceManifest = vmVirtieWorkspaces.config.agentspace.sandbox.launch.virtieManifestData;
   fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
@@ -280,7 +343,8 @@ let
     assert !(manifest.notifications ? exec);
     assert builtins.length virtiofsMounts > 0;
     assert ninePMounts == [ ];
-    assert builtins.length manifest.volumes > 0;
+    assert !(manifest ? volumes);
+    assert builtins.length manifest.mounts.image > 0;
     assert builtins.length manifest.networks > 0;
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.after == [ "sshd.service" ];
     assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
@@ -298,7 +362,9 @@ let
     assert manifest.ssh.ready_socket == "ready.sock";
     assert !(manifest.ssh ? retry_delay_ms);
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.exec;
-    assert builtins.any (volume: volume.image == ".agentspace/nix-store-overlay.img") manifest.volumes;
+    assert builtins.any (
+      volume: volume.source == ".agentspace/nix-store-overlay.img"
+    ) manifest.mounts.image;
     assert builtins.length virtiofsDaemonMounts > 0;
     assert builtins.all (
       mount: mount.virtiofs.socket != "" && mount.virtiofs.bin != ""
@@ -435,6 +501,46 @@ let
       mount: mount.tag == "tools" && mount.virtiofs.socket != "" && mount.virtiofs ? bin
     ) extraSharesManifest.mounts.virtiofs;
     assert !(builtins.any (mount: mount.tag == "cache") extraSharesManifest.mounts.virtiofs);
+    true;
+
+  _extraImagesAndPorts =
+    assert !(extraImagesAndPortsManifest ? volumes);
+    assert builtins.any (
+      mount:
+      mount.source == ".agentspace-test/data.img"
+      && mount.read_only == true
+      && mount.image.size == 512
+      && mount.image.fs == "ext4"
+      && mount.image.create == true
+      && mount.image.direct == true
+      && mount.image.serial == "cfg-data"
+    ) extraImagesAndPortsManifest.mounts.image;
+    assert builtins.any (
+      mount:
+      mount.source == ".agentspace-test/microvm.img"
+      && mount.image.size == 256
+      && mount.image.create == true
+    ) extraImagesAndPortsManifest.mounts.image;
+    assert builtins.any (
+      network:
+      builtins.any (
+        forward:
+        forward.proto == "tcp"
+        && forward.from == "host"
+        && forward.host == "127.0.0.1:2222"
+        && forward.guest == "127.0.0.1:22"
+      ) network.forward
+    ) extraImagesAndPortsManifest.networks;
+    assert builtins.any (
+      network:
+      builtins.any (
+        forward:
+        forward.proto == "udp"
+        && forward.from == "guest"
+        && forward.host == "127.0.0.1:5353"
+        && forward.guest == "127.0.0.1:5353"
+      ) network.forward
+    ) extraImagesAndPortsManifest.networks;
     true;
 
   _workspace =
@@ -618,6 +724,10 @@ in
   virtie-manifest-extra-shares-contract =
     assert _extraShares;
     pkgs.runCommand "virtie-manifest-extra-shares-contract" { } "touch $out";
+
+  virtie-manifest-extra-images-and-ports-contract =
+    assert _extraImagesAndPorts;
+    pkgs.runCommand "virtie-manifest-extra-images-and-ports-contract" { } "touch $out";
 
   virtie-manifest-write-files-contract =
     assert _writeFiles;

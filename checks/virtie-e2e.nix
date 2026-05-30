@@ -466,15 +466,6 @@ let
         path = "/tmp/vmlinuz";
         initrd_path = "/tmp/initrd";
       };
-      volumes = [
-        {
-          image = "overlay.img";
-          size = 256;
-          fs = "ext4";
-          create = true;
-          label = null;
-        }
-      ];
       mounts = {
         virtiofs = [
           {
@@ -486,6 +477,16 @@ let
           }
         ];
         "9p" = [ ];
+        image = [
+          {
+            source = "overlay.img";
+            image = {
+              size = 256;
+              fs = "ext4";
+              create = true;
+            };
+          }
+        ];
       };
       write_files = [
         {

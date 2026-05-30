@@ -174,7 +174,8 @@ func (c *socketGuestAgentClient) ExecStatus(timeout time.Duration, pid int) (gue
 	}
 
 	var result struct {
-		Exited   bool   `json:"exited"`
+		Exited bool `json:"exited"`
+		// Pointer preserves absent exitcode while a guest command is still running.
 		ExitCode *int   `json:"exitcode,omitempty"`
 		OutData  string `json:"out-data,omitempty"`
 		ErrData  string `json:"err-data,omitempty"`
