@@ -69,6 +69,7 @@ let
   manifestPath = sandboxCfg.launch.virtieManifest;
   manifestTemplate = sandboxCfg.launch.virtieManifestTemplate;
   manifest = sandboxCfg.launch.virtieManifestData;
+  mountsOfType = type: manifest: builtins.filter (mount: mount.type == type) manifest.mounts;
   launchScript = mkLaunch vmConsumer;
   runner = vmConsumer.config.microvm.declaredRunner.outPath;
   virtiofsdHelper = "${runner}/bin/virtiofsd-run";
@@ -109,10 +110,12 @@ let
     assert manifest.machine.memory == 512;
     assert manifest.machine.vcpu == 16;
     assert !(manifest ? volumes);
-    assert builtins.any (volume: volume.source == "/var/lib/agentspace/home.img") manifest.mounts.image;
-    assert builtins.any (
-      volume: volume.source == "/var/lib/agentspace/nix-store-overlay.img"
-    ) manifest.mounts.image;
+    assert builtins.any (volume: volume.source == "/var/lib/agentspace/home.img") (
+      mountsOfType "image" manifest
+    );
+    assert builtins.any (volume: volume.source == "/var/lib/agentspace/nix-store-overlay.img") (
+      mountsOfType "image" manifest
+    );
     true;
 in
 {

@@ -47,10 +47,11 @@
         [ssh]
         ready_socket = ""
 
-        [[mounts.image]]
+        [[mounts]]
+        type = "image"
         source = ".virtie/rootfs.ext4"
 
-        [mounts.image.image]
+        [mounts.image]
         fs = "ext4"
         create = false
         label = "gondolin-root"

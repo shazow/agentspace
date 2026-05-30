@@ -3647,6 +3647,55 @@ func TestBuildQEMUSpecAddsNinePDevice(t *testing.T) {
 	}
 }
 
+func TestBuildQEMUSpecPreservesOrderedMountDevices(t *testing.T) {
+	cfg := validManifest("/tmp/work")
+	cfg.QEMU.Devices.Mounts = []manifest.QEMUMountDevice{
+		{
+			Type: manifest.MountTypeNineP,
+			NineP: &manifest.QEMUNinePShare{
+				ID:            "fs9p0",
+				SourcePath:    "shares/cache",
+				Tag:           "cache",
+				SecurityModel: "none",
+				Transport:     "pci",
+			},
+		},
+		{
+			Type: manifest.MountTypeVirtioFS,
+			VirtioFS: &manifest.QEMUVirtioFSShare{
+				ID:         "fs0",
+				SocketPath: "fs.sock",
+				Tag:        "workspace",
+				Transport:  "pci",
+			},
+		},
+		{
+			Type: manifest.MountTypeImage,
+			Block: &manifest.QEMUBlockDevice{
+				ID:        "vda",
+				ImagePath: "root.img",
+				AIO:       "threads",
+				Transport: "pci",
+			},
+		},
+	}
+
+	spec, err := buildQEMUSpec(cfg, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	ninePIndex := indexStringContaining(spec.Args, "local,id=fs9p0,path=/tmp/work/shares/cache")
+	virtioFSIndex := indexStringContaining(spec.Args, "vhost-user-fs-pci,chardev=char-fs0,tag=workspace")
+	blockIndex := indexStringContaining(spec.Args, "id=vda,format=raw,file=/tmp/work/root.img")
+	if ninePIndex == -1 || virtioFSIndex == -1 || blockIndex == -1 {
+		t.Fatalf("expected qemu args to include all ordered mount devices: %v", spec.Args)
+	}
+	if !(ninePIndex < virtioFSIndex && virtioFSIndex < blockIndex) {
+		t.Fatalf("expected mount args in manifest order, got indexes 9p=%d virtiofs=%d block=%d args=%v", ninePIndex, virtioFSIndex, blockIndex, spec.Args)
+	}
+}
+
 func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 	manifest.QEMU.Memory.Backend = "default"
@@ -4777,6 +4826,15 @@ func containsGuestExec(calls []guestExecCall, path string, argNeedle string) boo
 func indexString(values []string, needle string) int {
 	for i, value := range values {
 		if value == needle {
+			return i
+		}
+	}
+	return -1
+}
+
+func indexStringContaining(values []string, needle string) int {
+	for i, value := range values {
+		if strings.Contains(value, needle) {
 			return i
 		}
 	}

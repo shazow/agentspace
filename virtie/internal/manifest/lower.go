@@ -76,7 +76,9 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 	if m.Persistence.StateDir == "" {
 		m.Persistence.StateDir = m.Persistence.BaseDir
 	}
-	m.Persistence.Directories = persistenceDirectories(d.Mounts.Image, m.Persistence.StateDir)
+	imageMounts := d.Mounts.Image()
+	virtioFSMounts := d.Mounts.VirtioFS()
+	m.Persistence.Directories = persistenceDirectories(imageMounts, m.Persistence.StateDir)
 	if m.Paths.LockPath == "" {
 		m.Paths.LockPath = filepath.Join(m.Persistence.StateDir, m.Identity.HostName+".lock")
 	}
@@ -90,8 +92,8 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 		return nil, err
 	}
 	m.QEMU = qemu
-	m.Volumes = lowerVolumes(d.Mounts.Image)
-	virtioFSRuns, err := m.lowerVirtioFSRuns(d.Mounts.VirtioFS, options)
+	m.Volumes = lowerVolumes(imageMounts)
+	virtioFSRuns, err := m.lowerVirtioFSRuns(virtioFSMounts, options)
 	if err != nil {
 		return nil, err
 	}
@@ -191,6 +193,9 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		return QEMU{}, err
 	}
 
+	virtioFSMounts := d.Mounts.VirtioFS()
+	ninePMounts := d.Mounts.NineP()
+	imageMounts := d.Mounts.Image()
 	qemu := QEMU{
 		BinaryPath: binaryPath,
 		Name:       hostName,
@@ -204,8 +209,8 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		},
 		Memory: QEMUMemory{
 			Size:    memorySize,
-			Backend: memoryBackend(host, d.Mounts.VirtioFS),
-			Shared:  len(d.Mounts.VirtioFS) > 0,
+			Backend: memoryBackend(host, virtioFSMounts),
+			Shared:  len(virtioFSMounts) > 0,
 		},
 		Kernel: QEMUKernel{
 			Path:       d.Kernel.Path,
@@ -243,9 +248,10 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 			},
 			I8042:    host.System == "x86_64-linux",
 			Balloon:  lowerBalloon(d.Balloon, transport),
-			VirtioFS: lowerVirtioFSMounts(d.Mounts.VirtioFS, transport),
-			NineP:    lowerNinePMounts(d.Mounts.NineP, transport),
-			Block:    lowerBlocks(d.Mounts.Image, host, transport),
+			VirtioFS: lowerVirtioFSMounts(virtioFSMounts, transport),
+			NineP:    lowerNinePMounts(ninePMounts, transport),
+			Block:    lowerBlocks(imageMounts, host, transport),
+			Mounts:   lowerQEMUMounts(d.Mounts, host, transport),
 			Network:  networks,
 			VSOCK: QEMUVSOCKDevice{
 				ID:        "vsock0",
@@ -270,7 +276,7 @@ func lowerCPUCount(cpus *int) CPUCount {
 }
 
 func qemuTransport(machineType string, mounts MountsInput, graphics QEMUGraphics) string {
-	if !strings.HasPrefix(machineType, "microvm") || mounts.Len() > 0 || !graphics.IsZero() {
+	if !strings.HasPrefix(machineType, "microvm") || mounts.RequiresPCI() || !graphics.IsZero() {
 		return "pci"
 	}
 	return "mmio"
@@ -396,6 +402,85 @@ func lowerBlocks(volumes []ImageMountInput, host HostInput, transport string) []
 		blocks = append(blocks, block)
 	}
 	return blocks
+}
+
+func lowerQEMUMounts(mounts MountsInput, host HostInput, transport string) []QEMUMountDevice {
+	devices := make([]QEMUMountDevice, 0, len(mounts))
+	ctx := mountLowerContext{
+		host:      host,
+		transport: transport,
+	}
+	for _, mount := range mounts {
+		devices = append(devices, mount.lowerQEMUMount(&ctx))
+	}
+	return devices
+}
+
+type mountLowerContext struct {
+	host           HostInput
+	transport      string
+	virtioFSIndex  int
+	ninePIndex     int
+	blockDiskIndex int
+}
+
+func (mount VirtioFSMountInput) lowerQEMUMount(ctx *mountLowerContext) QEMUMountDevice {
+	device := lowerQEMUVirtioFSMount(mount, ctx.virtioFSIndex, ctx.transport)
+	ctx.virtioFSIndex++
+	return device
+}
+
+func (mount NinePMountInput) lowerQEMUMount(ctx *mountLowerContext) QEMUMountDevice {
+	device := lowerQEMUNinePMount(mount, ctx.ninePIndex, ctx.transport)
+	ctx.ninePIndex++
+	return device
+}
+
+func (mount ImageMountInput) lowerQEMUMount(ctx *mountLowerContext) QEMUMountDevice {
+	device := lowerQEMUImageMount(mount, ctx.blockDiskIndex, ctx.host, ctx.transport)
+	ctx.blockDiskIndex++
+	return device
+}
+
+func lowerQEMUVirtioFSMount(mount VirtioFSMountInput, index int, transport string) QEMUMountDevice {
+	share := QEMUVirtioFSShare{
+		ID:         "fs" + strconv.Itoa(index),
+		SocketPath: mount.VirtioFS.Socket,
+		Tag:        mount.Tag,
+		Transport:  transport,
+	}
+	return QEMUMountDevice{Type: MountTypeVirtioFS, VirtioFS: &share}
+}
+
+func lowerQEMUNinePMount(mount NinePMountInput, index int, transport string) QEMUMountDevice {
+	securityModel := mount.NineP.SecurityModel
+	if securityModel == "" {
+		securityModel = "mapped"
+	}
+	share := QEMUNinePShare{
+		ID:            "fs9p" + strconv.Itoa(index),
+		SourcePath:    mount.SourcePath,
+		Tag:           mount.Tag,
+		SecurityModel: securityModel,
+		ReadOnly:      mount.ReadOnly,
+		Transport:     transport,
+	}
+	return QEMUMountDevice{Type: MountTypeNineP, NineP: &share}
+}
+
+func lowerQEMUImageMount(mount ImageMountInput, index int, host HostInput, transport string) QEMUMountDevice {
+	block := QEMUBlockDevice{
+		ID:        "vd" + string(rune('a'+index)),
+		ImagePath: mount.SourcePath,
+		AIO:       aioEngine(host),
+		ReadOnly:  mount.ReadOnly,
+		Serial:    stringValue(mount.Image.Serial),
+		Transport: transport,
+	}
+	if mount.Image.Direct {
+		block.Cache = "none"
+	}
+	return QEMUMountDevice{Type: MountTypeImage, Block: &block}
 }
 
 func aioEngine(host HostInput) string {

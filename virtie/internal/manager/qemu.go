@@ -159,73 +159,32 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 		return nil, err
 	}
 
-	for _, share := range qemu.Devices.VirtioFS {
-		shareTransport, err := resolveQEMUTransport(share.Transport)
-		if err != nil {
-			return nil, err
+	if len(qemu.Devices.Mounts) > 0 {
+		for _, mount := range qemu.Devices.Mounts {
+			args, err = appendQEMUMountArgs(config, args, mount)
+			if err != nil {
+				return nil, err
+			}
 		}
-		args = append(args, govmmQemu.VhostUserDevice{
-			SocketPath:    share.SocketPath,
-			CharDevID:     "char-" + share.ID,
-			Tag:           share.Tag,
-			VhostUserType: govmmQemu.VhostUserFS,
-			Transport:     shareTransport,
-		}.QemuParams(config)...)
-	}
-
-	for _, share := range qemu.Devices.NineP {
-		driver, err := ninePDriver(share.Transport)
-		if err != nil {
-			return nil, err
+	} else {
+		for _, share := range qemu.Devices.VirtioFS {
+			args, err = appendVirtioFSArgs(config, args, share)
+			if err != nil {
+				return nil, err
+			}
 		}
-		fsdevParams := []string{
-			"local",
-			fmt.Sprintf("id=%s", share.ID),
-			fmt.Sprintf("path=%s", share.SourcePath),
-			fmt.Sprintf("security_model=%s", share.SecurityModel),
-			fmt.Sprintf("readonly=%s", onOff(share.ReadOnly)),
+		for _, share := range qemu.Devices.NineP {
+			args, err = appendNinePArgs(args, share)
+			if err != nil {
+				return nil, err
+			}
 		}
-		deviceParams := []string{
-			driver,
-			fmt.Sprintf("fsdev=%s", share.ID),
-			fmt.Sprintf("mount_tag=%s", share.Tag),
+		for _, block := range qemu.Devices.Block {
+			args, err = appendBlockArgs(args, block)
+			if err != nil {
+				return nil, err
+			}
 		}
-		args = append(args, "-fsdev", strings.Join(fsdevParams, ","))
-		args = append(args, "-device", strings.Join(deviceParams, ","))
-	}
-
-	for _, block := range qemu.Devices.Block {
-		blockTransport, err := resolveQEMUTransport(block.Transport)
-		if err != nil {
-			return nil, err
-		}
-		driver := govmmQemu.VirtioBlockTransport[blockTransport]
-
-		driveParams := []string{
-			fmt.Sprintf("id=%s", block.ID),
-			"format=raw",
-			fmt.Sprintf("file=%s", block.ImagePath),
-			"if=none",
-		}
-		if block.AIO != "" {
-			driveParams = append(driveParams, fmt.Sprintf("aio=%s", block.AIO))
-		}
-		driveParams = append(driveParams, "discard=unmap")
-		if block.Cache != "" {
-			driveParams = append(driveParams, fmt.Sprintf("cache=%s", block.Cache))
-		}
-		driveParams = append(driveParams, fmt.Sprintf("read-only=%s", onOff(block.ReadOnly)))
-
-		deviceParams := []string{
-			driver,
-			fmt.Sprintf("drive=%s", block.ID),
-		}
-		if block.Serial != "" {
-			deviceParams = append(deviceParams, fmt.Sprintf("serial=%s", block.Serial))
-		}
-
-		args = append(args, "-drive", strings.Join(driveParams, ","))
-		args = append(args, "-device", strings.Join(deviceParams, ","))
 	}
 
 	for _, netdev := range qemu.Devices.Network {
@@ -275,6 +234,99 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 
 	args = append(args, qemu.PassthroughArgs...)
 
+	return args, nil
+}
+
+func appendQEMUMountArgs(config *govmmQemu.Config, args []string, mount manifest.QEMUMountDevice) ([]string, error) {
+	switch mount.Type {
+	case manifest.MountTypeVirtioFS:
+		if mount.VirtioFS == nil {
+			return nil, fmt.Errorf("qemu mount %q missing virtiofs device", mount.Type)
+		}
+		return appendVirtioFSArgs(config, args, *mount.VirtioFS)
+	case manifest.MountTypeNineP:
+		if mount.NineP == nil {
+			return nil, fmt.Errorf("qemu mount %q missing 9p device", mount.Type)
+		}
+		return appendNinePArgs(args, *mount.NineP)
+	case manifest.MountTypeImage:
+		if mount.Block == nil {
+			return nil, fmt.Errorf("qemu mount %q missing block device", mount.Type)
+		}
+		return appendBlockArgs(args, *mount.Block)
+	default:
+		return nil, fmt.Errorf("unsupported qemu mount type %q", mount.Type)
+	}
+}
+
+func appendVirtioFSArgs(config *govmmQemu.Config, args []string, share manifest.QEMUVirtioFSShare) ([]string, error) {
+	shareTransport, err := resolveQEMUTransport(share.Transport)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, govmmQemu.VhostUserDevice{
+		SocketPath:    share.SocketPath,
+		CharDevID:     "char-" + share.ID,
+		Tag:           share.Tag,
+		VhostUserType: govmmQemu.VhostUserFS,
+		Transport:     shareTransport,
+	}.QemuParams(config)...), nil
+}
+
+func appendNinePArgs(args []string, share manifest.QEMUNinePShare) ([]string, error) {
+	driver, err := ninePDriver(share.Transport)
+	if err != nil {
+		return nil, err
+	}
+	fsdevParams := []string{
+		"local",
+		fmt.Sprintf("id=%s", share.ID),
+		fmt.Sprintf("path=%s", share.SourcePath),
+		fmt.Sprintf("security_model=%s", share.SecurityModel),
+		fmt.Sprintf("readonly=%s", onOff(share.ReadOnly)),
+	}
+	deviceParams := []string{
+		driver,
+		fmt.Sprintf("fsdev=%s", share.ID),
+		fmt.Sprintf("mount_tag=%s", share.Tag),
+	}
+	args = append(args, "-fsdev", strings.Join(fsdevParams, ","))
+	args = append(args, "-device", strings.Join(deviceParams, ","))
+	return args, nil
+}
+
+func appendBlockArgs(args []string, block manifest.QEMUBlockDevice) ([]string, error) {
+	blockTransport, err := resolveQEMUTransport(block.Transport)
+	if err != nil {
+		return nil, err
+	}
+	driver := govmmQemu.VirtioBlockTransport[blockTransport]
+
+	driveParams := []string{
+		fmt.Sprintf("id=%s", block.ID),
+		"format=raw",
+		fmt.Sprintf("file=%s", block.ImagePath),
+		"if=none",
+	}
+	if block.AIO != "" {
+		driveParams = append(driveParams, fmt.Sprintf("aio=%s", block.AIO))
+	}
+	driveParams = append(driveParams, "discard=unmap")
+	if block.Cache != "" {
+		driveParams = append(driveParams, fmt.Sprintf("cache=%s", block.Cache))
+	}
+	driveParams = append(driveParams, fmt.Sprintf("read-only=%s", onOff(block.ReadOnly)))
+
+	deviceParams := []string{
+		driver,
+		fmt.Sprintf("drive=%s", block.ID),
+	}
+	if block.Serial != "" {
+		deviceParams = append(deviceParams, fmt.Sprintf("serial=%s", block.Serial))
+	}
+
+	args = append(args, "-drive", strings.Join(driveParams, ","))
+	args = append(args, "-device", strings.Join(deviceParams, ","))
 	return args, nil
 }
 

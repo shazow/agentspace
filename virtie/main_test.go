@@ -172,22 +172,20 @@ func testManifestJSON(workingDir string) string {
     "path": "/tmp/vmlinuz",
     "initrd_path": "/tmp/initrd"
   },
-  "mounts": {
-    "virtiofs": [
-      {
-        "tag": "workspace",
-        "virtiofs": {
-          "socket": "virtiofs.sock",
-          "bin": "/bin/virtiofsd"
-        }
+  "mounts": [
+    {
+      "type": "virtiofs",
+      "tag": "workspace",
+      "virtiofs": {
+        "socket": "virtiofs.sock",
+        "bin": "/bin/virtiofsd"
       }
-    ],
-    "image": [
-      {
-        "source": "overlay.img"
-      }
-    ]
-  }
+    },
+    {
+      "type": "image",
+      "source": "overlay.img"
+    }
+  ]
 }
 `
 }

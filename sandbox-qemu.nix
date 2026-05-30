@@ -488,6 +488,7 @@ in
       };
 
       mkManifestImageMount = volume: {
+        type = "image";
         source = volume.image;
         read_only = volume.readOnly;
         image = {
@@ -502,6 +503,7 @@ in
       manifestImageMounts =
         lib.optionals cfg.persistence.storeDisk [
           {
+            type = "image";
             source = config.microvm.storeDisk;
             read_only = true;
             image = { };
@@ -559,14 +561,15 @@ in
         };
       }) cfg.run;
 
-      manifestMounts = {
-        virtiofs = builtins.map (
+      manifestMounts =
+        builtins.map (
           share:
           let
             socketPath =
               if nixStoreShareUsesSocket && isNixStoreShare share then cfg.nixStoreShareSocket else share.socket;
           in
           {
+            type = "virtiofs";
             tag = share.tag;
             source = share.source;
             read_only = share.readOnly;
@@ -580,17 +583,17 @@ in
               }
             );
           }
-        ) virtiofsShares;
-        "9p" = builtins.map (share: {
+        ) virtiofsShares
+        ++ builtins.map (share: {
+          type = "9p";
           tag = share.tag;
           source = share.source;
           read_only = share.readOnly;
           "9p" = {
             security_model = share.securityModel;
           };
-        }) ninepShares;
-        image = manifestImageMounts;
-      };
+        }) ninepShares
+        ++ manifestImageMounts;
 
       manifestWriteFiles = lib.mapAttrsToList (
         guestPath: file:

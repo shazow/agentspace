@@ -177,6 +177,24 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 		resolved.Devices.Block[i].ImagePath = m.resolvePath(resolved.Devices.Block[i].ImagePath)
 	}
 
+	resolved.Devices.Mounts = cloneQEMUMountDevices(resolved.Devices.Mounts)
+	for i := range resolved.Devices.Mounts {
+		mount := &resolved.Devices.Mounts[i]
+		if mount.VirtioFS != nil {
+			socketPath, err := m.resolveSocketPath(mount.VirtioFS.SocketPath)
+			if err != nil {
+				return QEMU{}, err
+			}
+			mount.VirtioFS.SocketPath = socketPath
+		}
+		if mount.NineP != nil {
+			mount.NineP.SourcePath = m.resolvePath(mount.NineP.SourcePath)
+		}
+		if mount.Block != nil {
+			mount.Block.ImagePath = m.resolvePath(mount.Block.ImagePath)
+		}
+	}
+
 	resolved.Devices.Network = append([]QEMUNetDevice(nil), resolved.Devices.Network...)
 	for i := range resolved.Devices.Network {
 		resolved.Devices.Network[i].NetdevOptions = append([]string(nil), resolved.Devices.Network[i].NetdevOptions...)
@@ -185,6 +203,29 @@ func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved.Devices.Balloon = cloneBalloonDevice(resolved.Devices.Balloon)
 
 	return resolved, nil
+}
+
+func cloneQEMUMountDevices(mounts []QEMUMountDevice) []QEMUMountDevice {
+	if len(mounts) == 0 {
+		return nil
+	}
+	clone := make([]QEMUMountDevice, len(mounts))
+	for i, mount := range mounts {
+		clone[i] = mount
+		if mount.VirtioFS != nil {
+			share := *mount.VirtioFS
+			clone[i].VirtioFS = &share
+		}
+		if mount.NineP != nil {
+			share := *mount.NineP
+			clone[i].NineP = &share
+		}
+		if mount.Block != nil {
+			block := *mount.Block
+			clone[i].Block = &block
+		}
+	}
+	return clone
 }
 
 func (m *Manifest) ResolvedRuns(cid int) ([]ResolvedRun, error) {

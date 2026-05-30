@@ -1,6 +1,9 @@
 package manifest
 
-import "github.com/shazow/agentspace/virtie/internal/units"
+import (
+	"github.com/shazow/agentspace/virtie/internal/manifest/tagged"
+	"github.com/shazow/agentspace/virtie/internal/units"
+)
 
 const (
 	KernelSerialOff     = "off"
@@ -79,14 +82,68 @@ type GraphicsInput struct {
 	Backend string `json:"backend,omitempty" toml:"backend"`
 }
 
-type MountsInput struct {
-	VirtioFS []VirtioFSMountInput `json:"virtiofs,omitempty" toml:"virtiofs"`
-	NineP    []NinePMountInput    `json:"9p,omitempty" toml:"9p"`
-	Image    []ImageMountInput    `json:"image,omitempty" toml:"image"`
+type MountsInput []MountEntry
+
+func (m MountsInput) RequiresPCI() bool {
+	return len(m.VirtioFS()) > 0 || len(m.NineP()) > 0
 }
 
-func (m MountsInput) Len() int {
-	return len(m.VirtioFS) + len(m.NineP)
+type MountEntry interface {
+	mountEntry()
+	mountType() string
+	lowerQEMUMount(*mountLowerContext) QEMUMountDevice
+}
+
+const (
+	MountTypeVirtioFS = "virtiofs"
+	MountTypeNineP    = "9p"
+	MountTypeImage    = "image"
+)
+
+var mountRegistry = tagged.Registry[MountEntry]{
+	tagged.Value[MountEntry, VirtioFSMountInput](MountTypeVirtioFS),
+	tagged.Value[MountEntry, NinePMountInput](MountTypeNineP),
+	tagged.Value[MountEntry, ImageMountInput](MountTypeImage),
+}
+
+func (m MountsInput) VirtioFS() []VirtioFSMountInput {
+	return filterMounts[VirtioFSMountInput](m)
+}
+
+func (m MountsInput) NineP() []NinePMountInput {
+	return filterMounts[NinePMountInput](m)
+}
+
+func (m MountsInput) Image() []ImageMountInput {
+	return filterMounts[ImageMountInput](m)
+}
+
+func (m *MountsInput) UnmarshalJSON(data []byte) error {
+	mounts, err := tagged.DecodeJSONList(data, "manifest.mounts", mountRegistry)
+	*m = mounts
+	return err
+}
+
+func (m MountsInput) MarshalJSON() ([]byte, error) {
+	return tagged.MarshalJSONList(m, func(mount MountEntry) string {
+		return mount.mountType()
+	})
+}
+
+func (m *MountsInput) UnmarshalTOML(data any) error {
+	mounts, err := tagged.DecodeTOMLList(data, "manifest.mounts", mountRegistry)
+	*m = mounts
+	return err
+}
+
+func filterMounts[T MountEntry](mounts MountsInput) []T {
+	filtered := make([]T, 0, len(mounts))
+	for _, mount := range mounts {
+		if typed, ok := mount.(T); ok {
+			filtered = append(filtered, typed)
+		}
+	}
+	return filtered
 }
 
 type MountInput struct {
@@ -96,10 +153,15 @@ type MountInput struct {
 }
 
 type VirtioFSMountInput struct {
+	Type string `json:"type" toml:"type"`
 	MountInput
 
 	VirtioFS VirtioFSInput `json:"virtiofs,omitempty" toml:"virtiofs"`
 }
+
+func (VirtioFSMountInput) mountEntry() {}
+
+func (VirtioFSMountInput) mountType() string { return MountTypeVirtioFS }
 
 type VirtioFSInput struct {
 	Socket string   `json:"socket,omitempty" toml:"socket"`
@@ -108,20 +170,30 @@ type VirtioFSInput struct {
 }
 
 type NinePMountInput struct {
+	Type string `json:"type" toml:"type"`
 	MountInput
 
 	NineP NinePInput `json:"9p,omitempty" toml:"9p"`
 }
+
+func (NinePMountInput) mountEntry() {}
+
+func (NinePMountInput) mountType() string { return MountTypeNineP }
 
 type NinePInput struct {
 	SecurityModel string `json:"security_model,omitempty" toml:"security_model"`
 }
 
 type ImageMountInput struct {
+	Type       string     `json:"type" toml:"type"`
 	SourcePath string     `json:"source" toml:"source"`
 	ReadOnly   bool       `json:"read_only,omitempty" toml:"read_only"`
 	Image      ImageInput `json:"image,omitempty" toml:"image"`
 }
+
+func (ImageMountInput) mountEntry() {}
+
+func (ImageMountInput) mountType() string { return MountTypeImage }
 
 type ImageInput struct {
 	Size       units.MiB `json:"size,omitempty" toml:"size"`
