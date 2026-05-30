@@ -22,6 +22,8 @@ const (
 
 type qmpClient interface {
 	WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error
+	RunRaw(timeout time.Duration, command string) error
+	DeviceDelAndWait(timeout time.Duration, id string) error
 	Stop(timeout time.Duration) error
 	Cont(timeout time.Duration) error
 	QueryStatus(timeout time.Duration) (string, error)
@@ -100,6 +102,50 @@ func (c *socketMonitorClient) WithRaw(timeout time.Duration, fn func(*rawQMP.Mon
 	return c.withTimeout(timeout, func() error {
 		return fn(c.raw)
 	})
+}
+
+func (c *socketMonitorClient) RunRaw(timeout time.Duration, command string) error {
+	err := c.withTimeout(timeout, func() error {
+		if !json.Valid([]byte(command)) {
+			return fmt.Errorf("invalid qmp json")
+		}
+		_, err := c.monitor.Run([]byte(command))
+		return err
+	})
+	if isTimeoutError(err) {
+		return fmt.Errorf("qmp command timed out after %s", timeout)
+	}
+	return err
+}
+
+func (c *socketMonitorClient) DeviceDelAndWait(timeout time.Duration, id string) error {
+	command, err := json.Marshal(map[string]any{
+		"execute":   "device_del",
+		"arguments": map[string]any{"id": id},
+	})
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.monitor.setTimeout(timeout)
+	defer c.monitor.setTimeout(0)
+
+	c.monitor.mu.Lock()
+	defer c.monitor.mu.Unlock()
+	err = c.monitor.withDeadline(func() error {
+		if _, err := c.monitor.conn.Write(appendQMPDelimiter(command)); err != nil {
+			return err
+		}
+		if _, err := c.monitor.readResponseLocked(); err != nil {
+			return err
+		}
+		return c.monitor.waitDeviceDeletedLocked(id)
+	})
+	if isTimeoutError(err) {
+		return fmt.Errorf("qmp device_del %q timed out after %s", id, timeout)
+	}
+	return err
 }
 
 func (c *socketMonitorClient) Quit(timeout time.Duration) error {
@@ -345,6 +391,34 @@ func (m *deadlineSocketMonitor) readResponseLocked() ([]byte, error) {
 			return nil, errors.New(envelope.Error.Desc)
 		}
 		return message, nil
+	}
+}
+
+func (m *deadlineSocketMonitor) waitDeviceDeletedLocked(id string) error {
+	for {
+		var message json.RawMessage
+		if err := m.decoder.Decode(&message); err != nil {
+			return err
+		}
+
+		var envelope struct {
+			Event string `json:"event,omitempty"`
+			Data  struct {
+				Device string `json:"device,omitempty"`
+			} `json:"data,omitempty"`
+			Error *struct {
+				Desc string `json:"desc"`
+			} `json:"error,omitempty"`
+		}
+		if err := json.Unmarshal(message, &envelope); err != nil {
+			return err
+		}
+		if envelope.Error != nil && envelope.Error.Desc != "" {
+			return errors.New(envelope.Error.Desc)
+		}
+		if envelope.Event == "DEVICE_DELETED" && envelope.Data.Device == id {
+			return nil
+		}
 	}
 }
 

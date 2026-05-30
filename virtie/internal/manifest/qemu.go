@@ -19,6 +19,7 @@ type QEMU struct {
 	QMP             QEMUQMP        `json:"qmp"`
 	GuestAgent      QEMUGuestAgent `json:"guestAgent,omitempty"`
 	SSHReady        QEMUSSHReady   `json:"sshReady,omitempty"`
+	Hotplug         QEMUHotplug    `json:"hotplug,omitempty"`
 	Devices         QEMUDevices    `json:"devices"`
 	MachineID       string         `json:"machineId,omitempty"`
 	PassthroughArgs []string       `json:"passthroughArgs,omitempty"`
@@ -97,6 +98,10 @@ type QEMUGuestAgent struct {
 
 type QEMUSSHReady struct {
 	SocketPath string `json:"socketPath,omitempty"`
+}
+
+type QEMUHotplug struct {
+	PCIEPorts int `json:"pciePorts,omitempty"`
 }
 
 type QEMUDevices struct {

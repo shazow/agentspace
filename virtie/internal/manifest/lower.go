@@ -17,6 +17,7 @@ import (
 	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/hotplug"
 )
 
 const virtioFSSocketProbeTimeout = 100 * time.Millisecond
@@ -87,7 +88,8 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 		m.SSH.User = defaultSSHUser
 	}
 
-	qemu, err := d.lowerQEMU(host, m.Identity.HostName, m.Paths.WorkingDir, m.Persistence.StateDir)
+	hotplugCount := d.hotplugCount()
+	qemu, err := d.lowerQEMU(host, m.Identity.HostName, m.Paths.WorkingDir, m.Persistence.StateDir, hotplugCount)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +100,11 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 		return nil, err
 	}
 	m.Run = append(virtioFSRuns, lowerRun(d.Run)...)
+	hotplug, err := m.lowerHotplug(d)
+	if err != nil {
+		return nil, err
+	}
+	m.Hotplug = hotplug
 	m.WriteFiles = lowerWriteFiles(d.WriteFiles)
 
 	if err := m.Validate(); err != nil {
@@ -129,13 +136,16 @@ func (h HostInput) withDefaults() HostInput {
 	return h
 }
 
-func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, stateDir string) (QEMU, error) {
+func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, stateDir string, hotplugCount int) (QEMU, error) {
 	machineType := d.Machine.Type
 	if machineType == "" {
 		machineType = defaultMachineType
 	}
 	graphics := lowerGraphics(d.Graphics)
-	transport := qemuTransport(machineType, d.Mounts, graphics)
+	transport := qemuTransport(machineType, d.Mounts, graphics, hotplugCount > 0)
+	virtioFSMounts := d.Mounts.VirtioFS()
+	hasVirtioFS := len(virtioFSMounts) > 0 || len(d.Hotplug.VirtioFS) > 0
+	launchVirtioFSMounts := filterLaunchVirtioFSMounts(virtioFSMounts)
 	memorySize := d.Machine.Memory
 	if memorySize == 0 {
 		memorySize = defaultMemorySize
@@ -193,7 +203,6 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		return QEMU{}, err
 	}
 
-	virtioFSMounts := d.Mounts.VirtioFS()
 	ninePMounts := d.Mounts.NineP()
 	imageMounts := d.Mounts.Image()
 	qemu := QEMU{
@@ -209,8 +218,8 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		},
 		Memory: QEMUMemory{
 			Size:    memorySize,
-			Backend: memoryBackend(host, virtioFSMounts),
-			Shared:  len(virtioFSMounts) > 0,
+			Backend: memoryBackend(host, hasVirtioFS),
+			Shared:  hasVirtioFS,
 		},
 		Kernel: QEMUKernel{
 			Path:       d.Kernel.Path,
@@ -241,6 +250,9 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		SSHReady: QEMUSSHReady{
 			SocketPath: sshReadySocket,
 		},
+		Hotplug: QEMUHotplug{
+			PCIEPorts: hotplugCount,
+		},
 		Devices: QEMUDevices{
 			RNG: QEMURNGDevice{
 				ID:        "rng0",
@@ -248,7 +260,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 			},
 			I8042:    host.System == "x86_64-linux",
 			Balloon:  lowerBalloon(d.Balloon, transport),
-			VirtioFS: lowerVirtioFSMounts(virtioFSMounts, transport),
+			VirtioFS: lowerVirtioFSMounts(launchVirtioFSMounts, transport),
 			NineP:    lowerNinePMounts(ninePMounts, transport),
 			Block:    lowerBlocks(imageMounts, host, transport),
 			Mounts:   lowerQEMUMounts(d.Mounts, host, transport),
@@ -275,8 +287,18 @@ func lowerCPUCount(cpus *int) CPUCount {
 	return ExplicitCPUs(*cpus)
 }
 
-func qemuTransport(machineType string, mounts MountsInput, graphics QEMUGraphics) string {
-	if !strings.HasPrefix(machineType, "microvm") || mounts.RequiresPCI() || !graphics.IsZero() {
+func (d Document) hotplugCount() int {
+	count := len(d.Hotplug.VirtioFS) + len(d.Hotplug.Net) + len(d.Hotplug.Block)
+	for _, mount := range d.Mounts.VirtioFS() {
+		if mount.Hotplugged {
+			count++
+		}
+	}
+	return count
+}
+
+func qemuTransport(machineType string, mounts MountsInput, graphics QEMUGraphics, requirePCI bool) string {
+	if requirePCI || !strings.HasPrefix(machineType, "microvm") || mounts.RequiresPCI() || !graphics.IsZero() {
 		return "pci"
 	}
 	return "mmio"
@@ -286,6 +308,11 @@ func lowerMachineOptions(host HostInput, machineType string, explicit map[string
 	options := explicit
 	if options == nil {
 		options = defaultMachineOptions(host, machineType, requirePCI)
+	} else {
+		options = cloneStringMap(explicit)
+		if requirePCI && strings.HasPrefix(machineType, "microvm") {
+			options["pcie"] = "on"
+		}
 	}
 	keys := make([]string, 0, len(options))
 	for key := range options {
@@ -338,8 +365,8 @@ func defaultCPUModel(host HostInput) string {
 	return "host"
 }
 
-func memoryBackend(host HostInput, virtiofsMounts []VirtioFSMountInput) string {
-	if host.OS == "linux" && len(virtiofsMounts) > 0 {
+func memoryBackend(host HostInput, hasVirtioFS bool) string {
+	if host.OS == "linux" && hasVirtioFS {
 		return "memfd"
 	}
 	return "default"
@@ -411,6 +438,9 @@ func lowerQEMUMounts(mounts MountsInput, host HostInput, transport string) []QEM
 		transport: transport,
 	}
 	for _, mount := range mounts {
+		if virtiofs, ok := mount.(VirtioFSMountInput); ok && virtiofs.Hotplugged {
+			continue
+		}
 		devices = append(devices, mount.lowerQEMUMount(&ctx))
 	}
 	return devices
@@ -490,6 +520,16 @@ func aioEngine(host HostInput) string {
 	return "threads"
 }
 
+func filterLaunchVirtioFSMounts(mounts []VirtioFSMountInput) []VirtioFSMountInput {
+	result := make([]VirtioFSMountInput, 0, len(mounts))
+	for _, mount := range mounts {
+		if !mount.Hotplugged {
+			result = append(result, mount)
+		}
+	}
+	return result
+}
+
 func lowerWorkspace(workspace WorkspaceInput) Workspace {
 	return Workspace{
 		GuestDir: workspace.GuestDir,
@@ -533,7 +573,7 @@ func lowerNinePMounts(mounts []NinePMountInput, transport string) []QEMUNinePSha
 func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerOptions) ([]Run, error) {
 	runs := make([]Run, 0, len(mounts))
 	for _, mount := range mounts {
-		if mount.VirtioFS.Socket == "" {
+		if mount.Hotplugged || mount.VirtioFS.Socket == "" {
 			continue
 		}
 		if mount.VirtioFS.Bin == "" && len(mount.VirtioFS.Args) == 0 {
@@ -581,7 +621,7 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerO
 		}
 		runs = append(runs, Run{
 			Name: fmt.Sprintf("virtiofsd[%s]", mount.Tag),
-			Exec: append([]string{m.resolvePath(bin)}, args...),
+			Exec: append([]string{m.resolveOptionalBin(bin, "virtiofsd")}, args...),
 			Env:  []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
 			Vars: map[string]any{
 				"Socket":      socketPath,
@@ -592,6 +632,137 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerO
 		m.addCleanupFile(mount.VirtioFS.Socket)
 	}
 	return runs, nil
+}
+
+func (m *Manifest) lowerHotplug(d Document) ([]hotplug.Device, error) {
+	hotplugs := make([]hotplug.Device, 0, d.hotplugCount())
+	for _, entry := range d.Hotplug.VirtioFS {
+		device, err := m.lowerVirtioFSHotplugInput(entry)
+		if err != nil {
+			return nil, err
+		}
+		hotplugs = append(hotplugs, device)
+	}
+	for _, entry := range d.Hotplug.Net {
+		hotplugs = append(hotplugs, lowerNetHotplug(entry))
+	}
+	for _, entry := range d.Hotplug.Block {
+		hotplugs = append(hotplugs, m.lowerBlockHotplug(entry))
+	}
+	for _, mount := range d.Mounts.VirtioFS() {
+		if !mount.Hotplugged {
+			continue
+		}
+		hotplug, err := m.lowerVirtioFSHotplug(mount)
+		if err != nil {
+			return nil, err
+		}
+		hotplugs = append(hotplugs, hotplug)
+	}
+	return hotplugs, nil
+}
+
+func (m *Manifest) lowerVirtioFSHotplugInput(entry HotplugVirtioFSInput) (hotplug.Device, error) {
+	socket := entry.Socket
+	if socket == "" {
+		socket = entry.ID + ".sock"
+	}
+	socketPath, err := m.resolveSocketPath(socket)
+	if err != nil {
+		return hotplug.Device{}, err
+	}
+	bin := entry.Bin
+	if bin == "" {
+		bin = "virtiofsd"
+	}
+	source := m.resolvePath(entry.SourcePath)
+	args := append([]string(nil), entry.Args...)
+	if len(args) == 0 {
+		args = hotplug.DefaultVirtioFSArgs(socketPath, source, entry.ID)
+	}
+	return hotplug.Device{
+		Kind: hotplug.KindVirtioFS,
+		ID:   entry.ID,
+		VirtioFS: hotplug.VirtioFS{
+			Source:     source,
+			Target:     entry.Target,
+			SocketPath: socketPath,
+			Bin:        m.resolveOptionalBin(bin, "virtiofsd"),
+			Args:       args,
+		},
+	}, nil
+}
+
+func (m *Manifest) lowerVirtioFSHotplug(mount VirtioFSMountInput) (hotplug.Device, error) {
+	id := mount.Tag
+	socket := mount.VirtioFS.Socket
+	if socket == "" {
+		socket = id + ".sock"
+	}
+	socketPath, err := m.resolveSocketPath(socket)
+	if err != nil {
+		return hotplug.Device{}, err
+	}
+	bin := mount.VirtioFS.Bin
+	if bin == "" {
+		bin = "virtiofsd"
+	}
+	source := m.resolvePath(mount.SourcePath)
+	args := append([]string(nil), mount.VirtioFS.Args...)
+	if len(args) == 0 {
+		args = hotplug.DefaultVirtioFSArgs(socketPath, source, id)
+	}
+	return hotplug.Device{
+		Kind: hotplug.KindVirtioFS,
+		ID:   id,
+		VirtioFS: hotplug.VirtioFS{
+			Source:     source,
+			Target:     mount.Target,
+			SocketPath: socketPath,
+			Bin:        m.resolveOptionalBin(bin, "virtiofsd"),
+			Args:       args,
+		},
+	}, nil
+}
+
+func (m *Manifest) resolveOptionalBin(bin string, defaultBin string) string {
+	if bin == "" || bin == defaultBin {
+		return defaultBin
+	}
+	return m.resolvePath(bin)
+}
+
+func lowerNetHotplug(entry HotplugNetInput) hotplug.Device {
+	forward := make([]hotplug.Forward, 0, len(entry.Forward))
+	for _, fwd := range entry.Forward {
+		forward = append(forward, hotplug.Forward{
+			Proto: fwd.Proto,
+			Host:  fwd.Host,
+			Guest: fwd.Guest,
+		})
+	}
+	return hotplug.Device{
+		Kind: hotplug.KindNet,
+		ID:   entry.ID,
+		Net: hotplug.Net{
+			Backend: entry.Backend,
+			MAC:     entry.MAC,
+			Forward: forward,
+		},
+	}
+}
+
+func (m *Manifest) lowerBlockHotplug(entry HotplugBlockInput) hotplug.Device {
+	return hotplug.Device{
+		Kind: hotplug.KindBlock,
+		ID:   entry.ID,
+		Block: hotplug.Block{
+			ImagePath: m.resolvePath(entry.ImagePath),
+			Format:    entry.Format,
+			ReadOnly:  entry.ReadOnly,
+			Serial:    entry.Serial,
+		},
+	}
 }
 
 func staleUnixSocket(path string) (bool, error) {
@@ -859,7 +1030,7 @@ func commandFromExec(exec []string) Command {
 
 func cloneStringMap(values map[string]string) map[string]string {
 	if len(values) == 0 {
-		return nil
+		return map[string]string{}
 	}
 	clone := make(map[string]string, len(values))
 	for key, value := range values {

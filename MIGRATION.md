@@ -141,6 +141,82 @@ Move 9p entries to `[[mounts.9p]]` and nest 9p-specific options:
 +9p.security_model = "mapped"
 ```
 
+## 2026-05-27: typed virtie manifest hotplug entries
+
+### Who Is Affected
+
+- Direct virtie manifest producers that want runtime device hotplug.
+- Direct manifest producers validating allowed manifest keys.
+
+### What Changed
+
+The manifest now accepts typed hotplug lists: `[[hotplug.virtiofs]]`,
+`[[hotplug.net]]`, and `[[hotplug.block]]`. The command is
+`virtie hotplug --manifest=MANIFEST ID`, with `--detach` for removal. QEMU
+starts with one preallocated PCIe root port per typed hotplug entry.
+
+The earlier arbitrary-QMP shape is removed before release. Manifest producers
+should not emit `[[hotplug]]` entries with `attach.qmp`, `detach.qmp`,
+`exec_guest`, `vars`, or host `exec` fields.
+
+The earlier `qemu.allocate_pcie_ports` knob is also removed before release.
+Manifest producers should declare typed hotplug entries up front instead of
+reserving spare ports.
+
+Virtiofs mounts can opt into the shortcut with `hotplugged = true`. These mounts
+are not attached during launch; they generate a hotplug entry instead. Set
+`target = "/guest/path"` when `virtie hotplug` should run `mount -t virtiofs`
+inside the guest. If `target` is omitted, attach only adds the QEMU device and
+the guest must mount it through fstab, udev, or a manual command.
+
+### Migration Steps
+
+No existing launch manifests need to change. To add a hotplugged virtiofs share:
+
+```toml
+[[mounts]]
+type = "virtiofs"
+tag = "cache"
+source = "/tmp/cache"
+hotplugged = true
+target = "/mnt/cache"
+virtiofs.socket = "cache.sock"
+```
+
+Then attach or detach it while the VM is running:
+
+```console
+virtie hotplug --manifest=manifest.toml cache
+virtie hotplug --manifest=manifest.toml --detach cache
+```
+
+To define the same share explicitly:
+
+```toml
+[[hotplug.virtiofs]]
+id = "cache"
+source = "/tmp/cache"
+target = "/mnt/cache"
+socket = "cache.sock"
+```
+
+Net and block hotplug are intentionally minimal in this version:
+
+```toml
+[[hotplug.net]]
+id = "vpn"
+backend = "user"
+mac = "02:02:00:00:00:10"
+
+[[hotplug.block]]
+id = "data"
+image = "data.qcow2"
+format = "qcow2"
+```
+
+These attach and detach QEMU devices only. Guest-side network setup, block
+discovery, filesystem policy, and mounting are future work.
+
 ## 2026-05-22: generic run commands replace runWithTunnel
 
 ### Who Is Affected

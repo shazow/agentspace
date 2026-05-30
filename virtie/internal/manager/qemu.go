@@ -120,6 +120,10 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 
 	args = append(args, "-qmp", fmt.Sprintf("unix:%s,server,nowait", qemu.QMP.SocketPath))
 
+	for i := 0; i < qemu.Hotplug.PCIEPorts; i++ {
+		args = append(args, "-device", fmt.Sprintf("pcie-root-port,id=pcie.hotplug.%d,bus=pcie.0,chassis=%d,slot=%d", i, i+1, i+1))
+	}
+
 	if qemu.GuestAgent.SocketPath != "" {
 		serialDriver, err := guestAgentSerialDriver(qemu.Devices.VSOCK.Transport)
 		if err != nil {

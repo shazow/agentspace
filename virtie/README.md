@@ -19,6 +19,8 @@ The supported CLI is:
 ```console
 virtie launch --manifest=MANIFEST [--ssh] [--resume=no|auto|force] [-v|-vv] [-- <remote-cmd...>]
 virtie suspend --manifest=MANIFEST
+virtie hotplug --manifest=MANIFEST [-v] ID
+virtie hotplug --manifest=MANIFEST [-v] --detach ID
 ```
 
 In normal use this is invoked by the generated launch wrapper rather than by
@@ -34,6 +36,8 @@ minimal manifest and a full manifest with default-valued fields included.
 - Starts `virtiofsd`, launches QEMU, waits for SSH readiness, and either
   prints the SSH command or attaches the active session with `--ssh`.
 - Uses QMP for readiness and graceful shutdown.
+- Attaches or detaches typed hotplug devices. Virtiofs includes optional guest
+  mount/umount; net and block currently attach only the QEMU-side device.
 - Records the active launch PID under the manifest persistence state directory.
   `virtie suspend` validates that PID and sends `SIGTSTP` as a caught control
   signal; the launch process saves QEMU migration state through its existing

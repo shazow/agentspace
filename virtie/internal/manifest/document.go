@@ -40,6 +40,7 @@ type Document struct {
 	WriteFiles    []WriteFileInput   `json:"write_files,omitempty" toml:"write_files"`
 	Notifications NotificationsInput `json:"notifications,omitempty" toml:"notifications"`
 	Run           []RunInput         `json:"run,omitempty" toml:"run"`
+	Hotplug       HotplugInput       `json:"hotplug,omitempty" toml:"hotplug"`
 }
 
 type HostInput struct {
@@ -155,6 +156,8 @@ type MountInput struct {
 type VirtioFSMountInput struct {
 	Type string `json:"type" toml:"type"`
 	MountInput
+	Target     string `json:"target,omitempty" toml:"target"`
+	Hotplugged bool   `json:"hotplugged,omitempty" toml:"hotplugged"`
 
 	VirtioFS VirtioFSInput `json:"virtiofs,omitempty" toml:"virtiofs"`
 }
@@ -292,4 +295,34 @@ type NotificationsInput struct {
 type RunInput struct {
 	Exec []string       `json:"exec" toml:"exec"`
 	Vars map[string]any `json:"vars,omitempty" toml:"vars"`
+}
+
+type HotplugInput struct {
+	VirtioFS []HotplugVirtioFSInput `json:"virtiofs,omitempty" toml:"virtiofs"`
+	Net      []HotplugNetInput      `json:"net,omitempty" toml:"net"`
+	Block    []HotplugBlockInput    `json:"block,omitempty" toml:"block"`
+}
+
+type HotplugVirtioFSInput struct {
+	ID         string   `json:"id" toml:"id"`
+	SourcePath string   `json:"source" toml:"source"`
+	Target     string   `json:"target,omitempty" toml:"target"`
+	Socket     string   `json:"socket,omitempty" toml:"socket"`
+	Bin        string   `json:"bin,omitempty" toml:"bin"`
+	Args       []string `json:"args,omitempty" toml:"args"`
+}
+
+type HotplugNetInput struct {
+	ID      string        `json:"id" toml:"id"`
+	Backend string        `json:"backend" toml:"backend"`
+	MAC     string        `json:"mac,omitempty" toml:"mac"`
+	Forward []ForwardPort `json:"forward,omitempty" toml:"forward"`
+}
+
+type HotplugBlockInput struct {
+	ID        string `json:"id" toml:"id"`
+	ImagePath string `json:"image" toml:"image"`
+	Format    string `json:"format" toml:"format"`
+	ReadOnly  bool   `json:"read_only,omitempty" toml:"read_only"`
+	Serial    string `json:"serial,omitempty" toml:"serial"`
 }

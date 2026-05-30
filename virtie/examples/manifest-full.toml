@@ -62,6 +62,10 @@ machine_options = { accel = "kvm:tcg", pcie = "on" }  # Default: Derived for hos
 qmp_socket = "qmp.sock"  # Default: "qmp.sock"
 guest_agent_socket = "qga.sock"  # Default: "qga.sock"
 
+# Hotplugged PCI devices need root ports created when QEMU starts. virtie
+# automatically allocates one port for each typed hotplug entry, including
+# entries generated from mounts with hotplugged = true.
+
 [machine]
 # The machine profile is the backend-neutral VM shape virtie should run. For
 # QEMU today this maps to a board model; another backend may map it to its own
@@ -194,6 +198,47 @@ read_only = false
 # 9p filesystem security policy is backend-specific, so it lives under the
 # nested 9p table.
 9p.security_model = "mapped"  # Options: mapped, none, passthrough (default: mapped)
+
+[[mounts]]
+# A hotplugged virtiofs mount is not attached during launch. Instead, virtie
+# generates a [[hotplug.virtiofs]] entry with the mount tag as its id, starts
+# virtiofsd during `virtie hotplug`, attaches the QEMU device through QMP, and
+# optionally mounts it in the guest through the guest agent.
+type = "virtiofs"
+tag = "cache"
+source = "/tmp/cache"
+hotplugged = true
+target = "/mnt/cache"  # Optional: omit when the guest mounts it through fstab or another mechanism
+virtiofs.socket = "cache.sock"  # Default for hotplugged virtiofs: "<tag>.sock"
+virtiofs.bin = "virtiofsd"
+
+[[hotplug.virtiofs]]
+# Explicit virtiofs hotplug entries are the typed equivalent of hotplugged
+# mounts. target is optional; omit it when the guest mounts the share itself.
+id = "tools"
+source = "/tmp/tools"
+target = "/mnt/tools"
+socket = "tools.sock"  # Default: "<id>.sock"
+bin = "virtiofsd"  # Default: "virtiofsd"
+
+[[hotplug.net]]
+# Network hotplug v1 attaches only the QEMU device. Guest-side interface naming,
+# DHCP/static configuration, and routing policy are future work.
+id = "vpn"
+backend = "user"  # v1 supports user only
+mac = "02:02:00:00:00:10"
+forward = [
+  { proto = "tcp", host = "127.0.0.1:2223", guest = "10.0.2.15:22" },
+]
+
+[[hotplug.block]]
+# Block hotplug v1 attaches only the QEMU block device. Guest-side discovery,
+# partition/filesystem policy, and mounting are future work.
+id = "data"
+image = "data.qcow2"
+format = "qcow2"  # Options: raw, qcow2
+read_only = false
+serial = "data"
 
 [[run]]
 # Run commands are host-side processes managed for the VM lifetime. They start
