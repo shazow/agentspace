@@ -466,28 +466,25 @@ let
         path = "/tmp/vmlinuz";
         initrd_path = "/tmp/initrd";
       };
-      mounts = {
-        virtiofs = [
-          {
-            tag = "workspace";
-            virtiofs = {
-              socket = "virtiofs.sock";
-              bin = "${fakeTools}/bin/virtiofsd-workspace";
-            };
-          }
-        ];
-        "9p" = [ ];
-        image = [
-          {
-            source = "overlay.img";
-            image = {
-              size = 256;
-              fs = "ext4";
-              create = true;
-            };
-          }
-        ];
-      };
+      mounts = [
+        {
+          type = "virtiofs";
+          tag = "workspace";
+          virtiofs = {
+            socket = "virtiofs.sock";
+            bin = "${fakeTools}/bin/virtiofsd-workspace";
+          };
+        }
+        {
+          type = "image";
+          source = "overlay.img";
+          image = {
+            size = 256;
+            fs = "ext4";
+            create = true;
+          };
+        }
+      ];
       write_files = [
         {
           guest_path = "/etc/virtie/inline";
