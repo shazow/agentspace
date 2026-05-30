@@ -7,12 +7,16 @@
 // commands without exposing those QMP-specific details to the rest of virtie.
 package balloon
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/shazow/agentspace/virtie/internal/units"
+)
 
 const (
 	bytesPerMiB int64 = 1024 * 1024
 
-	defaultControllerStepMiB          = 256
+	defaultControllerStep             = units.MiB(256)
 	defaultControllerPollIntervalSecs = 5
 	defaultControllerReclaimHoldoff   = 30
 )
@@ -26,16 +30,16 @@ type Device struct {
 }
 
 type ControllerConfig struct {
-	MinActualMiB             int `json:"minActualMiB" toml:"minActualMiB"`
-	MaxActualMiB             int `json:"maxActualMiB,omitempty" toml:"maxActualMiB"`
-	GrowBelowAvailableMiB    int `json:"growBelowAvailableMiB" toml:"growBelowAvailableMiB"`
-	ReclaimAboveAvailableMiB int `json:"reclaimAboveAvailableMiB" toml:"reclaimAboveAvailableMiB"`
-	StepMiB                  int `json:"stepMiB,omitempty" toml:"stepMiB"`
-	PollIntervalSeconds      int `json:"pollIntervalSeconds,omitempty" toml:"pollIntervalSeconds"`
-	ReclaimHoldoffSeconds    int `json:"reclaimHoldoffSeconds,omitempty" toml:"reclaimHoldoffSeconds"`
+	MinActual             units.MiB `json:"minActualMiB" toml:"minActualMiB"`
+	MaxActual             units.MiB `json:"maxActualMiB,omitempty" toml:"maxActualMiB"`
+	GrowBelowAvailable    units.MiB `json:"growBelowAvailableMiB" toml:"growBelowAvailableMiB"`
+	ReclaimAboveAvailable units.MiB `json:"reclaimAboveAvailableMiB" toml:"reclaimAboveAvailableMiB"`
+	Step                  units.MiB `json:"stepMiB,omitempty" toml:"stepMiB"`
+	PollIntervalSeconds   int       `json:"pollIntervalSeconds,omitempty" toml:"pollIntervalSeconds"`
+	ReclaimHoldoffSeconds int       `json:"reclaimHoldoffSeconds,omitempty" toml:"reclaimHoldoffSeconds"`
 }
 
-func ApplyDefaults(memoryMiB int, device *Device) {
+func ApplyDefaults(memory units.MiB, device *Device) {
 	if device == nil {
 		return
 	}
@@ -45,24 +49,24 @@ func ApplyDefaults(memoryMiB int, device *Device) {
 	}
 
 	controller := device.Controller
-	if controller.MaxActualMiB == 0 {
-		controller.MaxActualMiB = memoryMiB
+	if controller.MaxActual == 0 {
+		controller.MaxActual = memory
 	}
-	idleTargetMiB := controller.MinActualMiB
-	if idleTargetMiB <= 0 {
-		idleTargetMiB = defaultMinActualMiB(controller.MaxActualMiB, memoryMiB)
+	idleTarget := controller.MinActual
+	if idleTarget <= 0 {
+		idleTarget = defaultMinActual(controller.MaxActual, memory)
 	}
-	if controller.MinActualMiB == 0 {
-		controller.MinActualMiB = idleTargetMiB
+	if controller.MinActual == 0 {
+		controller.MinActual = idleTarget
 	}
-	if controller.GrowBelowAvailableMiB == 0 {
-		controller.GrowBelowAvailableMiB = defaultGrowBelowAvailableMiB(idleTargetMiB)
+	if controller.GrowBelowAvailable == 0 {
+		controller.GrowBelowAvailable = defaultGrowBelowAvailable(idleTarget)
 	}
-	if controller.ReclaimAboveAvailableMiB == 0 {
-		controller.ReclaimAboveAvailableMiB = defaultReclaimAboveAvailableMiB(idleTargetMiB)
+	if controller.ReclaimAboveAvailable == 0 {
+		controller.ReclaimAboveAvailable = defaultReclaimAboveAvailable(idleTarget)
 	}
-	if controller.StepMiB == 0 {
-		controller.StepMiB = defaultControllerStepMiB
+	if controller.Step == 0 {
+		controller.Step = defaultControllerStep
 	}
 	if controller.PollIntervalSeconds == 0 {
 		controller.PollIntervalSeconds = defaultControllerPollIntervalSecs
@@ -72,49 +76,49 @@ func ApplyDefaults(memoryMiB int, device *Device) {
 	}
 }
 
-func defaultMinActualMiB(maxActualMiB int, fallbackMiB int) int {
-	if maxActualMiB <= 0 {
-		maxActualMiB = fallbackMiB
+func defaultMinActual(maxActual units.MiB, fallback units.MiB) units.MiB {
+	if maxActual <= 0 {
+		maxActual = fallback
 	}
-	if maxActualMiB <= 1 {
+	if maxActual <= 1 {
 		return 1
 	}
-	return (maxActualMiB + 1) / 2
+	return (maxActual + 1) / 2
 }
 
-func defaultGrowBelowAvailableMiB(minActualMiB int) int {
-	if minActualMiB <= 1 {
+func defaultGrowBelowAvailable(minActual units.MiB) units.MiB {
+	if minActual <= 1 {
 		return 0
 	}
-	return minActualMiB / 2
+	return minActual / 2
 }
 
-func defaultReclaimAboveAvailableMiB(minActualMiB int) int {
-	if minActualMiB <= 0 {
+func defaultReclaimAboveAvailable(minActual units.MiB) units.MiB {
+	if minActual <= 0 {
 		return 1
 	}
-	return minActualMiB
+	return minActual
 }
 
-func ValidateController(memoryMiB int, controller *ControllerConfig) error {
+func ValidateController(memory units.MiB, controller *ControllerConfig) error {
 	if controller == nil {
 		return nil
 	}
 
 	switch {
-	case controller.MinActualMiB <= 0:
+	case controller.MinActual <= 0:
 		return fmt.Errorf("minActualMiB must be greater than zero")
-	case controller.MinActualMiB > controller.MaxActualMiB:
+	case controller.MinActual > controller.MaxActual:
 		return fmt.Errorf("minActualMiB must be less than or equal to maxActualMiB")
-	case controller.MaxActualMiB > memoryMiB:
+	case controller.MaxActual > memory:
 		return fmt.Errorf("maxActualMiB must be less than or equal to manifest.qemu.memory.sizeMiB")
-	case controller.GrowBelowAvailableMiB < 0:
+	case controller.GrowBelowAvailable < 0:
 		return fmt.Errorf("growBelowAvailableMiB must be greater than or equal to zero")
-	case controller.ReclaimAboveAvailableMiB < 0:
+	case controller.ReclaimAboveAvailable < 0:
 		return fmt.Errorf("reclaimAboveAvailableMiB must be greater than or equal to zero")
-	case controller.GrowBelowAvailableMiB >= controller.ReclaimAboveAvailableMiB:
+	case controller.GrowBelowAvailable >= controller.ReclaimAboveAvailable:
 		return fmt.Errorf("growBelowAvailableMiB must be less than reclaimAboveAvailableMiB")
-	case controller.StepMiB <= 0:
+	case controller.Step <= 0:
 		return fmt.Errorf("stepMiB must be greater than zero")
 	case controller.PollIntervalSeconds <= 0:
 		return fmt.Errorf("pollIntervalSeconds must be greater than zero")

@@ -89,7 +89,7 @@ func TestLoadReadsFromReader(t *testing.T) {
 	if got, want := loaded.ResolvedVolumes(), []Volume{
 		{
 			ImagePath:  "/tmp/work/images/root.img",
-			SizeMiB:    256,
+			Size:       256,
 			FSType:     "ext4",
 			AutoCreate: true,
 		},
@@ -1721,7 +1721,7 @@ func TestManifestVolumeValidation(t *testing.T) {
 
 	t.Run("requires image path when auto creating", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.Volumes = []Volume{{ImagePath: "", SizeMiB: 256, AutoCreate: true}}
+		manifest.Volumes = []Volume{{ImagePath: "", Size: 256, AutoCreate: true}}
 
 		err := manifest.Validate()
 		if err == nil || !strings.Contains(err.Error(), "manifest.mounts.image[0].source is required") {
@@ -1731,7 +1731,7 @@ func TestManifestVolumeValidation(t *testing.T) {
 
 	t.Run("requires size when auto creating", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 0, AutoCreate: true}}
+		manifest.Volumes = []Volume{{ImagePath: "root.img", Size: 0, AutoCreate: true}}
 
 		err := manifest.Validate()
 		if err == nil || !strings.Contains(err.Error(), "manifest.mounts.image[0].image.size must be greater than zero") {
@@ -1741,7 +1741,7 @@ func TestManifestVolumeValidation(t *testing.T) {
 
 	t.Run("rejects auto-created volumes below minimum size", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 255, AutoCreate: true}}
+		manifest.Volumes = []Volume{{ImagePath: "root.img", Size: 255, AutoCreate: true}}
 
 		err := manifest.Validate()
 		if err == nil || !strings.Contains(err.Error(), "manifest.mounts.image[0].image.size must be at least 256") {
@@ -1751,7 +1751,7 @@ func TestManifestVolumeValidation(t *testing.T) {
 
 	t.Run("rejects non-ext4 filesystem when auto creating", func(t *testing.T) {
 		manifest := validManifest()
-		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 256, FSType: "xfs", AutoCreate: true}}
+		manifest.Volumes = []Volume{{ImagePath: "root.img", Size: 256, FSType: "xfs", AutoCreate: true}}
 
 		err := manifest.Validate()
 		if err == nil || !strings.Contains(err.Error(), `manifest.mounts.image[0].image.fs must be "ext4"`) {
@@ -1763,7 +1763,7 @@ func TestManifestVolumeValidation(t *testing.T) {
 		manifest := validManifest()
 		manifest.Volumes = []Volume{{
 			ImagePath:     "root.img",
-			SizeMiB:       256,
+			Size:          256,
 			AutoCreate:    true,
 			MkfsExtraArgs: []string{"-E", "discard"},
 		}}
@@ -1777,7 +1777,7 @@ func TestManifestVolumeValidation(t *testing.T) {
 	t.Run("allows label when auto creating ext4", func(t *testing.T) {
 		manifest := validManifest()
 		label := "persist"
-		manifest.Volumes = []Volume{{ImagePath: "root.img", SizeMiB: 256, AutoCreate: true, Label: label}}
+		manifest.Volumes = []Volume{{ImagePath: "root.img", Size: 256, AutoCreate: true, Label: label}}
 
 		if err := manifest.Validate(); err != nil {
 			t.Fatalf("unexpected validation error: %v", err)
@@ -1832,7 +1832,7 @@ func validDocument() Document {
 				{
 					SourcePath: "root.img",
 					Image: ImageInput{
-						SizeMiB:    256,
+						Size:       256,
 						FSType:     "ext4",
 						AutoCreate: true,
 					},

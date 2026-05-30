@@ -15,19 +15,19 @@ func TestValidateAppliesBalloonDefaults(t *testing.T) {
 	if manifest.QEMU.Devices.Balloon.Controller == nil {
 		t.Fatal("expected balloon controller defaults to be synthesized")
 	}
-	if got, want := manifest.QEMU.Devices.Balloon.Controller.MinActualMiB, 512; got != want {
+	if got, want := manifest.QEMU.Devices.Balloon.Controller.MinActual.Int(), 512; got != want {
 		t.Fatalf("unexpected balloon controller minActualMiB default: got %d want %d", got, want)
 	}
-	if got, want := manifest.QEMU.Devices.Balloon.Controller.MaxActualMiB, manifest.QEMU.Memory.SizeMiB; got != want {
+	if got, want := manifest.QEMU.Devices.Balloon.Controller.MaxActual, manifest.QEMU.Memory.Size; got != want {
 		t.Fatalf("unexpected balloon controller maxActualMiB default: got %d want %d", got, want)
 	}
-	if got, want := manifest.QEMU.Devices.Balloon.Controller.GrowBelowAvailableMiB, 256; got != want {
+	if got, want := manifest.QEMU.Devices.Balloon.Controller.GrowBelowAvailable.Int(), 256; got != want {
 		t.Fatalf("unexpected balloon controller grow threshold default: got %d want %d", got, want)
 	}
-	if got, want := manifest.QEMU.Devices.Balloon.Controller.ReclaimAboveAvailableMiB, 512; got != want {
+	if got, want := manifest.QEMU.Devices.Balloon.Controller.ReclaimAboveAvailable.Int(), 512; got != want {
 		t.Fatalf("unexpected balloon controller reclaim threshold default: got %d want %d", got, want)
 	}
-	if got, want := manifest.QEMU.Devices.Balloon.Controller.StepMiB, 256; got != want {
+	if got, want := manifest.QEMU.Devices.Balloon.Controller.Step.Int(), 256; got != want {
 		t.Fatalf("unexpected balloon controller step default: got %d want %d", got, want)
 	}
 	if got, want := manifest.QEMU.Devices.Balloon.Controller.PollIntervalSeconds, 5; got != want {
@@ -41,7 +41,7 @@ func TestValidateAppliesBalloonDefaults(t *testing.T) {
 func TestValidateRejectsInvalidBalloonControllerConfig(t *testing.T) {
 	invalidBounds := validManifestWithBalloon()
 	invalidBounds.QEMU.Devices.Balloon.Controller = &balloon.ControllerConfig{
-		MinActualMiB: invalidBounds.QEMU.Memory.SizeMiB + 1,
+		MinActual: invalidBounds.QEMU.Memory.Size + 1,
 	}
 	if err := invalidBounds.Validate(); err == nil {
 		t.Fatal("expected validation error for invalid balloon controller bounds")
@@ -49,8 +49,8 @@ func TestValidateRejectsInvalidBalloonControllerConfig(t *testing.T) {
 
 	invalidThresholds := validManifestWithBalloon()
 	invalidThresholds.QEMU.Devices.Balloon.Controller = &balloon.ControllerConfig{
-		GrowBelowAvailableMiB:    512,
-		ReclaimAboveAvailableMiB: 512,
+		GrowBelowAvailable:    512,
+		ReclaimAboveAvailable: 512,
 	}
 	if err := invalidThresholds.Validate(); err == nil {
 		t.Fatal("expected validation error for invalid balloon controller thresholds")
@@ -88,7 +88,7 @@ func validManifest() *Manifest {
 				Model: "host",
 			},
 			Memory: QEMUMemory{
-				SizeMiB: 1024,
+				Size: 1024,
 			},
 			Kernel: QEMUKernel{
 				Path:       "/tmp/vmlinuz",
@@ -140,7 +140,7 @@ func validManifest() *Manifest {
 		Volumes: []Volume{
 			{
 				ImagePath:  "root.img",
-				SizeMiB:    256,
+				Size:       256,
 				FSType:     "ext4",
 				AutoCreate: true,
 			},

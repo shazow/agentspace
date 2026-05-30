@@ -136,7 +136,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 	transport := qemuTransport(machineType, d.Mounts, graphics)
 	memorySize := d.Machine.Memory
 	if memorySize == 0 {
-		memorySize = defaultMemorySizeMiB
+		memorySize = defaultMemorySize
 	}
 	cpuModel := d.Machine.CPU
 	if cpuModel == "" {
@@ -203,7 +203,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 			EnableKVM: enableKVM,
 		},
 		Memory: QEMUMemory{
-			SizeMiB: memorySize,
+			Size:    memorySize,
 			Backend: memoryBackend(host, d.Mounts.VirtioFS),
 			Shared:  len(d.Mounts.VirtioFS) > 0,
 		},
@@ -370,7 +370,7 @@ func lowerVolumes(volumes []ImageMountInput) []Volume {
 	for _, volume := range volumes {
 		result = append(result, Volume{
 			ImagePath:  volume.SourcePath,
-			SizeMiB:    volume.Image.SizeMiB,
+			Size:       volume.Image.Size,
 			FSType:     volume.Image.FSType,
 			AutoCreate: volume.Image.AutoCreate,
 			Label:      stringValue(volume.Image.Label),
@@ -680,13 +680,13 @@ func lowerBalloon(facts *BalloonInput, transport string) *balloon.Device {
 	}
 	if facts.Controller != nil {
 		device.Controller = &balloon.ControllerConfig{
-			MinActualMiB:             facts.Controller.MinActualMiB,
-			MaxActualMiB:             facts.Controller.MaxActualMiB,
-			GrowBelowAvailableMiB:    facts.Controller.GrowBelowAvailableMiB,
-			ReclaimAboveAvailableMiB: facts.Controller.ReclaimAboveAvailableMiB,
-			StepMiB:                  facts.Controller.StepMiB,
-			PollIntervalSeconds:      facts.Controller.PollIntervalSeconds,
-			ReclaimHoldoffSeconds:    facts.Controller.ReclaimHoldoffSeconds,
+			MinActual:             facts.Controller.MinActual,
+			MaxActual:             facts.Controller.MaxActual,
+			GrowBelowAvailable:    facts.Controller.GrowBelowAvailable,
+			ReclaimAboveAvailable: facts.Controller.ReclaimAboveAvailable,
+			Step:                  facts.Controller.Step,
+			PollIntervalSeconds:   facts.Controller.PollIntervalSeconds,
+			ReclaimHoldoffSeconds: facts.Controller.ReclaimHoldoffSeconds,
 		}
 	}
 	if device == nil {

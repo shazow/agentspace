@@ -13,19 +13,19 @@ func TestApplyDefaultsCreatesHalfAllocationTarget(t *testing.T) {
 	if device.Controller == nil {
 		t.Fatal("expected controller defaults to be created")
 	}
-	if got, want := device.Controller.MinActualMiB, 1024; got != want {
+	if got, want := device.Controller.MinActual.Int(), 1024; got != want {
 		t.Fatalf("unexpected minActualMiB: got %d want %d", got, want)
 	}
-	if got, want := device.Controller.MaxActualMiB, 2048; got != want {
+	if got, want := device.Controller.MaxActual.Int(), 2048; got != want {
 		t.Fatalf("unexpected maxActualMiB: got %d want %d", got, want)
 	}
-	if got, want := device.Controller.GrowBelowAvailableMiB, 512; got != want {
+	if got, want := device.Controller.GrowBelowAvailable.Int(), 512; got != want {
 		t.Fatalf("unexpected growBelowAvailableMiB: got %d want %d", got, want)
 	}
-	if got, want := device.Controller.ReclaimAboveAvailableMiB, 1024; got != want {
+	if got, want := device.Controller.ReclaimAboveAvailable.Int(), 1024; got != want {
 		t.Fatalf("unexpected reclaimAboveAvailableMiB: got %d want %d", got, want)
 	}
-	if got, want := device.Controller.StepMiB, defaultControllerStepMiB; got != want {
+	if got, want := device.Controller.Step, defaultControllerStep; got != want {
 		t.Fatalf("unexpected stepMiB: got %d want %d", got, want)
 	}
 	if got, want := device.Controller.PollIntervalSeconds, defaultControllerPollIntervalSecs; got != want {
@@ -41,45 +41,45 @@ func TestApplyDefaultsDerivesThresholdsFromExplicitIdleTarget(t *testing.T) {
 		ID:        "balloon0",
 		Transport: "pci",
 		Controller: &ControllerConfig{
-			MinActualMiB: 768,
+			MinActual: 768,
 		},
 	}
 
 	ApplyDefaults(2048, device)
 
-	if got, want := device.Controller.MaxActualMiB, 2048; got != want {
+	if got, want := device.Controller.MaxActual.Int(), 2048; got != want {
 		t.Fatalf("unexpected maxActualMiB: got %d want %d", got, want)
 	}
-	if got, want := device.Controller.GrowBelowAvailableMiB, 384; got != want {
+	if got, want := device.Controller.GrowBelowAvailable.Int(), 384; got != want {
 		t.Fatalf("unexpected growBelowAvailableMiB: got %d want %d", got, want)
 	}
-	if got, want := device.Controller.ReclaimAboveAvailableMiB, 768; got != want {
+	if got, want := device.Controller.ReclaimAboveAvailable.Int(), 768; got != want {
 		t.Fatalf("unexpected reclaimAboveAvailableMiB: got %d want %d", got, want)
 	}
 }
 
 func TestValidateControllerRejectsNegativeThresholds(t *testing.T) {
 	config := &ControllerConfig{
-		MinActualMiB:             512,
-		MaxActualMiB:             1024,
-		GrowBelowAvailableMiB:    -1,
-		ReclaimAboveAvailableMiB: 512,
-		StepMiB:                  defaultControllerStepMiB,
-		PollIntervalSeconds:      defaultControllerPollIntervalSecs,
-		ReclaimHoldoffSeconds:    defaultControllerReclaimHoldoff,
+		MinActual:             512,
+		MaxActual:             1024,
+		GrowBelowAvailable:    -1,
+		ReclaimAboveAvailable: 512,
+		Step:                  defaultControllerStep,
+		PollIntervalSeconds:   defaultControllerPollIntervalSecs,
+		ReclaimHoldoffSeconds: defaultControllerReclaimHoldoff,
 	}
 	if err := ValidateController(1024, config); err == nil {
 		t.Fatal("expected negative grow threshold validation error")
 	}
 
 	config = &ControllerConfig{
-		MinActualMiB:             512,
-		MaxActualMiB:             1024,
-		GrowBelowAvailableMiB:    256,
-		ReclaimAboveAvailableMiB: -1,
-		StepMiB:                  defaultControllerStepMiB,
-		PollIntervalSeconds:      defaultControllerPollIntervalSecs,
-		ReclaimHoldoffSeconds:    defaultControllerReclaimHoldoff,
+		MinActual:             512,
+		MaxActual:             1024,
+		GrowBelowAvailable:    256,
+		ReclaimAboveAvailable: -1,
+		Step:                  defaultControllerStep,
+		PollIntervalSeconds:   defaultControllerPollIntervalSecs,
+		ReclaimHoldoffSeconds: defaultControllerReclaimHoldoff,
 	}
 	if err := ValidateController(1024, config); err == nil {
 		t.Fatal("expected negative reclaim threshold validation error")

@@ -57,7 +57,7 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	}
 	args = append(args, "-M", machineArg)
 
-	args = append(args, "-m", fmt.Sprintf("%d", qemu.Memory.SizeMiB))
+	args = append(args, "-m", fmt.Sprintf("%d", qemu.Memory.Size))
 	args = append(args, "-smp", fmt.Sprintf("%d", qemuCPUCount(qemu.SMP.CPUs)))
 
 	if qemu.Knobs.NoDefaults {
@@ -149,7 +149,7 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 		// No extra memory object required.
 	case "memfd":
 		args = append(args, "-numa", "node,memdev=mem")
-		args = append(args, "-object", fmt.Sprintf("memory-backend-memfd,id=mem,size=%dM,share=%s", qemu.Memory.SizeMiB, onOff(qemu.Memory.Shared)))
+		args = append(args, "-object", fmt.Sprintf("memory-backend-memfd,id=mem,size=%dM,share=%s", qemu.Memory.Size, onOff(qemu.Memory.Shared)))
 	default:
 		return nil, fmt.Errorf("unsupported qemu memory backend %q", qemu.Memory.Backend)
 	}

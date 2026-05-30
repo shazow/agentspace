@@ -1,20 +1,22 @@
 package manifest
 
+import "github.com/shazow/agentspace/virtie/internal/units"
+
 const (
 	KernelSerialOff     = "off"
 	KernelSerialPrint   = "print"
 	KernelSerialConsole = "console"
 
-	defaultHostName      = "virtie"
-	defaultWorkingDir    = "."
-	defaultBaseDir       = ".virtie"
-	defaultMachineType   = "microvm"
-	defaultMemorySizeMiB = 1024
-	defaultQMP           = "qmp.sock"
-	defaultGuestAgent    = "qga.sock"
-	defaultSSHUser       = "agent"
-	defaultNetworkID     = "microvm1"
-	defaultNetworkMAC    = "02:02:00:00:00:01"
+	defaultHostName    = "virtie"
+	defaultWorkingDir  = "."
+	defaultBaseDir     = ".virtie"
+	defaultMachineType = "microvm"
+	defaultMemorySize  = units.MiB(1024)
+	defaultQMP         = "qmp.sock"
+	defaultGuestAgent  = "qga.sock"
+	defaultSSHUser     = "agent"
+	defaultNetworkID   = "microvm1"
+	defaultNetworkMAC  = "02:02:00:00:00:01"
 )
 
 type Document struct {
@@ -44,8 +46,9 @@ type HostInput struct {
 }
 
 type QEMUInput struct {
-	Exec             []string          `json:"exec,omitempty" toml:"exec"`
-	FwdTunnelExec    []string          `json:"fwd_tunnel_exec,omitempty" toml:"fwd_tunnel_exec"`
+	Exec          []string `json:"exec,omitempty" toml:"exec"`
+	FwdTunnelExec []string `json:"fwd_tunnel_exec,omitempty" toml:"fwd_tunnel_exec"`
+	// Pointer preserves omitted vs explicitly empty input until lowering.
 	User             *string           `json:"user,omitempty" toml:"user"`
 	Seccomp          bool              `json:"seccomp,omitempty" toml:"seccomp"`
 	MachineOptions   map[string]string `json:"machine_options,omitempty" toml:"machine_options"`
@@ -54,12 +57,15 @@ type QEMUInput struct {
 }
 
 type MachineInput struct {
-	Type   string  `json:"type,omitempty" toml:"type"`
-	VCPU   *int    `json:"vcpu,omitempty" toml:"vcpu"`
-	ID     *string `json:"id,omitempty" toml:"id"`
-	Memory int     `json:"memory,omitempty" toml:"memory"`
-	CPU    string  `json:"cpu,omitempty" toml:"cpu"`
-	KVM    *bool   `json:"kvm,omitempty" toml:"kvm"`
+	Type string `json:"type,omitempty" toml:"type"`
+	// Pointer preserves omitted vs explicitly zero input until lowering.
+	VCPU *int `json:"vcpu,omitempty" toml:"vcpu"`
+	// Pointer preserves omitted vs explicitly empty input until lowering.
+	ID     *string   `json:"id,omitempty" toml:"id"`
+	Memory units.MiB `json:"memory,omitempty" toml:"memory"`
+	CPU    string    `json:"cpu,omitempty" toml:"cpu"`
+	// Pointer preserves omitted vs explicitly false input until lowering.
+	KVM *bool `json:"kvm,omitempty" toml:"kvm"`
 }
 
 type KernelInput struct {
@@ -118,12 +124,14 @@ type ImageMountInput struct {
 }
 
 type ImageInput struct {
-	SizeMiB    int     `json:"size,omitempty" toml:"size"`
-	FSType     string  `json:"fs,omitempty" toml:"fs"`
-	AutoCreate bool    `json:"create,omitempty" toml:"create"`
-	Label      *string `json:"label,omitempty" toml:"label"`
-	Direct     bool    `json:"direct,omitempty" toml:"direct"`
-	Serial     *string `json:"serial,omitempty" toml:"serial"`
+	Size       units.MiB `json:"size,omitempty" toml:"size"`
+	FSType     string    `json:"fs,omitempty" toml:"fs"`
+	AutoCreate bool      `json:"create,omitempty" toml:"create"`
+	// Pointer preserves omitted vs explicitly empty input until lowering.
+	Label  *string `json:"label,omitempty" toml:"label"`
+	Direct bool    `json:"direct,omitempty" toml:"direct"`
+	// Pointer preserves omitted vs explicitly empty input until lowering.
+	Serial *string `json:"serial,omitempty" toml:"serial"`
 }
 
 type WorkspaceInput struct {
@@ -159,19 +167,20 @@ type BalloonInput struct {
 }
 
 type BalloonControllerInput struct {
-	MinActualMiB             int `json:"min_actual,omitempty" toml:"min_actual"`
-	MaxActualMiB             int `json:"max_actual,omitempty" toml:"max_actual"`
-	GrowBelowAvailableMiB    int `json:"grow_below_available,omitempty" toml:"grow_below_available"`
-	ReclaimAboveAvailableMiB int `json:"reclaim_above_available,omitempty" toml:"reclaim_above_available"`
-	StepMiB                  int `json:"step,omitempty" toml:"step"`
-	PollIntervalSeconds      int `json:"poll_interval_seconds,omitempty" toml:"poll_interval_seconds"`
-	ReclaimHoldoffSeconds    int `json:"reclaim_holdoff_seconds,omitempty" toml:"reclaim_holdoff_seconds"`
+	MinActual             units.MiB `json:"min_actual,omitempty" toml:"min_actual"`
+	MaxActual             units.MiB `json:"max_actual,omitempty" toml:"max_actual"`
+	GrowBelowAvailable    units.MiB `json:"grow_below_available,omitempty" toml:"grow_below_available"`
+	ReclaimAboveAvailable units.MiB `json:"reclaim_above_available,omitempty" toml:"reclaim_above_available"`
+	Step                  units.MiB `json:"step,omitempty" toml:"step"`
+	PollIntervalSeconds   int       `json:"poll_interval_seconds,omitempty" toml:"poll_interval_seconds"`
+	ReclaimHoldoffSeconds int       `json:"reclaim_holdoff_seconds,omitempty" toml:"reclaim_holdoff_seconds"`
 }
 
 type SSHInput struct {
-	Exec          []string `json:"exec,omitempty" toml:"exec"`
-	User          string   `json:"user,omitempty" toml:"user"`
-	ReadySocket   string   `json:"ready_socket,omitempty" toml:"ready_socket"`
+	Exec        []string `json:"exec,omitempty" toml:"exec"`
+	User        string   `json:"user,omitempty" toml:"user"`
+	ReadySocket string   `json:"ready_socket,omitempty" toml:"ready_socket"`
+	// Pointer preserves omitted vs explicitly zero input until lowering.
 	RetryDelay    *float64 `json:"retry_delay,omitempty" toml:"retry_delay"`
 	Autoprovision bool     `json:"autoprovision,omitempty" toml:"autoprovision"`
 }
@@ -186,14 +195,21 @@ type RangeInput struct {
 }
 
 type WriteFileInput struct {
-	GuestPath   string  `json:"guest_path" toml:"guest_path"`
-	Chown       *string `json:"chown,omitempty" toml:"chown"`
-	Text        *string `json:"text,omitempty" toml:"text"`
-	Mode        *string `json:"mode,omitempty" toml:"mode"`
-	Overwrite   *bool   `json:"overwrite,omitempty" toml:"overwrite"`
-	FollowLinks *bool   `json:"follow_links,omitempty" toml:"follow_links"`
-	WriteBack   *bool   `json:"write_back,omitempty" toml:"write_back"`
-	Path        *string `json:"source,omitempty" toml:"source"`
+	GuestPath string `json:"guest_path" toml:"guest_path"`
+	// Pointer preserves omitted vs explicitly empty input until lowering.
+	Chown *string `json:"chown,omitempty" toml:"chown"`
+	// Pointer preserves omitted vs explicitly empty input until lowering.
+	Text *string `json:"text,omitempty" toml:"text"`
+	// Pointer preserves omitted vs explicitly empty input until lowering.
+	Mode *string `json:"mode,omitempty" toml:"mode"`
+	// Pointer preserves omitted vs explicitly false input until lowering.
+	Overwrite *bool `json:"overwrite,omitempty" toml:"overwrite"`
+	// Pointer preserves omitted vs explicitly false input until lowering.
+	FollowLinks *bool `json:"follow_links,omitempty" toml:"follow_links"`
+	// Pointer preserves omitted vs explicitly false input until lowering.
+	WriteBack *bool `json:"write_back,omitempty" toml:"write_back"`
+	// Pointer preserves omitted vs explicitly empty input until lowering.
+	Path *string `json:"source,omitempty" toml:"source"`
 }
 
 type NotificationsInput struct {

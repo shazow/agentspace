@@ -164,13 +164,13 @@ func TestBalloonControllerTaskWithNilLoggerDoesNotPanicOnFailure(t *testing.T) {
 		ID:        "balloon0",
 		Transport: "pci",
 		Controller: &balloonpkg.ControllerConfig{
-			MinActualMiB:             512,
-			MaxActualMiB:             1024,
-			GrowBelowAvailableMiB:    256,
-			ReclaimAboveAvailableMiB: 512,
-			StepMiB:                  256,
-			PollIntervalSeconds:      1,
-			ReclaimHoldoffSeconds:    1,
+			MinActual:             512,
+			MaxActual:             1024,
+			GrowBelowAvailable:    256,
+			ReclaimAboveAvailable: 512,
+			Step:                  256,
+			PollIntervalSeconds:   1,
+			ReclaimHoldoffSeconds: 1,
 		},
 	}, nil)
 	if task == nil {
@@ -197,13 +197,13 @@ func TestBalloonControllerTaskWithNilLoggerDoesNotPanicOnAdjustment(t *testing.T
 		ID:        "balloon0",
 		Transport: "pci",
 		Controller: &balloonpkg.ControllerConfig{
-			MinActualMiB:             512,
-			MaxActualMiB:             1024,
-			GrowBelowAvailableMiB:    600,
-			ReclaimAboveAvailableMiB: 900,
-			StepMiB:                  256,
-			PollIntervalSeconds:      1,
-			ReclaimHoldoffSeconds:    1,
+			MinActual:             512,
+			MaxActual:             1024,
+			GrowBelowAvailable:    600,
+			ReclaimAboveAvailable: 900,
+			Step:                  256,
+			PollIntervalSeconds:   1,
+			ReclaimHoldoffSeconds: 1,
 		},
 	}, nil)
 	if task == nil {
