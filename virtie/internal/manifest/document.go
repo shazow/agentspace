@@ -297,32 +297,94 @@ type RunInput struct {
 	Vars map[string]any `json:"vars,omitempty" toml:"vars"`
 }
 
-type HotplugInput struct {
-	VirtioFS []HotplugVirtioFSInput `json:"virtiofs,omitempty" toml:"virtiofs"`
-	Net      []HotplugNetInput      `json:"net,omitempty" toml:"net"`
-	Block    []HotplugBlockInput    `json:"block,omitempty" toml:"block"`
+type HotplugInput []HotplugEntry
+
+type HotplugEntry interface {
+	hotplugEntry()
+	hotplugType() string
+}
+
+const (
+	HotplugTypeVirtioFS = "virtiofs"
+	HotplugTypeImage    = "image"
+	HotplugTypeNet      = "net"
+)
+
+var hotplugRegistry = tagged.Registry[HotplugEntry]{
+	tagged.Value[HotplugEntry, HotplugVirtioFSInput](HotplugTypeVirtioFS),
+	tagged.Value[HotplugEntry, HotplugImageInput](HotplugTypeImage),
+	tagged.Value[HotplugEntry, HotplugNetInput](HotplugTypeNet),
+}
+
+func (h HotplugInput) Len() int {
+	return len(h)
+}
+
+func (h HotplugInput) VirtioFS() []HotplugVirtioFSInput {
+	return filterHotplug[HotplugVirtioFSInput](h)
+}
+
+func (h *HotplugInput) UnmarshalJSON(data []byte) error {
+	entries, err := tagged.DecodeJSONList(data, "manifest.hotplug", hotplugRegistry)
+	*h = entries
+	return err
+}
+
+func (h HotplugInput) MarshalJSON() ([]byte, error) {
+	return tagged.MarshalJSONList(h, func(entry HotplugEntry) string {
+		return entry.hotplugType()
+	})
+}
+
+func (h *HotplugInput) UnmarshalTOML(data any) error {
+	entries, err := tagged.DecodeTOMLList(data, "manifest.hotplug", hotplugRegistry)
+	*h = entries
+	return err
+}
+
+func filterHotplug[T HotplugEntry](hotplug HotplugInput) []T {
+	filtered := make([]T, 0, len(hotplug))
+	for _, entry := range hotplug {
+		if typed, ok := entry.(T); ok {
+			filtered = append(filtered, typed)
+		}
+	}
+	return filtered
 }
 
 type HotplugVirtioFSInput struct {
-	ID         string   `json:"id" toml:"id"`
-	SourcePath string   `json:"source" toml:"source"`
-	Target     string   `json:"target,omitempty" toml:"target"`
-	Socket     string   `json:"socket,omitempty" toml:"socket"`
-	Bin        string   `json:"bin,omitempty" toml:"bin"`
-	Args       []string `json:"args,omitempty" toml:"args"`
+	Type string `json:"type" toml:"type"`
+	ID   string `json:"id,omitempty" toml:"id"`
+	MountInput
+	Target   string        `json:"target,omitempty" toml:"target"`
+	VirtioFS VirtioFSInput `json:"virtiofs,omitempty" toml:"virtiofs"`
 }
 
+func (HotplugVirtioFSInput) hotplugEntry() {}
+
+func (HotplugVirtioFSInput) hotplugType() string { return HotplugTypeVirtioFS }
+
+type HotplugImageInput struct {
+	Type       string `json:"type" toml:"type"`
+	ID         string `json:"id,omitempty" toml:"id"`
+	SourcePath string `json:"source" toml:"source"`
+	ReadOnly   bool   `json:"read_only,omitempty" toml:"read_only"`
+	Format     string `json:"format,omitempty" toml:"format"`
+	Serial     string `json:"serial,omitempty" toml:"serial"`
+}
+
+func (HotplugImageInput) hotplugEntry() {}
+
+func (HotplugImageInput) hotplugType() string { return HotplugTypeImage }
+
 type HotplugNetInput struct {
+	Type    string        `json:"type" toml:"type"`
 	ID      string        `json:"id" toml:"id"`
 	Backend string        `json:"backend" toml:"backend"`
 	MAC     string        `json:"mac,omitempty" toml:"mac"`
 	Forward []ForwardPort `json:"forward,omitempty" toml:"forward"`
 }
 
-type HotplugBlockInput struct {
-	ID        string `json:"id" toml:"id"`
-	ImagePath string `json:"image" toml:"image"`
-	Format    string `json:"format" toml:"format"`
-	ReadOnly  bool   `json:"read_only,omitempty" toml:"read_only"`
-	Serial    string `json:"serial,omitempty" toml:"serial"`
-}
+func (HotplugNetInput) hotplugEntry() {}
+
+func (HotplugNetInput) hotplugType() string { return HotplugTypeNet }

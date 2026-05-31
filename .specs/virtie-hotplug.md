@@ -9,8 +9,8 @@ Runtime device hotplug support for `virtie` through typed manifest entries.
 Provide a first hotplug path for already-running `virtie` VMs without expanding
 the agentspace Nix API yet.
 
-- Define typed direct-manifest entries for `[[hotplug.virtiofs]]`,
-  `[[hotplug.net]]`, and `[[hotplug.block]]`.
+- Define typed direct-manifest entries with `[[hotplug]] type = "virtiofs"`,
+  `type = "net"`, and `type = "image"`.
 - Support `mounts[].hotplugged = true` as sugar for a virtiofs hotplug device.
 - Automatically preallocate one QEMU PCIe root port for each lowered hotplug
   device so it can be attached after launch.
@@ -31,14 +31,13 @@ Out of scope:
 
 Acceptance criteria:
 
-- [x] Manifest accepts `[[hotplug.virtiofs]]`, `[[hotplug.net]]`, and
-  `[[hotplug.block]]`.
+- [x] Manifest accepts ordered tagged `[[hotplug]]` entries.
 - [x] QEMU root-port allocation is automatic from the lowered hotplug count.
 - [x] Manifest accepts `mounts[].hotplugged` and optional `mounts[].target`.
 - [x] Hotplugged virtiofs mounts are excluded from launch-time QEMU devices and
   managed `run` processes.
 - [x] Hotplugged virtiofs mounts lower to the same runtime device type as
-  explicit `[[hotplug.virtiofs]]` entries.
+  explicit `[[hotplug]] type = "virtiofs"` entries.
 - [x] QEMU launch emits stable `pcie-root-port` devices for allocated hotplug
   ports.
 - [x] CLI supports attach and detach by hotplug id.
@@ -58,17 +57,20 @@ Acceptance criteria:
 ## Manifest Shape
 
 ```toml
-[[hotplug.virtiofs]]
-id = "cache"
+[[hotplug]]
+type = "virtiofs"
+id = "{{.Tag}}"     # optional, defaults to "{{.Tag}}"
+tag = "cache"
 source = "/tmp/cache"
 target = "/mnt/cache" # optional
-socket = "cache.sock" # optional, defaults to "<id>.sock"
-bin = "virtiofsd"     # optional
-args = []             # optional
+virtiofs.socket = "cache.sock" # optional, defaults to "<id>.sock"
+virtiofs.bin = "virtiofsd"     # optional
+virtiofs.args = []             # optional
 ```
 
 ```toml
-[[hotplug.net]]
+[[hotplug]]
+type = "net"
 id = "vpn"
 backend = "user" # v1 supports user only
 mac = "02:02:00:00:00:10"
@@ -78,9 +80,10 @@ forward = [
 ```
 
 ```toml
-[[hotplug.block]]
-id = "data"
-image = "data.qcow2"
+[[hotplug]]
+type = "image"
+id = "{{.Serial}}" # optional, defaults to "{{.Serial}}"
+source = "data.qcow2"
 format = "qcow2" # raw or qcow2
 read_only = false
 serial = "data"
@@ -97,9 +100,8 @@ command construction, rollback sequencing, and attach/detach orchestration.
 QMP dialer/client, guest-agent dialer, socket waiter, path resolution, and
 stage-error wrapping.
 
-Hotplug buses are assigned deterministically from the lowered runtime order:
-explicit virtiofs, net, block, then virtiofs devices generated from
-`mounts[].hotplugged = true`.
+Hotplug buses are assigned deterministically from the ordered `[[hotplug]]`
+list, followed by virtiofs devices generated from `mounts[].hotplugged = true`.
 
 Net and block are intentionally minimal in v1. They attach and detach the QEMU
 device only. Full functionality would require guest-side link naming,

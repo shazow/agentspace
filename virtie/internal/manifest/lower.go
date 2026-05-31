@@ -144,7 +144,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 	graphics := lowerGraphics(d.Graphics)
 	transport := qemuTransport(machineType, d.Mounts, graphics, hotplugCount > 0)
 	virtioFSMounts := d.Mounts.VirtioFS()
-	hasVirtioFS := len(virtioFSMounts) > 0 || len(d.Hotplug.VirtioFS) > 0
+	hasVirtioFS := len(virtioFSMounts) > 0 || len(d.Hotplug.VirtioFS()) > 0
 	launchVirtioFSMounts := filterLaunchVirtioFSMounts(virtioFSMounts)
 	memorySize := d.Machine.Memory
 	if memorySize == 0 {
@@ -288,7 +288,7 @@ func lowerCPUCount(cpus *int) CPUCount {
 }
 
 func (d Document) hotplugCount() int {
-	count := len(d.Hotplug.VirtioFS) + len(d.Hotplug.Net) + len(d.Hotplug.Block)
+	count := d.Hotplug.Len()
 	for _, mount := range d.Mounts.VirtioFS() {
 		if mount.Hotplugged {
 			count++
@@ -636,18 +636,12 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerO
 
 func (m *Manifest) lowerHotplug(d Document) ([]hotplug.Device, error) {
 	hotplugs := make([]hotplug.Device, 0, d.hotplugCount())
-	for _, entry := range d.Hotplug.VirtioFS {
-		device, err := m.lowerVirtioFSHotplugInput(entry)
+	for i, entry := range d.Hotplug {
+		device, err := m.lowerHotplugEntry(entry)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("manifest.hotplug[%d]: %w", i, err)
 		}
 		hotplugs = append(hotplugs, device)
-	}
-	for _, entry := range d.Hotplug.Net {
-		hotplugs = append(hotplugs, lowerNetHotplug(entry))
-	}
-	for _, entry := range d.Hotplug.Block {
-		hotplugs = append(hotplugs, m.lowerBlockHotplug(entry))
 	}
 	for _, mount := range d.Mounts.VirtioFS() {
 		if !mount.Hotplugged {
@@ -662,33 +656,79 @@ func (m *Manifest) lowerHotplug(d Document) ([]hotplug.Device, error) {
 	return hotplugs, nil
 }
 
+func (m *Manifest) lowerHotplugEntry(entry HotplugEntry) (hotplug.Device, error) {
+	switch typed := entry.(type) {
+	case HotplugVirtioFSInput:
+		return m.lowerVirtioFSHotplugInput(typed)
+	case HotplugImageInput:
+		return m.lowerImageHotplug(typed)
+	case HotplugNetInput:
+		return lowerNetHotplug(typed), nil
+	default:
+		return hotplug.Device{}, fmt.Errorf("unsupported hotplug type %T", entry)
+	}
+}
+
 func (m *Manifest) lowerVirtioFSHotplugInput(entry HotplugVirtioFSInput) (hotplug.Device, error) {
-	socket := entry.Socket
+	id, err := renderHotplugID(entry.ID, "{{.Tag}}", executor.Context{
+		"Tag":    entry.Tag,
+		"Source": entry.SourcePath,
+		"Target": entry.Target,
+	})
+	if err != nil {
+		return hotplug.Device{}, err
+	}
+	socket := entry.VirtioFS.Socket
 	if socket == "" {
-		socket = entry.ID + ".sock"
+		socket = id + ".sock"
 	}
 	socketPath, err := m.resolveSocketPath(socket)
 	if err != nil {
 		return hotplug.Device{}, err
 	}
-	bin := entry.Bin
+	bin := entry.VirtioFS.Bin
 	if bin == "" {
 		bin = "virtiofsd"
 	}
 	source := m.resolvePath(entry.SourcePath)
-	args := append([]string(nil), entry.Args...)
+	args := append([]string(nil), entry.VirtioFS.Args...)
 	if len(args) == 0 {
-		args = hotplug.DefaultVirtioFSArgs(socketPath, source, entry.ID)
+		args = hotplug.DefaultVirtioFSArgs(socketPath, source, id)
 	}
 	return hotplug.Device{
 		Kind: hotplug.KindVirtioFS,
-		ID:   entry.ID,
+		ID:   id,
 		VirtioFS: hotplug.VirtioFS{
 			Source:     source,
 			Target:     entry.Target,
 			SocketPath: socketPath,
 			Bin:        m.resolveOptionalBin(bin, "virtiofsd"),
 			Args:       args,
+		},
+	}, nil
+}
+
+func (m *Manifest) lowerImageHotplug(entry HotplugImageInput) (hotplug.Device, error) {
+	id, err := renderHotplugID(entry.ID, "{{.Serial}}", executor.Context{
+		"Serial": entry.Serial,
+		"Source": entry.SourcePath,
+		"Format": entry.Format,
+	})
+	if err != nil {
+		return hotplug.Device{}, err
+	}
+	format := entry.Format
+	if format == "" {
+		format = "raw"
+	}
+	return hotplug.Device{
+		Kind: hotplug.KindBlock,
+		ID:   id,
+		Block: hotplug.Block{
+			ImagePath: m.resolvePath(entry.SourcePath),
+			Format:    format,
+			ReadOnly:  entry.ReadOnly,
+			Serial:    entry.Serial,
 		},
 	}, nil
 }
@@ -752,17 +792,22 @@ func lowerNetHotplug(entry HotplugNetInput) hotplug.Device {
 	}
 }
 
-func (m *Manifest) lowerBlockHotplug(entry HotplugBlockInput) hotplug.Device {
-	return hotplug.Device{
-		Kind: hotplug.KindBlock,
-		ID:   entry.ID,
-		Block: hotplug.Block{
-			ImagePath: m.resolvePath(entry.ImagePath),
-			Format:    entry.Format,
-			ReadOnly:  entry.ReadOnly,
-			Serial:    entry.Serial,
-		},
+func renderHotplugID(id string, defaultID string, context executor.Context) (string, error) {
+	if id == "" {
+		id = defaultID
 	}
+	renderer, err := executor.New(context)
+	if err != nil {
+		return "", err
+	}
+	rendered, err := renderer.RenderString(id)
+	if err != nil {
+		return "", err
+	}
+	if rendered == "" {
+		return "", fmt.Errorf("id is required")
+	}
+	return rendered, nil
 }
 
 func staleUnixSocket(path string) (bool, error) {

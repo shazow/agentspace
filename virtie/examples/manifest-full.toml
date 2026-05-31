@@ -201,7 +201,7 @@ read_only = false
 
 [[mounts]]
 # A hotplugged virtiofs mount is not attached during launch. Instead, virtie
-# generates a [[hotplug.virtiofs]] entry with the mount tag as its id, starts
+# generates a [[hotplug]] type="virtiofs" entry with the mount tag as its id, starts
 # virtiofsd during `virtie hotplug`, attaches the QEMU device through QMP, and
 # optionally mounts it in the guest through the guest agent.
 type = "virtiofs"
@@ -212,18 +212,21 @@ target = "/mnt/cache"  # Optional: omit when the guest mounts it through fstab o
 virtiofs.socket = "cache.sock"  # Default for hotplugged virtiofs: "<tag>.sock"
 virtiofs.bin = "virtiofsd"
 
-[[hotplug.virtiofs]]
+[[hotplug]]
 # Explicit virtiofs hotplug entries are the typed equivalent of hotplugged
 # mounts. target is optional; omit it when the guest mounts the share itself.
-id = "tools"
+type = "virtiofs"
+id = "{{.Tag}}"  # Default: "{{.Tag}}"
+tag = "tools"
 source = "/tmp/tools"
 target = "/mnt/tools"
-socket = "tools.sock"  # Default: "<id>.sock"
-bin = "virtiofsd"  # Default: "virtiofsd"
+virtiofs.socket = "tools.sock"  # Default: "<id>.sock"
+virtiofs.bin = "virtiofsd"  # Default: "virtiofsd"
 
-[[hotplug.net]]
+[[hotplug]]
 # Network hotplug v1 attaches only the QEMU device. Guest-side interface naming,
 # DHCP/static configuration, and routing policy are future work.
+type = "net"
 id = "vpn"
 backend = "user"  # v1 supports user only
 mac = "02:02:00:00:00:10"
@@ -231,11 +234,12 @@ forward = [
   { proto = "tcp", host = "127.0.0.1:2223", guest = "10.0.2.15:22" },
 ]
 
-[[hotplug.block]]
+[[hotplug]]
 # Block hotplug v1 attaches only the QEMU block device. Guest-side discovery,
 # partition/filesystem policy, and mounting are future work.
-id = "data"
-image = "data.qcow2"
+type = "image"
+id = "{{.Serial}}"  # Default: "{{.Serial}}"
+source = "data.qcow2"
 format = "qcow2"  # Options: raw, qcow2
 read_only = false
 serial = "data"

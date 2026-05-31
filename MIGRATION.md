@@ -150,8 +150,8 @@ Move 9p entries to `[[mounts.9p]]` and nest 9p-specific options:
 
 ### What Changed
 
-The manifest now accepts typed hotplug lists: `[[hotplug.virtiofs]]`,
-`[[hotplug.net]]`, and `[[hotplug.block]]`. The command is
+The manifest now accepts ordered typed hotplug lists using `[[hotplug]]` with
+`type = "virtiofs"`, `type = "net"`, or `type = "image"`. The command is
 `virtie hotplug --manifest=MANIFEST ID`, with `--detach` for removal. QEMU
 starts with one preallocated PCIe root port per typed hotplug entry.
 
@@ -193,24 +193,29 @@ virtie hotplug --manifest=manifest.toml --detach cache
 To define the same share explicitly:
 
 ```toml
-[[hotplug.virtiofs]]
-id = "cache"
+[[hotplug]]
+type = "virtiofs"
+id = "{{.Tag}}"
+tag = "cache"
 source = "/tmp/cache"
 target = "/mnt/cache"
-socket = "cache.sock"
+virtiofs.socket = "cache.sock"
 ```
 
 Net and block hotplug are intentionally minimal in this version:
 
 ```toml
-[[hotplug.net]]
+[[hotplug]]
+type = "net"
 id = "vpn"
 backend = "user"
 mac = "02:02:00:00:00:10"
 
-[[hotplug.block]]
-id = "data"
-image = "data.qcow2"
+[[hotplug]]
+type = "image"
+id = "{{.Serial}}"
+source = "data.qcow2"
+serial = "data"
 format = "qcow2"
 ```
 
