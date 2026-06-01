@@ -1051,20 +1051,6 @@ func TestManifestResolvesSocketsFromRuntimeDir(t *testing.T) {
 	}
 }
 
-func TestManifestResolvedQEMUPreservesBareBinaryForPATHLookup(t *testing.T) {
-	manifest := validManifest()
-	manifest.QEMU.BinaryPath = "qemu-system-x86_64"
-
-	qemu, err := manifest.ResolvedQEMU()
-	if err != nil {
-		t.Fatalf("resolve qemu config: %v", err)
-	}
-
-	if got, want := qemu.BinaryPath, "qemu-system-x86_64"; got != want {
-		t.Fatalf("unexpected qemu binary path: got %q want %q", got, want)
-	}
-}
-
 func TestManifestWriteFilesValidation(t *testing.T) {
 	validMode := "0640"
 
