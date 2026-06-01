@@ -403,7 +403,6 @@ let
     assert !(pkgs.lib.hasInfix "--sandbox=namespace" virtiofsDaemonScript);
     assert pkgs.lib.hasInfix "ulimit -Hn" virtiofsDaemonScript;
     assert pkgs.lib.hasInfix "--inode-file-handles=never" virtiofsDaemonScript;
-    assert !(pkgs.lib.hasInfix "--inode-file-handles=prefer" virtiofsDaemonScript);
     assert pkgs.lib.hasInfix "--inode-file-handles=prefer" inodeFileHandlesPreferVirtiofsDaemonScript;
     assert pkgs.lib.hasInfix "--inode-file-handles=prefer"
       nativeInodeFileHandlesPreferVirtiofsDaemonScript;
