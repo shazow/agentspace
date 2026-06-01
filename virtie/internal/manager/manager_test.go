@@ -3455,6 +3455,20 @@ func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	}
 }
 
+func TestBuildQEMUSpecPreservesBareBinaryForPATHLookup(t *testing.T) {
+	manifest := validManifest("/tmp/work")
+	manifest.QEMU.BinaryPath = "qemu-system-x86_64"
+
+	spec, err := buildQEMUSpec(manifest, 42)
+	if err != nil {
+		t.Fatalf("build qemu spec: %v", err)
+	}
+
+	if got, want := spec.Path, "qemu-system-x86_64"; got != want {
+		t.Fatalf("unexpected qemu path: got %q want %q", got, want)
+	}
+}
+
 func TestBuildQEMUSpecAddsPCIEHotplugPorts(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 	manifest.QEMU.Hotplug.PCIEPorts = 2

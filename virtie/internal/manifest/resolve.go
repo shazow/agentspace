@@ -133,7 +133,6 @@ func (m *Manifest) ResolvedSSHReadySocketPath() (string, error) {
 
 func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved := m.QEMU
-	resolved.BinaryPath = m.resolvePath(resolved.BinaryPath)
 	resolved.Kernel.Path = m.resolvePath(resolved.Kernel.Path)
 	resolved.Kernel.InitrdPath = m.resolvePath(resolved.Kernel.InitrdPath)
 	resolved.PassthroughArgs = append([]string(nil), resolved.PassthroughArgs...)
@@ -280,7 +279,6 @@ func (m *Manifest) ResolvedNotifications() Notifications {
 	}
 	if !m.Notifications.Command.IsZero() {
 		command := m.Notifications.Command
-		command.Path = m.resolvePath(command.Path)
 		command.Args = append([]string(nil), command.Args...)
 		command.Env = append([]string(nil), command.Env...)
 		resolved.Command = command

@@ -40,7 +40,7 @@ func TestCommandNotifierHonorsStateAllowlistAndPassesEnv(t *testing.T) {
 		t.Fatalf("expected one notification command, got %d", got)
 	}
 	call := runner.calls[0]
-	if got, want := call.path, "/tmp/work/bin/notify"; got != want {
+	if got, want := call.path, "bin/notify"; got != want {
 		t.Fatalf("unexpected command path: got %q want %q", got, want)
 	}
 	if got, want := call.args, []string{"--flag"}; !slices.Equal(got, want) {
@@ -61,12 +61,12 @@ func TestCommandNotifierHonorsStateAllowlistAndPassesEnv(t *testing.T) {
 	}
 }
 
-func TestCommandNotifierResolvesRelativeCommandAgainstAbsoluteWorkingDir(t *testing.T) {
+func TestCommandNotifierKeepsCommandPathAndUsesAbsoluteWorkingDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 
 	cfg := validManifest("work")
-	cfg.Notifications.Command = manifest.Command{Path: "bin/notify"}
+	cfg.Notifications.Command = manifest.Command{Path: "notify"}
 	runner := &recordingNotificationRunner{}
 	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
 
@@ -79,7 +79,7 @@ func TestCommandNotifierResolvesRelativeCommandAgainstAbsoluteWorkingDir(t *test
 	if got, want := call.dir, filepath.Join(tmpDir, "work"); got != want {
 		t.Fatalf("unexpected command dir: got %q want %q", got, want)
 	}
-	if got, want := call.path, filepath.Join(tmpDir, "work", "bin", "notify"); got != want {
+	if got, want := call.path, "notify"; got != want {
 		t.Fatalf("unexpected command path: got %q want %q", got, want)
 	}
 }
@@ -103,7 +103,7 @@ func TestCommandNotifierRendersExecTemplates(t *testing.T) {
 		t.Fatalf("expected one notification command, got %d", got)
 	}
 	call := runner.calls[0]
-	if got, want := call.path, "/tmp/work/bin/notify-runtime:resume"; got != want {
+	if got, want := call.path, "bin/notify-runtime:resume"; got != want {
 		t.Fatalf("unexpected command path: got %q want %q", got, want)
 	}
 	if got, want := call.args, []string{"Restored", "7", "template-user"}; !slices.Equal(got, want) {
