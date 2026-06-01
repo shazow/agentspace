@@ -321,6 +321,7 @@ let
   virtiofsMounts = mountsOfType "virtiofs" manifest;
   ninePMounts = mountsOfType "9p" manifest;
   virtiofsDaemonMounts = builtins.filter (mount: mount.virtiofs ? bin) virtiofsMounts;
+  virtiofsDaemonScript = builtins.readFile (builtins.head virtiofsDaemonMounts).virtiofs.bin;
 
   _ =
     assert builtins.head manifest.qemu.exec != "";
@@ -370,6 +371,15 @@ let
     assert builtins.all (
       mount: mount.virtiofs.socket != "" && mount.virtiofs.bin != ""
     ) virtiofsDaemonMounts;
+    assert !(pkgs.lib.hasInfix "--sandbox=none" virtiofsDaemonScript);
+    assert !(pkgs.lib.hasInfix "--sandbox=namespace" virtiofsDaemonScript);
+    assert pkgs.lib.hasInfix "--uid-map=:0:$(id -u):1:" virtiofsDaemonScript;
+    assert pkgs.lib.hasInfix "--gid-map=:0:$(id -g):1:" virtiofsDaemonScript;
+    assert !(pkgs.lib.hasInfix "--rlimit-nofile 1048576" virtiofsDaemonScript);
+    assert pkgs.lib.hasInfix "ulimit -Hn" virtiofsDaemonScript;
+    assert pkgs.lib.hasInfix "CapEff:" virtiofsDaemonScript;
+    assert pkgs.lib.hasInfix "--inode-file-handles=never" virtiofsDaemonScript;
+    assert pkgs.lib.hasInfix "--inode-file-handles=prefer" virtiofsDaemonScript;
     assert builtins.any (mount: mount.tag == "workspace_cwd") virtiofsDaemonMounts;
     assert !(manifest ? vsock);
     assert !(manifest.ssh ? destination);

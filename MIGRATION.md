@@ -4,6 +4,24 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-06-01: managed virtiofsd defaults avoid unprivileged warnings
+
+### Who Is Affected
+
+- Users launching agentspace as a normal user with managed virtiofs mounts.
+
+### What Changed
+
+The Nix-generated `virtiofsd` wrapper no longer uses the hardcoded nofile limit
+or file handle behavior that produced warnings for normal users. It keeps
+`virtiofsd`'s namespace sandbox, maps namespace root to the launching uid/gid
+for non-root launches, sets nofile to the inherited hard limit, and uses
+`--inode-file-handles=prefer` only when `CAP_DAC_READ_SEARCH` is effective.
+
+### Migration Steps
+
+No manifest change is required for Nix-generated managed virtiofs mounts.
+
 ## 2026-06-01: virtie hotplug entries moved under source device groups
 
 ### Who Is Affected

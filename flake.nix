@@ -32,6 +32,7 @@
       };
 
       mkExecSSH = import ./lib/mkExecSSH.nix { inherit pkgs lib; };
+      mkVirtioFSD = import ./lib/mkVirtioFSD.nix { inherit pkgs lib; };
 
       mkSandbox =
         cfg:
@@ -65,7 +66,7 @@
           baseSystem = nixpkgs.lib.nixosSystem {
             inherit system;
             modules = baseModules;
-            specialArgs = { inherit mkExecSSH; };
+            specialArgs = { inherit mkExecSSH mkVirtioFSD; };
           };
           sandboxExtraModules = baseSystem.config.agentspace.sandbox.extraModules;
         in
@@ -74,7 +75,7 @@
         else
           baseSystem.extendModules {
             modules = sandboxExtraModules;
-            specialArgs = { inherit mkExecSSH; };
+            specialArgs = { inherit mkExecSSH mkVirtioFSD; };
           };
 
       mkLaunch =
@@ -164,7 +165,12 @@
       nixosModules.default = ./sandbox-qemu.nix;
 
       lib = {
-        inherit mkSandbox mkLaunch mkExecSSH;
+        inherit
+          mkSandbox
+          mkLaunch
+          mkExecSSH
+          mkVirtioFSD
+          ;
       };
 
       checks.${system} = import ./checks {

@@ -4,6 +4,7 @@
   options,
   pkgs,
   mkExecSSH ? import ./lib/mkExecSSH.nix { inherit pkgs lib; },
+  mkVirtioFSD ? import ./lib/mkVirtioFSD.nix { inherit pkgs lib; },
   ...
 }:
 
@@ -433,48 +434,17 @@ in
       arch = builtins.head (builtins.split "-" system);
       canSandbox = builtins.elem "--enable-seccomp" (config.microvm.qemu.package.configureFlags or [ ]);
 
-      mkVirtioFSDaemonCommand =
-        {
-          tag,
-          socket,
-          source,
-          readOnly,
-          cache,
-          ...
-        }:
-        pkgs.writeShellScript "virtiofsd-${cfg.hostName}-${tag}" ''
-          if [ "$(id -u)" = 0 ]; then
-            opt_rlimit=(--rlimit-nofile 1048576)
-          else
-            opt_rlimit=()
-          fi
-
-          socket_path=${lib.escapeShellArg socket}
-          if [ -n "''${VIRTIOFSD_SOCKET-}" ]; then
-            socket_path="$VIRTIOFSD_SOCKET"
-          fi
-
-          exec ${lib.getExe config.microvm.virtiofsd.package} \
-            --socket-path="$socket_path" \
-            ${
-              lib.optionalString (
-                config.microvm.virtiofsd.group != null
-              ) "--socket-group=${config.microvm.virtiofsd.group}"
-            } \
-            --shared-dir="''${VIRTIOFSD_SOURCE-${lib.escapeShellArg source}}" \
-            "''${opt_rlimit[@]}" \
-            --thread-pool-size ${toString config.microvm.virtiofsd.threadPoolSize} \
-            --posix-acl --xattr \
-            --cache=${cache} \
-            ${
-              lib.optionalString (
-                config.microvm.virtiofsd.inodeFileHandles != null
-              ) "--inode-file-handles=${config.microvm.virtiofsd.inodeFileHandles}"
-            } \
-            ${lib.optionalString (config.microvm.hypervisor == "crosvm") "--tag=${tag}"} \
-            ${lib.optionalString readOnly "--readonly"} \
-            ${lib.escapeShellArgs config.microvm.virtiofsd.extraArgs}
-        '';
+      mkVirtioFSDaemonCommand = mkVirtioFSD {
+        inherit (cfg) hostName;
+        inherit (config.microvm) hypervisor;
+        inherit (config.microvm.virtiofsd)
+          package
+          group
+          threadPoolSize
+          inodeFileHandles
+          extraArgs
+          ;
+      };
 
       notificationManifest = {
         states = cfg.notifications.states;
