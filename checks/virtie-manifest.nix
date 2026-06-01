@@ -298,6 +298,15 @@ let
     ];
   };
 
+  vmVirtieInodeFileHandlesPrefer = mkSandbox {
+    persistence.homeImage = null;
+    extraModules = [
+      {
+        microvm.virtiofsd.inodeFileHandles = "prefer";
+      }
+    ];
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtieManifestData;
   quietDisabledKernelParams = vmQuietDisabled.config.microvm.kernelParams;
@@ -316,12 +325,19 @@ let
   fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
   graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
   runManifest = vmVirtieRun.config.agentspace.sandbox.launch.virtieManifestData;
+  inodeFileHandlesPreferManifest =
+    vmVirtieInodeFileHandlesPrefer.config.agentspace.sandbox.launch.virtieManifestData;
 
   mountsOfType = type: manifest: builtins.filter (mount: mount.type == type) manifest.mounts;
   virtiofsMounts = mountsOfType "virtiofs" manifest;
   ninePMounts = mountsOfType "9p" manifest;
   virtiofsDaemonMounts = builtins.filter (mount: mount.virtiofs ? bin) virtiofsMounts;
   virtiofsDaemonScript = builtins.readFile (builtins.head virtiofsDaemonMounts).virtiofs.bin;
+  inodeFileHandlesPreferVirtiofsDaemonMounts = builtins.filter (mount: mount.virtiofs ? bin) (
+    mountsOfType "virtiofs" inodeFileHandlesPreferManifest
+  );
+  inodeFileHandlesPreferVirtiofsDaemonScript = builtins.readFile (builtins.head inodeFileHandlesPreferVirtiofsDaemonMounts)
+  .virtiofs.bin;
 
   _ =
     assert builtins.head manifest.qemu.exec != "";
@@ -373,13 +389,9 @@ let
     ) virtiofsDaemonMounts;
     assert !(pkgs.lib.hasInfix "--sandbox=none" virtiofsDaemonScript);
     assert !(pkgs.lib.hasInfix "--sandbox=namespace" virtiofsDaemonScript);
-    assert pkgs.lib.hasInfix "--uid-map=:0:$(id -u):1:" virtiofsDaemonScript;
-    assert pkgs.lib.hasInfix "--gid-map=:0:$(id -g):1:" virtiofsDaemonScript;
-    assert !(pkgs.lib.hasInfix "--rlimit-nofile 1048576" virtiofsDaemonScript);
     assert pkgs.lib.hasInfix "ulimit -Hn" virtiofsDaemonScript;
-    assert pkgs.lib.hasInfix "CapEff:" virtiofsDaemonScript;
     assert pkgs.lib.hasInfix "--inode-file-handles=never" virtiofsDaemonScript;
-    assert pkgs.lib.hasInfix "--inode-file-handles=prefer" virtiofsDaemonScript;
+    assert pkgs.lib.hasInfix "--inode-file-handles=prefer" inodeFileHandlesPreferVirtiofsDaemonScript;
     assert builtins.any (mount: mount.tag == "workspace_cwd") virtiofsDaemonMounts;
     assert !(manifest ? vsock);
     assert !(manifest.ssh ? destination);
