@@ -307,6 +307,11 @@ let
     ];
   };
 
+  vmVirtieNativeInodeFileHandlesPrefer = mkSandbox {
+    persistence.homeImage = null;
+    virtiofsd.inodeFileHandles = "prefer";
+  };
+
   manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
   defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtieManifestData;
   quietDisabledKernelParams = vmQuietDisabled.config.microvm.kernelParams;
@@ -327,6 +332,8 @@ let
   runManifest = vmVirtieRun.config.agentspace.sandbox.launch.virtieManifestData;
   inodeFileHandlesPreferManifest =
     vmVirtieInodeFileHandlesPrefer.config.agentspace.sandbox.launch.virtieManifestData;
+  nativeInodeFileHandlesPreferManifest =
+    vmVirtieNativeInodeFileHandlesPrefer.config.agentspace.sandbox.launch.virtieManifestData;
 
   mountsOfType = type: manifest: builtins.filter (mount: mount.type == type) manifest.mounts;
   virtiofsMounts = mountsOfType "virtiofs" manifest;
@@ -337,6 +344,11 @@ let
     mountsOfType "virtiofs" inodeFileHandlesPreferManifest
   );
   inodeFileHandlesPreferVirtiofsDaemonScript = builtins.readFile (builtins.head inodeFileHandlesPreferVirtiofsDaemonMounts)
+  .virtiofs.bin;
+  nativeInodeFileHandlesPreferVirtiofsDaemonMounts = builtins.filter (mount: mount.virtiofs ? bin) (
+    mountsOfType "virtiofs" nativeInodeFileHandlesPreferManifest
+  );
+  nativeInodeFileHandlesPreferVirtiofsDaemonScript = builtins.readFile (builtins.head nativeInodeFileHandlesPreferVirtiofsDaemonMounts)
   .virtiofs.bin;
 
   _ =
@@ -391,7 +403,10 @@ let
     assert !(pkgs.lib.hasInfix "--sandbox=namespace" virtiofsDaemonScript);
     assert pkgs.lib.hasInfix "ulimit -Hn" virtiofsDaemonScript;
     assert pkgs.lib.hasInfix "--inode-file-handles=never" virtiofsDaemonScript;
+    assert !(pkgs.lib.hasInfix "--inode-file-handles=prefer" virtiofsDaemonScript);
     assert pkgs.lib.hasInfix "--inode-file-handles=prefer" inodeFileHandlesPreferVirtiofsDaemonScript;
+    assert pkgs.lib.hasInfix "--inode-file-handles=prefer"
+      nativeInodeFileHandlesPreferVirtiofsDaemonScript;
     assert builtins.any (mount: mount.tag == "workspace_cwd") virtiofsDaemonMounts;
     assert !(manifest ? vsock);
     assert !(manifest.ssh ? destination);
@@ -405,6 +420,8 @@ let
     assert defaultManifest.ssh.autoprovision == true;
     assert defaultManifest.ssh.ready_socket == "ready.sock";
     assert vmDefault.config.microvm.virtiofsd.group == null;
+    assert vmDefault.config.microvm.virtiofsd.inodeFileHandles == "never";
+    assert vmDefault.config.agentspace.sandbox.virtiofsd.inodeFileHandles == "never";
     assert vmDefault.config.microvm.qemu.serialConsole == false;
     assert defaultManifest.kernel.serial == "off";
     assert builtins.elem "quiet" vmDefault.config.microvm.kernelParams;

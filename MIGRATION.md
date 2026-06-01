@@ -17,7 +17,10 @@ or default file handle probing that produced warnings for normal users. It
 keeps `virtiofsd`'s namespace sandbox, leaves uid/gid mapping to virtiofsd, sets
 nofile to the inherited hard limit, and defaults to
 `--inode-file-handles=never`. Users who know file handles are safe for their
-host filesystem can still opt in through `microvm.virtiofsd.inodeFileHandles`.
+host filesystem can opt in through
+`agentspace.sandbox.virtiofsd.inodeFileHandles`. The lower-level
+`microvm.virtiofsd.*` settings remain compatibility defaults for the matching
+`agentspace.sandbox.virtiofsd.*` options.
 
 ### Migration Steps
 

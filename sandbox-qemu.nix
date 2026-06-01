@@ -343,6 +343,8 @@ in
       '';
     };
 
+    virtiofsd = mkVirtioFSD.options { inherit options config; };
+
     homeModules = lib.mkOption {
       type = lib.types.listOf lib.types.raw;
       default = [ ];
@@ -437,7 +439,7 @@ in
       mkVirtioFSDaemonCommand = mkVirtioFSD {
         inherit (cfg) hostName;
         inherit (config.microvm) hypervisor;
-        inherit (config.microvm.virtiofsd)
+        inherit (cfg.virtiofsd)
           package
           group
           threadPoolSize
@@ -661,6 +663,7 @@ in
       virtieManifest = "${persistenceBaseDir}/virtie-${cfg.hostName}.toml";
     in
     lib.mkMerge [
+      mkVirtioFSD.moduleDefaults
       {
         assertions = [
           {
@@ -702,14 +705,8 @@ in
         boot.initrd.verbose = lib.mkIf cfg.quiet false;
         boot.tmp.useTmpfs = false;
 
-        # Some workspace-backed filesystems (like FUSE) reject chgrp/chown on
-        # the virtiofsd socket path with EINVAL when --socket-group is used.
-        # virtie starts QEMU and virtiofsd as the same user, so managed
-        # sockets do not need a group override.
-        microvm.virtiofsd.group = lib.mkDefault null;
-
         # Need this to fix running out of fd's, but requires root (or CAP_DAC_READ_SEARCH)
-        #   microvm.virtiofsd.inodeFileHandles = "mandatory";
+        #   agentspace.sandbox.virtiofsd.inodeFileHandles = "mandatory";
         # Workaround during runtime:
         # $ sync && echo 3 > /proc/sys/vm/drop_caches
         # Also:
