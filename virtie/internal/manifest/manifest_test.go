@@ -36,7 +36,7 @@ func writeFilePathContent(path string) WriteFileContent {
 
 func TestLoadReadsFromReader(t *testing.T) {
 	document := validDocument()
-	document.QEMU.Exec = []string{"bin/qemu-system-x86_64"}
+	document.QEMU.Exec = []string{"qemu-system-x86_64"}
 	document.Kernel.Path = "boot/vmlinuz"
 	document.Kernel.InitrdPath = "boot/initrd"
 	document.Mounts = append(document.Mounts, NinePMountInput{
@@ -67,7 +67,7 @@ func TestLoadReadsFromReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve qemu: %v", err)
 	}
-	if got, want := qemu.BinaryPath, "/tmp/work/bin/qemu-system-x86_64"; got != want {
+	if got, want := qemu.BinaryPath, "qemu-system-x86_64"; got != want {
 		t.Fatalf("unexpected qemu binary path: got %q want %q", got, want)
 	}
 	if got, want := qemu.Kernel.Path, "/tmp/work/boot/vmlinuz"; got != want {
@@ -1278,7 +1278,7 @@ func TestManifestNotificationsValidationAndResolution(t *testing.T) {
 		if resolved.Command.IsZero() {
 			t.Fatal("expected resolved notification command")
 		}
-		if got, want := resolved.Command.Path, "/tmp/work/bin/notify"; got != want {
+		if got, want := resolved.Command.Path, "bin/notify"; got != want {
 			t.Fatalf("unexpected resolved command path: got %q want %q", got, want)
 		}
 		if got, want := resolved.Command.Args, []string{"--verbose"}; !reflect.DeepEqual(got, want) {

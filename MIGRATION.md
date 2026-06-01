@@ -4,6 +4,26 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-06-01: virtie exec command names use PATH lookup
+
+### Who Is Affected
+
+- Direct virtie manifest producers using bare command names in `qemu.exec` or
+  `notifications.exec`.
+
+### What Changed
+
+`qemu.exec[0]` and `notifications.exec[0]` are no longer resolved against the
+manifest working directory. They are passed through to Go's `exec.Command`, so
+bare command names are located through `$PATH`, while absolute paths and
+explicit relative paths such as `./bin/qemu-system-x86_64` continue to work.
+
+### Migration Steps
+
+No change is needed for manifests that use absolute paths or commands available
+on `$PATH`. If a manifest intended to run a binary from the working directory,
+make that explicit with `./`, for example `["./bin/notify"]`.
+
 ## 2026-06-01: managed virtiofsd defaults avoid unprivileged warnings
 
 ### Who Is Affected

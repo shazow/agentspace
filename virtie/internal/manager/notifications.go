@@ -119,10 +119,6 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 		}
 		return
 	}
-	path := command.Path
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(n.dir, path)
-	}
 	env, err := notificationEnv(state, message, values)
 	if err != nil {
 		if n.logger != nil {
@@ -131,7 +127,7 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 		return
 	}
 	env = append(env, command.Env...)
-	if err := n.runner.Run(ctx, path, command.Args, n.dir, env); err != nil && n.logger != nil {
+	if err := n.runner.Run(ctx, command.Path, command.Args, n.dir, env); err != nil && n.logger != nil {
 		n.logger.Info("notification hook failed", "state", state, "err", err)
 	}
 }
