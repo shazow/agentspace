@@ -127,6 +127,30 @@ func TestNetAttachDetachCommands(t *testing.T) {
 	}
 }
 
+func TestDetachRejectsStateKindMismatchBeforeCleanup(t *testing.T) {
+	tmpDir := t.TempDir()
+	runtime, _, qmp, _ := testRuntime(tmpDir, Device{
+		Kind: KindNet,
+		ID:   "cache",
+		Net:  Net{Backend: "user", MAC: "02:02:00:00:00:10"},
+	})
+	statePath := filepath.Join(tmpDir, "state", "hotplug", "cache.json")
+	if err := WriteState(statePath, State{ID: "cache", Kind: KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	err := runtime.Detach(context.Background(), "cache")
+	if err == nil || !strings.Contains(err.Error(), `kind "virtiofs", not current manifest kind "net"`) {
+		t.Fatalf("expected kind mismatch error, got %v", err)
+	}
+	if len(qmp.commands) != 0 || len(qmp.deviceDels) != 0 {
+		t.Fatalf("expected no qmp cleanup, got commands=%#v deviceDels=%#v", qmp.commands, qmp.deviceDels)
+	}
+	if _, err := os.Stat(statePath); err != nil {
+		t.Fatalf("expected state file to remain, got %v", err)
+	}
+}
+
 func TestBlockAttachDetachCommands(t *testing.T) {
 	tmpDir := t.TempDir()
 	runtime, _, qmp, _ := testRuntime(tmpDir, Device{

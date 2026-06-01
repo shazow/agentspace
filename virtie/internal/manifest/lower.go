@@ -724,11 +724,18 @@ func lowerNetworkHotplug(entry NetworkInput, index int) (hotplug.Device, error) 
 		mac = defaultNetworkMAC
 	}
 	forward := make([]hotplug.Forward, 0, len(entry.Forward))
-	for _, fwd := range entry.Forward {
+	for i, fwd := range entry.Forward {
+		normalized, err := normalizeForwardPort(fwd, fmt.Sprintf("forward[%d]", i))
+		if err != nil {
+			return hotplug.Device{}, err
+		}
+		if normalized.From == "guest" {
+			return hotplug.Device{}, fmt.Errorf("forward[%d].from guest is not supported for hotplug networks", i)
+		}
 		forward = append(forward, hotplug.Forward{
-			Proto: fwd.Proto,
-			Host:  fwd.Host,
-			Guest: fwd.Guest,
+			Proto: normalized.Proto,
+			Host:  formatPortEndpoint(normalized.Host),
+			Guest: formatPortEndpoint(normalized.Guest),
 		})
 	}
 	return hotplug.Device{
@@ -850,45 +857,69 @@ func parsePortEndpoint(value string) (PortEndpoint, error) {
 	return PortEndpoint{Address: host, Port: parsedPort}, nil
 }
 
+type normalizedForwardPort struct {
+	Proto string
+	From  string
+	Host  PortEndpoint
+	Guest PortEndpoint
+}
+
+func normalizeForwardPort(port ForwardPort, fieldPath string) (normalizedForwardPort, error) {
+	proto := port.Proto
+	if proto == "" {
+		proto = "tcp"
+	}
+	if proto != "tcp" && proto != "udp" {
+		return normalizedForwardPort{}, fmt.Errorf("%s.proto must be one of tcp or udp", fieldPath)
+	}
+	from := port.From
+	if from == "" {
+		from = "host"
+	}
+	if from != "host" && from != "guest" {
+		return normalizedForwardPort{}, fmt.Errorf("%s.from must be one of host or guest", fieldPath)
+	}
+	hostEndpoint, err := parsePortEndpoint(port.Host)
+	if err != nil {
+		return normalizedForwardPort{}, fmt.Errorf("%s.host %s", fieldPath, err)
+	}
+	guestEndpoint, err := parsePortEndpoint(port.Guest)
+	if err != nil {
+		return normalizedForwardPort{}, fmt.Errorf("%s.guest %s", fieldPath, err)
+	}
+	return normalizedForwardPort{
+		Proto: proto,
+		From:  from,
+		Host:  hostEndpoint,
+		Guest: guestEndpoint,
+	}, nil
+}
+
+func formatPortEndpoint(endpoint PortEndpoint) string {
+	return net.JoinHostPort(endpoint.Address, strconv.Itoa(endpoint.Port))
+}
+
 func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex int) ([]string, error) {
 	options := make([]string, 0, len(ports))
 	if len(fwdTunnelExec) == 0 {
 		fwdTunnelExec = []string{"nc", "{{.Host}}", "{{.Port}}"}
 	}
 	for i, port := range ports {
-		proto := port.Proto
-		if proto == "" {
-			proto = "tcp"
-		}
-		if proto != "tcp" && proto != "udp" {
-			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].proto must be one of tcp or udp", networkIndex, i)
-		}
-		from := port.From
-		if from == "" {
-			from = "host"
-		}
-		if from != "host" && from != "guest" {
-			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].from must be one of host or guest", networkIndex, i)
-		}
-		hostEndpoint, err := parsePortEndpoint(port.Host)
+		normalized, err := normalizeForwardPort(port, fmt.Sprintf("manifest.networks[%d].forward[%d]", networkIndex, i))
 		if err != nil {
-			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].host %s", networkIndex, i, err)
+			return nil, err
 		}
-		guestEndpoint, err := parsePortEndpoint(port.Guest)
-		if err != nil {
-			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].guest %s", networkIndex, i, err)
-		}
-		if from == "host" {
-			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", proto, hostEndpoint.Address, hostEndpoint.Port, guestEndpoint.Address, guestEndpoint.Port))
+		if normalized.From == "host" {
+			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", normalized.Proto, normalized.Host.Address, normalized.Host.Port, normalized.Guest.Address, normalized.Guest.Port))
 		} else {
 			if err := rejectLegacyFwdTunnelExecEnv(fwdTunnelExec); err != nil {
 				return nil, fmt.Errorf("manifest.networks[%d].forward[%d].fwd_tunnel_exec: %w", networkIndex, i, err)
 			}
-			command, err := renderFwdTunnelExec(fwdTunnelExec, hostEndpoint)
+			command, err := renderFwdTunnelExec(fwdTunnelExec, normalized.Host)
 			if err != nil {
 				return nil, fmt.Errorf("manifest.networks[%d].forward[%d].fwd_tunnel_exec: %w", networkIndex, i, err)
 			}
-			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s", proto, guestEndpoint.Address, guestEndpoint.Port, shellquote.Join(command...)))
+			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s", normalized.Proto, normalized.Guest.Address, normalized.Guest.Port, shellquote.Join(command...)))
 		}
 	}
 	return options, nil

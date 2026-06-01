@@ -254,6 +254,9 @@ func (h hotplugBase) detach(device Device, cleanup func(State) error) error {
 	if state.ID != h.id {
 		return fmt.Errorf("hotplug state %q belongs to %q, not %q", statePath, state.ID, h.id)
 	}
+	if state.Kind != h.kind {
+		return fmt.Errorf("hotplug state %q is kind %q, not current manifest kind %q", statePath, state.Kind, h.kind)
+	}
 
 	if err := h.runtime.detachGuest(h.ctx, device); err != nil {
 		return err

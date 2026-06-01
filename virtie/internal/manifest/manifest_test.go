@@ -2190,6 +2190,93 @@ func TestDocumentTypedHotplugEntries(t *testing.T) {
 	}
 }
 
+func TestDocumentHotplugNetworkForwardDefaultsProto(t *testing.T) {
+	document := validDocument()
+	document.Mounts = nil
+	document.Hotplug = HotplugInput{
+		Networks: []NetworkInput{
+			{
+				ID: "vpn",
+				Forward: []ForwardPort{{
+					Host:  "127.0.0.1:2223",
+					Guest: "10.0.2.15:22",
+				}},
+			},
+		},
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := manifest.Hotplug[0].Net.Forward, []hotplug.Forward{{Proto: "tcp", Host: "127.0.0.1:2223", Guest: "10.0.2.15:22"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected hotplug forward: got %#v want %#v", got, want)
+	}
+}
+
+func TestDocumentHotplugNetworkForwardValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		forward   ForwardPort
+		wantError string
+	}{
+		{
+			name: "malformed host endpoint",
+			forward: ForwardPort{
+				Host:  "127.0.0.1",
+				Guest: "10.0.2.15:22",
+			},
+			wantError: "manifest.hotplug.networks[0]: forward[0].host missing :port",
+		},
+		{
+			name: "malformed guest endpoint",
+			forward: ForwardPort{
+				Host:  "127.0.0.1:2223",
+				Guest: "10.0.2.15:ssh",
+			},
+			wantError: "manifest.hotplug.networks[0]: forward[0].guest port must be an integer",
+		},
+		{
+			name: "invalid proto",
+			forward: ForwardPort{
+				Proto: "icmp",
+				Host:  "127.0.0.1:2223",
+				Guest: "10.0.2.15:22",
+			},
+			wantError: "manifest.hotplug.networks[0]: forward[0].proto must be one of tcp or udp",
+		},
+		{
+			name: "guest origin unsupported",
+			forward: ForwardPort{
+				From:  "guest",
+				Host:  "127.0.0.1:2223",
+				Guest: "10.0.2.15:22",
+			},
+			wantError: "manifest.hotplug.networks[0]: forward[0].from guest is not supported for hotplug networks",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.Mounts = nil
+			document.Hotplug = HotplugInput{
+				Networks: []NetworkInput{
+					{
+						ID:      "vpn",
+						Forward: []ForwardPort{tt.forward},
+					},
+				},
+			}
+
+			_, err := document.Manifest()
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantError, err)
+			}
+		})
+	}
+}
+
 func TestDecodeDocumentGroupedHotplugEntries(t *testing.T) {
 	document, err := DecodeDocumentBytes([]byte(`
 [kernel]
