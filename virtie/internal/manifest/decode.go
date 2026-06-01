@@ -89,9 +89,24 @@ func decodeTOML(data []byte, doc *Document) error {
 		return fmt.Errorf("decode manifest: %w", err)
 	}
 	if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
-		return fmt.Errorf("decode manifest: unknown key %s", undecoded[0].String())
+		for _, key := range undecoded {
+			if taggedTOMLKey(key) {
+				continue
+			}
+			return fmt.Errorf("decode manifest: unknown key %s", key.String())
+		}
 	}
 	return nil
+}
+
+func taggedTOMLKey(key toml.Key) bool {
+	if len(key) == 0 {
+		return false
+	}
+	if key[0] == "mounts" {
+		return true
+	}
+	return len(key) > 1 && key[0] == "hotplug" && key[1] == "mounts"
 }
 
 func manifestLooksTOML(data []byte, name string) bool {

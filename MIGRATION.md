@@ -4,6 +4,78 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-06-01: virtie hotplug entries moved under source device groups
+
+### Who Is Affected
+
+- Direct virtie manifest producers that emit hotplug entries.
+- Producers using `mounts[].hotplugged = true`.
+
+### What Changed
+
+Hotplug devices now use the same input shape as their launch-time device
+groups. To hotplug a mount, move it from `[[mounts]]` to
+`[[hotplug.mounts]]`. To hotplug a network, move it from `[[networks]]` to
+`[[hotplug.networks]]`.
+
+The `hotplugged = true` mount flag and the typed `[[hotplug]]` list are no
+longer accepted. Image mount formats are declared as `image.format`, not a
+top-level `format` field.
+
+### Migration Steps
+
+Change hotplugged virtiofs mounts from:
+
+```toml
+[[mounts]]
+type = "virtiofs"
+tag = "cache"
+source = "/tmp/cache"
+hotplugged = true
+target = "/mnt/cache"
+virtiofs.socket = "cache.sock"
+```
+
+to:
+
+```toml
+[[hotplug.mounts]]
+type = "virtiofs"
+tag = "cache"
+source = "/tmp/cache"
+target = "/mnt/cache"
+virtiofs.socket = "cache.sock"
+```
+
+Change network hotplug entries from:
+
+```toml
+[[hotplug]]
+type = "net"
+id = "vpn"
+backend = "user"
+mac = "02:02:00:00:00:10"
+```
+
+to:
+
+```toml
+[[hotplug.networks]]
+id = "vpn"
+type = "user"
+mac = "02:02:00:00:00:10"
+```
+
+For hotplugged image mounts, use:
+
+```toml
+[[hotplug.mounts]]
+type = "image"
+source = "data.qcow2"
+image.serial = "data"
+image.format = "qcow2"
+```
+
 ## 2026-05-30: ordered tagged virtie mounts restored
 
 ### Who Is Affected
@@ -140,6 +212,87 @@ Move 9p entries to `[[mounts.9p]]` and nest 9p-specific options:
 -security_model = "mapped"
 +9p.security_model = "mapped"
 ```
+
+## 2026-05-27: typed virtie manifest hotplug entries
+
+### Who Is Affected
+
+- Direct virtie manifest producers that want runtime device hotplug.
+- Direct manifest producers validating allowed manifest keys.
+
+### What Changed
+
+The manifest now accepts ordered typed hotplug lists using `[[hotplug]]` with
+`type = "virtiofs"`, `type = "net"`, or `type = "image"`. The command is
+`virtie hotplug --manifest=MANIFEST ID`, with `--detach` for removal. QEMU
+starts with one preallocated PCIe root port per typed hotplug entry.
+
+The earlier arbitrary-QMP shape is removed before release. Manifest producers
+should not emit `[[hotplug]]` entries with `attach.qmp`, `detach.qmp`,
+`exec_guest`, `vars`, or host `exec` fields.
+
+The earlier `qemu.allocate_pcie_ports` knob is also removed before release.
+Manifest producers should declare typed hotplug entries up front instead of
+reserving spare ports.
+
+Virtiofs mounts can opt into the shortcut with `hotplugged = true`. These mounts
+are not attached during launch; they generate a hotplug entry instead. Set
+`target = "/guest/path"` when `virtie hotplug` should run `mount -t virtiofs`
+inside the guest. If `target` is omitted, attach only adds the QEMU device and
+the guest must mount it through fstab, udev, or a manual command.
+
+### Migration Steps
+
+No existing launch manifests need to change. To add a hotplugged virtiofs share:
+
+```toml
+[[mounts]]
+type = "virtiofs"
+tag = "cache"
+source = "/tmp/cache"
+hotplugged = true
+target = "/mnt/cache"
+virtiofs.socket = "cache.sock"
+```
+
+Then attach or detach it while the VM is running:
+
+```console
+virtie hotplug --manifest=manifest.toml cache
+virtie hotplug --manifest=manifest.toml --detach cache
+```
+
+To define the same share explicitly:
+
+```toml
+[[hotplug]]
+type = "virtiofs"
+id = "{{.Tag}}"
+tag = "cache"
+source = "/tmp/cache"
+target = "/mnt/cache"
+virtiofs.socket = "cache.sock"
+```
+
+Net and block hotplug are intentionally minimal in this version:
+
+```toml
+[[hotplug]]
+type = "net"
+id = "vpn"
+backend = "user"
+mac = "02:02:00:00:00:10"
+
+[[hotplug]]
+type = "image"
+id = "{{.Serial}}"
+source = "data.qcow2"
+serial = "data"
+format = "qcow2"
+```
+
+These attach and detach QEMU devices only. Guest-side network setup, block
+discovery, filesystem policy, and mounting are future work.
 
 ## 2026-05-22: generic run commands replace runWithTunnel
 

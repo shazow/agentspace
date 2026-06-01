@@ -40,6 +40,7 @@ type Document struct {
 	WriteFiles    []WriteFileInput   `json:"write_files,omitempty" toml:"write_files"`
 	Notifications NotificationsInput `json:"notifications,omitempty" toml:"notifications"`
 	Run           []RunInput         `json:"run,omitempty" toml:"run"`
+	Hotplug       HotplugInput       `json:"hotplug,omitempty" toml:"hotplug"`
 }
 
 type HostInput struct {
@@ -155,6 +156,7 @@ type MountInput struct {
 type VirtioFSMountInput struct {
 	Type string `json:"type" toml:"type"`
 	MountInput
+	Target string `json:"target,omitempty" toml:"target"`
 
 	VirtioFS VirtioFSInput `json:"virtiofs,omitempty" toml:"virtiofs"`
 }
@@ -198,6 +200,7 @@ func (ImageMountInput) mountType() string { return MountTypeImage }
 type ImageInput struct {
 	Size       units.MiB `json:"size,omitempty" toml:"size"`
 	FSType     string    `json:"fs,omitempty" toml:"fs"`
+	Format     string    `json:"format,omitempty" toml:"format"`
 	AutoCreate bool      `json:"create,omitempty" toml:"create"`
 	// Pointer preserves omitted vs explicitly empty input until lowering.
 	Label  *string `json:"label,omitempty" toml:"label"`
@@ -292,4 +295,17 @@ type NotificationsInput struct {
 type RunInput struct {
 	Exec []string       `json:"exec" toml:"exec"`
 	Vars map[string]any `json:"vars,omitempty" toml:"vars"`
+}
+
+type HotplugInput struct {
+	Mounts   MountsInput    `json:"mounts,omitempty" toml:"mounts"`
+	Networks []NetworkInput `json:"networks,omitempty" toml:"networks"`
+}
+
+func (h HotplugInput) Len() int {
+	return len(h.Mounts) + len(h.Networks)
+}
+
+func (h HotplugInput) VirtioFS() []VirtioFSMountInput {
+	return h.Mounts.VirtioFS()
 }

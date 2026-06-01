@@ -19,6 +19,7 @@ type QEMU struct {
 	QMP             QEMUQMP        `json:"qmp"`
 	GuestAgent      QEMUGuestAgent `json:"guestAgent,omitempty"`
 	SSHReady        QEMUSSHReady   `json:"sshReady,omitempty"`
+	Hotplug         QEMUHotplug    `json:"hotplug,omitempty"`
 	Devices         QEMUDevices    `json:"devices"`
 	MachineID       string         `json:"machineId,omitempty"`
 	PassthroughArgs []string       `json:"passthroughArgs,omitempty"`
@@ -99,6 +100,10 @@ type QEMUSSHReady struct {
 	SocketPath string `json:"socketPath,omitempty"`
 }
 
+type QEMUHotplug struct {
+	PCIEPorts int `json:"pciePorts,omitempty"`
+}
+
 type QEMUDevices struct {
 	RNG      QEMURNGDevice       `json:"rng"`
 	I8042    bool                `json:"i8042,omitempty"`
@@ -135,6 +140,7 @@ type QEMUNinePShare struct {
 type QEMUBlockDevice struct {
 	ID        string `json:"id"`
 	ImagePath string `json:"imagePath"`
+	Format    string `json:"format,omitempty"`
 	AIO       string `json:"aio,omitempty"`
 	Cache     string `json:"cache,omitempty"`
 	ReadOnly  bool   `json:"readOnly,omitempty"`

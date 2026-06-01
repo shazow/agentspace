@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	hotplugpkg "github.com/shazow/agentspace/virtie/internal/hotplug"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
@@ -91,6 +92,25 @@ func (m *Manifest) Validate() error {
 			return err
 		}
 	}
+	if m.QEMU.Hotplug.PCIEPorts < 0 {
+		return fmt.Errorf("manifest.qemu.hotplug.pciePorts must be greater than or equal to zero")
+	}
+	if m.QEMU.Hotplug.PCIEPorts < len(m.Hotplug) {
+		return fmt.Errorf("manifest.qemu.hotplug.pciePorts must be at least manifest.hotplug length")
+	}
+	if m.QEMU.Hotplug.PCIEPorts > 0 && m.QEMU.Devices.RNG.Transport != "pci" {
+		return fmt.Errorf("manifest.qemu.hotplug.pciePorts requires pci transport")
+	}
+	hotplugIDs := make(map[string]int, len(m.Hotplug))
+	for i, hotplug := range m.Hotplug {
+		if err := validateHotplug(i, hotplug); err != nil {
+			return err
+		}
+		if previous, ok := hotplugIDs[hotplug.ID]; ok {
+			return fmt.Errorf("manifest.hotplug[%d].id duplicates manifest.hotplug[%d].id %q", i, previous, hotplug.ID)
+		}
+		hotplugIDs[hotplug.ID] = i
+	}
 	for i, path := range m.CleanupFiles {
 		if path == "" {
 			return fmt.Errorf("manifest.cleanupFiles[%d] must not be empty", i)
@@ -115,6 +135,15 @@ func (m *Manifest) Validate() error {
 	for i, block := range m.QEMU.Devices.Block {
 		if !validQEMUTransport(block.Transport) {
 			return fmt.Errorf("manifest.qemu.devices.block[%d].transport must be one of pci, mmio, or ccw", i)
+		}
+		if block.Format != "" && !validImageFormat(block.Format) {
+			return fmt.Errorf("manifest.qemu.devices.block[%d].format must be raw or qcow2", i)
+		}
+	}
+
+	for i, mount := range m.QEMU.Devices.Mounts {
+		if mount.Block != nil && mount.Block.Format != "" && !validImageFormat(mount.Block.Format) {
+			return fmt.Errorf("manifest.qemu.devices.mounts[%d].block.format must be raw or qcow2", i)
 		}
 	}
 
@@ -149,6 +178,44 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func validateHotplug(index int, device hotplugpkg.Device) error {
+	if device.ID == "" {
+		return fmt.Errorf("manifest.hotplug[%d].id is required", index)
+	}
+	if strings.ContainsAny(device.ID, `/\`) {
+		return fmt.Errorf("manifest.hotplug[%d].id must not contain path separators", index)
+	}
+	switch device.Kind {
+	case hotplugpkg.KindVirtioFS:
+		if device.VirtioFS.Source == "" {
+			return fmt.Errorf("manifest.hotplug[%d].virtiofs.source is required", index)
+		}
+		if device.VirtioFS.SocketPath == "" {
+			return fmt.Errorf("manifest.hotplug[%d].virtiofs.socket is required", index)
+		}
+		if device.VirtioFS.Bin == "" {
+			return fmt.Errorf("manifest.hotplug[%d].virtiofs.bin is required", index)
+		}
+	case hotplugpkg.KindNet:
+		if device.Net.Backend != "user" {
+			return fmt.Errorf("manifest.hotplug[%d].net.backend must be user", index)
+		}
+		if device.Net.MAC == "" {
+			return fmt.Errorf("manifest.hotplug[%d].net.mac is required", index)
+		}
+	case hotplugpkg.KindBlock:
+		if device.Block.ImagePath == "" {
+			return fmt.Errorf("manifest.hotplug[%d].block.image is required", index)
+		}
+		if !validImageFormat(device.Block.Format) {
+			return fmt.Errorf("manifest.hotplug[%d].block.format must be raw or qcow2", index)
+		}
+	default:
+		return fmt.Errorf("manifest.hotplug[%d].kind is required", index)
+	}
 	return nil
 }
 
@@ -291,6 +358,15 @@ func validQEMUTransport(transport string) bool {
 func validQEMUGraphicsBackend(backend string) bool {
 	switch backend {
 	case "gtk", "cocoa":
+		return true
+	default:
+		return false
+	}
+}
+
+func validImageFormat(format string) bool {
+	switch format {
+	case "raw", "qcow2":
 		return true
 	default:
 		return false

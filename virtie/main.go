@@ -80,6 +80,37 @@ func (c *suspendCommand) Execute(args []string) error {
 	return manager.Suspend(ctx, manifest)
 }
 
+type hotplugCommand struct {
+	manifestOption
+	Detach  bool   `long:"detach" description:"Detach the hotplug device instead of attaching it"`
+	Verbose []bool `short:"v" long:"verbose" description:"Show verbose logging."`
+
+	Args struct {
+		ID string `positional-arg-name:"id" required:"yes"`
+	} `positional-args:"yes"`
+}
+
+func (c *hotplugCommand) Execute(args []string) error {
+	baseLogger := slog.Default()
+	discardLogger := slog.New(slog.DiscardHandler)
+	manifestLogger := discardLogger
+	manager.SetLogger(discardLogger)
+	if len(c.Verbose) > 0 {
+		manifestLogger = baseLogger.With("package", "manifest")
+		manager.SetLogger(baseLogger.With("package", "manager"))
+	}
+
+	manifest, err := loadLaunchManifest(c.Manifest, manifestLogger)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	return manager.Hotplug(ctx, manifest, c.Args.ID, manager.HotplugOptions{Detach: c.Detach})
+}
+
 func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {
 	doc, resolvedPath, data, err := loadManifestDocumentData(path)
 	if err != nil {
@@ -202,6 +233,16 @@ func newParser() *flags.Parser {
 		"Suspend a running sandbox session",
 		"Save QEMU state to disk and exit the launch session.",
 		&suspendCommand{},
+	); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if _, err := parser.AddCommand(
+		"hotplug",
+		"Attach or detach a predefined hotplug device",
+		"Attach or detach a device described under manifest [hotplug].",
+		&hotplugCommand{},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -17,6 +17,7 @@ import (
 	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/hotplug"
 )
 
 const virtioFSSocketProbeTimeout = 100 * time.Millisecond
@@ -87,7 +88,8 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 		m.SSH.User = defaultSSHUser
 	}
 
-	qemu, err := d.lowerQEMU(host, m.Identity.HostName, m.Paths.WorkingDir, m.Persistence.StateDir)
+	hotplugCount := d.hotplugCount()
+	qemu, err := d.lowerQEMU(host, m.Identity.HostName, m.Paths.WorkingDir, m.Persistence.StateDir, hotplugCount)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +100,11 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 		return nil, err
 	}
 	m.Run = append(virtioFSRuns, lowerRun(d.Run)...)
+	hotplug, err := m.lowerHotplug(d)
+	if err != nil {
+		return nil, err
+	}
+	m.Hotplug = hotplug
 	m.WriteFiles = lowerWriteFiles(d.WriteFiles)
 
 	if err := m.Validate(); err != nil {
@@ -129,13 +136,15 @@ func (h HostInput) withDefaults() HostInput {
 	return h
 }
 
-func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, stateDir string) (QEMU, error) {
+func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, stateDir string, hotplugCount int) (QEMU, error) {
 	machineType := d.Machine.Type
 	if machineType == "" {
 		machineType = defaultMachineType
 	}
 	graphics := lowerGraphics(d.Graphics)
-	transport := qemuTransport(machineType, d.Mounts, graphics)
+	transport := qemuTransport(machineType, d.Mounts, graphics, hotplugCount > 0)
+	virtioFSMounts := d.Mounts.VirtioFS()
+	hasVirtioFS := len(virtioFSMounts) > 0 || len(d.Hotplug.VirtioFS()) > 0
 	memorySize := d.Machine.Memory
 	if memorySize == 0 {
 		memorySize = defaultMemorySize
@@ -193,7 +202,6 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		return QEMU{}, err
 	}
 
-	virtioFSMounts := d.Mounts.VirtioFS()
 	ninePMounts := d.Mounts.NineP()
 	imageMounts := d.Mounts.Image()
 	qemu := QEMU{
@@ -209,8 +217,8 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		},
 		Memory: QEMUMemory{
 			Size:    memorySize,
-			Backend: memoryBackend(host, virtioFSMounts),
-			Shared:  len(virtioFSMounts) > 0,
+			Backend: memoryBackend(host, hasVirtioFS),
+			Shared:  hasVirtioFS,
 		},
 		Kernel: QEMUKernel{
 			Path:       d.Kernel.Path,
@@ -240,6 +248,9 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		},
 		SSHReady: QEMUSSHReady{
 			SocketPath: sshReadySocket,
+		},
+		Hotplug: QEMUHotplug{
+			PCIEPorts: hotplugCount,
 		},
 		Devices: QEMUDevices{
 			RNG: QEMURNGDevice{
@@ -275,8 +286,12 @@ func lowerCPUCount(cpus *int) CPUCount {
 	return ExplicitCPUs(*cpus)
 }
 
-func qemuTransport(machineType string, mounts MountsInput, graphics QEMUGraphics) string {
-	if !strings.HasPrefix(machineType, "microvm") || mounts.RequiresPCI() || !graphics.IsZero() {
+func (d Document) hotplugCount() int {
+	return d.Hotplug.Len()
+}
+
+func qemuTransport(machineType string, mounts MountsInput, graphics QEMUGraphics, requirePCI bool) string {
+	if requirePCI || !strings.HasPrefix(machineType, "microvm") || mounts.RequiresPCI() || !graphics.IsZero() {
 		return "pci"
 	}
 	return "mmio"
@@ -286,6 +301,11 @@ func lowerMachineOptions(host HostInput, machineType string, explicit map[string
 	options := explicit
 	if options == nil {
 		options = defaultMachineOptions(host, machineType, requirePCI)
+	} else {
+		options = cloneStringMap(explicit)
+		if requirePCI && strings.HasPrefix(machineType, "microvm") {
+			options["pcie"] = "on"
+		}
 	}
 	keys := make([]string, 0, len(options))
 	for key := range options {
@@ -338,8 +358,8 @@ func defaultCPUModel(host HostInput) string {
 	return "host"
 }
 
-func memoryBackend(host HostInput, virtiofsMounts []VirtioFSMountInput) string {
-	if host.OS == "linux" && len(virtiofsMounts) > 0 {
+func memoryBackend(host HostInput, hasVirtioFS bool) string {
+	if host.OS == "linux" && hasVirtioFS {
 		return "memfd"
 	}
 	return "default"
@@ -391,6 +411,7 @@ func lowerBlocks(volumes []ImageMountInput, host HostInput, transport string) []
 		block := QEMUBlockDevice{
 			ID:        "vd" + string(rune('a'+i)),
 			ImagePath: volume.SourcePath,
+			Format:    lowerImageFormat(volume.Image.Format),
 			AIO:       aioEngine(host),
 			ReadOnly:  volume.ReadOnly,
 			Serial:    stringValue(volume.Image.Serial),
@@ -472,6 +493,7 @@ func lowerQEMUImageMount(mount ImageMountInput, index int, host HostInput, trans
 	block := QEMUBlockDevice{
 		ID:        "vd" + string(rune('a'+index)),
 		ImagePath: mount.SourcePath,
+		Format:    lowerImageFormat(mount.Image.Format),
 		AIO:       aioEngine(host),
 		ReadOnly:  mount.ReadOnly,
 		Serial:    stringValue(mount.Image.Serial),
@@ -581,17 +603,168 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerO
 		}
 		runs = append(runs, Run{
 			Name: fmt.Sprintf("virtiofsd[%s]", mount.Tag),
-			Exec: append([]string{m.resolvePath(bin)}, args...),
+			Exec: append([]string{m.resolveOptionalBin(bin, "virtiofsd")}, args...),
 			Env:  []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
-			Vars: map[string]any{
-				"Socket":      socketPath,
-				"MountTag":    mount.Tag,
-				"MountSource": m.resolvePath(mount.SourcePath),
-			},
+			Vars: virtioFSTemplateContext(socketPath, m.resolvePath(mount.SourcePath), mount.Tag),
 		})
 		m.addCleanupFile(mount.VirtioFS.Socket)
 	}
 	return runs, nil
+}
+
+func (m *Manifest) lowerHotplug(d Document) ([]hotplug.Device, error) {
+	hotplugs := make([]hotplug.Device, 0, d.hotplugCount())
+	for i, mount := range d.Hotplug.Mounts {
+		device, err := m.lowerHotplugMount(mount)
+		if err != nil {
+			return nil, fmt.Errorf("manifest.hotplug.mounts[%d]: %w", i, err)
+		}
+		hotplugs = append(hotplugs, device)
+	}
+	for i, network := range d.Hotplug.Networks {
+		device, err := lowerNetworkHotplug(network, i)
+		if err != nil {
+			return nil, fmt.Errorf("manifest.hotplug.networks[%d]: %w", i, err)
+		}
+		hotplugs = append(hotplugs, device)
+	}
+	return hotplugs, nil
+}
+
+func (m *Manifest) lowerHotplugMount(entry MountEntry) (hotplug.Device, error) {
+	switch typed := entry.(type) {
+	case VirtioFSMountInput:
+		return m.lowerVirtioFSHotplug(typed)
+	case ImageMountInput:
+		return m.lowerImageHotplug(typed)
+	default:
+		return hotplug.Device{}, fmt.Errorf("type %q does not support hotplug", entry.mountType())
+	}
+}
+
+func (m *Manifest) lowerImageHotplug(entry ImageMountInput) (hotplug.Device, error) {
+	serial := stringValue(entry.Image.Serial)
+	format := lowerImageFormat(entry.Image.Format)
+	id, err := renderHotplugID(serial, "{{.Serial}}", executor.Context{
+		"Serial": serial,
+		"Source": entry.SourcePath,
+		"Format": format,
+	})
+	if err != nil {
+		return hotplug.Device{}, err
+	}
+	return hotplug.Device{
+		Kind: hotplug.KindBlock,
+		ID:   id,
+		Block: hotplug.Block{
+			ImagePath: m.resolvePath(entry.SourcePath),
+			Format:    format,
+			ReadOnly:  entry.ReadOnly,
+			Serial:    serial,
+		},
+	}, nil
+}
+
+func (m *Manifest) lowerVirtioFSHotplug(mount VirtioFSMountInput) (hotplug.Device, error) {
+	id := mount.Tag
+	socket := mount.VirtioFS.Socket
+	if socket == "" {
+		socket = id + ".sock"
+	}
+	socketPath, err := m.resolveSocketPath(socket)
+	if err != nil {
+		return hotplug.Device{}, err
+	}
+	bin := mount.VirtioFS.Bin
+	if bin == "" {
+		bin = "virtiofsd"
+	}
+	source := m.resolvePath(mount.SourcePath)
+	args := append([]string(nil), mount.VirtioFS.Args...)
+	if len(args) == 0 {
+		args = hotplug.DefaultVirtioFSArgs(socketPath, source, id)
+	} else {
+		renderedArgs, err := renderVirtioFSArgv(args, socketPath, source, id)
+		if err != nil {
+			return hotplug.Device{}, err
+		}
+		args = renderedArgs
+	}
+	return hotplug.Device{
+		Kind: hotplug.KindVirtioFS,
+		ID:   id,
+		VirtioFS: hotplug.VirtioFS{
+			Source:     source,
+			Target:     mount.Target,
+			SocketPath: socketPath,
+			Bin:        m.resolveOptionalBin(bin, "virtiofsd"),
+			Args:       args,
+		},
+	}, nil
+}
+
+func (m *Manifest) resolveOptionalBin(bin string, defaultBin string) string {
+	if bin == "" || bin == defaultBin {
+		return defaultBin
+	}
+	return m.resolvePath(bin)
+}
+
+func lowerNetworkHotplug(entry NetworkInput, index int) (hotplug.Device, error) {
+	id := entry.ID
+	if id == "" {
+		id = fmt.Sprintf("net%d", index)
+	}
+	backend := entry.Type
+	if backend == "" {
+		backend = "user"
+	}
+	mac := entry.MAC
+	if mac == "" {
+		mac = defaultNetworkMAC
+	}
+	forward := make([]hotplug.Forward, 0, len(entry.Forward))
+	for i, fwd := range entry.Forward {
+		normalized, err := normalizeForwardPort(fwd, fmt.Sprintf("forward[%d]", i))
+		if err != nil {
+			return hotplug.Device{}, err
+		}
+		if normalized.From == "guest" {
+			return hotplug.Device{}, fmt.Errorf("forward[%d].from guest is not supported for hotplug networks", i)
+		}
+		forward = append(forward, hotplug.Forward{
+			Proto: normalized.Proto,
+			Host:  formatPortEndpoint(normalized.Host),
+			Guest: formatPortEndpoint(normalized.Guest),
+		})
+	}
+	return hotplug.Device{
+		Kind: hotplug.KindNet,
+		ID:   id,
+		Net: hotplug.Net{
+			Backend: backend,
+			MAC:     mac,
+			Forward: forward,
+		},
+	}, nil
+}
+
+func renderHotplugID(id string, defaultID string, context executor.Context) (string, error) {
+	if id == "" {
+		id = defaultID
+	}
+	renderer, err := executor.New(context)
+	if err != nil {
+		return "", err
+	}
+	rendered, err := renderer.RenderString(id)
+	if err != nil {
+		return "", err
+	}
+	if rendered == "" {
+		return "", fmt.Errorf("id is required")
+	}
+	return rendered, nil
 }
 
 func staleUnixSocket(path string) (bool, error) {
@@ -684,45 +857,69 @@ func parsePortEndpoint(value string) (PortEndpoint, error) {
 	return PortEndpoint{Address: host, Port: parsedPort}, nil
 }
 
+type normalizedForwardPort struct {
+	Proto string
+	From  string
+	Host  PortEndpoint
+	Guest PortEndpoint
+}
+
+func normalizeForwardPort(port ForwardPort, fieldPath string) (normalizedForwardPort, error) {
+	proto := port.Proto
+	if proto == "" {
+		proto = "tcp"
+	}
+	if proto != "tcp" && proto != "udp" {
+		return normalizedForwardPort{}, fmt.Errorf("%s.proto must be one of tcp or udp", fieldPath)
+	}
+	from := port.From
+	if from == "" {
+		from = "host"
+	}
+	if from != "host" && from != "guest" {
+		return normalizedForwardPort{}, fmt.Errorf("%s.from must be one of host or guest", fieldPath)
+	}
+	hostEndpoint, err := parsePortEndpoint(port.Host)
+	if err != nil {
+		return normalizedForwardPort{}, fmt.Errorf("%s.host %s", fieldPath, err)
+	}
+	guestEndpoint, err := parsePortEndpoint(port.Guest)
+	if err != nil {
+		return normalizedForwardPort{}, fmt.Errorf("%s.guest %s", fieldPath, err)
+	}
+	return normalizedForwardPort{
+		Proto: proto,
+		From:  from,
+		Host:  hostEndpoint,
+		Guest: guestEndpoint,
+	}, nil
+}
+
+func formatPortEndpoint(endpoint PortEndpoint) string {
+	return net.JoinHostPort(endpoint.Address, strconv.Itoa(endpoint.Port))
+}
+
 func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex int) ([]string, error) {
 	options := make([]string, 0, len(ports))
 	if len(fwdTunnelExec) == 0 {
 		fwdTunnelExec = []string{"nc", "{{.Host}}", "{{.Port}}"}
 	}
 	for i, port := range ports {
-		proto := port.Proto
-		if proto == "" {
-			proto = "tcp"
-		}
-		if proto != "tcp" && proto != "udp" {
-			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].proto must be one of tcp or udp", networkIndex, i)
-		}
-		from := port.From
-		if from == "" {
-			from = "host"
-		}
-		if from != "host" && from != "guest" {
-			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].from must be one of host or guest", networkIndex, i)
-		}
-		hostEndpoint, err := parsePortEndpoint(port.Host)
+		normalized, err := normalizeForwardPort(port, fmt.Sprintf("manifest.networks[%d].forward[%d]", networkIndex, i))
 		if err != nil {
-			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].host %s", networkIndex, i, err)
+			return nil, err
 		}
-		guestEndpoint, err := parsePortEndpoint(port.Guest)
-		if err != nil {
-			return nil, fmt.Errorf("manifest.networks[%d].forward[%d].guest %s", networkIndex, i, err)
-		}
-		if from == "host" {
-			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", proto, hostEndpoint.Address, hostEndpoint.Port, guestEndpoint.Address, guestEndpoint.Port))
+		if normalized.From == "host" {
+			options = append(options, fmt.Sprintf("hostfwd=%s:%s:%d-%s:%d", normalized.Proto, normalized.Host.Address, normalized.Host.Port, normalized.Guest.Address, normalized.Guest.Port))
 		} else {
 			if err := rejectLegacyFwdTunnelExecEnv(fwdTunnelExec); err != nil {
 				return nil, fmt.Errorf("manifest.networks[%d].forward[%d].fwd_tunnel_exec: %w", networkIndex, i, err)
 			}
-			command, err := renderFwdTunnelExec(fwdTunnelExec, hostEndpoint)
+			command, err := renderFwdTunnelExec(fwdTunnelExec, normalized.Host)
 			if err != nil {
 				return nil, fmt.Errorf("manifest.networks[%d].forward[%d].fwd_tunnel_exec: %w", networkIndex, i, err)
 			}
-			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s", proto, guestEndpoint.Address, guestEndpoint.Port, shellquote.Join(command...)))
+			options = append(options, fmt.Sprintf("guestfwd=%s:%s:%d-cmd:%s", normalized.Proto, normalized.Guest.Address, normalized.Guest.Port, shellquote.Join(command...)))
 		}
 	}
 	return options, nil
@@ -818,6 +1015,29 @@ func lowerWriteFileContent(file WriteFileInput) WriteFileContent {
 	}
 }
 
+func lowerImageFormat(format string) string {
+	if format == "" {
+		return "raw"
+	}
+	return format
+}
+
+func renderVirtioFSArgv(argv []string, socketPath string, source string, tag string) ([]string, error) {
+	renderer, err := executor.New(virtioFSTemplateContext(socketPath, source, tag))
+	if err != nil {
+		return nil, err
+	}
+	return renderer.RenderArgv(argv)
+}
+
+func virtioFSTemplateContext(socketPath string, source string, tag string) executor.Context {
+	return executor.Context{
+		"Socket":      socketPath,
+		"MountTag":    tag,
+		"MountSource": source,
+	}
+}
+
 func lowerGraphics(graphics *GraphicsInput) QEMUGraphics {
 	if graphics == nil || graphics.Backend == "" || graphics.Backend == "headless" {
 		return QEMUGraphics{}
@@ -859,7 +1079,7 @@ func commandFromExec(exec []string) Command {
 
 func cloneStringMap(values map[string]string) map[string]string {
 	if len(values) == 0 {
-		return nil
+		return map[string]string{}
 	}
 	clone := make(map[string]string, len(values))
 	for key, value := range values {

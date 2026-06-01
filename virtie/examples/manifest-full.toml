@@ -62,6 +62,9 @@ machine_options = { accel = "kvm:tcg", pcie = "on" }  # Default: Derived for hos
 qmp_socket = "qmp.sock"  # Default: "qmp.sock"
 guest_agent_socket = "qga.sock"  # Default: "qga.sock"
 
+# Hotplugged PCI devices need root ports created when QEMU starts. virtie
+# automatically allocates one port for each entry under [hotplug].
+
 [machine]
 # The machine profile is the backend-neutral VM shape virtie should run. For
 # QEMU today this maps to a board model; another backend may map it to its own
@@ -149,6 +152,13 @@ autoprovision = true  # Default: false
 # CID space; narrowing it too much can make launch fail under concurrency.
 cid_range = { min = 3, max = 65535 }  # Default: Full allocatable CID range
 
+[workspace]
+# Workspace paths are passed into run command templates. mount_cwd asks virtie
+# to bind the host launch CWD into the guest workspace after SSH readiness.
+guest_dir = "/home/agent/workspace"
+host_dir = ".virtie/workspace"
+mount_cwd = true  # Default: false
+
 [[mounts]]
 type = "image"
 # Image mounts attach host disk images to the guest. The source path is
@@ -163,6 +173,7 @@ read_only = false  # Default: attach writable
 # rewrite an existing image.
 image.size = 4096  # Default: Minimum auto-created image size
 image.fs = "ext4"  # Options: ext4 (default: ext4)
+image.format = "raw"  # Options: raw, qcow2 (default: raw)
 image.create = true  # Default: Use existing image only
 image.label = "root"  # Default: no filesystem label
 image.direct = false  # Default: backend cache policy
@@ -195,6 +206,49 @@ read_only = false
 # nested 9p table.
 9p.security_model = "mapped"  # Options: mapped, none, passthrough (default: mapped)
 
+[[hotplug.mounts]]
+# A hotplugged virtiofs mount uses the same fields as a launch mount, but lives
+# under hotplug.mounts so it is not attached during launch. The mount tag is the
+# `virtie hotplug` id. target is optional; omit it when the guest mounts the
+# share itself.
+type = "virtiofs"
+tag = "cache"
+source = "/tmp/cache"
+target = "/mnt/cache"  # Optional: omit when the guest mounts it through fstab or another mechanism
+virtiofs.socket = "cache.sock"  # Default for hotplugged virtiofs: "<tag>.sock"
+virtiofs.bin = "virtiofsd"
+
+[[hotplug.mounts]]
+# Moving a mount between launch-time and hotplug is just changing the header
+# between [[mounts]] and [[hotplug.mounts]].
+type = "virtiofs"
+tag = "tools"
+source = "/tmp/tools"
+target = "/mnt/tools"
+virtiofs.socket = "tools.sock"  # Default: "<tag>.sock"
+virtiofs.bin = "virtiofsd"  # Default: "virtiofsd"
+
+[[hotplug.networks]]
+# Network hotplug v1 attaches only the QEMU device. Guest-side interface naming,
+# DHCP/static configuration, and routing policy are future work. Hotplug network
+# forwarding supports host-origin QEMU hostfwd only; from = "guest" is rejected
+# because hotplug net has no tunnel command lifecycle yet.
+id = "vpn"
+type = "user"  # v1 supports user only
+mac = "02:02:00:00:00:10"
+forward = [
+  { host = "127.0.0.1:2223", guest = "10.0.2.15:22" }, # proto defaults to tcp; from defaults to host
+]
+
+[[hotplug.mounts]]
+# Block hotplug v1 attaches only the QEMU block device. Guest-side discovery,
+# partition/filesystem policy, and mounting are future work.
+type = "image"
+source = "data.qcow2"
+read_only = false
+image.serial = "data"
+image.format = "qcow2"  # Options: raw, qcow2 (default: raw)
+
 [[run]]
 # Run commands are host-side processes managed for the VM lifetime. They start
 # before QEMU and are stopped with the VM. virtie does not wait for command
@@ -221,6 +275,7 @@ mac = "02:02:00:00:00:01"
 # already in use.
 forward = [
   { proto = "tcp", from = "host", host = "127.0.0.1:2222", guest = "10.0.2.15:22" }, # proto options: tcp, udp (default: tcp); from options: host, guest (default: host)
+  { proto = "tcp", from = "guest", host = "127.0.0.1:5432", guest = "10.0.2.15:15432" },
 ]
 
 [balloon]
@@ -265,13 +320,18 @@ text = "example"
 # an existing guest file can be security-sensitive and hard to diagnose later.
 mode = "0644"
 overwrite = false  # Default: Preserve existing guest files
+follow_links = true  # Default: follow host symlinks for source payloads
 
 [[write_files]]
 # Host-file sources are the alternative to inline text for binary or larger
-# payloads. A write_files entry must choose exactly one of text or source.
+# payloads. A write_files entry must choose exactly one of text or source. When
+# write_back is true, virtie copies the guest file back to the host source path
+# during teardown.
 guest_path = "/var/lib/virtie/host"
 source = "host-file"
 overwrite = true
+follow_links = false  # Default: true
+write_back = true  # Requires source
 
 [notifications]
 # Notifications are host-side hooks for surfacing runtime state changes. The
@@ -281,6 +341,5 @@ overwrite = true
 # processes also receive VIRTIE_NOTIFY_* environment variables.
 exec = ["notify-send", "virtie: {{.State}}", "{{.Message}}"]
 
-# Empty means all supported states. A non-empty list limits hook execution,
-# which is useful when only noisy states such as balloon changes should notify.
-states = []  # Default: Notify on all states
+# Empty means all supported states. A non-empty list limits hook execution.
+states = ["runtime:suspend", "runtime:resume", "balloon:resize"]  # Default: Notify on all states

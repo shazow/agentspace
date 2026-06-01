@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/hotplug"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
@@ -19,18 +20,19 @@ type LowerOptions struct {
 }
 
 type Manifest struct {
-	Identity      Identity      `json:"identity"`
-	Paths         Paths         `json:"paths"`
-	Persistence   Persistence   `json:"persistence"`
-	SSH           SSH           `json:"ssh"`
-	QEMU          QEMU          `json:"qemu"`
-	Volumes       []Volume      `json:"volumes,omitempty"`
-	VSock         VSock         `json:"vsock"`
-	Workspace     Workspace     `json:"workspace,omitempty"`
-	WriteFiles    WriteFiles    `json:"writeFiles,omitempty"`
-	Notifications Notifications `json:"notifications,omitempty"`
-	Run           []Run         `json:"run,omitempty"`
-	CleanupFiles  []string      `json:"cleanupFiles,omitempty"`
+	Identity      Identity         `json:"identity"`
+	Paths         Paths            `json:"paths"`
+	Persistence   Persistence      `json:"persistence"`
+	SSH           SSH              `json:"ssh"`
+	QEMU          QEMU             `json:"qemu"`
+	Volumes       []Volume         `json:"volumes,omitempty"`
+	VSock         VSock            `json:"vsock"`
+	Workspace     Workspace        `json:"workspace,omitempty"`
+	WriteFiles    WriteFiles       `json:"writeFiles,omitempty"`
+	Notifications Notifications    `json:"notifications,omitempty"`
+	Run           []Run            `json:"run,omitempty"`
+	Hotplug       []hotplug.Device `json:"hotplug,omitempty"`
+	CleanupFiles  []string         `json:"cleanupFiles,omitempty"`
 }
 
 type Identity struct {

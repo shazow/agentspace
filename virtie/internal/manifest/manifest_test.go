@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
+	"github.com/shazow/agentspace/virtie/internal/hotplug"
 )
 
 func writeFileText(text string) WriteFile {
@@ -131,6 +132,25 @@ func TestLoadRejectsLegacyTopLevelVolumes(t *testing.T) {
 	_, err := Load(bytes.NewReader(data))
 	if err == nil || !strings.Contains(err.Error(), `unknown field "volumes"`) {
 		t.Fatalf("expected legacy volumes decode error, got %v", err)
+	}
+}
+
+func TestDocumentManagedVirtioFSDefaultBinUsesPATH(t *testing.T) {
+	document := validDocument()
+	mount := document.Mounts[0].(VirtioFSMountInput)
+	mount.VirtioFS.Bin = ""
+	mount.VirtioFS.Args = []string{"--socket-path={{.Socket}}"}
+	document.Mounts[0] = mount
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if len(manifest.Run) != 1 {
+		t.Fatalf("expected managed virtiofs run, got %#v", manifest.Run)
+	}
+	if got, want := manifest.Run[0].Exec[0], "virtiofsd"; got != want {
+		t.Fatalf("unexpected virtiofs run path: got %q want %q", got, want)
 	}
 }
 
@@ -634,6 +654,12 @@ func TestDecodeDocumentRejectsInvalidTaggedMounts(t *testing.T) {
 			name:    "unknown backend field",
 			file:    "manifest.json",
 			data:    `{"kernel":{"path":"/tmp/vmlinuz","initrd_path":"/tmp/initrd"},"mounts":[{"type":"virtiofs","tag":"workspace","virtiofs":{"socket":"fs.sock"},"extra":true}]}`,
+			wantErr: "unknown field",
+		},
+		{
+			name:    "top-level image format",
+			file:    "manifest.json",
+			data:    `{"kernel":{"path":"/tmp/vmlinuz","initrd_path":"/tmp/initrd"},"mounts":[{"type":"image","source":"data.qcow2","format":"qcow2","image":{"serial":"data"}}]}`,
 			wantErr: "unknown field",
 		},
 		{
@@ -1418,7 +1444,7 @@ func TestDocumentMountDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lower manifest: %v", err)
 	}
-	if got, want := manifest.Run[0].Exec[0], "/tmp/work/virtiofsd"; got != want {
+	if got, want := manifest.Run[0].Exec[0], "virtiofsd"; got != want {
 		t.Fatalf("unexpected default virtiofs binary: got %q want %q", got, want)
 	}
 	if got, want := manifest.QEMU.Devices.NineP[0].SecurityModel, "mapped"; got != want {
@@ -1983,6 +2009,541 @@ func TestManifestAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	}
 }
 
+func TestDocumentHotplugVirtioFSMountGeneratesHotplugEntry(t *testing.T) {
+	document := validDocument()
+	document.Mounts = nil
+	document.Hotplug.Mounts = MountsInput{
+		VirtioFSMountInput{
+			MountInput: MountInput{
+				Tag:        "workspace",
+				SourcePath: "shares/cache",
+			},
+			Target:   "/mnt/cache",
+			VirtioFS: VirtioFSInput{Bin: "/tmp/virtiofsd-workspace"},
+		},
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+
+	if len(manifest.QEMU.Devices.VirtioFS) != 0 {
+		t.Fatalf("expected hotplug mount to be excluded from launch qemu devices, got %#v", manifest.QEMU.Devices.VirtioFS)
+	}
+	if len(manifest.Run) != 0 {
+		t.Fatalf("expected hotplug mount to be excluded from launch runs, got %#v", manifest.Run)
+	}
+	if got, want := manifest.QEMU.Hotplug.PCIEPorts, 1; got != want {
+		t.Fatalf("unexpected pcie hotplug ports: got %d want %d", got, want)
+	}
+	if len(manifest.Hotplug) != 1 {
+		t.Fatalf("expected one hotplug entry, got %#v", manifest.Hotplug)
+	}
+
+	device := manifest.Hotplug[0]
+	if got, want := device.ID, "workspace"; got != want {
+		t.Fatalf("unexpected hotplug id: got %q want %q", got, want)
+	}
+	if got, want := device.Kind, hotplug.KindVirtioFS; got != want {
+		t.Fatalf("unexpected hotplug kind: got %q want %q", got, want)
+	}
+	if got, want := device.VirtioFS.Target, "/mnt/cache"; got != want {
+		t.Fatalf("unexpected mount target: got %q want %q", got, want)
+	}
+	if got, want := device.VirtioFS.Bin, "/tmp/virtiofsd-workspace"; got != want {
+		t.Fatalf("unexpected hotplug exec path: got %q want %q", got, want)
+	}
+	if !containsString(device.VirtioFS.Args, "--socket-path=/tmp/work/.virtie/workspace.sock") {
+		t.Fatalf("expected resolved socket arg, got %#v", device.VirtioFS.Args)
+	}
+	if !containsString(device.VirtioFS.Args, "--shared-dir=/tmp/work/shares/cache") {
+		t.Fatalf("expected resolved source arg, got %#v", device.VirtioFS.Args)
+	}
+}
+
+func TestDocumentHotplugVirtioFSMountDefaultBinUsesPATH(t *testing.T) {
+	document := validDocument()
+	document.Mounts = nil
+	document.Hotplug.Mounts = MountsInput{
+		VirtioFSMountInput{
+			MountInput: MountInput{
+				Tag:        "workspace",
+				SourcePath: "shares/cache",
+			},
+		},
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := manifest.Hotplug[0].VirtioFS.Bin, "virtiofsd"; got != want {
+		t.Fatalf("unexpected hotplug virtiofs bin: got %q want %q", got, want)
+	}
+}
+
+func TestDocumentHotplugVirtioFSRendersCustomArgs(t *testing.T) {
+	document := validDocument()
+	document.Mounts = nil
+	document.Hotplug.Mounts = MountsInput{
+		VirtioFSMountInput{
+			MountInput: MountInput{
+				Tag:        "cache",
+				SourcePath: "shares/cache",
+			},
+			VirtioFS: VirtioFSInput{
+				Args: []string{"--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}", "--user={{.Env.USER}}"},
+			},
+		},
+	}
+	t.Setenv("USER", "template-user")
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := manifest.Hotplug[0].VirtioFS.Args, []string{"--socket-path=/tmp/work/.virtie/cache.sock", "--shared-dir=/tmp/work/shares/cache", "--tag=cache", "--user=template-user"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected hotplug args: got %#v want %#v", got, want)
+	}
+}
+
+func TestDocumentImageMountFormatLowersToQEMU(t *testing.T) {
+	document := validDocument()
+	imageMount := document.Mounts[1].(ImageMountInput)
+	imageMount.Image.Format = "qcow2"
+	document.Mounts[1] = imageMount
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := manifest.QEMU.Devices.Block[0].Format, "qcow2"; got != want {
+		t.Fatalf("unexpected block format: got %q want %q", got, want)
+	}
+	if got, want := manifest.QEMU.Devices.Mounts[1].Block.Format, "qcow2"; got != want {
+		t.Fatalf("unexpected mount block format: got %q want %q", got, want)
+	}
+}
+
+func TestDocumentTypedHotplugEntries(t *testing.T) {
+	document := validDocument()
+	document.Mounts = nil
+	document.Hotplug = HotplugInput{
+		Mounts: MountsInput{
+			VirtioFSMountInput{
+				MountInput: MountInput{
+					Tag:        "cache",
+					SourcePath: "shares/cache",
+				},
+				Target: "/mnt/cache",
+			},
+			ImageMountInput{
+				SourcePath: "data.qcow2",
+				Image:      ImageInput{Serial: stringPtr("data"), Format: "qcow2"},
+			},
+		},
+		Networks: []NetworkInput{
+			{
+				ID:   "vpn",
+				Type: "user",
+				MAC:  "02:02:00:00:00:10",
+				Forward: []ForwardPort{{
+					Proto: "tcp",
+					Host:  "127.0.0.1:2223",
+					Guest: "10.0.2.15:22",
+				}},
+			},
+		},
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := manifest.QEMU.Hotplug.PCIEPorts, 3; got != want {
+		t.Fatalf("unexpected pcie ports: got %d want %d", got, want)
+	}
+	if got, want := []hotplug.Kind{manifest.Hotplug[0].Kind, manifest.Hotplug[1].Kind, manifest.Hotplug[2].Kind}, []hotplug.Kind{hotplug.KindVirtioFS, hotplug.KindBlock, hotplug.KindNet}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected hotplug order: got %#v want %#v", got, want)
+	}
+	if got, want := manifest.Hotplug[0].VirtioFS.SocketPath, "/tmp/work/.virtie/cache.sock"; got != want {
+		t.Fatalf("unexpected virtiofs socket: got %q want %q", got, want)
+	}
+	if got, want := manifest.Hotplug[0].VirtioFS.Bin, "virtiofsd"; got != want {
+		t.Fatalf("unexpected virtiofs bin: got %q want %q", got, want)
+	}
+	if got, want := manifest.Hotplug[0].ID, "cache"; got != want {
+		t.Fatalf("unexpected virtiofs id: got %q want %q", got, want)
+	}
+	if got, want := manifest.Hotplug[2].Net.Forward[0].Host, "127.0.0.1:2223"; got != want {
+		t.Fatalf("unexpected net forward host: got %q want %q", got, want)
+	}
+	if got, want := manifest.Hotplug[1].ID, "data"; got != want {
+		t.Fatalf("unexpected image id: got %q want %q", got, want)
+	}
+	if got, want := manifest.Hotplug[1].Block.ImagePath, "/tmp/work/data.qcow2"; got != want {
+		t.Fatalf("unexpected block image: got %q want %q", got, want)
+	}
+	if got, want := manifest.Hotplug[1].Block.Format, "qcow2"; got != want {
+		t.Fatalf("unexpected block format: got %q want %q", got, want)
+	}
+}
+
+func TestDocumentHotplugNetworkForwardDefaultsProto(t *testing.T) {
+	document := validDocument()
+	document.Mounts = nil
+	document.Hotplug = HotplugInput{
+		Networks: []NetworkInput{
+			{
+				ID: "vpn",
+				Forward: []ForwardPort{{
+					Host:  "127.0.0.1:2223",
+					Guest: "10.0.2.15:22",
+				}},
+			},
+		},
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := manifest.Hotplug[0].Net.Forward, []hotplug.Forward{{Proto: "tcp", Host: "127.0.0.1:2223", Guest: "10.0.2.15:22"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected hotplug forward: got %#v want %#v", got, want)
+	}
+}
+
+func TestDocumentHotplugNetworkForwardValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		forward   ForwardPort
+		wantError string
+	}{
+		{
+			name: "malformed host endpoint",
+			forward: ForwardPort{
+				Host:  "127.0.0.1",
+				Guest: "10.0.2.15:22",
+			},
+			wantError: "manifest.hotplug.networks[0]: forward[0].host missing :port",
+		},
+		{
+			name: "malformed guest endpoint",
+			forward: ForwardPort{
+				Host:  "127.0.0.1:2223",
+				Guest: "10.0.2.15:ssh",
+			},
+			wantError: "manifest.hotplug.networks[0]: forward[0].guest port must be an integer",
+		},
+		{
+			name: "invalid proto",
+			forward: ForwardPort{
+				Proto: "icmp",
+				Host:  "127.0.0.1:2223",
+				Guest: "10.0.2.15:22",
+			},
+			wantError: "manifest.hotplug.networks[0]: forward[0].proto must be one of tcp or udp",
+		},
+		{
+			name: "guest origin unsupported",
+			forward: ForwardPort{
+				From:  "guest",
+				Host:  "127.0.0.1:2223",
+				Guest: "10.0.2.15:22",
+			},
+			wantError: "manifest.hotplug.networks[0]: forward[0].from guest is not supported for hotplug networks",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.Mounts = nil
+			document.Hotplug = HotplugInput{
+				Networks: []NetworkInput{
+					{
+						ID:      "vpn",
+						Forward: []ForwardPort{tt.forward},
+					},
+				},
+			}
+
+			_, err := document.Manifest()
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantError, err)
+			}
+		})
+	}
+}
+
+func TestDecodeDocumentGroupedHotplugEntries(t *testing.T) {
+	document, err := DecodeDocumentBytes([]byte(`
+[kernel]
+path = "/tmp/vmlinuz"
+initrd_path = "/tmp/initrd"
+
+[[hotplug.mounts]]
+type = "virtiofs"
+tag = "workspace"
+source = "."
+
+[[hotplug.mounts]]
+type = "image"
+source = ".virtie/root.img"
+image.serial = "root"
+
+[[hotplug.networks]]
+id = "vpn"
+type = "user"
+mac = "02:02:00:00:00:10"
+`), "manifest.toml")
+	if err != nil {
+		t.Fatalf("decode document: %v", err)
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := []string{manifest.Hotplug[0].ID, manifest.Hotplug[1].ID, manifest.Hotplug[2].ID}, []string{"workspace", "root", "vpn"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected hotplug ids: got %#v want %#v", got, want)
+	}
+	if got, want := manifest.Hotplug[1].Block.Format, "raw"; got != want {
+		t.Fatalf("unexpected image format: got %q want %q", got, want)
+	}
+}
+
+func TestDocumentExplicitVirtioFSHotplugEnablesSharedMemory(t *testing.T) {
+	document := validDocument()
+	document.Host.OS = "linux"
+	document.Mounts = nil
+	document.Hotplug = HotplugInput{
+		Mounts: MountsInput{
+			VirtioFSMountInput{
+				MountInput: MountInput{
+					Tag:        "cache",
+					SourcePath: "shares/cache",
+				},
+			},
+		},
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if !manifest.QEMU.Memory.Shared {
+		t.Fatal("expected explicit virtiofs hotplug to enable shared memory")
+	}
+	if got, want := manifest.QEMU.Memory.Backend, "memfd"; got != want {
+		t.Fatalf("unexpected memory backend: got %q want %q", got, want)
+	}
+	if len(manifest.QEMU.Devices.VirtioFS) != 0 {
+		t.Fatalf("expected explicit virtiofs hotplug to stay out of launch devices, got %#v", manifest.QEMU.Devices.VirtioFS)
+	}
+	if got, want := manifest.QEMU.Hotplug.PCIEPorts, 1; got != want {
+		t.Fatalf("unexpected pcie ports: got %d want %d", got, want)
+	}
+}
+
+func TestDocumentExplicitMachineOptionsEnablePCIForHotplug(t *testing.T) {
+	tests := []struct {
+		name    string
+		options map[string]string
+	}{
+		{
+			name:    "missing pcie",
+			options: map[string]string{"accel": "kvm:tcg"},
+		},
+		{
+			name:    "pcie off",
+			options: map[string]string{"accel": "kvm:tcg", "pcie": "off"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.QEMU.MachineOptions = tt.options
+			document.Mounts = nil
+			document.Hotplug = HotplugInput{
+				Networks: []NetworkInput{
+					{
+						ID:   "vpn",
+						Type: "user",
+						MAC:  "02:02:00:00:00:10",
+					},
+				},
+			}
+
+			manifest, err := document.Manifest()
+			if err != nil {
+				t.Fatalf("lower manifest: %v", err)
+			}
+			if !containsString(manifest.QEMU.Machine.Options, "pcie=on") {
+				t.Fatalf("expected pcie=on in machine options, got %#v", manifest.QEMU.Machine.Options)
+			}
+			if got, want := document.QEMU.MachineOptions["pcie"], tt.options["pcie"]; got != want {
+				t.Fatalf("lowering mutated input machine options: got %q want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestDocumentWithoutHotplugAllocatesNoHotplugPorts(t *testing.T) {
+	document := validDocument()
+	document.Mounts = nil
+	document.Hotplug = HotplugInput{}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got := manifest.QEMU.Hotplug.PCIEPorts; got != 0 {
+		t.Fatalf("expected no hotplug ports, got %d", got)
+	}
+	if got, want := manifest.QEMU.Devices.RNG.Transport, "mmio"; got != want {
+		t.Fatalf("unexpected transport: got %q want %q", got, want)
+	}
+}
+
+func TestDocumentTypedHotplugValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Document)
+		want   string
+	}{
+		{
+			name: "duplicate ids across kinds",
+			mutate: func(document *Document) {
+				document.Hotplug = HotplugInput{
+					Mounts:   MountsInput{ImageMountInput{SourcePath: "data.raw", Image: ImageInput{Serial: stringPtr("same")}}},
+					Networks: []NetworkInput{{ID: "same", Type: "user", MAC: "02:02:00:00:00:10"}},
+				}
+			},
+			want: "duplicates",
+		},
+		{
+			name: "unsupported net backend",
+			mutate: func(document *Document) {
+				document.Hotplug = HotplugInput{Networks: []NetworkInput{{ID: "vpn", Type: "tap"}}}
+			},
+			want: "net.backend must be user",
+		},
+		{
+			name: "unsupported image format",
+			mutate: func(document *Document) {
+				document.Hotplug = HotplugInput{Mounts: MountsInput{ImageMountInput{SourcePath: "data.vmdk", Image: ImageInput{Serial: stringPtr("data"), Format: "vmdk"}}}}
+			},
+			want: "block.format must be raw or qcow2",
+		},
+		{
+			name: "invalid virtiofs args template",
+			mutate: func(document *Document) {
+				document.Hotplug = HotplugInput{Mounts: MountsInput{VirtioFSMountInput{
+					MountInput: MountInput{Tag: "cache", SourcePath: "cache"},
+					VirtioFS:   VirtioFSInput{Args: []string{"--socket-path={{.Missing}}"}},
+				}}}
+			},
+			want: "map has no entry for key",
+		},
+		{
+			name: "unsupported 9p hotplug mount",
+			mutate: func(document *Document) {
+				document.Hotplug = HotplugInput{Mounts: MountsInput{NinePMountInput{MountInput: MountInput{Tag: "cache", SourcePath: "cache"}}}}
+			},
+			want: "does not support hotplug",
+		},
+		{
+			name: "image id required",
+			mutate: func(document *Document) {
+				document.Hotplug = HotplugInput{Mounts: MountsInput{ImageMountInput{SourcePath: "data.raw"}}}
+			},
+			want: "id is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validDocument()
+			document.Mounts = nil
+			tt.mutate(&document)
+			_, err := document.Manifest()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected %q error, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestManifestHotplugRequiresPCITransport(t *testing.T) {
+	manifest, err := validDocument().Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	manifest.Hotplug = []hotplug.Device{{Kind: hotplug.KindNet, ID: "vpn", Net: hotplug.Net{Backend: "user", MAC: "02:02:00:00:00:10"}}}
+	manifest.QEMU.Hotplug.PCIEPorts = 1
+	manifest.QEMU.Devices.RNG.Transport = "mmio"
+	if err := manifest.Validate(); err == nil || !strings.Contains(err.Error(), "requires pci transport") {
+		t.Fatalf("expected pci transport error, got %v", err)
+	}
+}
+
+func TestDocumentRejectsExplicitHotplugPortAllocation(t *testing.T) {
+	_, err := DecodeDocumentBytes([]byte(`
+[kernel]
+path = "/tmp/vmlinuz"
+initrd_path = "/tmp/initrd"
+
+[qemu]
+allocate_pcie_ports = 4
+`), "manifest.toml")
+	if err == nil || !strings.Contains(err.Error(), "unknown key qemu.allocate_pcie_ports") {
+		t.Fatalf("expected unknown key error for allocate_pcie_ports, got %v", err)
+	}
+}
+
+func TestDocumentRejectsLegacyTaggedHotplugList(t *testing.T) {
+	_, err := DecodeDocumentBytes([]byte(`
+[kernel]
+path = "/tmp/vmlinuz"
+initrd_path = "/tmp/initrd"
+
+[[hotplug]]
+type = "virtiofs"
+tag = "cache"
+source = "/tmp/cache"
+`), "manifest.toml")
+	if err == nil || !strings.Contains(err.Error(), "expected table") {
+		t.Fatalf("expected legacy hotplug list error, got %v", err)
+	}
+}
+
+func TestDocumentHotplugVirtioFSMountTargetIsOptional(t *testing.T) {
+	document := validDocument()
+	document.Mounts = nil
+	document.Hotplug.Mounts = MountsInput{
+		VirtioFSMountInput{
+			MountInput: MountInput{
+				Tag:        "workspace",
+				SourcePath: "shares/cache",
+			},
+		},
+	}
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if len(manifest.Hotplug) != 1 {
+		t.Fatalf("expected one hotplug entry, got %#v", manifest.Hotplug)
+	}
+	if manifest.Hotplug[0].VirtioFS.Target != "" {
+		t.Fatalf("expected omitted target to skip guest mount command, got %#v", manifest.Hotplug[0].VirtioFS.Target)
+	}
+}
+
 func TestManifestVolumeValidation(t *testing.T) {
 	t.Run("allows empty image path when not auto creating", func(t *testing.T) {
 		manifest := validManifest()
@@ -2121,6 +2682,15 @@ func validDocument() Document {
 			User: "agent",
 		},
 	}
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func setXDGTestRuntimeDir(t *testing.T, runtimeDir string) {

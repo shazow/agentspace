@@ -60,6 +60,10 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	args = append(args, "-m", fmt.Sprintf("%d", qemu.Memory.Size))
 	args = append(args, "-smp", fmt.Sprintf("%d", qemuCPUCount(qemu.SMP.CPUs)))
 
+	for i := 0; i < qemu.Hotplug.PCIEPorts; i++ {
+		args = append(args, "-device", fmt.Sprintf("pcie-root-port,id=pcie.hotplug.%d,bus=pcie.0,chassis=%d,slot=%d", i, i+1, i+1))
+	}
+
 	if qemu.Knobs.NoDefaults {
 		args = append(args, "-nodefaults")
 	}
@@ -301,10 +305,14 @@ func appendBlockArgs(args []string, block manifest.QEMUBlockDevice) ([]string, e
 		return nil, err
 	}
 	driver := govmmQemu.VirtioBlockTransport[blockTransport]
+	format := block.Format
+	if format == "" {
+		format = "raw"
+	}
 
 	driveParams := []string{
 		fmt.Sprintf("id=%s", block.ID),
-		"format=raw",
+		fmt.Sprintf("format=%s", format),
 		fmt.Sprintf("file=%s", block.ImagePath),
 		"if=none",
 	}
