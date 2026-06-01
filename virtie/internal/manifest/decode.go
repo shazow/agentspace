@@ -103,7 +103,10 @@ func taggedTOMLKey(key toml.Key) bool {
 	if len(key) == 0 {
 		return false
 	}
-	return key[0] == "mounts" || key[0] == "hotplug"
+	if key[0] == "mounts" {
+		return true
+	}
+	return len(key) > 1 && key[0] == "hotplug" && key[1] == "mounts"
 }
 
 func manifestLooksTOML(data []byte, name string) bool {

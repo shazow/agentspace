@@ -54,6 +54,12 @@ type Block struct {
 	Serial    string `json:"serial,omitempty"`
 }
 
+type Hotplug interface {
+	Attach() error
+	Detach() error
+	ID() string
+}
+
 type State struct {
 	ID   string `json:"id"`
 	Kind Kind   `json:"kind"`
@@ -104,52 +110,140 @@ type GuestRunner interface {
 }
 
 func (r Runtime) Attach(ctx context.Context, id string) error {
-	device, bus, err := r.find(id)
+	registry, err := r.hotplugRegistry(ctx)
 	if err != nil {
 		return err
 	}
-	statePath, err := StatePath(r.StateDir, id)
+	hotplug, err := registry.lookup(id)
+	if err != nil {
+		return err
+	}
+	return hotplug.Attach()
+}
+
+func (r Runtime) Detach(ctx context.Context, id string) error {
+	registry, err := r.hotplugRegistry(ctx)
+	if err != nil {
+		return err
+	}
+	hotplug, err := registry.lookup(id)
+	if err != nil {
+		return err
+	}
+	return hotplug.Detach()
+}
+
+type hotplugRegistry map[string]Hotplug
+
+func (r Runtime) hotplugRegistry(ctx context.Context) (hotplugRegistry, error) {
+	registry := make(hotplugRegistry, len(r.Devices))
+	for i, device := range r.Devices {
+		hotplug, err := r.hotplug(ctx, device, i)
+		if err != nil {
+			return nil, err
+		}
+		if err := registry.add(hotplug); err != nil {
+			return nil, err
+		}
+	}
+	return registry, nil
+}
+
+func (r Runtime) hotplug(ctx context.Context, device Device, index int) (Hotplug, error) {
+	base := hotplugBase{
+		ctx:     ctx,
+		runtime: &r,
+		id:      device.ID,
+		kind:    device.Kind,
+		bus:     fmt.Sprintf("pcie.hotplug.%d", index),
+	}
+	switch device.Kind {
+	case KindVirtioFS:
+		return &HotplugVirtioFS{hotplugBase: base, VirtioFS: device.VirtioFS}, nil
+	case KindNet:
+		return &HotplugNet{hotplugBase: base, Net: device.Net}, nil
+	case KindBlock:
+		return &HotplugBlock{hotplugBase: base, Block: device.Block}, nil
+	default:
+		return nil, fmt.Errorf("manifest.hotplug id %q has unsupported kind %q", device.ID, device.Kind)
+	}
+}
+
+func (r hotplugRegistry) add(hotplug Hotplug) error {
+	id := hotplug.ID()
+	if _, ok := r[id]; ok {
+		return fmt.Errorf("manifest.hotplug id %q is duplicated", id)
+	}
+	r[id] = hotplug
+	return nil
+}
+
+func (r hotplugRegistry) lookup(id string) (Hotplug, error) {
+	hotplug, ok := r[id]
+	if !ok {
+		return nil, fmt.Errorf("manifest.hotplug id %q not found", id)
+	}
+	return hotplug, nil
+}
+
+type hotplugBase struct {
+	ctx     context.Context
+	runtime *Runtime
+	id      string
+	kind    Kind
+	bus     string
+}
+
+func (h hotplugBase) ID() string {
+	return h.id
+}
+
+func (h hotplugBase) attach(device Device, attachHost func() (Process, error), detachHost func(Process)) error {
+	if detachHost == nil {
+		detachHost = func(Process) {}
+	}
+	statePath, err := StatePath(h.runtime.StateDir, h.id)
 	if err != nil {
 		return err
 	}
 	if _, err := os.Stat(statePath); err == nil {
-		return fmt.Errorf("hotplug %q is already attached; state exists at %q", id, statePath)
+		return fmt.Errorf("hotplug %q is already attached; state exists at %q", h.id, statePath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat hotplug state %q: %w", statePath, err)
 	}
 
 	var proc Process
-	if device.Kind == KindVirtioFS {
-		proc, err = r.attachVirtioFSHost(ctx, device)
+	if attachHost != nil {
+		proc, err = attachHost()
 		if err != nil {
 			return err
 		}
 	}
 
-	state := State{ID: id, Kind: device.Kind, Bus: bus}
+	state := State{ID: h.id, Kind: h.kind, Bus: h.bus}
 	if proc != nil {
 		state.PID = proc.PID()
 	}
-	if err := r.attachQMP(ctx, device, bus); err != nil {
-		r.rollbackHost(proc)
+	if err := h.runtime.attachQMP(h.ctx, device, h.bus); err != nil {
+		detachHost(proc)
 		return err
 	}
-	if err := r.attachGuest(ctx, device); err != nil {
-		_ = r.detachQMP(ctx, device)
-		r.rollbackHost(proc)
+	if err := h.runtime.attachGuest(h.ctx, device); err != nil {
+		_ = h.runtime.detachQMP(h.ctx, device)
+		detachHost(proc)
 		return err
 	}
 	if err := WriteState(statePath, state); err != nil {
-		_ = r.detachGuest(ctx, device)
-		_ = r.detachQMP(ctx, device)
-		r.rollbackHost(proc)
+		_ = h.runtime.detachGuest(h.ctx, device)
+		_ = h.runtime.detachQMP(h.ctx, device)
+		detachHost(proc)
 		return err
 	}
 	return nil
 }
 
-func (r Runtime) Detach(ctx context.Context, id string) error {
-	statePath, err := StatePath(r.StateDir, id)
+func (h hotplugBase) detach(device Device, cleanup func(State) error) error {
+	statePath, err := StatePath(h.runtime.StateDir, h.id)
 	if err != nil {
 		return err
 	}
@@ -157,41 +251,94 @@ func (r Runtime) Detach(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if state.ID != id {
-		return fmt.Errorf("hotplug state %q belongs to %q, not %q", statePath, state.ID, id)
-	}
-	device, _, err := r.find(id)
-	if err != nil {
-		return err
+	if state.ID != h.id {
+		return fmt.Errorf("hotplug state %q belongs to %q, not %q", statePath, state.ID, h.id)
 	}
 
-	if err := r.detachGuest(ctx, device); err != nil {
+	if err := h.runtime.detachGuest(h.ctx, device); err != nil {
 		return err
 	}
-	if err := r.detachQMP(ctx, device); err != nil {
+	if err := h.runtime.detachQMP(h.ctx, device); err != nil {
 		return err
 	}
-	if state.PID > 0 {
-		if err := r.terminatePID(state.PID); err != nil {
+	if cleanup != nil {
+		if err := cleanup(state); err != nil {
 			return err
 		}
 	}
 	if err := os.Remove(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove hotplug state %q: %w", statePath, err)
 	}
-	if device.Kind == KindVirtioFS && device.VirtioFS.SocketPath != "" {
-		_ = os.Remove(device.VirtioFS.SocketPath)
-	}
 	return nil
 }
 
-func (r Runtime) find(id string) (Device, string, error) {
-	for i, device := range r.Devices {
-		if device.ID == id {
-			return device, fmt.Sprintf("pcie.hotplug.%d", i), nil
+type HotplugVirtioFS struct {
+	hotplugBase
+	VirtioFS
+}
+
+func (h HotplugVirtioFS) Attach() error {
+	return h.attach(h.device(), h.attachHost, h.detachHost)
+}
+
+func (h HotplugVirtioFS) Detach() error {
+	return h.detach(h.device(), func(state State) error {
+		if state.PID > 0 {
+			if err := h.runtime.terminatePID(state.PID); err != nil {
+				return err
+			}
 		}
-	}
-	return Device{}, "", fmt.Errorf("manifest.hotplug id %q not found", id)
+		if h.SocketPath != "" {
+			_ = os.Remove(h.SocketPath)
+		}
+		return nil
+	})
+}
+
+func (h HotplugVirtioFS) device() Device {
+	return Device{Kind: KindVirtioFS, ID: h.id, VirtioFS: h.VirtioFS}
+}
+
+func (h HotplugVirtioFS) attachHost() (Process, error) {
+	return h.runtime.attachVirtioFSHost(h.ctx, h.device())
+}
+
+func (h HotplugVirtioFS) detachHost(proc Process) {
+	h.runtime.rollbackHost(proc)
+}
+
+type HotplugNet struct {
+	hotplugBase
+	Net
+}
+
+func (h HotplugNet) Attach() error {
+	return h.attach(h.device(), nil, nil)
+}
+
+func (h HotplugNet) Detach() error {
+	return h.detach(h.device(), nil)
+}
+
+func (h HotplugNet) device() Device {
+	return Device{Kind: KindNet, ID: h.id, Net: h.Net}
+}
+
+type HotplugBlock struct {
+	hotplugBase
+	Block
+}
+
+func (h HotplugBlock) Attach() error {
+	return h.attach(h.device(), nil, nil)
+}
+
+func (h HotplugBlock) Detach() error {
+	return h.detach(h.device(), nil)
+}
+
+func (h HotplugBlock) device() Device {
+	return Device{Kind: KindBlock, ID: h.id, Block: h.Block}
 }
 
 func (r Runtime) attachVirtioFSHost(ctx context.Context, device Device) (Process, error) {

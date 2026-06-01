@@ -4,6 +4,67 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-06-01: virtie hotplug entries moved under source device groups
+
+### Who Is Affected
+
+- Direct virtie manifest producers that emit hotplug entries.
+- Producers using `mounts[].hotplugged = true`.
+
+### What Changed
+
+Hotplug devices now use the same input shape as their launch-time device
+groups. To hotplug a mount, move it from `[[mounts]]` to
+`[[hotplug.mounts]]`. To hotplug a network, move it from `[[networks]]` to
+`[[hotplug.networks]]`.
+
+The `hotplugged = true` mount flag and the typed `[[hotplug]]` list are no
+longer accepted.
+
+### Migration Steps
+
+Change hotplugged virtiofs mounts from:
+
+```toml
+[[mounts]]
+type = "virtiofs"
+tag = "cache"
+source = "/tmp/cache"
+hotplugged = true
+target = "/mnt/cache"
+virtiofs.socket = "cache.sock"
+```
+
+to:
+
+```toml
+[[hotplug.mounts]]
+type = "virtiofs"
+tag = "cache"
+source = "/tmp/cache"
+target = "/mnt/cache"
+virtiofs.socket = "cache.sock"
+```
+
+Change network hotplug entries from:
+
+```toml
+[[hotplug]]
+type = "net"
+id = "vpn"
+backend = "user"
+mac = "02:02:00:00:00:10"
+```
+
+to:
+
+```toml
+[[hotplug.networks]]
+id = "vpn"
+type = "user"
+mac = "02:02:00:00:00:10"
+```
+
 ## 2026-05-30: ordered tagged virtie mounts restored
 
 ### Who Is Affected

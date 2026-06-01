@@ -156,14 +156,74 @@ func TestBlockAttachDetachCommands(t *testing.T) {
 	}
 }
 
+func TestHotplugRegistryKeysByInterfaceID(t *testing.T) {
+	registry := make(hotplugRegistry)
+	hotplug := fakeHotplug{id: "from-id"}
+
+	if err := registry.add(hotplug); err != nil {
+		t.Fatalf("add hotplug: %v", err)
+	}
+	got, err := registry.lookup("from-id")
+	if err != nil {
+		t.Fatalf("lookup hotplug: %v", err)
+	}
+	if got.ID() != "from-id" {
+		t.Fatalf("unexpected hotplug id: got %q want from-id", got.ID())
+	}
+}
+
+func TestHotplugRegistryMissingID(t *testing.T) {
+	tmpDir := t.TempDir()
+	runtime, _, _, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
+
+	err := runtime.Attach(context.Background(), "missing")
+	if err == nil || !strings.Contains(err.Error(), `manifest.hotplug id "missing" not found`) {
+		t.Fatalf("expected missing id error, got %v", err)
+	}
+}
+
+func TestHotplugRegistryRejectsDuplicateIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+	runtime, _, _, _ := testRuntimeDevices(tmpDir, []Device{
+		testVirtioFSDevice(tmpDir),
+		{
+			Kind: KindNet,
+			ID:   "cache",
+			Net:  Net{Backend: "user", MAC: "02:02:00:00:00:10"},
+		},
+	})
+
+	err := runtime.Attach(context.Background(), "cache")
+	if err == nil || !strings.Contains(err.Error(), `manifest.hotplug id "cache" is duplicated`) {
+		t.Fatalf("expected duplicate id error, got %v", err)
+	}
+}
+
+func TestHotplugRegistryRejectsUnsupportedKind(t *testing.T) {
+	tmpDir := t.TempDir()
+	runtime, _, _, _ := testRuntimeDevices(tmpDir, []Device{
+		testVirtioFSDevice(tmpDir),
+		{Kind: Kind("unsupported"), ID: "bad"},
+	})
+
+	err := runtime.Attach(context.Background(), "cache")
+	if err == nil || !strings.Contains(err.Error(), `manifest.hotplug id "bad" has unsupported kind "unsupported"`) {
+		t.Fatalf("expected unsupported kind error, got %v", err)
+	}
+}
+
 func testRuntime(tmpDir string, device Device) (Runtime, *fakeStarter, *fakeQMP, *fakeGuest) {
+	return testRuntimeDevices(tmpDir, []Device{device})
+}
+
+func testRuntimeDevices(tmpDir string, devices []Device) (Runtime, *fakeStarter, *fakeQMP, *fakeGuest) {
 	starter := &fakeStarter{}
 	qmp := &fakeQMP{}
 	guest := &fakeGuest{}
 	return Runtime{
 		StateDir: filepath.Join(tmpDir, "state"),
 		WorkDir:  tmpDir,
-		Devices:  []Device{device},
+		Devices:  devices,
 		Start:    starter,
 		Sockets:  fakeSockets{},
 		QMP:      qmp,
@@ -183,6 +243,14 @@ func testVirtioFSDevice(tmpDir string) Device {
 		},
 	}
 }
+
+type fakeHotplug struct {
+	id string
+}
+
+func (h fakeHotplug) Attach() error { return nil }
+func (h fakeHotplug) Detach() error { return nil }
+func (h fakeHotplug) ID() string    { return h.id }
 
 type fakeProcess struct {
 	pid int

@@ -241,7 +241,7 @@ func newParser() *flags.Parser {
 	if _, err := parser.AddCommand(
 		"hotplug",
 		"Attach or detach a predefined hotplug device",
-		"Attach or detach a device described by a manifest [[hotplug]] entry.",
+		"Attach or detach a device described under manifest [hotplug].",
 		&hotplugCommand{},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)

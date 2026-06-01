@@ -145,7 +145,6 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 	transport := qemuTransport(machineType, d.Mounts, graphics, hotplugCount > 0)
 	virtioFSMounts := d.Mounts.VirtioFS()
 	hasVirtioFS := len(virtioFSMounts) > 0 || len(d.Hotplug.VirtioFS()) > 0
-	launchVirtioFSMounts := filterLaunchVirtioFSMounts(virtioFSMounts)
 	memorySize := d.Machine.Memory
 	if memorySize == 0 {
 		memorySize = defaultMemorySize
@@ -260,7 +259,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 			},
 			I8042:    host.System == "x86_64-linux",
 			Balloon:  lowerBalloon(d.Balloon, transport),
-			VirtioFS: lowerVirtioFSMounts(launchVirtioFSMounts, transport),
+			VirtioFS: lowerVirtioFSMounts(virtioFSMounts, transport),
 			NineP:    lowerNinePMounts(ninePMounts, transport),
 			Block:    lowerBlocks(imageMounts, host, transport),
 			Mounts:   lowerQEMUMounts(d.Mounts, host, transport),
@@ -288,13 +287,7 @@ func lowerCPUCount(cpus *int) CPUCount {
 }
 
 func (d Document) hotplugCount() int {
-	count := d.Hotplug.Len()
-	for _, mount := range d.Mounts.VirtioFS() {
-		if mount.Hotplugged {
-			count++
-		}
-	}
-	return count
+	return d.Hotplug.Len()
 }
 
 func qemuTransport(machineType string, mounts MountsInput, graphics QEMUGraphics, requirePCI bool) string {
@@ -438,9 +431,6 @@ func lowerQEMUMounts(mounts MountsInput, host HostInput, transport string) []QEM
 		transport: transport,
 	}
 	for _, mount := range mounts {
-		if virtiofs, ok := mount.(VirtioFSMountInput); ok && virtiofs.Hotplugged {
-			continue
-		}
 		devices = append(devices, mount.lowerQEMUMount(&ctx))
 	}
 	return devices
@@ -520,16 +510,6 @@ func aioEngine(host HostInput) string {
 	return "threads"
 }
 
-func filterLaunchVirtioFSMounts(mounts []VirtioFSMountInput) []VirtioFSMountInput {
-	result := make([]VirtioFSMountInput, 0, len(mounts))
-	for _, mount := range mounts {
-		if !mount.Hotplugged {
-			result = append(result, mount)
-		}
-	}
-	return result
-}
-
 func lowerWorkspace(workspace WorkspaceInput) Workspace {
 	return Workspace{
 		GuestDir: workspace.GuestDir,
@@ -573,7 +553,7 @@ func lowerNinePMounts(mounts []NinePMountInput, transport string) []QEMUNinePSha
 func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerOptions) ([]Run, error) {
 	runs := make([]Run, 0, len(mounts))
 	for _, mount := range mounts {
-		if mount.Hotplugged || mount.VirtioFS.Socket == "" {
+		if mount.VirtioFS.Socket == "" {
 			continue
 		}
 		if mount.VirtioFS.Bin == "" && len(mount.VirtioFS.Args) == 0 {
@@ -636,90 +616,47 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerO
 
 func (m *Manifest) lowerHotplug(d Document) ([]hotplug.Device, error) {
 	hotplugs := make([]hotplug.Device, 0, d.hotplugCount())
-	for i, entry := range d.Hotplug {
-		device, err := m.lowerHotplugEntry(entry)
+	for i, mount := range d.Hotplug.Mounts {
+		device, err := m.lowerHotplugMount(mount)
 		if err != nil {
-			return nil, fmt.Errorf("manifest.hotplug[%d]: %w", i, err)
+			return nil, fmt.Errorf("manifest.hotplug.mounts[%d]: %w", i, err)
 		}
 		hotplugs = append(hotplugs, device)
 	}
-	for _, mount := range d.Mounts.VirtioFS() {
-		if !mount.Hotplugged {
-			continue
-		}
-		hotplug, err := m.lowerVirtioFSHotplug(mount)
+	for i, network := range d.Hotplug.Networks {
+		device, err := lowerNetworkHotplug(network, i)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("manifest.hotplug.networks[%d]: %w", i, err)
 		}
-		hotplugs = append(hotplugs, hotplug)
+		hotplugs = append(hotplugs, device)
 	}
 	return hotplugs, nil
 }
 
-func (m *Manifest) lowerHotplugEntry(entry HotplugEntry) (hotplug.Device, error) {
+func (m *Manifest) lowerHotplugMount(entry MountEntry) (hotplug.Device, error) {
 	switch typed := entry.(type) {
-	case HotplugVirtioFSInput:
-		return m.lowerVirtioFSHotplugInput(typed)
-	case HotplugImageInput:
+	case VirtioFSMountInput:
+		return m.lowerVirtioFSHotplug(typed)
+	case ImageMountInput:
 		return m.lowerImageHotplug(typed)
-	case HotplugNetInput:
-		return lowerNetHotplug(typed), nil
 	default:
-		return hotplug.Device{}, fmt.Errorf("unsupported hotplug type %T", entry)
+		return hotplug.Device{}, fmt.Errorf("type %q does not support hotplug", entry.mountType())
 	}
 }
 
-func (m *Manifest) lowerVirtioFSHotplugInput(entry HotplugVirtioFSInput) (hotplug.Device, error) {
-	id, err := renderHotplugID(entry.ID, "{{.Tag}}", executor.Context{
-		"Tag":    entry.Tag,
-		"Source": entry.SourcePath,
-		"Target": entry.Target,
-	})
-	if err != nil {
-		return hotplug.Device{}, err
-	}
-	socket := entry.VirtioFS.Socket
-	if socket == "" {
-		socket = id + ".sock"
-	}
-	socketPath, err := m.resolveSocketPath(socket)
-	if err != nil {
-		return hotplug.Device{}, err
-	}
-	bin := entry.VirtioFS.Bin
-	if bin == "" {
-		bin = "virtiofsd"
-	}
-	source := m.resolvePath(entry.SourcePath)
-	args := append([]string(nil), entry.VirtioFS.Args...)
-	if len(args) == 0 {
-		args = hotplug.DefaultVirtioFSArgs(socketPath, source, id)
-	}
-	return hotplug.Device{
-		Kind: hotplug.KindVirtioFS,
-		ID:   id,
-		VirtioFS: hotplug.VirtioFS{
-			Source:     source,
-			Target:     entry.Target,
-			SocketPath: socketPath,
-			Bin:        m.resolveOptionalBin(bin, "virtiofsd"),
-			Args:       args,
-		},
-	}, nil
-}
-
-func (m *Manifest) lowerImageHotplug(entry HotplugImageInput) (hotplug.Device, error) {
-	id, err := renderHotplugID(entry.ID, "{{.Serial}}", executor.Context{
-		"Serial": entry.Serial,
-		"Source": entry.SourcePath,
-		"Format": entry.Format,
-	})
-	if err != nil {
-		return hotplug.Device{}, err
-	}
+func (m *Manifest) lowerImageHotplug(entry ImageMountInput) (hotplug.Device, error) {
+	serial := stringValue(entry.Image.Serial)
 	format := entry.Format
 	if format == "" {
 		format = "raw"
+	}
+	id, err := renderHotplugID(serial, "{{.Serial}}", executor.Context{
+		"Serial": serial,
+		"Source": entry.SourcePath,
+		"Format": format,
+	})
+	if err != nil {
+		return hotplug.Device{}, err
 	}
 	return hotplug.Device{
 		Kind: hotplug.KindBlock,
@@ -728,7 +665,7 @@ func (m *Manifest) lowerImageHotplug(entry HotplugImageInput) (hotplug.Device, e
 			ImagePath: m.resolvePath(entry.SourcePath),
 			Format:    format,
 			ReadOnly:  entry.ReadOnly,
-			Serial:    entry.Serial,
+			Serial:    serial,
 		},
 	}, nil
 }
@@ -772,7 +709,19 @@ func (m *Manifest) resolveOptionalBin(bin string, defaultBin string) string {
 	return m.resolvePath(bin)
 }
 
-func lowerNetHotplug(entry HotplugNetInput) hotplug.Device {
+func lowerNetworkHotplug(entry NetworkInput, index int) (hotplug.Device, error) {
+	id := entry.ID
+	if id == "" {
+		id = fmt.Sprintf("net%d", index)
+	}
+	backend := entry.Type
+	if backend == "" {
+		backend = "user"
+	}
+	mac := entry.MAC
+	if mac == "" {
+		mac = defaultNetworkMAC
+	}
 	forward := make([]hotplug.Forward, 0, len(entry.Forward))
 	for _, fwd := range entry.Forward {
 		forward = append(forward, hotplug.Forward{
@@ -783,13 +732,13 @@ func lowerNetHotplug(entry HotplugNetInput) hotplug.Device {
 	}
 	return hotplug.Device{
 		Kind: hotplug.KindNet,
-		ID:   entry.ID,
+		ID:   id,
 		Net: hotplug.Net{
-			Backend: entry.Backend,
-			MAC:     entry.MAC,
+			Backend: backend,
+			MAC:     mac,
 			Forward: forward,
 		},
-	}
+	}, nil
 }
 
 func renderHotplugID(id string, defaultID string, context executor.Context) (string, error) {
