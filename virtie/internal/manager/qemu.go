@@ -305,10 +305,14 @@ func appendBlockArgs(args []string, block manifest.QEMUBlockDevice) ([]string, e
 		return nil, err
 	}
 	driver := govmmQemu.VirtioBlockTransport[blockTransport]
+	format := block.Format
+	if format == "" {
+		format = "raw"
+	}
 
 	driveParams := []string{
 		fmt.Sprintf("id=%s", block.ID),
-		"format=raw",
+		fmt.Sprintf("format=%s", format),
 		fmt.Sprintf("file=%s", block.ImagePath),
 		"if=none",
 	}

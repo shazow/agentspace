@@ -657,6 +657,12 @@ func TestDecodeDocumentRejectsInvalidTaggedMounts(t *testing.T) {
 			wantErr: "unknown field",
 		},
 		{
+			name:    "top-level image format",
+			file:    "manifest.json",
+			data:    `{"kernel":{"path":"/tmp/vmlinuz","initrd_path":"/tmp/initrd"},"mounts":[{"type":"image","source":"data.qcow2","format":"qcow2","image":{"serial":"data"}}]}`,
+			wantErr: "unknown field",
+		},
+		{
 			name: "grouped toml mounts",
 			file: "manifest.toml",
 			data: `[kernel]
@@ -2077,6 +2083,49 @@ func TestDocumentHotplugVirtioFSMountDefaultBinUsesPATH(t *testing.T) {
 	}
 }
 
+func TestDocumentHotplugVirtioFSRendersCustomArgs(t *testing.T) {
+	document := validDocument()
+	document.Mounts = nil
+	document.Hotplug.Mounts = MountsInput{
+		VirtioFSMountInput{
+			MountInput: MountInput{
+				Tag:        "cache",
+				SourcePath: "shares/cache",
+			},
+			VirtioFS: VirtioFSInput{
+				Args: []string{"--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}", "--user={{.Env.USER}}"},
+			},
+		},
+	}
+	t.Setenv("USER", "template-user")
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := manifest.Hotplug[0].VirtioFS.Args, []string{"--socket-path=/tmp/work/.virtie/cache.sock", "--shared-dir=/tmp/work/shares/cache", "--tag=cache", "--user=template-user"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected hotplug args: got %#v want %#v", got, want)
+	}
+}
+
+func TestDocumentImageMountFormatLowersToQEMU(t *testing.T) {
+	document := validDocument()
+	imageMount := document.Mounts[1].(ImageMountInput)
+	imageMount.Image.Format = "qcow2"
+	document.Mounts[1] = imageMount
+
+	manifest, err := document.Manifest()
+	if err != nil {
+		t.Fatalf("lower manifest: %v", err)
+	}
+	if got, want := manifest.QEMU.Devices.Block[0].Format, "qcow2"; got != want {
+		t.Fatalf("unexpected block format: got %q want %q", got, want)
+	}
+	if got, want := manifest.QEMU.Devices.Mounts[1].Block.Format, "qcow2"; got != want {
+		t.Fatalf("unexpected mount block format: got %q want %q", got, want)
+	}
+}
+
 func TestDocumentTypedHotplugEntries(t *testing.T) {
 	document := validDocument()
 	document.Mounts = nil
@@ -2091,8 +2140,7 @@ func TestDocumentTypedHotplugEntries(t *testing.T) {
 			},
 			ImageMountInput{
 				SourcePath: "data.qcow2",
-				Format:     "qcow2",
-				Image:      ImageInput{Serial: stringPtr("data")},
+				Image:      ImageInput{Serial: stringPtr("data"), Format: "qcow2"},
 			},
 		},
 		Networks: []NetworkInput{
@@ -2299,9 +2347,19 @@ func TestDocumentTypedHotplugValidation(t *testing.T) {
 		{
 			name: "unsupported image format",
 			mutate: func(document *Document) {
-				document.Hotplug = HotplugInput{Mounts: MountsInput{ImageMountInput{SourcePath: "data.vmdk", Format: "vmdk", Image: ImageInput{Serial: stringPtr("data")}}}}
+				document.Hotplug = HotplugInput{Mounts: MountsInput{ImageMountInput{SourcePath: "data.vmdk", Image: ImageInput{Serial: stringPtr("data"), Format: "vmdk"}}}}
 			},
 			want: "block.format must be raw or qcow2",
+		},
+		{
+			name: "invalid virtiofs args template",
+			mutate: func(document *Document) {
+				document.Hotplug = HotplugInput{Mounts: MountsInput{VirtioFSMountInput{
+					MountInput: MountInput{Tag: "cache", SourcePath: "cache"},
+					VirtioFS:   VirtioFSInput{Args: []string{"--socket-path={{.Missing}}"}},
+				}}}
+			},
+			want: "map has no entry for key",
 		},
 		{
 			name: "unsupported 9p hotplug mount",

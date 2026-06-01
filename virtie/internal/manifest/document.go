@@ -190,7 +190,6 @@ type ImageMountInput struct {
 	Type       string     `json:"type" toml:"type"`
 	SourcePath string     `json:"source" toml:"source"`
 	ReadOnly   bool       `json:"read_only,omitempty" toml:"read_only"`
-	Format     string     `json:"format,omitempty" toml:"format"`
 	Image      ImageInput `json:"image,omitempty" toml:"image"`
 }
 
@@ -201,6 +200,7 @@ func (ImageMountInput) mountType() string { return MountTypeImage }
 type ImageInput struct {
 	Size       units.MiB `json:"size,omitempty" toml:"size"`
 	FSType     string    `json:"fs,omitempty" toml:"fs"`
+	Format     string    `json:"format,omitempty" toml:"format"`
 	AutoCreate bool      `json:"create,omitempty" toml:"create"`
 	// Pointer preserves omitted vs explicitly empty input until lowering.
 	Label  *string `json:"label,omitempty" toml:"label"`

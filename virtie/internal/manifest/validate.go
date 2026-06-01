@@ -136,6 +136,15 @@ func (m *Manifest) Validate() error {
 		if !validQEMUTransport(block.Transport) {
 			return fmt.Errorf("manifest.qemu.devices.block[%d].transport must be one of pci, mmio, or ccw", i)
 		}
+		if block.Format != "" && !validImageFormat(block.Format) {
+			return fmt.Errorf("manifest.qemu.devices.block[%d].format must be raw or qcow2", i)
+		}
+	}
+
+	for i, mount := range m.QEMU.Devices.Mounts {
+		if mount.Block != nil && mount.Block.Format != "" && !validImageFormat(mount.Block.Format) {
+			return fmt.Errorf("manifest.qemu.devices.mounts[%d].block.format must be raw or qcow2", i)
+		}
 	}
 
 	for i, netdev := range m.QEMU.Devices.Network {
@@ -201,7 +210,7 @@ func validateHotplug(index int, device hotplugpkg.Device) error {
 		if device.Block.ImagePath == "" {
 			return fmt.Errorf("manifest.hotplug[%d].block.image is required", index)
 		}
-		if device.Block.Format != "raw" && device.Block.Format != "qcow2" {
+		if !validImageFormat(device.Block.Format) {
 			return fmt.Errorf("manifest.hotplug[%d].block.format must be raw or qcow2", index)
 		}
 	default:
@@ -349,6 +358,15 @@ func validQEMUTransport(transport string) bool {
 func validQEMUGraphicsBackend(backend string) bool {
 	switch backend {
 	case "gtk", "cocoa":
+		return true
+	default:
+		return false
+	}
+}
+
+func validImageFormat(format string) bool {
+	switch format {
+	case "raw", "qcow2":
 		return true
 	default:
 		return false

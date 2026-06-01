@@ -411,6 +411,7 @@ func lowerBlocks(volumes []ImageMountInput, host HostInput, transport string) []
 		block := QEMUBlockDevice{
 			ID:        "vd" + string(rune('a'+i)),
 			ImagePath: volume.SourcePath,
+			Format:    lowerImageFormat(volume.Image.Format),
 			AIO:       aioEngine(host),
 			ReadOnly:  volume.ReadOnly,
 			Serial:    stringValue(volume.Image.Serial),
@@ -492,6 +493,7 @@ func lowerQEMUImageMount(mount ImageMountInput, index int, host HostInput, trans
 	block := QEMUBlockDevice{
 		ID:        "vd" + string(rune('a'+index)),
 		ImagePath: mount.SourcePath,
+		Format:    lowerImageFormat(mount.Image.Format),
 		AIO:       aioEngine(host),
 		ReadOnly:  mount.ReadOnly,
 		Serial:    stringValue(mount.Image.Serial),
@@ -603,11 +605,7 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerO
 			Name: fmt.Sprintf("virtiofsd[%s]", mount.Tag),
 			Exec: append([]string{m.resolveOptionalBin(bin, "virtiofsd")}, args...),
 			Env:  []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
-			Vars: map[string]any{
-				"Socket":      socketPath,
-				"MountTag":    mount.Tag,
-				"MountSource": m.resolvePath(mount.SourcePath),
-			},
+			Vars: virtioFSTemplateContext(socketPath, m.resolvePath(mount.SourcePath), mount.Tag),
 		})
 		m.addCleanupFile(mount.VirtioFS.Socket)
 	}
@@ -646,10 +644,7 @@ func (m *Manifest) lowerHotplugMount(entry MountEntry) (hotplug.Device, error) {
 
 func (m *Manifest) lowerImageHotplug(entry ImageMountInput) (hotplug.Device, error) {
 	serial := stringValue(entry.Image.Serial)
-	format := entry.Format
-	if format == "" {
-		format = "raw"
-	}
+	format := lowerImageFormat(entry.Image.Format)
 	id, err := renderHotplugID(serial, "{{.Serial}}", executor.Context{
 		"Serial": serial,
 		"Source": entry.SourcePath,
@@ -688,6 +683,12 @@ func (m *Manifest) lowerVirtioFSHotplug(mount VirtioFSMountInput) (hotplug.Devic
 	args := append([]string(nil), mount.VirtioFS.Args...)
 	if len(args) == 0 {
 		args = hotplug.DefaultVirtioFSArgs(socketPath, source, id)
+	} else {
+		renderedArgs, err := renderVirtioFSArgv(args, socketPath, source, id)
+		if err != nil {
+			return hotplug.Device{}, err
+		}
+		args = renderedArgs
 	}
 	return hotplug.Device{
 		Kind: hotplug.KindVirtioFS,
@@ -980,6 +981,29 @@ func lowerWriteFileContent(file WriteFileInput) WriteFileContent {
 		return WriteFileContent{Kind: WriteFileContentPath, Path: *file.Path}
 	default:
 		return WriteFileContent{}
+	}
+}
+
+func lowerImageFormat(format string) string {
+	if format == "" {
+		return "raw"
+	}
+	return format
+}
+
+func renderVirtioFSArgv(argv []string, socketPath string, source string, tag string) ([]string, error) {
+	renderer, err := executor.New(virtioFSTemplateContext(socketPath, source, tag))
+	if err != nil {
+		return nil, err
+	}
+	return renderer.RenderArgv(argv)
+}
+
+func virtioFSTemplateContext(socketPath string, source string, tag string) executor.Context {
+	return executor.Context{
+		"Socket":      socketPath,
+		"MountTag":    tag,
+		"MountSource": source,
 	}
 }
 

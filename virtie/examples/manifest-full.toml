@@ -235,9 +235,9 @@ forward = [
 # partition/filesystem policy, and mounting are future work.
 type = "image"
 source = "data.qcow2"
-format = "qcow2"  # Options: raw, qcow2 (default: raw)
 read_only = false
 image.serial = "data"
+image.format = "qcow2"  # Options: raw, qcow2 (default: raw)
 
 [[run]]
 # Run commands are host-side processes managed for the VM lifetime. They start

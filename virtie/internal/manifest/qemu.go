@@ -140,6 +140,7 @@ type QEMUNinePShare struct {
 type QEMUBlockDevice struct {
 	ID        string `json:"id"`
 	ImagePath string `json:"imagePath"`
+	Format    string `json:"format,omitempty"`
 	AIO       string `json:"aio,omitempty"`
 	Cache     string `json:"cache,omitempty"`
 	ReadOnly  bool   `json:"readOnly,omitempty"`

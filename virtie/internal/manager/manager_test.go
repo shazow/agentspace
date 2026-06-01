@@ -3812,6 +3812,7 @@ func TestBuildQEMUSpecPreservesOrderedMountDevices(t *testing.T) {
 			Block: &manifest.QEMUBlockDevice{
 				ID:        "vda",
 				ImagePath: "root.img",
+				Format:    "qcow2",
 				AIO:       "threads",
 				Transport: "pci",
 			},
@@ -3825,7 +3826,7 @@ func TestBuildQEMUSpecPreservesOrderedMountDevices(t *testing.T) {
 
 	ninePIndex := indexStringContaining(spec.Args, "local,id=fs9p0,path=/tmp/work/shares/cache")
 	virtioFSIndex := indexStringContaining(spec.Args, "vhost-user-fs-pci,chardev=char-fs0,tag=workspace")
-	blockIndex := indexStringContaining(spec.Args, "id=vda,format=raw,file=/tmp/work/root.img")
+	blockIndex := indexStringContaining(spec.Args, "id=vda,format=qcow2,file=/tmp/work/root.img")
 	if ninePIndex == -1 || virtioFSIndex == -1 || blockIndex == -1 {
 		t.Fatalf("expected qemu args to include all ordered mount devices: %v", spec.Args)
 	}

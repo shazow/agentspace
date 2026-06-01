@@ -19,7 +19,8 @@ groups. To hotplug a mount, move it from `[[mounts]]` to
 `[[hotplug.networks]]`.
 
 The `hotplugged = true` mount flag and the typed `[[hotplug]]` list are no
-longer accepted.
+longer accepted. Image mount formats are declared as `image.format`, not a
+top-level `format` field.
 
 ### Migration Steps
 
@@ -63,6 +64,16 @@ to:
 id = "vpn"
 type = "user"
 mac = "02:02:00:00:00:10"
+```
+
+For hotplugged image mounts, use:
+
+```toml
+[[hotplug.mounts]]
+type = "image"
+source = "data.qcow2"
+image.serial = "data"
+image.format = "qcow2"
 ```
 
 ## 2026-05-30: ordered tagged virtie mounts restored
