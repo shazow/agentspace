@@ -27,9 +27,9 @@ Out of scope:
 
 Acceptance criteria:
 
-- [x] `virtie --manifest=MANIFEST launch [--ssh] [--resume=no|auto|force] [-- <remote-cmd...>]` is the supported launch command.
-- [x] `virtie --manifest=MANIFEST suspend` saves QEMU migration state to disk, records saved suspend state, and exits the launch session.
-- [x] `virtie --manifest=MANIFEST launch --resume=force` restores only from saved suspend state.
+- [x] `virtie --manifest=MANIFEST [-v|-vv] launch [--ssh] [--resume=no|auto|force] [-- <remote-cmd...>]` is the supported launch command. Shared options may also be placed after the subcommand.
+- [x] `virtie --manifest=MANIFEST suspend` saves QEMU migration state to disk, records saved suspend state, and exits the launch session. Shared options may also be placed after the subcommand.
+- [x] `virtie --manifest=MANIFEST [-v|-vv] launch --resume=force` restores only from saved suspend state. Shared options may also be placed after the subcommand.
 - [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, SSH readiness socket, QEMU devices, `virtiofs` daemons, opt-in `9p` shares, and auto-created volumes.
 - [x] QEMU launch is compiled from the typed manifest plus the runtime-selected CID rather than string-substituting a Nix-generated argv template.
 - [x] Launch acquires the per-sandbox lock and probes free vsock CIDs before starting guest processes.

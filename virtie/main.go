@@ -18,15 +18,15 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
-type options struct {
+type Options struct {
 	Manifest string `long:"manifest" value-name:"MANIFEST" description:"Path to the virtie manifest"`
+	Verbose  []bool `short:"v" long:"verbose" description:"Show verbose logging."`
 }
 
 type launchCommand struct {
-	options *options
+	options *Options
 	Resume  string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
 	SSH     bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
-	Verbose []bool `short:"v" long:"verbose" description:"Show verbose logging."`
 
 	Args struct {
 		RemoteCommand []string `positional-arg-name:"remote-cmd"`
@@ -43,15 +43,15 @@ func (c *launchCommand) Execute(args []string) error {
 	manifestLogger := discardLogger
 	manager.SetLogger(discardLogger)
 	balloon.SetLogger(discardLogger)
-	if len(c.Verbose) > 0 {
+	if len(c.options.Verbose) > 0 {
 		manifestLogger = baseLogger.With("package", "manifest")
 		manager.SetLogger(baseLogger.With("package", "manager"))
 	}
-	if len(c.Verbose) > 1 {
+	if len(c.options.Verbose) > 1 {
 		balloon.SetLogger(baseLogger.With("package", "balloon"))
 	}
 
-	manifest, err := loadLaunchManifest(c.manifestPath(), manifestLogger)
+	manifest, err := loadLaunchManifest(c.options.Manifest, manifestLogger)
 	if err != nil {
 		return err
 	}
@@ -59,16 +59,16 @@ func (c *launchCommand) Execute(args []string) error {
 	return manager.LaunchWithOptions(context.Background(), manifest, c.Args.RemoteCommand, manager.LaunchOptions{
 		Resume:    manager.ResumeMode(c.Resume),
 		SSH:       c.SSH,
-		Verbosity: len(c.Verbose),
+		Verbosity: len(c.options.Verbose),
 	})
 }
 
 type suspendCommand struct {
-	options *options
+	options *Options
 }
 
 func (c *suspendCommand) Execute(args []string) error {
-	manifest, err := loadManifest(c.manifestPath())
+	manifest, err := loadManifest(c.options.Manifest)
 	if err != nil {
 		return err
 	}
@@ -80,9 +80,8 @@ func (c *suspendCommand) Execute(args []string) error {
 }
 
 type hotplugCommand struct {
-	options *options
-	Detach  bool   `long:"detach" description:"Detach the hotplug device instead of attaching it"`
-	Verbose []bool `short:"v" long:"verbose" description:"Show verbose logging."`
+	options *Options
+	Detach  bool `long:"detach" description:"Detach the hotplug device instead of attaching it"`
 
 	Args struct {
 		ID string `positional-arg-name:"id" required:"yes"`
@@ -94,12 +93,12 @@ func (c *hotplugCommand) Execute(args []string) error {
 	discardLogger := slog.New(slog.DiscardHandler)
 	manifestLogger := discardLogger
 	manager.SetLogger(discardLogger)
-	if len(c.Verbose) > 0 {
+	if len(c.options.Verbose) > 0 {
 		manifestLogger = baseLogger.With("package", "manifest")
 		manager.SetLogger(baseLogger.With("package", "manager"))
 	}
 
-	manifest, err := loadLaunchManifest(c.manifestPath(), manifestLogger)
+	manifest, err := loadLaunchManifest(c.options.Manifest, manifestLogger)
 	if err != nil {
 		return err
 	}
@@ -108,27 +107,6 @@ func (c *hotplugCommand) Execute(args []string) error {
 	defer cancel()
 
 	return manager.Hotplug(ctx, manifest, c.Args.ID, manager.HotplugOptions{Detach: c.Detach})
-}
-
-func (c *launchCommand) manifestPath() string {
-	if c.options == nil {
-		return ""
-	}
-	return c.options.Manifest
-}
-
-func (c *suspendCommand) manifestPath() string {
-	if c.options == nil {
-		return ""
-	}
-	return c.options.Manifest
-}
-
-func (c *hotplugCommand) manifestPath() string {
-	if c.options == nil {
-		return ""
-	}
-	return c.options.Manifest
 }
 
 func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {
@@ -257,7 +235,7 @@ func main() {
 }
 
 func newParser() *flags.Parser {
-	opts := &options{}
+	opts := &Options{}
 	parser := flags.NewParser(opts, flags.Default|flags.PassDoubleDash)
 
 	if _, err := parser.AddCommand(

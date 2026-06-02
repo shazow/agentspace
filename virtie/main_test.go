@@ -108,6 +108,49 @@ func TestParserAcceptsLaunchFlags(t *testing.T) {
 	}
 }
 
+func TestParserAcceptsSharedOptionsBeforeOrAfterSubcommand(t *testing.T) {
+	manifestPath := filepath.Join(t.TempDir(), "manifest.toml")
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "manifest root first",
+			args: []string{"--manifest=" + manifestPath, "launch"},
+		},
+		{
+			name: "manifest command after",
+			args: []string{"launch", "--manifest=" + manifestPath},
+		},
+		{
+			name: "verbose root first",
+			args: []string{"--manifest=" + manifestPath, "-vv", "launch"},
+		},
+		{
+			name: "verbose command after",
+			args: []string{"launch", "-vv", "--manifest=" + manifestPath},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := newParser().ParseArgs(tt.args)
+			if err == nil {
+				t.Fatalf("ParseArgs(%v) succeeded, expected manifest load error", tt.args)
+			}
+			if strings.Contains(err.Error(), "unknown flag `manifest'") {
+				t.Fatalf("ParseArgs(%v) rejected supported manifest placement: %v", tt.args, err)
+			}
+			if strings.Contains(err.Error(), "unknown flag `v'") {
+				t.Fatalf("ParseArgs(%v) rejected supported verbose placement: %v", tt.args, err)
+			}
+			if !strings.Contains(err.Error(), `open manifest`) || !strings.Contains(err.Error(), manifestPath) {
+				t.Fatalf("ParseArgs(%v) did not parse manifest path, got %v", tt.args, err)
+			}
+		})
+	}
+}
+
 func TestResolveManifestPathDefaultsToTOMLThenJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldDir, err := os.Getwd()
