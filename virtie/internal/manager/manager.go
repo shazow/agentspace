@@ -26,7 +26,6 @@ import (
 	backendfile "github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
 	shellquote "github.com/kballard/go-shellquote"
-	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
@@ -214,11 +213,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return removeLaunchPID(manifest, os.Getpid())
 	})
 
-	cid, cidLock, err := m.acquireLaunchCID(manifest, resumeState)
+	cid, err := m.acquireLaunchCID(manifest, resumeState)
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	defer joinDeferredError(&err, cidLock.Release)
 	if resumeState != nil {
 		m.logger.Info("restoring saved vsock cid", "cid", cid)
 	} else {
@@ -496,15 +494,14 @@ func ensureSavedVMStateAvailable(state *suspendState) error {
 	return nil
 }
 
-func (m *manager) acquireLaunchCID(manifest *manifest.Manifest, state *suspendState) (int, lock, error) {
+func (m *manager) acquireLaunchCID(manifest *manifest.Manifest, state *suspendState) (int, error) {
 	if state == nil {
 		return m.allocateCID(manifest)
 	}
-	lock, err := m.acquireCID(manifest, state.CID)
-	if err != nil {
-		return 0, nil, err
+	if state.CID < manifest.VSock.CIDRange.Start || state.CID > manifest.VSock.CIDRange.End {
+		return 0, fmt.Errorf("saved vsock CID %d is outside manifest range %d-%d", state.CID, manifest.VSock.CIDRange.Start, manifest.VSock.CIDRange.End)
 	}
-	return state.CID, lock, nil
+	return state.CID, nil
 }
 
 func buildLaunchQEMUSpec(manifest *manifest.Manifest, cid int, resume bool) (processSpec, error) {
@@ -592,45 +589,26 @@ func (m *manager) startRuns(cid int, manifest *manifest.Manifest) ([]*managedPro
 	return started, nil
 }
 
-func (m *manager) allocateCID(manifest *manifest.Manifest) (int, lock, error) {
+func (m *manager) allocateCID(manifest *manifest.Manifest) (int, error) {
 	for cid := manifest.VSock.CIDRange.Start; cid <= manifest.VSock.CIDRange.End; cid++ {
-		lock, err := m.locker.Acquire(manifest.ResolvedVSockLockPath(cid))
-		if err == nil {
-			if m.vsockCIDChecker != nil {
-				available, err := m.vsockCIDChecker.Available(cid)
-				if err != nil {
-					_ = lock.Release()
-					return 0, nil, err
-				}
-				if !available {
-					_ = lock.Release()
-					continue
-				}
-			}
-			return cid, lock, nil
+		if m.vsockCIDChecker == nil {
+			return cid, nil
 		}
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		available, err := m.vsockCIDChecker.Available(cid)
+		if err != nil {
+			return 0, err
+		}
+		if !available {
 			continue
 		}
-		return 0, nil, err
+		return cid, nil
 	}
 
-	return 0, nil, fmt.Errorf(
+	return 0, fmt.Errorf(
 		"no free vsock CID in range %d-%d",
 		manifest.VSock.CIDRange.Start,
 		manifest.VSock.CIDRange.End,
 	)
-}
-
-func (m *manager) acquireCID(manifest *manifest.Manifest, cid int) (lock, error) {
-	if cid < manifest.VSock.CIDRange.Start || cid > manifest.VSock.CIDRange.End {
-		return nil, fmt.Errorf("saved vsock CID %d is outside manifest range %d-%d", cid, manifest.VSock.CIDRange.Start, manifest.VSock.CIDRange.End)
-	}
-	lock, err := m.locker.Acquire(manifest.ResolvedVSockLockPath(cid))
-	if err != nil {
-		return nil, err
-	}
-	return lock, nil
 }
 
 func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths []string, watchers ...*managedProcess) error {
@@ -1215,10 +1193,10 @@ func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) 
 }
 
 func buildSSHSpecWithArgv(launchManifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) (processSpec, error) {
-	renderer, err := executor.New(executor.Context{
-		"CID":         fmt.Sprintf("%d", cid),
-		"User":        launchManifest.SSH.User,
-		"Destination": sshtools.VSockDestination(launchManifest.SSH.User, cid),
+	renderer, err := manifest.NewTemplateRenderer(manifest.SSHTemplateProvider{
+		CID:         cid,
+		User:        launchManifest.SSH.User,
+		Destination: sshtools.VSockDestination(launchManifest.SSH.User, cid),
 	})
 	if err != nil {
 		return processSpec{Name: "ssh"}, err
@@ -1244,10 +1222,10 @@ func buildSSHSpecWithArgv(launchManifest *manifest.Manifest, cid int, remoteComm
 }
 
 func buildSSHCommandHint(launchManifest *manifest.Manifest, cid int) (string, error) {
-	renderer, err := executor.New(executor.Context{
-		"CID":         fmt.Sprintf("%d", cid),
-		"User":        launchManifest.SSH.User,
-		"Destination": sshtools.VSockDestination(launchManifest.SSH.User, cid),
+	renderer, err := manifest.NewTemplateRenderer(manifest.SSHTemplateProvider{
+		CID:         cid,
+		User:        launchManifest.SSH.User,
+		Destination: sshtools.VSockDestination(launchManifest.SSH.User, cid),
 	})
 	if err != nil {
 		return "", err

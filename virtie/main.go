@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/jessevdk/go-flags"
@@ -17,14 +18,12 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
-type options struct{}
-
-type manifestOption struct {
-	Manifest string `long:"manifest" value-name:"MANIFEST" required:"yes" description:"Path to the virtie manifest"`
+type options struct {
+	Manifest string `long:"manifest" value-name:"MANIFEST" description:"Path to the virtie manifest"`
 }
 
 type launchCommand struct {
-	manifestOption
+	options *options
 	Resume  string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
 	SSH     bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
 	Verbose []bool `short:"v" long:"verbose" description:"Show verbose logging."`
@@ -52,7 +51,7 @@ func (c *launchCommand) Execute(args []string) error {
 		balloon.SetLogger(baseLogger.With("package", "balloon"))
 	}
 
-	manifest, err := loadLaunchManifest(c.Manifest, manifestLogger)
+	manifest, err := loadLaunchManifest(c.manifestPath(), manifestLogger)
 	if err != nil {
 		return err
 	}
@@ -65,11 +64,11 @@ func (c *launchCommand) Execute(args []string) error {
 }
 
 type suspendCommand struct {
-	manifestOption
+	options *options
 }
 
 func (c *suspendCommand) Execute(args []string) error {
-	manifest, err := loadManifest(c.Manifest)
+	manifest, err := loadManifest(c.manifestPath())
 	if err != nil {
 		return err
 	}
@@ -81,7 +80,7 @@ func (c *suspendCommand) Execute(args []string) error {
 }
 
 type hotplugCommand struct {
-	manifestOption
+	options *options
 	Detach  bool   `long:"detach" description:"Detach the hotplug device instead of attaching it"`
 	Verbose []bool `short:"v" long:"verbose" description:"Show verbose logging."`
 
@@ -100,7 +99,7 @@ func (c *hotplugCommand) Execute(args []string) error {
 		manager.SetLogger(baseLogger.With("package", "manager"))
 	}
 
-	manifest, err := loadLaunchManifest(c.Manifest, manifestLogger)
+	manifest, err := loadLaunchManifest(c.manifestPath(), manifestLogger)
 	if err != nil {
 		return err
 	}
@@ -109,6 +108,27 @@ func (c *hotplugCommand) Execute(args []string) error {
 	defer cancel()
 
 	return manager.Hotplug(ctx, manifest, c.Args.ID, manager.HotplugOptions{Detach: c.Detach})
+}
+
+func (c *launchCommand) manifestPath() string {
+	if c.options == nil {
+		return ""
+	}
+	return c.options.Manifest
+}
+
+func (c *suspendCommand) manifestPath() string {
+	if c.options == nil {
+		return ""
+	}
+	return c.options.Manifest
+}
+
+func (c *hotplugCommand) manifestPath() string {
+	if c.options == nil {
+		return ""
+	}
+	return c.options.Manifest
 }
 
 func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {
@@ -131,7 +151,7 @@ func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, e
 		}
 	}
 
-	return doc.ManifestWithOptions(manifest.LowerOptions{Logger: logger})
+	return doc.ManifestWithOptions(manifest.ResolveOptions{Logger: logger})
 }
 
 func loadManifest(path string) (*manifest.Manifest, error) {
@@ -152,7 +172,7 @@ func loadManifestData(path string) (*manifest.Manifest, string, []byte, error) {
 }
 
 func loadManifestDocumentData(path string) (manifest.Document, string, []byte, error) {
-	resolvedPath, err := filepath.Abs(path)
+	resolvedPath, err := resolveManifestPath(path)
 	if err != nil {
 		return manifest.Document{}, "", nil, fmt.Errorf("resolve manifest path %q: %w", path, err)
 	}
@@ -167,6 +187,28 @@ func loadManifestDocumentData(path string) (manifest.Document, string, []byte, e
 	}
 
 	return doc, resolvedPath, data, nil
+}
+
+func resolveManifestPath(path string) (string, error) {
+	if path != "" {
+		return filepath.Abs(path)
+	}
+
+	var checked []string
+	for _, candidate := range []string{"manifest.toml", "manifest.json"} {
+		resolved, err := filepath.Abs(candidate)
+		if err != nil {
+			return "", err
+		}
+		checked = append(checked, resolved)
+		if _, err := os.Stat(resolved); err == nil {
+			return resolved, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+
+	return "", fmt.Errorf("no manifest path provided and no default manifest found; checked %s", strings.Join(checked, ", "))
 }
 
 func writeManifestWorkingDir(path string, data []byte, workingDir string) error {
@@ -215,14 +257,14 @@ func main() {
 }
 
 func newParser() *flags.Parser {
-	var opts options
-	parser := flags.NewParser(&opts, flags.Default|flags.PassDoubleDash)
+	opts := &options{}
+	parser := flags.NewParser(opts, flags.Default|flags.PassDoubleDash)
 
 	if _, err := parser.AddCommand(
 		"launch",
 		"Launch a virtiofs + ssh sandbox session",
 		"Start configured host-side run processes, launch QEMU directly, then optionally attach over ssh.",
-		&launchCommand{},
+		&launchCommand{options: opts},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -232,7 +274,7 @@ func newParser() *flags.Parser {
 		"suspend",
 		"Suspend a running sandbox session",
 		"Save QEMU state to disk and exit the launch session.",
-		&suspendCommand{},
+		&suspendCommand{options: opts},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -242,7 +284,7 @@ func newParser() *flags.Parser {
 		"hotplug",
 		"Attach or detach a predefined hotplug device",
 		"Attach or detach a device described under manifest [hotplug].",
-		&hotplugCommand{},
+		&hotplugCommand{options: opts},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

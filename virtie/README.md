@@ -17,16 +17,18 @@ the main flake.
 The supported CLI is:
 
 ```console
-virtie launch --manifest=MANIFEST [--ssh] [--resume=no|auto|force] [-v|-vv] [-- <remote-cmd...>]
-virtie suspend --manifest=MANIFEST
-virtie hotplug --manifest=MANIFEST [-v] ID
-virtie hotplug --manifest=MANIFEST [-v] --detach ID
+virtie --manifest=MANIFEST launch [--ssh] [--resume=no|auto|force] [-v|-vv] [-- <remote-cmd...>]
+virtie --manifest=MANIFEST suspend
+virtie --manifest=MANIFEST hotplug [-v] ID
+virtie --manifest=MANIFEST hotplug [-v] --detach ID
 ```
 
 In normal use this is invoked by the generated launch wrapper rather than by
 hand. See the root flake for packaging and launch integration. Hand-written
 manifests may be JSON or TOML; the TOML examples in this directory show a
-minimal manifest and a full manifest with default-valued fields included.
+minimal manifest and a full manifest with default-valued fields included. When
+`--manifest` is omitted, `virtie` checks `./manifest.toml` and then
+`./manifest.json`.
 
 ## Features
 

@@ -4,6 +4,34 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-06-02: virtie manifest flag moved to the root command
+
+### Who Is Affected
+
+- Direct `virtie` users and wrapper scripts that pass `--manifest` to a
+  subcommand.
+
+### What Changed
+
+`--manifest=MANIFEST` is now a root `virtie` option shared by `launch`,
+`suspend`, and `hotplug`. When omitted, `virtie` looks for `./manifest.toml`
+then `./manifest.json` before returning an error.
+
+Per-CID lock files were also removed. `virtie` still keeps the main sandbox
+launch lock and still probes host vsock CID availability before fresh launches.
+
+### Migration Steps
+
+Move `--manifest` before the subcommand in scripts and documentation:
+
+```diff
+- virtie launch --manifest="$manifest" --ssh
++ virtie --manifest="$manifest" launch --ssh
+
+- virtie suspend --manifest="$manifest"
++ virtie --manifest="$manifest" suspend
+```
+
 ## 2026-06-01: virtie exec command names use PATH lookup
 
 ### Who Is Affected

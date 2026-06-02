@@ -3309,43 +3309,6 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 	}
 }
 
-func TestAllocateCIDSkipsLockedIDs(t *testing.T) {
-	tmpDir := t.TempDir()
-	manifest := &manifest.Manifest{
-		Paths: manifest.Paths{
-			WorkingDir: tmpDir,
-			LockPath:   filepath.Join(tmpDir, "agent-sandbox.lock"),
-		},
-		VSock: manifest.VSock{
-			CIDRange: manifest.VSockCIDRange{
-				Start: 7,
-				End:   8,
-			},
-		},
-	}
-
-	locker := &fileLocker{}
-	held, err := locker.Acquire(manifest.ResolvedVSockLockPath(7))
-	if err != nil {
-		t.Fatalf("acquire held cid lock: %v", err)
-	}
-	defer held.Release()
-
-	manager := &manager{locker: locker}
-	cid, lock, err := manager.allocateCID(manifest)
-	if err != nil {
-		t.Fatalf("allocate cid: %v", err)
-	}
-	defer lock.Release()
-
-	if cid != 8 {
-		t.Fatalf("unexpected cid: got %d want 8", cid)
-	}
-	if _, err := os.Stat(filepath.Join(tmpDir, "agent-sandbox-vsock-8.lock")); err != nil {
-		t.Fatalf("expected flat cid lock file beside launch lock: %v", err)
-	}
-}
-
 func TestAllocateCIDSkipsHostUnavailableIDs(t *testing.T) {
 	tmpDir := t.TempDir()
 	manifest := &manifest.Manifest{
@@ -3367,11 +3330,10 @@ func TestAllocateCIDSkipsHostUnavailableIDs(t *testing.T) {
 		locker:          locker,
 		vsockCIDChecker: checker,
 	}
-	cid, lock, err := manager.allocateCID(manifest)
+	cid, err := manager.allocateCID(manifest)
 	if err != nil {
 		t.Fatalf("allocate cid: %v", err)
 	}
-	defer lock.Release()
 
 	if cid != 8 {
 		t.Fatalf("unexpected cid: got %d want 8", cid)
@@ -3379,15 +3341,9 @@ func TestAllocateCIDSkipsHostUnavailableIDs(t *testing.T) {
 	if got := checker.checked; !reflect.DeepEqual(got, []int{7, 8}) {
 		t.Fatalf("unexpected checked cids: got %v want [7 8]", got)
 	}
-
-	reacquired, err := locker.Acquire(manifest.ResolvedVSockLockPath(7))
-	if err != nil {
-		t.Fatalf("expected skipped cid lock to be released: %v", err)
-	}
-	reacquired.Release()
 }
 
-func TestAllocateCIDReleasesLockAfterHostCheckError(t *testing.T) {
+func TestAllocateCIDReturnsHostCheckError(t *testing.T) {
 	tmpDir := t.TempDir()
 	manifest := &manifest.Manifest{
 		Paths: manifest.Paths{
@@ -3402,23 +3358,15 @@ func TestAllocateCIDReleasesLockAfterHostCheckError(t *testing.T) {
 		},
 	}
 
-	locker := &fileLocker{}
 	manager := &manager{
-		locker: locker,
 		vsockCIDChecker: &fakeVSockCIDChecker{
 			err: errors.New("probe failed"),
 		},
 	}
-	_, _, err := manager.allocateCID(manifest)
+	_, err := manager.allocateCID(manifest)
 	if err == nil || !strings.Contains(err.Error(), "probe failed") {
 		t.Fatalf("expected probe failure, got %v", err)
 	}
-
-	reacquired, err := locker.Acquire(manifest.ResolvedVSockLockPath(7))
-	if err != nil {
-		t.Fatalf("expected errored cid lock to be released: %v", err)
-	}
-	reacquired.Release()
 }
 
 func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
@@ -4557,13 +4505,6 @@ func acquireTestLaunchLock(t *testing.T, manifest *manifest.Manifest, pid int) f
 	t.Helper()
 
 	path := manifest.ResolvedLockPath()
-	return acquireTestLockFile(t, path, pid)
-}
-
-func acquireTestCIDLock(t *testing.T, manifest *manifest.Manifest, cid int, pid int) func() {
-	t.Helper()
-
-	path := manifest.ResolvedVSockLockPath(cid)
 	return acquireTestLockFile(t, path, pid)
 }
 
