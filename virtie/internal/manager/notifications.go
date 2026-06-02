@@ -104,8 +104,11 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 	if n == nil || !n.enabled(state) {
 		return
 	}
-	context := notificationTemplateContext(state, message, values)
-	renderer, err := executor.New(context)
+	renderer, err := manifest.NewTemplateRenderer(manifest.NotificationTemplateProvider{
+		State:   state,
+		Message: message,
+		Values:  values,
+	})
 	if err != nil {
 		if n.logger != nil {
 			n.logger.Info("notification hook template failed", "state", state, "err", err)
@@ -160,15 +163,4 @@ func notificationEnv(state string, message string, values map[string]string) ([]
 		env = append(env, fmt.Sprintf("VIRTIE_NOTIFY_CONTEXT_%s=%s", envKey, values[key]))
 	}
 	return env, nil
-}
-
-func notificationTemplateContext(state string, message string, values map[string]string) executor.Context {
-	context := executor.Context{
-		"State":   state,
-		"Message": message,
-	}
-	for key, value := range values {
-		context[key] = value
-	}
-	return context
 }

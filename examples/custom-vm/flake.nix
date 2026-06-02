@@ -69,7 +69,7 @@
 
         exec ${
           agentspace.packages.${system}.virtie
-        }/bin/virtie launch -v --resume=no --manifest=manifest.toml "$@"
+        }/bin/virtie --manifest=manifest.toml launch -v --resume=no "$@"
       '';
     in
     {

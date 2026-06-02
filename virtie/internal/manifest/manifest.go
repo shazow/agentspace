@@ -15,7 +15,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
-type LowerOptions struct {
+type ResolveOptions struct {
 	Logger *slog.Logger
 }
 

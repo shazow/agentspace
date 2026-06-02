@@ -122,7 +122,7 @@ in
   sandbox-consumer-workflow =
     assert consumerWorkflow;
     pkgs.runCommand "sandbox-consumer-workflow" { } ''
-      grep -F 'virtie launch -v --ssh --manifest=' ${launchScript}
+      grep -F 'virtie --manifest="$MANIFEST_PATH" launch -v --ssh' ${launchScript}
       grep -F ${pkgs.lib.escapeShellArg manifestPath} ${launchScript}
       grep -F ${pkgs.lib.escapeShellArg manifestTemplate} ${launchScript}
       grep -F 'mkdir -p "$(' ${launchScript}
@@ -132,7 +132,7 @@ in
       grep -F 'mkSandbox closure size:' ${launchScript}
       test ${pkgs.lib.escapeShellArg manifestPath} = '.agentspace/virtie-agent-sandbox.toml'
       grep -F "bash -lc pwd" ${launchScript}
-      grep -F 'launch -v --ssh --manifest="$MANIFEST_PATH" -- "$@"' ${launchScript}
+      grep -F 'virtie --manifest="$MANIFEST_PATH" launch -v --ssh -- "$@"' ${launchScript}
 
       grep -F 'managed by virtie' ${virtiofsdHelper}
 

@@ -52,7 +52,7 @@ type HostInput struct {
 type QEMUInput struct {
 	Exec          []string `json:"exec,omitempty" toml:"exec"`
 	FwdTunnelExec []string `json:"fwd_tunnel_exec,omitempty" toml:"fwd_tunnel_exec"`
-	// Pointer preserves omitted vs explicitly empty input until lowering.
+	// Pointer preserves omitted vs explicitly empty input until resolution.
 	User             *string           `json:"user,omitempty" toml:"user"`
 	Seccomp          bool              `json:"seccomp,omitempty" toml:"seccomp"`
 	MachineOptions   map[string]string `json:"machine_options,omitempty" toml:"machine_options"`
@@ -62,13 +62,13 @@ type QEMUInput struct {
 
 type MachineInput struct {
 	Type string `json:"type,omitempty" toml:"type"`
-	// Pointer preserves omitted vs explicitly zero input until lowering.
+	// Pointer preserves omitted vs explicitly zero input until resolution.
 	VCPU *int `json:"vcpu,omitempty" toml:"vcpu"`
-	// Pointer preserves omitted vs explicitly empty input until lowering.
+	// Pointer preserves omitted vs explicitly empty input until resolution.
 	ID     *string   `json:"id,omitempty" toml:"id"`
 	Memory units.MiB `json:"memory,omitempty" toml:"memory"`
 	CPU    string    `json:"cpu,omitempty" toml:"cpu"`
-	// Pointer preserves omitted vs explicitly false input until lowering.
+	// Pointer preserves omitted vs explicitly false input until resolution.
 	KVM *bool `json:"kvm,omitempty" toml:"kvm"`
 }
 
@@ -92,7 +92,7 @@ func (m MountsInput) RequiresPCI() bool {
 type MountEntry interface {
 	mountEntry()
 	mountType() string
-	lowerQEMUMount(*mountLowerContext) QEMUMountDevice
+	resolveQEMUMount(*mountResolveContext) QEMUMountDevice
 }
 
 const (
@@ -202,10 +202,10 @@ type ImageInput struct {
 	FSType     string    `json:"fs,omitempty" toml:"fs"`
 	Format     string    `json:"format,omitempty" toml:"format"`
 	AutoCreate bool      `json:"create,omitempty" toml:"create"`
-	// Pointer preserves omitted vs explicitly empty input until lowering.
+	// Pointer preserves omitted vs explicitly empty input until resolution.
 	Label  *string `json:"label,omitempty" toml:"label"`
 	Direct bool    `json:"direct,omitempty" toml:"direct"`
-	// Pointer preserves omitted vs explicitly empty input until lowering.
+	// Pointer preserves omitted vs explicitly empty input until resolution.
 	Serial *string `json:"serial,omitempty" toml:"serial"`
 }
 
@@ -255,7 +255,7 @@ type SSHInput struct {
 	Exec        []string `json:"exec,omitempty" toml:"exec"`
 	User        string   `json:"user,omitempty" toml:"user"`
 	ReadySocket string   `json:"ready_socket,omitempty" toml:"ready_socket"`
-	// Pointer preserves omitted vs explicitly zero input until lowering.
+	// Pointer preserves omitted vs explicitly zero input until resolution.
 	RetryDelay    *float64 `json:"retry_delay,omitempty" toml:"retry_delay"`
 	Autoprovision bool     `json:"autoprovision,omitempty" toml:"autoprovision"`
 }
@@ -271,19 +271,19 @@ type RangeInput struct {
 
 type WriteFileInput struct {
 	GuestPath string `json:"guest_path" toml:"guest_path"`
-	// Pointer preserves omitted vs explicitly empty input until lowering.
+	// Pointer preserves omitted vs explicitly empty input until resolution.
 	Chown *string `json:"chown,omitempty" toml:"chown"`
-	// Pointer preserves omitted vs explicitly empty input until lowering.
+	// Pointer preserves omitted vs explicitly empty input until resolution.
 	Text *string `json:"text,omitempty" toml:"text"`
-	// Pointer preserves omitted vs explicitly empty input until lowering.
+	// Pointer preserves omitted vs explicitly empty input until resolution.
 	Mode *string `json:"mode,omitempty" toml:"mode"`
-	// Pointer preserves omitted vs explicitly false input until lowering.
+	// Pointer preserves omitted vs explicitly false input until resolution.
 	Overwrite *bool `json:"overwrite,omitempty" toml:"overwrite"`
-	// Pointer preserves omitted vs explicitly false input until lowering.
+	// Pointer preserves omitted vs explicitly false input until resolution.
 	FollowLinks *bool `json:"follow_links,omitempty" toml:"follow_links"`
-	// Pointer preserves omitted vs explicitly false input until lowering.
+	// Pointer preserves omitted vs explicitly false input until resolution.
 	WriteBack *bool `json:"write_back,omitempty" toml:"write_back"`
-	// Pointer preserves omitted vs explicitly empty input until lowering.
+	// Pointer preserves omitted vs explicitly empty input until resolution.
 	Path *string `json:"source,omitempty" toml:"source"`
 }
 

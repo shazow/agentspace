@@ -10,7 +10,6 @@ import (
 	"text/template/parse"
 	"time"
 
-	"github.com/shazow/agentspace/virtie/internal/executor"
 	hotplugpkg "github.com/shazow/agentspace/virtie/internal/hotplug"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
@@ -237,18 +236,15 @@ func validateRun(index int, run Run) error {
 			return fmt.Errorf("manifest.run[%d].vars key %q is reserved", index, key)
 		}
 	}
-	context := executor.Context{
-		"CID":      "3",
-		"StateDir": ".virtie",
-		"Workspace": templateWorkspace{
-			GuestPath: "/workspace",
-			HostPath:  "/host/workspace",
+	if _, err := NewTemplateRenderer(RunTemplateProvider{
+		CID:      3,
+		StateDir: ".virtie",
+		Workspace: Workspace{
+			GuestDir: "/workspace",
+			HostDir:  "/host/workspace",
 		},
-	}
-	for key, value := range run.Vars {
-		context[key] = value
-	}
-	if _, err := executor.New(context); err != nil {
+		Vars: run.Vars,
+	}); err != nil {
 		return fmt.Errorf("manifest.run[%d].vars: %w", index, err)
 	}
 	return nil

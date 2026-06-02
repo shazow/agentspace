@@ -12,10 +12,10 @@ the agentspace Nix API yet.
 - Define typed direct-manifest entries with `[[hotplug]] type = "virtiofs"`,
   `type = "net"`, and `type = "image"`.
 - Support `mounts[].hotplugged = true` as sugar for a virtiofs hotplug device.
-- Automatically preallocate one QEMU PCIe root port for each lowered hotplug
+- Automatically preallocate one QEMU PCIe root port for each resolved hotplug
   device so it can be attached after launch.
-- Add `virtie hotplug --manifest=MANIFEST ID` and
-  `virtie hotplug --manifest=MANIFEST --detach ID`.
+- Add `virtie --manifest=MANIFEST hotplug ID` and
+  `virtie --manifest=MANIFEST hotplug --detach ID`.
 - Persist per-device runtime state under `state_dir/hotplug/<id>.json`.
 - Keep the relationship to
   [#112](https://github.com/shazow/agentspace/issues/112) visible: future
@@ -32,7 +32,7 @@ Out of scope:
 Acceptance criteria:
 
 - [x] Manifest accepts ordered tagged `[[hotplug]]` entries.
-- [x] QEMU root-port allocation is automatic from the lowered hotplug count.
+- [x] QEMU root-port allocation is automatic from the resolved hotplug count.
 - [x] Manifest accepts `mounts[].hotplugged` and optional `mounts[].target`.
 - [x] Hotplugged virtiofs mounts are excluded from launch-time QEMU devices and
   managed `run` processes.

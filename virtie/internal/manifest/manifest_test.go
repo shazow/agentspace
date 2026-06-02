@@ -144,7 +144,7 @@ func TestDocumentManagedVirtioFSDefaultBinUsesPATH(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if len(manifest.Run) != 1 {
 		t.Fatalf("expected managed virtiofs run, got %#v", manifest.Run)
@@ -154,12 +154,12 @@ func TestDocumentManagedVirtioFSDefaultBinUsesPATH(t *testing.T) {
 	}
 }
 
-func TestKernelSerialModesLowerToQEMUConsole(t *testing.T) {
+func TestKernelSerialModesResolveToQEMUConsole(t *testing.T) {
 	tests := []struct {
-		name               string
-		serial             string
-		wantSerial         bool
-		wantLoweringErrMsg string
+		name                 string
+		serial               string
+		wantSerial           bool
+		wantResolutionErrMsg string
 	}{
 		{
 			name: "default off",
@@ -175,9 +175,9 @@ func TestKernelSerialModesLowerToQEMUConsole(t *testing.T) {
 			wantSerial: true,
 		},
 		{
-			name:               "invalid",
-			serial:             "verbose",
-			wantLoweringErrMsg: "manifest.kernel.serial must be one of off, print, or console",
+			name:                 "invalid",
+			serial:               "verbose",
+			wantResolutionErrMsg: "manifest.kernel.serial must be one of off, print, or console",
 		},
 	}
 
@@ -192,14 +192,14 @@ func TestKernelSerialModesLowerToQEMUConsole(t *testing.T) {
 			document.Kernel.Serial = tt.serial
 
 			loaded, err := document.Manifest()
-			if tt.wantLoweringErrMsg != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantLoweringErrMsg) {
-					t.Fatalf("expected lowering error %q, got %v", tt.wantLoweringErrMsg, err)
+			if tt.wantResolutionErrMsg != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantResolutionErrMsg) {
+					t.Fatalf("expected resolution error %q, got %v", tt.wantResolutionErrMsg, err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("lower manifest: %v", err)
+				t.Fatalf("resolve manifest: %v", err)
 			}
 
 			qemu := loaded.QEMU
@@ -217,7 +217,7 @@ func TestKernelSerialModesLowerToQEMUConsole(t *testing.T) {
 	}
 }
 
-func TestDocumentWriteFilesFollowLinksLowersToManifest(t *testing.T) {
+func TestDocumentWriteFilesFollowLinksResolvesToManifest(t *testing.T) {
 	followLinks := false
 	writeBack := true
 	document := validDocument()
@@ -275,7 +275,7 @@ func TestDocumentWriteFilesRejectsTextAndSource(t *testing.T) {
 	}
 }
 
-func TestDocumentRunLowersAndResolvesCommand(t *testing.T) {
+func TestDocumentRunResolvesAndResolvesCommand(t *testing.T) {
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
 
 	document := validDocument()
@@ -307,7 +307,7 @@ func TestDocumentRunLowersAndResolvesCommand(t *testing.T) {
 
 	loaded, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 
 	runs, err := loaded.ResolvedRuns(7)
@@ -422,9 +422,9 @@ func TestDocumentVirtioFSUsesExistingSocketWithoutRun(t *testing.T) {
 	document.WorkingDir = tmpDir
 
 	var logOutput bytes.Buffer
-	manifest, err := document.ManifestWithOptions(LowerOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
+	manifest, err := document.ManifestWithOptions(ResolveOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 
 	if len(manifest.Run) != 0 {
@@ -465,9 +465,9 @@ func TestDocumentVirtioFSStartsRunForStaleSocket(t *testing.T) {
 	document.WorkingDir = tmpDir
 
 	var logOutput bytes.Buffer
-	manifest, err := document.ManifestWithOptions(LowerOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
+	manifest, err := document.ManifestWithOptions(ResolveOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 
 	if len(manifest.Run) != 1 || manifest.Run[0].Name != "virtiofsd[workspace]" {
@@ -495,9 +495,9 @@ func TestDocumentVirtioFSWarnsAndGeneratesRunForExistingNonSocket(t *testing.T) 
 	document.WorkingDir = tmpDir
 
 	var logOutput bytes.Buffer
-	manifest, err := document.ManifestWithOptions(LowerOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
+	manifest, err := document.ManifestWithOptions(ResolveOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 
 	if len(manifest.Run) != 1 || manifest.Run[0].Name != "virtiofsd[workspace]" {
@@ -518,7 +518,7 @@ func TestDocumentManagedVirtioFSAddsCleanupFile(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 
 	if got, want := manifest.CleanupFiles, []string{"fs.sock"}; !reflect.DeepEqual(got, want) {
@@ -551,7 +551,7 @@ func TestDocumentExternalVirtioFSSocketIsNotAutoRemovedOnShutdown(t *testing.T) 
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if len(manifest.CleanupFiles) != 0 {
 		t.Fatalf("expected external virtiofs socket not to add cleanup entry, got %#v", manifest.CleanupFiles)
@@ -619,14 +619,14 @@ image.create = true
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got, want := len(manifest.QEMU.Devices.Mounts), 3; got != want {
-		t.Fatalf("unexpected lowered mount count: got %d want %d", got, want)
+		t.Fatalf("unexpected resolved mount count: got %d want %d", got, want)
 	}
 	for i, want := range []string{MountTypeNineP, MountTypeVirtioFS, MountTypeImage} {
 		if got := manifest.QEMU.Devices.Mounts[i].Type; got != want {
-			t.Fatalf("unexpected lowered mount type at %d: got %q want %q", i, got, want)
+			t.Fatalf("unexpected resolved mount type at %d: got %q want %q", i, got, want)
 		}
 	}
 }
@@ -712,10 +712,10 @@ initrd_path = "/tmp/initrd"
 	}
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got := len(manifest.QEMU.Devices.Mounts); got != 0 {
-		t.Fatalf("unexpected lowered mount count: got %d want 0", got)
+		t.Fatalf("unexpected resolved mount count: got %d want 0", got)
 	}
 }
 
@@ -764,7 +764,7 @@ func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
 	document := validDocument()
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got, want := manifest.SSHRetryDelay(25*time.Millisecond), 500*time.Millisecond; got != want {
 		t.Fatalf("unexpected default ssh retry delay: got %s want %s", got, want)
@@ -788,7 +788,7 @@ func TestManifestSSHRetryDelayDefaultsAndValidation(t *testing.T) {
 	customDoc.SSH.RetryDelay = float64Ptr(0.25)
 	custom, err := customDoc.Manifest()
 	if err != nil {
-		t.Fatalf("lower custom retry delay: %v", err)
+		t.Fatalf("resolve custom retry delay: %v", err)
 	}
 	if got, want := custom.SSHRetryDelay(time.Second), 250*time.Millisecond; got != want {
 		t.Fatalf("unexpected custom ssh retry delay: got %s want %s", got, want)
@@ -807,7 +807,7 @@ func TestDocumentSSHReadySocketDefaultAndEnable(t *testing.T) {
 	omitted.SSH.ReadySocket = ""
 	omittedManifest, err := omitted.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest with omitted readiness socket: %v", err)
+		t.Fatalf("resolve manifest with omitted readiness socket: %v", err)
 	}
 	if got, want := omittedManifest.QEMU.SSHReady.SocketPath, ""; got != want {
 		t.Fatalf("unexpected default ssh readiness socket: got %q want %q", got, want)
@@ -817,7 +817,7 @@ func TestDocumentSSHReadySocketDefaultAndEnable(t *testing.T) {
 	enabled.SSH.ReadySocket = "ssh-ready.sock"
 	enabledManifest, err := enabled.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest with enabled readiness socket: %v", err)
+		t.Fatalf("resolve manifest with enabled readiness socket: %v", err)
 	}
 	if got, want := enabledManifest.QEMU.SSHReady.SocketPath, "ssh-ready.sock"; got != want {
 		t.Fatalf("unexpected enabled ssh readiness socket: got %q want %q", got, want)
@@ -837,10 +837,10 @@ func TestDocumentSSHExecDefaultsToEmpty(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest with omitted ssh exec: %v", err)
+		t.Fatalf("resolve manifest with omitted ssh exec: %v", err)
 	}
 	if len(manifest.SSH.Argv) != 0 {
-		t.Fatalf("expected omitted ssh exec to lower to empty argv, got %#v", manifest.SSH.Argv)
+		t.Fatalf("expected omitted ssh exec to resolve to empty argv, got %#v", manifest.SSH.Argv)
 	}
 }
 
@@ -864,7 +864,7 @@ func TestDocumentQEMUExecRendersTemplates(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest with qemu exec templates: %v", err)
+		t.Fatalf("resolve manifest with qemu exec templates: %v", err)
 	}
 	if got, want := manifest.QEMU.BinaryPath, "/nix/store/qemu-x86_64"; got != want {
 		t.Fatalf("unexpected qemu binary path: got %q want %q", got, want)
@@ -899,16 +899,16 @@ func TestDocumentQEMUExecRejectsMissingTemplateKey(t *testing.T) {
 	}
 }
 
-func TestDocumentSSHAutoprovisionLowersToManifest(t *testing.T) {
+func TestDocumentSSHAutoprovisionResolvesToManifest(t *testing.T) {
 	document := validDocument()
 	document.SSH.Autoprovision = true
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest with ssh autoprovision: %v", err)
+		t.Fatalf("resolve manifest with ssh autoprovision: %v", err)
 	}
 	if !manifest.SSH.Autoprovision {
-		t.Fatal("expected ssh autoprovision to lower to manifest")
+		t.Fatal("expected ssh autoprovision to resolve to manifest")
 	}
 }
 
@@ -1442,7 +1442,7 @@ func TestDocumentMountDefaults(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got, want := manifest.Run[0].Exec[0], "virtiofsd"; got != want {
 		t.Fatalf("unexpected default virtiofs binary: got %q want %q", got, want)
@@ -1459,7 +1459,7 @@ func TestDocumentMountDefaults(t *testing.T) {
 	document.Mounts[0] = virtioFSMount
 	manifest, err = document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got, want := manifest.Run[0].Exec[1:], []string{
 		"--socket-path={{.Socket}}",
@@ -1919,7 +1919,7 @@ func TestManifestTransportSelectionForMicroVM(t *testing.T) {
 
 			manifest, err := document.Manifest()
 			if err != nil {
-				t.Fatalf("lower manifest: %v", err)
+				t.Fatalf("resolve manifest: %v", err)
 			}
 			if got := manifest.QEMU.Devices.RNG.Transport; got != tt.wantTransport {
 				t.Fatalf("unexpected rng transport: got %q want %q", got, tt.wantTransport)
@@ -2025,7 +2025,7 @@ func TestDocumentHotplugVirtioFSMountGeneratesHotplugEntry(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 
 	if len(manifest.QEMU.Devices.VirtioFS) != 0 {
@@ -2076,7 +2076,7 @@ func TestDocumentHotplugVirtioFSMountDefaultBinUsesPATH(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got, want := manifest.Hotplug[0].VirtioFS.Bin, "virtiofsd"; got != want {
 		t.Fatalf("unexpected hotplug virtiofs bin: got %q want %q", got, want)
@@ -2101,14 +2101,14 @@ func TestDocumentHotplugVirtioFSRendersCustomArgs(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got, want := manifest.Hotplug[0].VirtioFS.Args, []string{"--socket-path=/tmp/work/.virtie/cache.sock", "--shared-dir=/tmp/work/shares/cache", "--tag=cache", "--user=template-user"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected hotplug args: got %#v want %#v", got, want)
 	}
 }
 
-func TestDocumentImageMountFormatLowersToQEMU(t *testing.T) {
+func TestDocumentImageMountFormatResolvesToQEMU(t *testing.T) {
 	document := validDocument()
 	imageMount := document.Mounts[1].(ImageMountInput)
 	imageMount.Image.Format = "qcow2"
@@ -2116,7 +2116,7 @@ func TestDocumentImageMountFormatLowersToQEMU(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got, want := manifest.QEMU.Devices.Block[0].Format, "qcow2"; got != want {
 		t.Fatalf("unexpected block format: got %q want %q", got, want)
@@ -2159,7 +2159,7 @@ func TestDocumentTypedHotplugEntries(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got, want := manifest.QEMU.Hotplug.PCIEPorts, 3; got != want {
 		t.Fatalf("unexpected pcie ports: got %d want %d", got, want)
@@ -2207,7 +2207,7 @@ func TestDocumentHotplugNetworkForwardDefaultsProto(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got, want := manifest.Hotplug[0].Net.Forward, []hotplug.Forward{{Proto: "tcp", Host: "127.0.0.1:2223", Guest: "10.0.2.15:22"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected hotplug forward: got %#v want %#v", got, want)
@@ -2304,7 +2304,7 @@ mac = "02:02:00:00:00:10"
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got, want := []string{manifest.Hotplug[0].ID, manifest.Hotplug[1].ID, manifest.Hotplug[2].ID}, []string{"workspace", "root", "vpn"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected hotplug ids: got %#v want %#v", got, want)
@@ -2331,7 +2331,7 @@ func TestDocumentExplicitVirtioFSHotplugEnablesSharedMemory(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if !manifest.QEMU.Memory.Shared {
 		t.Fatal("expected explicit virtiofs hotplug to enable shared memory")
@@ -2379,13 +2379,13 @@ func TestDocumentExplicitMachineOptionsEnablePCIForHotplug(t *testing.T) {
 
 			manifest, err := document.Manifest()
 			if err != nil {
-				t.Fatalf("lower manifest: %v", err)
+				t.Fatalf("resolve manifest: %v", err)
 			}
 			if !containsString(manifest.QEMU.Machine.Options, "pcie=on") {
 				t.Fatalf("expected pcie=on in machine options, got %#v", manifest.QEMU.Machine.Options)
 			}
 			if got, want := document.QEMU.MachineOptions["pcie"], tt.options["pcie"]; got != want {
-				t.Fatalf("lowering mutated input machine options: got %q want %q", got, want)
+				t.Fatalf("resolution mutated input machine options: got %q want %q", got, want)
 			}
 		})
 	}
@@ -2398,7 +2398,7 @@ func TestDocumentWithoutHotplugAllocatesNoHotplugPorts(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if got := manifest.QEMU.Hotplug.PCIEPorts; got != 0 {
 		t.Fatalf("expected no hotplug ports, got %d", got)
@@ -2480,7 +2480,7 @@ func TestDocumentTypedHotplugValidation(t *testing.T) {
 func TestManifestHotplugRequiresPCITransport(t *testing.T) {
 	manifest, err := validDocument().Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	manifest.Hotplug = []hotplug.Device{{Kind: hotplug.KindNet, ID: "vpn", Net: hotplug.Net{Backend: "user", MAC: "02:02:00:00:00:10"}}}
 	manifest.QEMU.Hotplug.PCIEPorts = 1
@@ -2534,7 +2534,7 @@ func TestDocumentHotplugVirtioFSMountTargetIsOptional(t *testing.T) {
 
 	manifest, err := document.Manifest()
 	if err != nil {
-		t.Fatalf("lower manifest: %v", err)
+		t.Fatalf("resolve manifest: %v", err)
 	}
 	if len(manifest.Hotplug) != 1 {
 		t.Fatalf("expected one hotplug entry, got %#v", manifest.Hotplug)

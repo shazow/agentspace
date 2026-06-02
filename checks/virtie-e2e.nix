@@ -664,7 +664,7 @@ in
     grep -F 'agent@vsock/3' "$no_ssh_log" >/dev/null
     test ! -f "$no_ssh_workspace_dir/state/ssh-session-started"
     no_ssh_manifest="$no_ssh_workspace_dir/.agentspace/virtie-fake.json"
-    ${virtiePackage}/bin/virtie suspend --manifest="$no_ssh_manifest"
+    ${virtiePackage}/bin/virtie --manifest="$no_ssh_manifest" suspend
     test -f "$no_ssh_workspace_dir/state/qemu-paused"
     test -f "$no_ssh_workspace_dir/state/qemu-migrated"
     test ! -e "$no_ssh_workspace_dir/.agentspace/virtie-fake.pid"
@@ -694,7 +694,7 @@ in
     done
 
     disk_manifest="$disk_workspace_dir/.agentspace/virtie-fake.json"
-    ${virtiePackage}/bin/virtie suspend --manifest="$disk_manifest"
+    ${virtiePackage}/bin/virtie --manifest="$disk_manifest" suspend
     test ! -f "$disk_workspace_dir/state/qmp-second-client"
     test -f "$disk_workspace_dir/state/qemu-paused"
     test -f "$disk_workspace_dir/state/qemu-migrated"
@@ -715,7 +715,7 @@ in
     mkdir -p "$disk_resume_cwd"
     cd "$disk_resume_cwd"
 
-    ${virtiePackage}/bin/virtie launch --ssh --resume=force --manifest="$disk_manifest" >"$disk_resume_log" 2>&1 &
+    ${virtiePackage}/bin/virtie --manifest="$disk_manifest" launch --ssh --resume=force >"$disk_resume_log" 2>&1 &
     resume_pid=$!
     for _ in $(seq 1 100); do
       if [ -f "$disk_workspace_dir/state/qemu-migrate-incoming" ] && [ -f "$disk_workspace_dir/state/qemu-resumed" ] && [ -f "$disk_workspace_dir/state/ssh-session-started" ]; then
@@ -804,7 +804,7 @@ in
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    ${pkgs.coreutils}/bin/timeout 20s ${virtiePackage}/bin/virtie launch --ssh --manifest="$auth_manifest" >"$auth_log" 2>&1 &
+    ${pkgs.coreutils}/bin/timeout 20s ${virtiePackage}/bin/virtie --manifest="$auth_manifest" launch --ssh >"$auth_log" 2>&1 &
     auth_pid=$!
 
     for _ in $(seq 1 100); do
@@ -857,7 +857,7 @@ in
       '.ssh.exec = [$ssh]' \
       ${manifest} > "$no_ssh_manifest"
 
-    ${virtiePackage}/bin/virtie launch --manifest="$no_ssh_manifest" >"$no_ssh_log" 2>&1 &
+    ${virtiePackage}/bin/virtie --manifest="$no_ssh_manifest" launch >"$no_ssh_log" 2>&1 &
     no_ssh_pid=$!
 
     for _ in $(seq 1 100); do
@@ -873,7 +873,7 @@ in
       exit 1
     fi
     test ! -e "$no_ssh_workspace_dir/state/ssh-auth-failure-attempt"
-    ${virtiePackage}/bin/virtie suspend --manifest="$no_ssh_manifest"
+    ${virtiePackage}/bin/virtie --manifest="$no_ssh_manifest" suspend
     test -f "$no_ssh_workspace_dir/state/qemu-stopped"
     test -f "$no_ssh_workspace_dir/state/virtiofsd-stopped"
     test ! -e "$no_ssh_workspace_dir/.agentspace/virtie-fake.pid"

@@ -18,26 +18,26 @@ func TestParserRejectsInvalidCommandLines(t *testing.T) {
 		{
 			name:    "launch missing manifest",
 			args:    []string{"launch"},
-			wantErr: "manifest",
+			wantErr: "no manifest path provided",
 		},
 		{
 			name:    "launch positional manifest",
 			args:    []string{"launch", "/tmp/manifest.json"},
-			wantErr: "manifest",
+			wantErr: "remote command arguments require --ssh",
 		},
 		{
 			name:    "suspend missing manifest",
 			args:    []string{"suspend"},
-			wantErr: "manifest",
+			wantErr: "no manifest path provided",
 		},
 		{
 			name:    "remote command without ssh",
-			args:    []string{"launch", "--manifest=/tmp/manifest.json", "--", "echo", "hi"},
+			args:    []string{"--manifest=/tmp/manifest.json", "launch", "--", "echo", "hi"},
 			wantErr: "remote command arguments require --ssh",
 		},
 		{
 			name:    "invalid launch resume mode",
-			args:    []string{"launch", "--resume=maybe", "--manifest=/tmp/manifest.json"},
+			args:    []string{"--manifest=/tmp/manifest.json", "launch", "--resume=maybe"},
 			wantErr: "Invalid value",
 		},
 	}
@@ -63,37 +63,37 @@ func TestParserAcceptsLaunchFlags(t *testing.T) {
 	}{
 		{
 			name:           "resume no",
-			args:           []string{"launch", "--resume=no", "--manifest=/tmp/manifest.json"},
+			args:           []string{"--manifest=/tmp/manifest.json", "launch", "--resume=no"},
 			unwantedErrMsg: "Invalid value",
 		},
 		{
 			name:           "resume auto",
-			args:           []string{"launch", "--resume=auto", "--manifest=/tmp/manifest.json"},
+			args:           []string{"--manifest=/tmp/manifest.json", "launch", "--resume=auto"},
 			unwantedErrMsg: "Invalid value",
 		},
 		{
 			name:           "resume force",
-			args:           []string{"launch", "--resume=force", "--manifest=/tmp/manifest.json"},
+			args:           []string{"--manifest=/tmp/manifest.json", "launch", "--resume=force"},
 			unwantedErrMsg: "Invalid value",
 		},
 		{
 			name:           "ssh",
-			args:           []string{"launch", "--ssh", "--manifest=/tmp/manifest.json"},
+			args:           []string{"--manifest=/tmp/manifest.json", "launch", "--ssh"},
 			unwantedErrMsg: "unknown flag `ssh'",
 		},
 		{
 			name:           "verbose short",
-			args:           []string{"launch", "-v", "--manifest=/tmp/manifest.json"},
+			args:           []string{"--manifest=/tmp/manifest.json", "launch", "-v"},
 			unwantedErrMsg: "unknown flag `v'",
 		},
 		{
 			name:           "debug short",
-			args:           []string{"launch", "-vv", "--manifest=/tmp/manifest.json"},
+			args:           []string{"--manifest=/tmp/manifest.json", "launch", "-vv"},
 			unwantedErrMsg: "unknown flag `v'",
 		},
 		{
 			name:           "verbose long",
-			args:           []string{"launch", "--verbose", "--manifest=/tmp/manifest.json"},
+			args:           []string{"--manifest=/tmp/manifest.json", "launch", "--verbose"},
 			unwantedErrMsg: "unknown flag `verbose'",
 		},
 	}
@@ -105,6 +105,110 @@ func TestParserAcceptsLaunchFlags(t *testing.T) {
 				t.Fatalf("ParseArgs(%v) rejected supported flag: %v", tt.args, err)
 			}
 		})
+	}
+}
+
+func TestParserAcceptsSharedOptionsBeforeOrAfterSubcommand(t *testing.T) {
+	manifestPath := filepath.Join(t.TempDir(), "manifest.toml")
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "manifest root first",
+			args: []string{"--manifest=" + manifestPath, "launch"},
+		},
+		{
+			name: "manifest command after",
+			args: []string{"launch", "--manifest=" + manifestPath},
+		},
+		{
+			name: "verbose root first",
+			args: []string{"--manifest=" + manifestPath, "-vv", "launch"},
+		},
+		{
+			name: "verbose command after",
+			args: []string{"launch", "-vv", "--manifest=" + manifestPath},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := newParser().ParseArgs(tt.args)
+			if err == nil {
+				t.Fatalf("ParseArgs(%v) succeeded, expected manifest load error", tt.args)
+			}
+			if strings.Contains(err.Error(), "unknown flag `manifest'") {
+				t.Fatalf("ParseArgs(%v) rejected supported manifest placement: %v", tt.args, err)
+			}
+			if strings.Contains(err.Error(), "unknown flag `v'") {
+				t.Fatalf("ParseArgs(%v) rejected supported verbose placement: %v", tt.args, err)
+			}
+			if !strings.Contains(err.Error(), `open manifest`) || !strings.Contains(err.Error(), manifestPath) {
+				t.Fatalf("ParseArgs(%v) did not parse manifest path, got %v", tt.args, err)
+			}
+		})
+	}
+}
+
+func TestResolveManifestPathDefaultsToTOMLThenJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	jsonPath := filepath.Join(tmpDir, "manifest.json")
+	if err := os.WriteFile(jsonPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write json manifest: %v", err)
+	}
+	resolved, err := resolveManifestPath("")
+	if err != nil {
+		t.Fatalf("resolve json default: %v", err)
+	}
+	if resolved != jsonPath {
+		t.Fatalf("unexpected json default: got %q want %q", resolved, jsonPath)
+	}
+
+	tomlPath := filepath.Join(tmpDir, "manifest.toml")
+	if err := os.WriteFile(tomlPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("write toml manifest: %v", err)
+	}
+	resolved, err = resolveManifestPath("")
+	if err != nil {
+		t.Fatalf("resolve toml default: %v", err)
+	}
+	if resolved != tomlPath {
+		t.Fatalf("unexpected toml default: got %q want %q", resolved, tomlPath)
+	}
+}
+
+func TestResolveManifestPathRequiresExplicitOrDefaultManifest(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	}()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	_, err = resolveManifestPath("")
+	if err == nil || !strings.Contains(err.Error(), "no manifest path provided") {
+		t.Fatalf("expected missing manifest error, got %v", err)
 	}
 }
 

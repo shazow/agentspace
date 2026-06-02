@@ -24,14 +24,14 @@ Out of scope:
 
 Acceptance criteria:
 
-- [x] `mkLaunch` execs `virtie launch -v --ssh --manifest=MANIFEST -- "$@"` for autoconnecting SSH sessions and `virtie launch -v --manifest=MANIFEST` when SSH autoconnect is disabled.
+- [x] `mkLaunch` execs `virtie --manifest=MANIFEST launch -v --ssh -- "$@"` for autoconnecting SSH sessions and `virtie --manifest=MANIFEST launch -v` when SSH autoconnect is disabled.
 - [x] `mkSandbox` keeps the supported customization hooks required by downstream consumers, especially `extraModules`, `homeModules`, SSH credentials, workspace settings, and persistence settings.
 - [x] The manifest emitted from `sandbox-qemu.nix` carries the current `virtie` inputs: working dir, lock path, ssh argv/user, host facts, kernel paths, volumes, mounts with managed `virtiofsd` commands, and opt-in `9p` shares.
 - [x] Unsupported launch configurations fail through explicit assertions rather than hidden fallback behavior.
 - [x] `agentspace.sandbox.extraModules` remains usable through the follow-up evaluation pass in `mkSandbox`.
 - [x] The default `mkSandbox {}` launch experience provisions a usable out-of-the-box SSH credential story.
 - [x] Repo-level flake outputs and enabled checks validate the documented path end to end.
-- [x] `microvm.graphics.enable = true` is accepted and lowered into the typed `virtie` manifest for GTK or Cocoa display backends.
+- [x] `microvm.graphics.enable = true` is accepted and resolved into the typed `virtie` manifest for GTK or Cocoa display backends.
 - [x] `agentspace.sandbox.runWithTunnel[]` lowers into `run_with_tunnel` manifest entries and adds a `/run/tunnels` guest share backed by `${persistence.basedir}/tunnels`.
 
 ## Progress
@@ -53,7 +53,7 @@ Acceptance criteria:
 - [x] Remove the legacy Nix argv-template builder so the repo does not imply that final QEMU argv is still Nix-owned.
 - [x] Keep the launch-contract and `virtie` fake-tools E2E checks enabled in `checks/default.nix`, alongside retained-hook checks for `extraModules`, `homeModules`, and a downstream-style consumer config.
 - [x] Fix `nix flake check` evaluation by removing broken non-derivation package shims.
-- [x] Add graphical-mode spec and typed `virtie` manifest lowering for `microvm.graphics`.
+- [x] Add graphical-mode spec and typed `virtie` manifest resolution for `microvm.graphics`.
 - [x] Add `agentspace.sandbox.runWithTunnel` for host-side tunnel socket producers shared into the guest.
 
 ## Appendix
@@ -65,7 +65,7 @@ Acceptance criteria:
   - Nix consumer-facing APIs should reuse `microvm.nix` option schemas and defaults wherever practical instead of re-declaring parallel shapes.
   - Nix emits evaluated launch facts for machine, CPU, memory, kernel, volumes, mounts, networking, package paths, and package or host capabilities that `virtie` cannot rediscover locally.
   - The `virtie` manifest is a Nix-agnostic runtime boundary: it should describe launch facts without depending on Nix option semantics or microvm.nix internals.
-  - `virtie` owns host-side QEMU policy derivation from those facts, including transport selection, machine defaults, CPU defaults, kernel console parameters, memory backend selection, device IDs, block letters, network forwarding lowering, graphics display args, final argv compilation, the long-lived QMP lifecycle, optional runtime balloon control, process launch, and teardown ordering.
+  - `virtie` owns host-side QEMU policy derivation from those facts, including transport selection, machine defaults, CPU defaults, kernel console parameters, memory backend selection, device IDs, block letters, network forwarding translation, graphics display args, final argv compilation, the long-lived QMP lifecycle, optional runtime balloon control, process launch, and teardown ordering.
   - Nix exposes only `agentspace.sandbox.balloon` for enabling or disabling the virtio-balloon device.
   - Nix exposes `agentspace.sandbox.notifications` for an optional host-side shell notification command and state allowlist.
   - When enabled, the generated manifest includes balloon facts but leaves transport and controller defaults to `virtie`.

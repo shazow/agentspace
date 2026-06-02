@@ -4,6 +4,42 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-06-02: virtie shared flags are available across commands
+
+### Who Is Affected
+
+- Direct `virtie` users and wrapper scripts that pass `--manifest` or
+  `-v`/`--verbose`.
+
+### What Changed
+
+`--manifest=MANIFEST` is now a root `virtie` option shared by `launch`,
+`suspend`, and `hotplug`. When omitted, `virtie` looks for `./manifest.toml`
+then `./manifest.json` before returning an error. The shared option may be
+placed before or after the subcommand, so both `virtie --manifest=MANIFEST
+launch` and `virtie launch --manifest=MANIFEST` are accepted.
+
+`-v`/`--verbose` is also shared and may be placed before or after the
+subcommand. Verbose logging currently affects `launch` and `hotplug`.
+
+Per-CID lock files were also removed. `virtie` still keeps the main sandbox
+launch lock and still probes host vsock CID availability before fresh launches.
+
+### Migration Steps
+
+Prefer placing shared options before the subcommand in scripts and documentation:
+
+```diff
+- virtie launch --manifest="$manifest" -v --ssh
++ virtie --manifest="$manifest" -v launch --ssh
+
+- virtie suspend --manifest="$manifest"
++ virtie --manifest="$manifest" suspend
+```
+
+Existing scripts that place shared options after the subcommand do not need to
+change for compatibility.
+
 ## 2026-06-01: virtie exec command names use PATH lookup
 
 ### Who Is Affected

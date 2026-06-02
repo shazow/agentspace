@@ -118,23 +118,23 @@
             ''}
 
             if [ "$#" -eq 0 ] && [ -n ${lib.escapeShellArg remoteCommand} ]; then
-              exec ${virtiePackage}/bin/virtie launch -v --ssh --manifest="$MANIFEST_PATH" -- ${lib.escapeShellArg remoteCommand}
+              exec ${virtiePackage}/bin/virtie --manifest="$MANIFEST_PATH" launch -v --ssh -- ${lib.escapeShellArg remoteCommand}
             fi
 
             if [ "$#" -eq 0 ]; then
               ${
                 if sshAutoconnect then
                   ''
-                    exec ${virtiePackage}/bin/virtie launch -v --ssh --manifest="$MANIFEST_PATH"
+                    exec ${virtiePackage}/bin/virtie --manifest="$MANIFEST_PATH" launch -v --ssh
                   ''
                 else
                   ''
-                    exec ${virtiePackage}/bin/virtie launch -v --manifest="$MANIFEST_PATH"
+                    exec ${virtiePackage}/bin/virtie --manifest="$MANIFEST_PATH" launch -v
                   ''
               }
             fi
 
-            exec ${virtiePackage}/bin/virtie launch -v --ssh --manifest="$MANIFEST_PATH" -- "$@"
+            exec ${virtiePackage}/bin/virtie --manifest="$MANIFEST_PATH" launch -v --ssh -- "$@"
           '';
         in
         "${script}/bin/launch-agent";

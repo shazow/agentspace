@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/adrg/xdg"
-	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 func (m *Manifest) resolvePath(path string) string {
@@ -111,12 +109,6 @@ func (m *Manifest) ResolvedExternalVirtioFSSocketPaths() ([]string, error) {
 
 func (m *Manifest) ResolvedLockPath() string {
 	return m.resolvePath(m.Paths.LockPath)
-}
-
-func (m *Manifest) ResolvedVSockLockPath(cid int) string {
-	lockPath := m.ResolvedLockPath()
-	lockName := strings.TrimSuffix(filepath.Base(lockPath), ".lock")
-	return filepath.Join(filepath.Dir(lockPath), fmt.Sprintf("%s-vsock-%d.lock", lockName, cid))
 }
 
 func (m *Manifest) ResolvedQMPSocketPath() (string, error) {
@@ -230,18 +222,12 @@ func cloneQEMUMountDevices(mounts []QEMUMountDevice) []QEMUMountDevice {
 func (m *Manifest) ResolvedRuns(cid int) ([]ResolvedRun, error) {
 	runs := make([]ResolvedRun, 0, len(m.Run))
 	for i, run := range m.Run {
-		context := executor.Context{
-			"CID":      fmt.Sprintf("%d", cid),
-			"StateDir": m.ResolvedPersistenceStateDir(),
-			"Workspace": templateWorkspace{
-				GuestPath: m.Workspace.GuestDir,
-				HostPath:  m.Workspace.HostDir,
-			},
-		}
-		for key, value := range run.Vars {
-			context[key] = value
-		}
-		renderer, err := executor.New(context)
+		renderer, err := NewTemplateRenderer(RunTemplateProvider{
+			CID:       cid,
+			StateDir:  m.ResolvedPersistenceStateDir(),
+			Workspace: m.Workspace,
+			Vars:      run.Vars,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("manifest.run[%d].exec: %w", i, err)
 		}

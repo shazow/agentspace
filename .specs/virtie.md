@@ -9,7 +9,7 @@ Host-side process manager for the supported agentspace sandbox launch path.
 Provide the foreground launch runtime for the supported sandbox session created by Nix.
 
 - Load and validate a Nix-generated manifest for the supported sandbox workflow.
-- Allocate and lock a runtime vsock CID for each session.
+- Allocate a runtime vsock CID for each session.
 - Create missing auto-created volume images, start `virtiofsd`, launch QEMU directly, wait for SSH readiness, and either print out-of-band SSH instructions or attach the active SSH session when requested.
 - Keep a long-lived QMP session open after boot for graceful shutdown and optional runtime balloon control.
 - Support disk-backed suspend/resume by saving QEMU migration state to disk and restoring it later.
@@ -27,12 +27,12 @@ Out of scope:
 
 Acceptance criteria:
 
-- [x] `virtie launch --manifest=MANIFEST [--ssh] [--resume=no|auto|force] [-- <remote-cmd...>]` is the supported launch command.
-- [x] `virtie suspend --manifest=MANIFEST` saves QEMU migration state to disk, records saved suspend state, and exits the launch session.
-- [x] `virtie launch --resume=force --manifest=MANIFEST` restores only from saved suspend state.
+- [x] `virtie --manifest=MANIFEST [-v|-vv] launch [--ssh] [--resume=no|auto|force] [-- <remote-cmd...>]` is the supported launch command. Shared options may also be placed after the subcommand.
+- [x] `virtie --manifest=MANIFEST suspend` saves QEMU migration state to disk, records saved suspend state, and exits the launch session. Shared options may also be placed after the subcommand.
+- [x] `virtie --manifest=MANIFEST [-v|-vv] launch --resume=force` restores only from saved suspend state. Shared options may also be placed after the subcommand.
 - [x] Manifest validation enforces the implemented typed QEMU contract for host name, working dir, lock path, ssh argv/user, QMP socket, SSH readiness socket, QEMU devices, `virtiofs` daemons, opt-in `9p` shares, and auto-created volumes.
 - [x] QEMU launch is compiled from the typed manifest plus the runtime-selected CID rather than string-substituting a Nix-generated argv template.
-- [x] Launch acquires per-sandbox and per-CID locks before starting guest processes.
+- [x] Launch acquires the per-sandbox lock and probes free vsock CIDs before starting guest processes.
 - [x] Launch waits for `virtiofs` socket readiness, then QMP readiness, then guest-pushed SSH readiness over virtio-serial before printing SSH instructions or starting the interactive session.
 - [x] Teardown stops the foreground SSH session when present, then requests QMP `quit`, then falls back to signal-based QEMU shutdown, then stops `virtiofsd`.
 - [x] Repo-level Nix checks exercise the generated wrapper and E2E launch path by default.
@@ -50,10 +50,10 @@ Acceptance criteria:
 - [x] Start an optional guest-pressure balloon controller only after SSH readiness succeeds, and stop it before sending the final QMP `quit`.
 - [x] Start optional `run_with_tunnel` host commands that produce Unix sockets under the state tunnel directory and keep them under the managed launch lifecycle.
 - [x] Implement volume auto-create handling, including filesystem defaults and native ext4 image creation.
-- [x] Implement per-sandbox and per-CID lock files for concurrent session safety.
+- [x] Implement the per-sandbox lock file for concurrent session safety.
 - [x] Add runtime-dir-based socket resolution for relative QMP, SSH readiness, QGA, and `virtiofs` sockets, using XDG defaults when requested by the manifest.
 - [x] Allow the Nix store `virtiofs` share to target a provided host socket while `virtie` only starts and removes sockets listed under `virtiofs.daemons`.
-- [x] Add opt-in `qemu.devices.9p[]` support, resolving relative host source paths from `paths.workingDir` and lowering them to QEMU `-fsdev local` plus `virtio-9p-*` devices.
+- [x] Add opt-in `qemu.devices.9p[]` support, resolving relative host source paths from `paths.workingDir` and translating them to QEMU `-fsdev local` plus `virtio-9p-*` devices.
 - [x] Implement stage-aware errors and foreground SSH exit-code propagation.
 - [x] Add explicit launch signal handling for interrupt/terminate teardown.
 - [x] Add disk-backed suspend/resume commands and saved suspend state records under `paths.workingDir/.virtie`.
@@ -62,7 +62,7 @@ Acceptance criteria:
 - [x] Print launch lifecycle stats after shutdown, including start-to-boot, boot-to-SSH-session when attached, shutdown completion, and total duration.
 - [x] Print guest process diagnostics on `SIGUSR1` by collecting process-list output through QGA `guest-exec`.
 - [x] Replace SSH autoconnect retry probing with a guest-pushed `READY` signal over the `virtie.ssh.ready` virtio-serial port.
-- [x] Cover manifest validation, typed QEMU compilation, CID locking, QMP shutdown, SSH readiness behavior, and launch/teardown ordering with Go tests.
+- [x] Cover manifest validation, typed QEMU compilation, CID allocation, QMP shutdown, SSH readiness behavior, and launch/teardown ordering with Go tests.
 - [x] Confirm `CGO_ENABLED=0 go test ./...` passes in `virtie`.
 - [x] Keep the launch-contract and fake-tools E2E Nix checks enabled in the default repo check surface, including saved suspend/resume coverage.
 - [x] Add typed graphical display compilation for `gtk` and `cocoa` manifest backends.
@@ -85,10 +85,10 @@ Acceptance criteria:
   - For `microvm`, `virtiofs` and `9p` share mounts require PCI transport, but image mounts do not; image-only microvms remain on MMIO unless graphics or another PCI-only feature is enabled.
   - `networks[]` describe user networking and `forward[]` host-to-guest or guest-to-host port forwards.
   - Optional `balloon` contains device facts and controller policy; optional `write_files[]` contains `guest_path`, exactly one of `text` or `source`, optional `chown`, optional mode, and `overwrite`; optional `notifications.exec` and `notifications.states` define best-effort host hooks.
-  - Manifest exec arrays render Go `text/template` values per argv element. Commands that `virtie` starts directly also receive the same context through uppercase environment variables, and the host process environment is available under `.Env`. `qemu.exec` renders during manifest lowering with `HostName`, `WorkingDir`, `StateDir`, `HostOS`, `HostArch`, `HostSystem`, and `.Env`, but does not receive injected environment variables because it is still lowered into QEMU binary and passthrough args. `qemu.fwd_tunnel_exec` is rendered per guest forward but does not receive injected environment variables because QEMU starts those commands directly.
+  - Manifest exec arrays render Go `text/template` values per argv element. Commands that `virtie` starts directly also receive the same context through uppercase environment variables, and the host process environment is available under `.Env`. `qemu.exec` renders during manifest resolution with `HostName`, `WorkingDir`, `StateDir`, `HostOS`, `HostArch`, `HostSystem`, and `.Env`, but does not receive injected environment variables because it is resolved into QEMU binary and passthrough args. `qemu.fwd_tunnel_exec` is rendered per guest forward but does not receive injected environment variables because QEMU starts those commands directly.
 - Runtime assumptions:
   - An upstream producer has already produced the guest image inputs, package paths, host facts, and manifest.
-  - `virtie` treats the manifest as a Nix-agnostic runtime contract; Nix and microvm.nix option semantics must be lowered into launch facts before this boundary.
+  - `virtie` treats the manifest as a Nix-agnostic runtime contract; Nix and microvm.nix option semantics must be resolved into launch facts before this boundary.
   - An omitted `[graphics]` section and `graphics.backend = "headless"` both represent the normal headless SSH workflow.
   - QEMU fields are validated only when `virtie` must interpret them before launch, such as transport selection or virtiofs socket waits. Values passed directly into QEMU args are allowed through so QEMU reports invalid inputs.
   - `ssh` is available on the host.
@@ -119,14 +119,14 @@ Acceptance criteria:
   - Notification commands receive `VIRTIE_NOTIFY_STATE`, `VIRTIE_NOTIFY_MESSAGE`, and `VIRTIE_NOTIFY_CONTEXT_<UPPER_SNAKE_KEY>` environment variables. Command args are rendered as templates using original context keys, then passed without shell word-splitting.
   - The old Nix-owned argv-template path has been removed from the active contract.
   - When `qemu.knobs.noGraphic` is false and `qemu.graphics.backend` is set, `virtie` emits the local QEMU display device set for `gtk` or `cocoa` instead of `-nographic`.
-  - Future manifest/runtime improvements to keep visible: replace guest-to-host `guestfwd cmd:` lowering with QEMU-native forwarding or chardev handling if QEMU grows a better fit, and revisit whether headless graphics should remain both explicit and representable by omission.
+  - Future manifest/runtime improvements to keep visible: replace guest-to-host `guestfwd cmd:` translation with QEMU-native forwarding or chardev handling if QEMU grows a better fit, and revisit whether headless graphics should remain both explicit and representable by omission.
 - Current verification note: the Go package tests pass, and `checks/default.nix` keeps the launch-contract and fake-tools E2E coverage enabled alongside repo-level hook-compatibility checks.
 
 ```mermaid
 flowchart TD
-  A[virtie launch --manifest=MANIFEST] --> B[Load and validate manifest]
+  A[virtie --manifest=MANIFEST launch] --> B[Load and validate manifest]
   B --> C[Acquire sandbox lock]
-  C --> D[Allocate and lock free vsock CID]
+  C --> D[Allocate free vsock CID]
   D --> E[Create required directories and auto-created volumes]
   E --> F[Start run_with_tunnel commands]
   F --> G[Start virtiofsd daemons]

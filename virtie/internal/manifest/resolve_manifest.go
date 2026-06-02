@@ -23,17 +23,17 @@ import (
 const virtioFSSocketProbeTimeout = 100 * time.Millisecond
 
 func (d Document) Manifest() (*Manifest, error) {
-	return d.ManifestWithOptions(LowerOptions{})
+	return d.ManifestWithOptions(ResolveOptions{})
 }
 
-func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
+func (d Document) ManifestWithOptions(options ResolveOptions) (*Manifest, error) {
 	if d.Kernel.Path == "" {
 		return nil, fmt.Errorf("manifest.kernel.path is required")
 	}
 	if d.Kernel.InitrdPath == "" {
 		return nil, fmt.Errorf("manifest.kernel.initrd_path is required")
 	}
-	retryDelay, err := lowerRetryDelay(d.SSH.RetryDelay)
+	retryDelay, err := resolveRetryDelay(d.SSH.RetryDelay)
 	if err != nil {
 		return nil, err
 	}
@@ -62,8 +62,8 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 				End:   d.VSock.CIDRange.Max,
 			},
 		},
-		Notifications: lowerNotifications(d.Notifications),
-		Workspace:     lowerWorkspace(d.Workspace),
+		Notifications: resolveNotifications(d.Notifications),
+		Workspace:     resolveWorkspace(d.Workspace),
 	}
 	if m.Identity.HostName == "" {
 		m.Identity.HostName = defaultHostName
@@ -89,23 +89,23 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 	}
 
 	hotplugCount := d.hotplugCount()
-	qemu, err := d.lowerQEMU(host, m.Identity.HostName, m.Paths.WorkingDir, m.Persistence.StateDir, hotplugCount)
+	qemu, err := d.resolveQEMU(host, m.Identity.HostName, m.Paths.WorkingDir, m.Persistence.StateDir, hotplugCount)
 	if err != nil {
 		return nil, err
 	}
 	m.QEMU = qemu
-	m.Volumes = lowerVolumes(imageMounts)
-	virtioFSRuns, err := m.lowerVirtioFSRuns(virtioFSMounts, options)
+	m.Volumes = resolveVolumes(imageMounts)
+	virtioFSRuns, err := m.resolveVirtioFSRuns(virtioFSMounts, options)
 	if err != nil {
 		return nil, err
 	}
-	m.Run = append(virtioFSRuns, lowerRun(d.Run)...)
-	hotplug, err := m.lowerHotplug(d)
+	m.Run = append(virtioFSRuns, resolveRun(d.Run)...)
+	hotplug, err := m.resolveHotplug(d)
 	if err != nil {
 		return nil, err
 	}
 	m.Hotplug = hotplug
-	m.WriteFiles = lowerWriteFiles(d.WriteFiles)
+	m.WriteFiles = resolveWriteFiles(d.WriteFiles)
 
 	if err := m.Validate(); err != nil {
 		return nil, err
@@ -113,7 +113,7 @@ func (d Document) ManifestWithOptions(options LowerOptions) (*Manifest, error) {
 	return m, nil
 }
 
-func lowerRetryDelay(seconds *float64) (time.Duration, error) {
+func resolveRetryDelay(seconds *float64) (time.Duration, error) {
 	if seconds == nil {
 		return time.Duration(defaultSSHRetryDelaySeconds * float64(time.Second)), nil
 	}
@@ -136,12 +136,12 @@ func (h HostInput) withDefaults() HostInput {
 	return h
 }
 
-func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, stateDir string, hotplugCount int) (QEMU, error) {
+func (d Document) resolveQEMU(host HostInput, hostName string, workingDir string, stateDir string, hotplugCount int) (QEMU, error) {
 	machineType := d.Machine.Type
 	if machineType == "" {
 		machineType = defaultMachineType
 	}
-	graphics := lowerGraphics(d.Graphics)
+	graphics := resolveGraphics(d.Graphics)
 	transport := qemuTransport(machineType, d.Mounts, graphics, hotplugCount > 0)
 	virtioFSMounts := d.Mounts.VirtioFS()
 	hasVirtioFS := len(virtioFSMounts) > 0 || len(d.Hotplug.VirtioFS()) > 0
@@ -157,13 +157,11 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 	if d.Machine.KVM != nil {
 		enableKVM = *d.Machine.KVM
 	}
-	qemuRenderer, err := executor.New(executor.Context{
-		"HostName":   hostName,
-		"WorkingDir": workingDir,
-		"StateDir":   stateDir,
-		"HostOS":     host.OS,
-		"HostArch":   host.Arch,
-		"HostSystem": host.System,
+	qemuRenderer, err := NewTemplateRenderer(QEMUTemplateProvider{
+		HostName:   hostName,
+		WorkingDir: workingDir,
+		StateDir:   stateDir,
+		Host:       host,
 	})
 	if err != nil {
 		return QEMU{}, fmt.Errorf("manifest.qemu.exec: %w", err)
@@ -192,8 +190,8 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		sshReadySocket = defaultSSHReadySocket
 	}
 	noGraphic := graphics.IsZero()
-	cpus := lowerCPUCount(d.Machine.VCPU)
-	networks, err := lowerNetwork(d.Networks, d.QEMU.FwdTunnelExec, host, transport, cpus)
+	cpus := resolveCPUCount(d.Machine.VCPU)
+	networks, err := resolveNetwork(d.Networks, d.QEMU.FwdTunnelExec, host, transport, cpus)
 	if err != nil {
 		return QEMU{}, err
 	}
@@ -209,7 +207,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 		Name:       hostName,
 		Machine: QEMUMachine{
 			Type:    machineType,
-			Options: lowerMachineOptions(host, machineType, d.QEMU.MachineOptions, transport == "pci"),
+			Options: resolveMachineOptions(host, machineType, d.QEMU.MachineOptions, transport == "pci"),
 		},
 		CPU: QEMUCPU{
 			Model:     cpuModel,
@@ -258,11 +256,11 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 				Transport: transport,
 			},
 			I8042:    host.System == "x86_64-linux",
-			Balloon:  lowerBalloon(d.Balloon, transport),
-			VirtioFS: lowerVirtioFSMounts(virtioFSMounts, transport),
-			NineP:    lowerNinePMounts(ninePMounts, transport),
-			Block:    lowerBlocks(imageMounts, host, transport),
-			Mounts:   lowerQEMUMounts(d.Mounts, host, transport),
+			Balloon:  resolveBalloon(d.Balloon, transport),
+			VirtioFS: resolveVirtioFSMounts(virtioFSMounts, transport),
+			NineP:    resolveNinePMounts(ninePMounts, transport),
+			Block:    resolveBlocks(imageMounts, host, transport),
+			Mounts:   resolveQEMUMounts(d.Mounts, host, transport),
 			Network:  networks,
 			VSOCK: QEMUVSOCKDevice{
 				ID:        "vsock0",
@@ -279,7 +277,7 @@ func (d Document) lowerQEMU(host HostInput, hostName string, workingDir string, 
 	return qemu, nil
 }
 
-func lowerCPUCount(cpus *int) CPUCount {
+func resolveCPUCount(cpus *int) CPUCount {
 	if cpus == nil {
 		return CPUCount{}
 	}
@@ -297,7 +295,7 @@ func qemuTransport(machineType string, mounts MountsInput, graphics QEMUGraphics
 	return "mmio"
 }
 
-func lowerMachineOptions(host HostInput, machineType string, explicit map[string]string, requirePCI bool) []string {
+func resolveMachineOptions(host HostInput, machineType string, explicit map[string]string, requirePCI bool) []string {
 	options := explicit
 	if options == nil {
 		options = defaultMachineOptions(host, machineType, requirePCI)
@@ -391,7 +389,7 @@ func kernelSerialMode(kernel KernelInput) (string, error) {
 	}
 }
 
-func lowerVolumes(volumes []ImageMountInput) []Volume {
+func resolveVolumes(volumes []ImageMountInput) []Volume {
 	result := make([]Volume, 0, len(volumes))
 	for _, volume := range volumes {
 		result = append(result, Volume{
@@ -405,13 +403,13 @@ func lowerVolumes(volumes []ImageMountInput) []Volume {
 	return result
 }
 
-func lowerBlocks(volumes []ImageMountInput, host HostInput, transport string) []QEMUBlockDevice {
+func resolveBlocks(volumes []ImageMountInput, host HostInput, transport string) []QEMUBlockDevice {
 	blocks := make([]QEMUBlockDevice, 0, len(volumes))
 	for i, volume := range volumes {
 		block := QEMUBlockDevice{
 			ID:        "vd" + string(rune('a'+i)),
 			ImagePath: volume.SourcePath,
-			Format:    lowerImageFormat(volume.Image.Format),
+			Format:    resolveImageFormat(volume.Image.Format),
 			AIO:       aioEngine(host),
 			ReadOnly:  volume.ReadOnly,
 			Serial:    stringValue(volume.Image.Serial),
@@ -425,19 +423,19 @@ func lowerBlocks(volumes []ImageMountInput, host HostInput, transport string) []
 	return blocks
 }
 
-func lowerQEMUMounts(mounts MountsInput, host HostInput, transport string) []QEMUMountDevice {
+func resolveQEMUMounts(mounts MountsInput, host HostInput, transport string) []QEMUMountDevice {
 	devices := make([]QEMUMountDevice, 0, len(mounts))
-	ctx := mountLowerContext{
+	ctx := mountResolveContext{
 		host:      host,
 		transport: transport,
 	}
 	for _, mount := range mounts {
-		devices = append(devices, mount.lowerQEMUMount(&ctx))
+		devices = append(devices, mount.resolveQEMUMount(&ctx))
 	}
 	return devices
 }
 
-type mountLowerContext struct {
+type mountResolveContext struct {
 	host           HostInput
 	transport      string
 	virtioFSIndex  int
@@ -445,25 +443,25 @@ type mountLowerContext struct {
 	blockDiskIndex int
 }
 
-func (mount VirtioFSMountInput) lowerQEMUMount(ctx *mountLowerContext) QEMUMountDevice {
-	device := lowerQEMUVirtioFSMount(mount, ctx.virtioFSIndex, ctx.transport)
+func (mount VirtioFSMountInput) resolveQEMUMount(ctx *mountResolveContext) QEMUMountDevice {
+	device := resolveQEMUVirtioFSMount(mount, ctx.virtioFSIndex, ctx.transport)
 	ctx.virtioFSIndex++
 	return device
 }
 
-func (mount NinePMountInput) lowerQEMUMount(ctx *mountLowerContext) QEMUMountDevice {
-	device := lowerQEMUNinePMount(mount, ctx.ninePIndex, ctx.transport)
+func (mount NinePMountInput) resolveQEMUMount(ctx *mountResolveContext) QEMUMountDevice {
+	device := resolveQEMUNinePMount(mount, ctx.ninePIndex, ctx.transport)
 	ctx.ninePIndex++
 	return device
 }
 
-func (mount ImageMountInput) lowerQEMUMount(ctx *mountLowerContext) QEMUMountDevice {
-	device := lowerQEMUImageMount(mount, ctx.blockDiskIndex, ctx.host, ctx.transport)
+func (mount ImageMountInput) resolveQEMUMount(ctx *mountResolveContext) QEMUMountDevice {
+	device := resolveQEMUImageMount(mount, ctx.blockDiskIndex, ctx.host, ctx.transport)
 	ctx.blockDiskIndex++
 	return device
 }
 
-func lowerQEMUVirtioFSMount(mount VirtioFSMountInput, index int, transport string) QEMUMountDevice {
+func resolveQEMUVirtioFSMount(mount VirtioFSMountInput, index int, transport string) QEMUMountDevice {
 	share := QEMUVirtioFSShare{
 		ID:         "fs" + strconv.Itoa(index),
 		SocketPath: mount.VirtioFS.Socket,
@@ -473,7 +471,7 @@ func lowerQEMUVirtioFSMount(mount VirtioFSMountInput, index int, transport strin
 	return QEMUMountDevice{Type: MountTypeVirtioFS, VirtioFS: &share}
 }
 
-func lowerQEMUNinePMount(mount NinePMountInput, index int, transport string) QEMUMountDevice {
+func resolveQEMUNinePMount(mount NinePMountInput, index int, transport string) QEMUMountDevice {
 	securityModel := mount.NineP.SecurityModel
 	if securityModel == "" {
 		securityModel = "mapped"
@@ -489,11 +487,11 @@ func lowerQEMUNinePMount(mount NinePMountInput, index int, transport string) QEM
 	return QEMUMountDevice{Type: MountTypeNineP, NineP: &share}
 }
 
-func lowerQEMUImageMount(mount ImageMountInput, index int, host HostInput, transport string) QEMUMountDevice {
+func resolveQEMUImageMount(mount ImageMountInput, index int, host HostInput, transport string) QEMUMountDevice {
 	block := QEMUBlockDevice{
 		ID:        "vd" + string(rune('a'+index)),
 		ImagePath: mount.SourcePath,
-		Format:    lowerImageFormat(mount.Image.Format),
+		Format:    resolveImageFormat(mount.Image.Format),
 		AIO:       aioEngine(host),
 		ReadOnly:  mount.ReadOnly,
 		Serial:    stringValue(mount.Image.Serial),
@@ -512,7 +510,7 @@ func aioEngine(host HostInput) string {
 	return "threads"
 }
 
-func lowerWorkspace(workspace WorkspaceInput) Workspace {
+func resolveWorkspace(workspace WorkspaceInput) Workspace {
 	return Workspace{
 		GuestDir: workspace.GuestDir,
 		HostDir:  workspace.HostDir,
@@ -520,7 +518,7 @@ func lowerWorkspace(workspace WorkspaceInput) Workspace {
 	}
 }
 
-func lowerVirtioFSMounts(mounts []VirtioFSMountInput, transport string) []QEMUVirtioFSShare {
+func resolveVirtioFSMounts(mounts []VirtioFSMountInput, transport string) []QEMUVirtioFSShare {
 	shares := make([]QEMUVirtioFSShare, 0, len(mounts))
 	for i, mount := range mounts {
 		shares = append(shares, QEMUVirtioFSShare{
@@ -533,7 +531,7 @@ func lowerVirtioFSMounts(mounts []VirtioFSMountInput, transport string) []QEMUVi
 	return shares
 }
 
-func lowerNinePMounts(mounts []NinePMountInput, transport string) []QEMUNinePShare {
+func resolveNinePMounts(mounts []NinePMountInput, transport string) []QEMUNinePShare {
 	shares := make([]QEMUNinePShare, 0, len(mounts))
 	for i, mount := range mounts {
 		securityModel := mount.NineP.SecurityModel
@@ -552,7 +550,7 @@ func lowerNinePMounts(mounts []NinePMountInput, transport string) []QEMUNinePSha
 	return shares
 }
 
-func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerOptions) ([]Run, error) {
+func (m *Manifest) resolveVirtioFSRuns(mounts []VirtioFSMountInput, options ResolveOptions) ([]Run, error) {
 	runs := make([]Run, 0, len(mounts))
 	for _, mount := range mounts {
 		if mount.VirtioFS.Socket == "" {
@@ -605,24 +603,28 @@ func (m *Manifest) lowerVirtioFSRuns(mounts []VirtioFSMountInput, options LowerO
 			Name: fmt.Sprintf("virtiofsd[%s]", mount.Tag),
 			Exec: append([]string{m.resolveOptionalBin(bin, "virtiofsd")}, args...),
 			Env:  []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
-			Vars: virtioFSTemplateContext(socketPath, m.resolvePath(mount.SourcePath), mount.Tag),
+			Vars: VirtioFSTemplateProvider{
+				SocketPath: socketPath,
+				SourcePath: m.resolvePath(mount.SourcePath),
+				Tag:        mount.Tag,
+			}.TemplateContext(),
 		})
 		m.addCleanupFile(mount.VirtioFS.Socket)
 	}
 	return runs, nil
 }
 
-func (m *Manifest) lowerHotplug(d Document) ([]hotplug.Device, error) {
+func (m *Manifest) resolveHotplug(d Document) ([]hotplug.Device, error) {
 	hotplugs := make([]hotplug.Device, 0, d.hotplugCount())
 	for i, mount := range d.Hotplug.Mounts {
-		device, err := m.lowerHotplugMount(mount)
+		device, err := m.resolveHotplugMount(mount)
 		if err != nil {
 			return nil, fmt.Errorf("manifest.hotplug.mounts[%d]: %w", i, err)
 		}
 		hotplugs = append(hotplugs, device)
 	}
 	for i, network := range d.Hotplug.Networks {
-		device, err := lowerNetworkHotplug(network, i)
+		device, err := resolveNetworkHotplug(network, i)
 		if err != nil {
 			return nil, fmt.Errorf("manifest.hotplug.networks[%d]: %w", i, err)
 		}
@@ -631,25 +633,25 @@ func (m *Manifest) lowerHotplug(d Document) ([]hotplug.Device, error) {
 	return hotplugs, nil
 }
 
-func (m *Manifest) lowerHotplugMount(entry MountEntry) (hotplug.Device, error) {
+func (m *Manifest) resolveHotplugMount(entry MountEntry) (hotplug.Device, error) {
 	switch typed := entry.(type) {
 	case VirtioFSMountInput:
-		return m.lowerVirtioFSHotplug(typed)
+		return m.resolveVirtioFSHotplug(typed)
 	case ImageMountInput:
-		return m.lowerImageHotplug(typed)
+		return m.resolveImageHotplug(typed)
 	default:
 		return hotplug.Device{}, fmt.Errorf("type %q does not support hotplug", entry.mountType())
 	}
 }
 
-func (m *Manifest) lowerImageHotplug(entry ImageMountInput) (hotplug.Device, error) {
+func (m *Manifest) resolveImageHotplug(entry ImageMountInput) (hotplug.Device, error) {
 	serial := stringValue(entry.Image.Serial)
-	format := lowerImageFormat(entry.Image.Format)
-	id, err := renderHotplugID(serial, "{{.Serial}}", executor.Context{
+	format := resolveImageFormat(entry.Image.Format)
+	id, err := renderHotplugID(serial, "{{.Serial}}", StaticTemplateContext(executor.Context{
 		"Serial": serial,
 		"Source": entry.SourcePath,
 		"Format": format,
-	})
+	}))
 	if err != nil {
 		return hotplug.Device{}, err
 	}
@@ -665,7 +667,7 @@ func (m *Manifest) lowerImageHotplug(entry ImageMountInput) (hotplug.Device, err
 	}, nil
 }
 
-func (m *Manifest) lowerVirtioFSHotplug(mount VirtioFSMountInput) (hotplug.Device, error) {
+func (m *Manifest) resolveVirtioFSHotplug(mount VirtioFSMountInput) (hotplug.Device, error) {
 	id := mount.Tag
 	socket := mount.VirtioFS.Socket
 	if socket == "" {
@@ -710,7 +712,7 @@ func (m *Manifest) resolveOptionalBin(bin string, defaultBin string) string {
 	return m.resolvePath(bin)
 }
 
-func lowerNetworkHotplug(entry NetworkInput, index int) (hotplug.Device, error) {
+func resolveNetworkHotplug(entry NetworkInput, index int) (hotplug.Device, error) {
 	id := entry.ID
 	if id == "" {
 		id = fmt.Sprintf("net%d", index)
@@ -749,11 +751,11 @@ func lowerNetworkHotplug(entry NetworkInput, index int) (hotplug.Device, error) 
 	}, nil
 }
 
-func renderHotplugID(id string, defaultID string, context executor.Context) (string, error) {
+func renderHotplugID(id string, defaultID string, provider TemplateProvider) (string, error) {
 	if id == "" {
 		id = defaultID
 	}
-	renderer, err := executor.New(context)
+	renderer, err := NewTemplateRenderer(provider)
 	if err != nil {
 		return "", err
 	}
@@ -791,7 +793,7 @@ func (m *Manifest) addCleanupFile(path string) {
 	m.CleanupFiles = append(m.CleanupFiles, path)
 }
 
-func lowerNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInput, transport string, cpus CPUCount) ([]QEMUNetDevice, error) {
+func resolveNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInput, transport string, cpus CPUCount) ([]QEMUNetDevice, error) {
 	if networks == nil {
 		networks = []NetworkInput{{}}
 	}
@@ -817,7 +819,7 @@ func lowerNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInpu
 		if cpus.Set && cpus.Value > 1 && transport == "pci" {
 			mqVectors = 2*cpus.Value + 2
 		}
-		forwardOptions, err := lowerForwardPorts(network.Forward, fwdTunnelExec, i)
+		forwardOptions, err := resolveForwardPorts(network.Forward, fwdTunnelExec, i)
 		if err != nil {
 			return nil, err
 		}
@@ -899,7 +901,7 @@ func formatPortEndpoint(endpoint PortEndpoint) string {
 	return net.JoinHostPort(endpoint.Address, strconv.Itoa(endpoint.Port))
 }
 
-func lowerForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex int) ([]string, error) {
+func resolveForwardPorts(ports []ForwardPort, fwdTunnelExec []string, networkIndex int) ([]string, error) {
 	options := make([]string, 0, len(ports))
 	if len(fwdTunnelExec) == 0 {
 		fwdTunnelExec = []string{"nc", "{{.Host}}", "{{.Port}}"}
@@ -938,9 +940,9 @@ func rejectLegacyFwdTunnelExecEnv(exec []string) error {
 }
 
 func renderFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) ([]string, error) {
-	renderer, err := executor.New(executor.Context{
-		"Host": hostEndpoint.Address,
-		"Port": strconv.Itoa(hostEndpoint.Port),
+	renderer, err := NewTemplateRenderer(ForwardTemplateProvider{
+		Host: hostEndpoint.Address,
+		Port: hostEndpoint.Port,
 	})
 	if err != nil {
 		return nil, err
@@ -952,7 +954,7 @@ func renderFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) ([]string, er
 	return command, nil
 }
 
-func lowerBalloon(facts *BalloonInput, transport string) *balloon.Device {
+func resolveBalloon(facts *BalloonInput, transport string) *balloon.Device {
 	if facts == nil || !facts.Enabled {
 		return nil
 	}
@@ -987,7 +989,7 @@ func lowerBalloon(facts *BalloonInput, transport string) *balloon.Device {
 	return &copy
 }
 
-func lowerWriteFiles(files []WriteFileInput) WriteFiles {
+func resolveWriteFiles(files []WriteFileInput) WriteFiles {
 	result := make(WriteFiles, len(files))
 	for _, file := range files {
 		result[file.GuestPath] = WriteFile{
@@ -996,13 +998,13 @@ func lowerWriteFiles(files []WriteFileInput) WriteFiles {
 			Overwrite:   boolValue(file.Overwrite),
 			FollowLinks: boolValueDefault(file.FollowLinks, true),
 			WriteBack:   boolValue(file.WriteBack),
-			Content:     lowerWriteFileContent(file),
+			Content:     resolveWriteFileContent(file),
 		}
 	}
 	return result
 }
 
-func lowerWriteFileContent(file WriteFileInput) WriteFileContent {
+func resolveWriteFileContent(file WriteFileInput) WriteFileContent {
 	switch {
 	case file.Text != nil && file.Path != nil:
 		return WriteFileContent{Kind: WriteFileContentNone, Text: *file.Text, Path: *file.Path}
@@ -1015,7 +1017,7 @@ func lowerWriteFileContent(file WriteFileInput) WriteFileContent {
 	}
 }
 
-func lowerImageFormat(format string) string {
+func resolveImageFormat(format string) string {
 	if format == "" {
 		return "raw"
 	}
@@ -1023,29 +1025,25 @@ func lowerImageFormat(format string) string {
 }
 
 func renderVirtioFSArgv(argv []string, socketPath string, source string, tag string) ([]string, error) {
-	renderer, err := executor.New(virtioFSTemplateContext(socketPath, source, tag))
+	renderer, err := NewTemplateRenderer(VirtioFSTemplateProvider{
+		SocketPath: socketPath,
+		SourcePath: source,
+		Tag:        tag,
+	})
 	if err != nil {
 		return nil, err
 	}
 	return renderer.RenderArgv(argv)
 }
 
-func virtioFSTemplateContext(socketPath string, source string, tag string) executor.Context {
-	return executor.Context{
-		"Socket":      socketPath,
-		"MountTag":    tag,
-		"MountSource": source,
-	}
-}
-
-func lowerGraphics(graphics *GraphicsInput) QEMUGraphics {
+func resolveGraphics(graphics *GraphicsInput) QEMUGraphics {
 	if graphics == nil || graphics.Backend == "" || graphics.Backend == "headless" {
 		return QEMUGraphics{}
 	}
 	return QEMUGraphics{Backend: graphics.Backend}
 }
 
-func lowerNotifications(notifications NotificationsInput) Notifications {
+func resolveNotifications(notifications NotificationsInput) Notifications {
 	result := Notifications{
 		States: append([]string(nil), notifications.States...),
 	}
@@ -1056,7 +1054,7 @@ func lowerNotifications(notifications NotificationsInput) Notifications {
 	return result
 }
 
-func lowerRun(runs []RunInput) []Run {
+func resolveRun(runs []RunInput) []Run {
 	result := make([]Run, 0, len(runs))
 	for _, run := range runs {
 		result = append(result, Run{
