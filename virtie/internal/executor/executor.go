@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"text/template"
@@ -13,6 +14,67 @@ import (
 
 // Context holds named values available to exec command templates.
 type Context map[string]any
+
+// Command builds an external command with virtie's environment inheritance rules.
+func Command(path string, args []string, env []string) *exec.Cmd {
+	cmd := exec.Command(path, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	return cmd
+}
+
+// Process is a started external process.
+type Process interface {
+	Wait() error
+	Signal(sig os.Signal) error
+	Kill() error
+	PID() int
+}
+
+// Runner starts external commands and returns process handles.
+type Runner struct{}
+
+// Start starts cmd and returns its process handle.
+func (r *Runner) Start(name string, cmd *exec.Cmd) (Process, error) {
+	if cmd == nil {
+		return nil, fmt.Errorf("start %s: command must not be nil", name)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start %s: %w", name, err)
+	}
+
+	return &execProcess{cmd: cmd}, nil
+}
+
+type execProcess struct {
+	cmd *exec.Cmd
+}
+
+func (p *execProcess) Wait() error {
+	return p.cmd.Wait()
+}
+
+func (p *execProcess) Signal(sig os.Signal) error {
+	if p.cmd.Process == nil {
+		return nil
+	}
+	return p.cmd.Process.Signal(sig)
+}
+
+func (p *execProcess) Kill() error {
+	if p.cmd.Process == nil {
+		return nil
+	}
+	return p.cmd.Process.Kill()
+}
+
+func (p *execProcess) PID() int {
+	if p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
+}
 
 // Renderer renders exec command templates from a fixed context.
 type Renderer struct {

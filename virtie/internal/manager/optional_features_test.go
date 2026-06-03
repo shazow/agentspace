@@ -28,8 +28,8 @@ func TestBuildQEMUSpecAppendsOptionalFeatureArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build qemu spec: %v", err)
 	}
-	if !containsString(spec.Args, feature.appendMarker) {
-		t.Fatalf("expected qemu args to include optional feature marker %q: %v", feature.appendMarker, spec.Args)
+	if !containsString(commandArgs(spec), feature.appendMarker) {
+		t.Fatalf("expected qemu args to include optional feature marker %q: %v", feature.appendMarker, commandArgs(spec))
 	}
 }
 

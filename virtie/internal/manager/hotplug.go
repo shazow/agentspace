@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -84,16 +85,14 @@ type managerHotplugStarter struct {
 }
 
 func (s managerHotplugStarter) Start(ctx context.Context, spec hotplug.ProcessSpec) (hotplug.Process, error) {
-	proc, err := s.m.startManagedProcess(processSpec{
-		Name:         spec.Name,
-		Path:         spec.Path,
-		Args:         spec.Args,
-		Dir:          spec.Dir,
-		Env:          spec.Env,
-		ProcessGroup: spec.ProcessGroup,
-		Stdout:       os.Stderr,
-		Stderr:       os.Stderr,
-	})
+	cmd := executor.Command(spec.Path, spec.Args, spec.Env)
+	cmd.Dir = spec.Dir
+	if spec.ProcessGroup {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	proc, err := s.m.startManagedProcess(spec.Name, cmd)
 	if err != nil {
 		return nil, err
 	}

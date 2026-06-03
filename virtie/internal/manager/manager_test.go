@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -25,6 +26,7 @@ import (
 	diskfs "github.com/diskfs/go-diskfs"
 	"github.com/diskfs/go-diskfs/filesystem"
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/units"
@@ -158,8 +160,8 @@ func TestBuildSSHSpecBuildsInteractiveSession(t *testing.T) {
 		"agent@vsock/10",
 		"bash -lc 'echo hi'",
 	}
-	if !reflect.DeepEqual(session.Args, wantArgs) {
-		t.Fatalf("unexpected ssh session args: got %v want %v", session.Args, wantArgs)
+	if !reflect.DeepEqual(commandArgs(session), wantArgs) {
+		t.Fatalf("unexpected ssh session args: got %v want %v", commandArgs(session), wantArgs)
 	}
 
 	if session.Stdin != os.Stdin || session.Stdout != os.Stdout || session.Stderr != os.Stderr {
@@ -181,7 +183,7 @@ func TestBuildSSHSpecShellQuotesRemoteCommand(t *testing.T) {
 		t.Fatalf("build ssh spec: %v", err)
 	}
 	want := "printf '%s\n' 'it'\\''s $HOME' ''"
-	if got := session.Args[len(session.Args)-1]; got != want {
+	if got := commandArgs(session)[len(commandArgs(session))-1]; got != want {
 		t.Fatalf("unexpected quoted remote command: got %q want %q", got, want)
 	}
 
@@ -210,12 +212,12 @@ func TestBuildSSHSpecRendersManifestExecTemplates(t *testing.T) {
 	}
 
 	for _, want := range []string{"CID=10", "USER=agent", "DESTINATION=agent@vsock/10"} {
-		if !containsString(session.Env, want) {
+		if !containsString(commandEnvAdditions(session.Env), want) {
 			t.Fatalf("expected ssh env %q in %#v", want, session.Env)
 		}
 	}
-	if !containsString(session.Args, "control-10") || !containsString(session.Args, "HostName=agent@vsock/10") {
-		t.Fatalf("expected rendered ssh args, got %#v", session.Args)
+	if !containsString(commandArgs(session), "control-10") || !containsString(commandArgs(session), "HostName=agent@vsock/10") {
+		t.Fatalf("expected rendered ssh args, got %#v", commandArgs(session))
 	}
 	hint, err := buildSSHCommandHint(manifest, 10)
 	if err != nil {
@@ -457,8 +459,8 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 
 	runner := &fakeRunner{
 		finishInteractiveSSH: true,
-		onStart: func(spec processSpec) {
-			recordEvent("start:" + spec.Name)
+		onStart: func(name string, cmd *exec.Cmd) {
+			recordEvent("start:" + name)
 		},
 	}
 	qmpClient := &fakeQMPClient{
@@ -1337,8 +1339,8 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 
 	runner := &fakeRunner{
 		finishInteractiveSSH: true,
-		onStart: func(spec processSpec) {
-			record("start:" + spec.Name)
+		onStart: func(name string, cmd *exec.Cmd) {
+			record("start:" + name)
 		},
 	}
 	qmpClient := &fakeQMPClient{
@@ -2382,8 +2384,8 @@ func TestManagerLaunchWithoutSSHSavesQueuedSuspend(t *testing.T) {
 
 	signalCh := make(chan os.Signal, 8)
 	runner := &fakeRunner{
-		onStart: func(spec processSpec) {
-			if spec.Name == "qemu" {
+		onStart: func(name string, cmd *exec.Cmd) {
+			if name == "qemu" {
 				signalCh <- syscall.SIGTSTP
 			}
 		},
@@ -2442,8 +2444,8 @@ func TestManagerLaunchHandlesDuplicateSuspendDuringActiveSessionWithoutForwardin
 
 	signalCh := make(chan os.Signal, 8)
 	runner := &fakeRunner{
-		onStart: func(spec processSpec) {
-			if spec.Name == "ssh" && !containsString(spec.Args, "true") {
+		onStart: func(name string, cmd *exec.Cmd) {
+			if name == "ssh" && !containsString(cmd.Args, "true") {
 				signalCh <- syscall.SIGTSTP
 				signalCh <- syscall.SIGTSTP
 			}
@@ -3120,8 +3122,8 @@ func TestManagerLaunchResumeForceSavesSuspendDuringRestoredSession(t *testing.T)
 
 	signalCh := make(chan os.Signal, 8)
 	runner := &fakeRunner{
-		onStart: func(spec processSpec) {
-			if spec.Name == "ssh" && !containsString(spec.Args, "true") {
+		onStart: func(name string, cmd *exec.Cmd) {
+			if name == "ssh" && !containsString(cmd.Args, "true") {
 				signalCh <- syscall.SIGTSTP
 			}
 		},
@@ -3184,8 +3186,8 @@ func TestManagerLaunchResumeCancellationDuringActiveSessionIsNotSuspend(t *testi
 
 	ctx, cancel := context.WithCancel(context.Background())
 	runner := &fakeRunner{
-		onStart: func(spec processSpec) {
-			if spec.Name == "ssh" && !containsString(spec.Args, "true") {
+		onStart: func(name string, cmd *exec.Cmd) {
+			if name == "ssh" && !containsString(cmd.Args, "true") {
 				cancel()
 			}
 		},
@@ -3380,25 +3382,25 @@ func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	if spec.Path != "/bin/qemu-system-x86_64" {
 		t.Fatalf("unexpected qemu path: got %q want %q", spec.Path, "/bin/qemu-system-x86_64")
 	}
-	if !containsString(spec.Args, "-name") || !containsString(spec.Args, "agent-sandbox") {
-		t.Fatalf("expected qemu args to include the guest name: %v", spec.Args)
+	if !containsString(commandArgs(spec), "-name") || !containsString(commandArgs(spec), "agent-sandbox") {
+		t.Fatalf("expected qemu args to include the guest name: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "guest-cid=42") {
-		t.Fatalf("expected qemu args to include the runtime cid: %v", spec.Args)
+	if !containsString(commandArgs(spec), "guest-cid=42") {
+		t.Fatalf("expected qemu args to include the runtime cid: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "unix:/tmp/work/qmp.sock,server,nowait") {
-		t.Fatalf("expected qemu args to include the qmp socket: %v", spec.Args)
+	if !containsString(commandArgs(spec), "unix:/tmp/work/qmp.sock,server,nowait") {
+		t.Fatalf("expected qemu args to include the qmp socket: %v", commandArgs(spec))
 	}
-	if containsString(spec.Args, "qga0") {
-		t.Fatalf("expected qemu args to omit guest agent device when socket is unset: %v", spec.Args)
+	if containsString(commandArgs(spec), "qga0") {
+		t.Fatalf("expected qemu args to omit guest agent device when socket is unset: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "memory-backend-memfd,id=mem,size=1024M,share=on") {
-		t.Fatalf("expected qemu args to include the shared memory backend: %v", spec.Args)
+	if !containsString(commandArgs(spec), "memory-backend-memfd,id=mem,size=1024M,share=on") {
+		t.Fatalf("expected qemu args to include the shared memory backend: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "-nographic") {
-		t.Fatalf("expected headless qemu args to include -nographic: %v", spec.Args)
+	if !containsString(commandArgs(spec), "-nographic") {
+		t.Fatalf("expected headless qemu args to include -nographic: %v", commandArgs(spec))
 	}
-	if !spec.ProcessGroup {
+	if !commandProcessGroup(spec) {
 		t.Fatal("expected qemu to run in its own process group")
 	}
 }
@@ -3416,16 +3418,16 @@ func TestBuildQEMUSpecAddsPCIEHotplugPorts(t *testing.T) {
 		"pcie-root-port,id=pcie.hotplug.0,bus=pcie.0,chassis=1,slot=1",
 		"pcie-root-port,id=pcie.hotplug.1,bus=pcie.0,chassis=2,slot=2",
 	} {
-		portIndex := indexStringContaining(spec.Args, want)
+		portIndex := indexStringContaining(commandArgs(spec), want)
 		if portIndex == -1 {
-			t.Fatalf("expected qemu args to include hotplug port %q: %v", want, spec.Args)
+			t.Fatalf("expected qemu args to include hotplug port %q: %v", want, commandArgs(spec))
 		}
-		rngIndex := indexStringContaining(spec.Args, "virtio-rng-pci")
+		rngIndex := indexStringContaining(commandArgs(spec), "virtio-rng-pci")
 		if rngIndex == -1 {
-			t.Fatalf("expected qemu args to include pci rng device: %v", spec.Args)
+			t.Fatalf("expected qemu args to include pci rng device: %v", commandArgs(spec))
 		}
 		if portIndex > rngIndex {
-			t.Fatalf("expected hotplug port %q before auto-addressed rng device: %v", want, spec.Args)
+			t.Fatalf("expected hotplug port %q before auto-addressed rng device: %v", want, commandArgs(spec))
 		}
 	}
 }
@@ -3569,12 +3571,12 @@ func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
 				t.Fatalf("build qemu spec: %v", err)
 			}
 
-			if containsString(spec.Args, "-nographic") {
-				t.Fatalf("expected graphical qemu args to omit -nographic: %v", spec.Args)
+			if containsString(commandArgs(spec), "-nographic") {
+				t.Fatalf("expected graphical qemu args to omit -nographic: %v", commandArgs(spec))
 			}
 			for _, want := range tt.want {
-				if !containsString(spec.Args, want) {
-					t.Fatalf("expected qemu args to include %q: %v", want, spec.Args)
+				if !containsString(commandArgs(spec), want) {
+					t.Fatalf("expected qemu args to include %q: %v", want, commandArgs(spec))
 				}
 			}
 		})
@@ -3591,12 +3593,12 @@ func TestBuildQEMUSpecPreservesPassthroughGraphicsArgs(t *testing.T) {
 		t.Fatalf("build qemu spec: %v", err)
 	}
 
-	if containsString(spec.Args, "-nographic") {
-		t.Fatalf("expected passthrough graphical qemu args to omit -nographic: %v", spec.Args)
+	if containsString(commandArgs(spec), "-nographic") {
+		t.Fatalf("expected passthrough graphical qemu args to omit -nographic: %v", commandArgs(spec))
 	}
 	for _, want := range cfg.QEMU.PassthroughArgs {
-		if !containsString(spec.Args, want) {
-			t.Fatalf("expected qemu args to include passthrough arg %q: %v", want, spec.Args)
+		if !containsString(commandArgs(spec), want) {
+			t.Fatalf("expected qemu args to include passthrough arg %q: %v", want, commandArgs(spec))
 		}
 	}
 }
@@ -3610,11 +3612,11 @@ func TestBuildQEMUSpecUsesRuntimeCPUCountWhenOmitted(t *testing.T) {
 		t.Fatalf("build qemu spec: %v", err)
 	}
 
-	smpIndex := indexString(spec.Args, "-smp")
-	if smpIndex == -1 || smpIndex+1 >= len(spec.Args) {
-		t.Fatalf("expected qemu args to include -smp: %v", spec.Args)
+	smpIndex := indexString(commandArgs(spec), "-smp")
+	if smpIndex == -1 || smpIndex+1 >= len(commandArgs(spec)) {
+		t.Fatalf("expected qemu args to include -smp: %v", commandArgs(spec))
 	}
-	if got, want := spec.Args[smpIndex+1], fmt.Sprintf("%d", runtime.NumCPU()); got != want {
+	if got, want := commandArgs(spec)[smpIndex+1], fmt.Sprintf("%d", runtime.NumCPU()); got != want {
 		t.Fatalf("unexpected runtime cpu count: got %q want %q", got, want)
 	}
 }
@@ -3647,11 +3649,11 @@ func TestBuildQEMUSpecAddsSerialConsoleArgsOnlyWhenEnabled(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build qemu spec: %v", err)
 			}
-			if got := containsString(spec.Args, "stdio,id=stdio,signal=off"); got != tt.wantConsoleArgs {
-				t.Fatalf("unexpected stdio chardev presence: got %v want %v args=%v", got, tt.wantConsoleArgs, spec.Args)
+			if got := containsString(commandArgs(spec), "stdio,id=stdio,signal=off"); got != tt.wantConsoleArgs {
+				t.Fatalf("unexpected stdio chardev presence: got %v want %v args=%v", got, tt.wantConsoleArgs, commandArgs(spec))
 			}
-			if got := containsString(spec.Args, "chardev:stdio"); got != tt.wantConsoleArgs {
-				t.Fatalf("unexpected serial console presence: got %v want %v args=%v", got, tt.wantConsoleArgs, spec.Args)
+			if got := containsString(commandArgs(spec), "chardev:stdio"); got != tt.wantConsoleArgs {
+				t.Fatalf("unexpected serial console presence: got %v want %v args=%v", got, tt.wantConsoleArgs, commandArgs(spec))
 			}
 		})
 	}
@@ -3667,23 +3669,23 @@ func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
 		t.Fatalf("build qemu spec: %v", err)
 	}
 
-	if !containsString(spec.Args, "socket,path=/tmp/work/qga.sock,server=on,wait=off,id=qga0") {
-		t.Fatalf("expected qemu args to include guest agent chardev: %v", spec.Args)
+	if !containsString(commandArgs(spec), "socket,path=/tmp/work/qga.sock,server=on,wait=off,id=qga0") {
+		t.Fatalf("expected qemu args to include guest agent chardev: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "virtio-serial-pci,id=qga0-serial") {
-		t.Fatalf("expected qemu args to include guest agent serial device: %v", spec.Args)
+	if !containsString(commandArgs(spec), "virtio-serial-pci,id=qga0-serial") {
+		t.Fatalf("expected qemu args to include guest agent serial device: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0") {
-		t.Fatalf("expected qemu args to include guest agent port: %v", spec.Args)
+	if !containsString(commandArgs(spec), "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0") {
+		t.Fatalf("expected qemu args to include guest agent port: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "socket,path=/tmp/work/ready.sock,server=on,wait=off,id=ready_char") {
-		t.Fatalf("expected qemu args to include ssh readiness chardev: %v", spec.Args)
+	if !containsString(commandArgs(spec), "socket,path=/tmp/work/ready.sock,server=on,wait=off,id=ready_char") {
+		t.Fatalf("expected qemu args to include ssh readiness chardev: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "virtio-serial-pci,id=ready-serial") {
-		t.Fatalf("expected qemu args to include ssh readiness serial device: %v", spec.Args)
+	if !containsString(commandArgs(spec), "virtio-serial-pci,id=ready-serial") {
+		t.Fatalf("expected qemu args to include ssh readiness serial device: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "virtserialport,chardev=ready_char,name=virtie.ready") {
-		t.Fatalf("expected qemu args to include ssh readiness port: %v", spec.Args)
+	if !containsString(commandArgs(spec), "virtserialport,chardev=ready_char,name=virtie.ready") {
+		t.Fatalf("expected qemu args to include ssh readiness port: %v", commandArgs(spec))
 	}
 }
 
@@ -3696,14 +3698,14 @@ func TestBuildQEMUSpecOmitsSSHReadyDeviceWhenSocketEmpty(t *testing.T) {
 		t.Fatalf("build qemu spec: %v", err)
 	}
 
-	if containsString(spec.Args, "ready_char") {
-		t.Fatalf("expected qemu args to omit ssh readiness chardev: %v", spec.Args)
+	if containsString(commandArgs(spec), "ready_char") {
+		t.Fatalf("expected qemu args to omit ssh readiness chardev: %v", commandArgs(spec))
 	}
-	if containsString(spec.Args, "virtio-serial-pci,id=ready-serial") {
-		t.Fatalf("expected qemu args to omit ssh readiness serial device: %v", spec.Args)
+	if containsString(commandArgs(spec), "virtio-serial-pci,id=ready-serial") {
+		t.Fatalf("expected qemu args to omit ssh readiness serial device: %v", commandArgs(spec))
 	}
-	if containsString(spec.Args, "virtserialport,chardev=ready_char,name=virtie.ready") {
-		t.Fatalf("expected qemu args to omit ssh readiness port: %v", spec.Args)
+	if containsString(commandArgs(spec), "virtserialport,chardev=ready_char,name=virtie.ready") {
+		t.Fatalf("expected qemu args to omit ssh readiness port: %v", commandArgs(spec))
 	}
 }
 
@@ -3725,11 +3727,11 @@ func TestBuildQEMUSpecAddsNinePDevice(t *testing.T) {
 		t.Fatalf("build qemu spec: %v", err)
 	}
 
-	if !containsString(spec.Args, "local,id=fs9p0,path=/tmp/work/shares/cache,security_model=none,readonly=on") {
-		t.Fatalf("expected qemu args to include resolved 9p fsdev: %v", spec.Args)
+	if !containsString(commandArgs(spec), "local,id=fs9p0,path=/tmp/work/shares/cache,security_model=none,readonly=on") {
+		t.Fatalf("expected qemu args to include resolved 9p fsdev: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "virtio-9p-pci,fsdev=fs9p0,mount_tag=cache") {
-		t.Fatalf("expected qemu args to include 9p device: %v", spec.Args)
+	if !containsString(commandArgs(spec), "virtio-9p-pci,fsdev=fs9p0,mount_tag=cache") {
+		t.Fatalf("expected qemu args to include 9p device: %v", commandArgs(spec))
 	}
 }
 
@@ -3772,14 +3774,14 @@ func TestBuildQEMUSpecPreservesOrderedMountDevices(t *testing.T) {
 		t.Fatalf("build qemu spec: %v", err)
 	}
 
-	ninePIndex := indexStringContaining(spec.Args, "local,id=fs9p0,path=/tmp/work/shares/cache")
-	virtioFSIndex := indexStringContaining(spec.Args, "vhost-user-fs-pci,chardev=char-fs0,tag=workspace")
-	blockIndex := indexStringContaining(spec.Args, "id=vda,format=qcow2,file=/tmp/work/root.img")
+	ninePIndex := indexStringContaining(commandArgs(spec), "local,id=fs9p0,path=/tmp/work/shares/cache")
+	virtioFSIndex := indexStringContaining(commandArgs(spec), "vhost-user-fs-pci,chardev=char-fs0,tag=workspace")
+	blockIndex := indexStringContaining(commandArgs(spec), "id=vda,format=qcow2,file=/tmp/work/root.img")
 	if ninePIndex == -1 || virtioFSIndex == -1 || blockIndex == -1 {
-		t.Fatalf("expected qemu args to include all ordered mount devices: %v", spec.Args)
+		t.Fatalf("expected qemu args to include all ordered mount devices: %v", commandArgs(spec))
 	}
 	if !(ninePIndex < virtioFSIndex && virtioFSIndex < blockIndex) {
-		t.Fatalf("expected mount args in manifest order, got indexes 9p=%d virtiofs=%d block=%d args=%v", ninePIndex, virtioFSIndex, blockIndex, spec.Args)
+		t.Fatalf("expected mount args in manifest order, got indexes 9p=%d virtiofs=%d block=%d args=%v", ninePIndex, virtioFSIndex, blockIndex, commandArgs(spec))
 	}
 }
 
@@ -3798,23 +3800,23 @@ func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 		t.Fatalf("build qemu spec: %v", err)
 	}
 
-	if containsString(spec.Args, "vhost-user-fs") {
-		t.Fatalf("expected qemu args to omit virtiofs devices: %v", spec.Args)
+	if containsString(commandArgs(spec), "vhost-user-fs") {
+		t.Fatalf("expected qemu args to omit virtiofs devices: %v", commandArgs(spec))
 	}
-	if containsString(spec.Args, "virtio-blk") {
-		t.Fatalf("expected qemu args to omit block devices: %v", spec.Args)
+	if containsString(commandArgs(spec), "virtio-blk") {
+		t.Fatalf("expected qemu args to omit block devices: %v", commandArgs(spec))
 	}
-	if containsString(spec.Args, "-netdev") || containsString(spec.Args, "virtio-net") {
-		t.Fatalf("expected qemu args to omit network devices: %v", spec.Args)
+	if containsString(commandArgs(spec), "-netdev") || containsString(commandArgs(spec), "virtio-net") {
+		t.Fatalf("expected qemu args to omit network devices: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "virtio-rng-pci") {
-		t.Fatalf("expected qemu args to retain rng device: %v", spec.Args)
+	if !containsString(commandArgs(spec), "virtio-rng-pci") {
+		t.Fatalf("expected qemu args to retain rng device: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "-qmp") {
-		t.Fatalf("expected qemu args to retain qmp socket: %v", spec.Args)
+	if !containsString(commandArgs(spec), "-qmp") {
+		t.Fatalf("expected qemu args to retain qmp socket: %v", commandArgs(spec))
 	}
-	if !containsString(spec.Args, "guest-cid=42") {
-		t.Fatalf("expected qemu args to retain vsock device: %v", spec.Args)
+	if !containsString(commandArgs(spec), "guest-cid=42") {
+		t.Fatalf("expected qemu args to retain vsock device: %v", commandArgs(spec))
 	}
 }
 
@@ -3832,16 +3834,16 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	}
 
 	wantQMP := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "qmp.sock")
-	if !containsString(spec.Args, "unix:"+wantQMP+",server,nowait") {
-		t.Fatalf("expected qemu args to include runtime qmp socket %q: %v", wantQMP, spec.Args)
+	if !containsString(commandArgs(spec), "unix:"+wantQMP+",server,nowait") {
+		t.Fatalf("expected qemu args to include runtime qmp socket %q: %v", wantQMP, commandArgs(spec))
 	}
 	wantQGA := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "qga.sock")
-	if !containsString(spec.Args, "socket,path="+wantQGA+",server=on,wait=off,id=qga0") {
-		t.Fatalf("expected qemu args to include runtime guest agent socket %q: %v", wantQGA, spec.Args)
+	if !containsString(commandArgs(spec), "socket,path="+wantQGA+",server=on,wait=off,id=qga0") {
+		t.Fatalf("expected qemu args to include runtime guest agent socket %q: %v", wantQGA, commandArgs(spec))
 	}
 	wantReady := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "ready.sock")
-	if !containsString(spec.Args, "socket,path="+wantReady+",server=on,wait=off,id=ready_char") {
-		t.Fatalf("expected qemu args to include runtime ssh readiness socket %q: %v", wantReady, spec.Args)
+	if !containsString(commandArgs(spec), "socket,path="+wantReady+",server=on,wait=off,id=ready_char") {
+		t.Fatalf("expected qemu args to include runtime ssh readiness socket %q: %v", wantReady, commandArgs(spec))
 	}
 }
 
@@ -4032,59 +4034,61 @@ type fakeRunner struct {
 	authSSHFailures           int
 	startErrors               map[string]error
 	qemu                      *fakeProcess
-	onStart                   func(processSpec)
+	onStart                   func(name string, cmd *exec.Cmd)
 }
 
-func (r *fakeRunner) Start(spec processSpec) (process, error) {
+func (r *fakeRunner) Start(name string, cmd *exec.Cmd) (executor.Process, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.starts = append(r.starts, spec.Name)
+	args := commandArgs(cmd)
+	env := commandEnvAdditions(cmd.Env)
+	r.starts = append(r.starts, name)
 	if r.onStart != nil {
-		r.onStart(spec)
+		r.onStart(name, cmd)
 	}
 	if r.processGroups == nil {
 		r.processGroups = make(map[string]bool)
 	}
-	r.processGroups[spec.Name] = spec.ProcessGroup
+	r.processGroups[name] = commandProcessGroup(cmd)
 	if r.processDirs == nil {
 		r.processDirs = make(map[string]string)
 	}
-	r.processDirs[spec.Name] = spec.Dir
-	if err := r.startErrors[spec.Name]; err != nil {
+	r.processDirs[name] = cmd.Dir
+	if err := r.startErrors[name]; err != nil {
 		return nil, err
 	}
 
-	switch spec.Name {
+	switch name {
 	case "qemu":
-		r.qemuArgs = append([]string(nil), spec.Args...)
-		r.qemuEnv = append([]string(nil), spec.Env...)
-		process := &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}
+		r.qemuArgs = append([]string(nil), args...)
+		r.qemuEnv = append([]string(nil), env...)
+		process := &fakeProcess{name: name, runner: r, done: make(chan error, 1)}
 		r.qemu = process
 		return process, nil
 	case "ssh":
-		r.sshArgs = append(r.sshArgs, append([]string(nil), spec.Args...))
+		r.sshArgs = append(r.sshArgs, append([]string(nil), args...))
 		r.interactiveStarts++
 		if r.interactiveStarts <= r.authSSHFailures {
-			if spec.Stderr != nil {
-				_, _ = io.WriteString(spec.Stderr, "agent@vsock/3: Permission denied (publickey).\n")
+			if cmd.Stderr != nil {
+				_, _ = io.WriteString(cmd.Stderr, "agent@vsock/3: Permission denied (publickey).\n")
 			}
 			return &fakeProcess{
-				name:   spec.Name,
+				name:   name,
 				runner: r,
 				done:   closedErrorChannel(errors.New("exit status 255")),
 			}, nil
 		}
 		if r.interactiveStarts <= r.transientSSHFailures {
-			if spec.Stderr != nil {
+			if cmd.Stderr != nil {
 				output := "ssh: connect to host vsock/3 port 22: Connection refused\n"
 				if index := r.interactiveStarts - 1; index < len(r.transientSSHOutputs) {
 					output = r.transientSSHOutputs[index]
 				}
-				_, _ = io.WriteString(spec.Stderr, output)
+				_, _ = io.WriteString(cmd.Stderr, output)
 			}
 			return &fakeProcess{
-				name:   spec.Name,
+				name:   name,
 				runner: r,
 				done:   closedErrorChannel(errors.New("exit status 255")),
 			}, nil
@@ -4094,7 +4098,7 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		}
 		if r.finishInteractiveSSH {
 			process := &fakeProcess{
-				name:   spec.Name,
+				name:   name,
 				runner: r,
 				done:   make(chan error, 1),
 			}
@@ -4107,7 +4111,7 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 			return process, nil
 		}
 
-		process := &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}
+		process := &fakeProcess{name: name, runner: r, done: make(chan error, 1)}
 		go func() {
 			if r.cancelDelay > 0 {
 				time.Sleep(r.cancelDelay)
@@ -4118,26 +4122,50 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		}()
 		return process, nil
 	default:
-		if strings.HasPrefix(spec.Name, "run[") {
+		if strings.HasPrefix(name, "run[") {
 			if r.runArgs == nil {
 				r.runArgs = make(map[string][]string)
 			}
 			if r.runEnv == nil {
 				r.runEnv = make(map[string][]string)
 			}
-			r.runArgs[spec.Name] = append([]string(nil), spec.Args...)
-			r.runEnv[spec.Name] = append([]string(nil), spec.Env...)
-			return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
+			r.runArgs[name] = append([]string(nil), args...)
+			r.runEnv[name] = append([]string(nil), env...)
+			return &fakeProcess{name: name, runner: r, done: make(chan error, 1)}, nil
 		}
-		if strings.HasPrefix(spec.Name, "virtiofsd[") || strings.HasPrefix(spec.Name, "hotplug[") {
+		if strings.HasPrefix(name, "virtiofsd[") || strings.HasPrefix(name, "hotplug[") {
 			if r.virtiofsEnv == nil {
 				r.virtiofsEnv = make(map[string][]string)
 			}
-			r.virtiofsEnv[spec.Name] = append([]string(nil), spec.Env...)
-			return &fakeProcess{name: spec.Name, runner: r, done: make(chan error, 1)}, nil
+			r.virtiofsEnv[name] = append([]string(nil), env...)
+			return &fakeProcess{name: name, runner: r, done: make(chan error, 1)}, nil
 		}
 		return nil, errors.New("unexpected process")
 	}
+}
+
+func commandArgs(cmd *exec.Cmd) []string {
+	if cmd == nil || len(cmd.Args) == 0 {
+		return nil
+	}
+	return cmd.Args[1:]
+}
+
+func commandEnvAdditions(env []string) []string {
+	environ := os.Environ()
+	if len(env) < len(environ) {
+		return env
+	}
+	for i, entry := range environ {
+		if env[i] != entry {
+			return env
+		}
+	}
+	return env[len(environ):]
+}
+
+func commandProcessGroup(cmd *exec.Cmd) bool {
+	return cmd != nil && cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid
 }
 
 func (r *fakeRunner) exitQEMU(err error) {

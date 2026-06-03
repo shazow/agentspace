@@ -6,12 +6,14 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -40,13 +42,13 @@ func TestCommandNotifierHonorsStateAllowlistAndPassesEnv(t *testing.T) {
 		t.Fatalf("expected one notification command, got %d", got)
 	}
 	call := runner.calls[0]
-	if got, want := call.path, "bin/notify"; got != want {
+	if got, want := call.cmd.Path, "bin/notify"; got != want {
 		t.Fatalf("unexpected command path: got %q want %q", got, want)
 	}
-	if got, want := call.args, []string{"--flag"}; !slices.Equal(got, want) {
+	if got, want := commandArgs(call.cmd), []string{"--flag"}; !slices.Equal(got, want) {
 		t.Fatalf("unexpected command args: got %v want %v", got, want)
 	}
-	if got, want := call.dir, "/tmp/work"; got != want {
+	if got, want := call.cmd.Dir, "/tmp/work"; got != want {
 		t.Fatalf("unexpected command dir: got %q want %q", got, want)
 	}
 	for _, want := range []string{
@@ -55,8 +57,8 @@ func TestCommandNotifierHonorsStateAllowlistAndPassesEnv(t *testing.T) {
 		"VIRTIE_NOTIFY_CONTEXT_CID=7",
 		"VIRTIE_NOTIFY_CONTEXT_VM_STATE_PATH=/tmp/work/state",
 	} {
-		if !slices.Contains(call.env, want) {
-			t.Fatalf("expected env %q in %#v", want, call.env)
+		if !slices.Contains(call.cmd.Env, want) {
+			t.Fatalf("expected env %q in %#v", want, call.cmd.Env)
 		}
 	}
 }
@@ -76,10 +78,10 @@ func TestCommandNotifierKeepsCommandPathAndUsesAbsoluteWorkingDir(t *testing.T) 
 		t.Fatalf("expected one notification command, got %d", got)
 	}
 	call := runner.calls[0]
-	if got, want := call.dir, filepath.Join(tmpDir, "work"); got != want {
+	if got, want := call.cmd.Dir, filepath.Join(tmpDir, "work"); got != want {
 		t.Fatalf("unexpected command dir: got %q want %q", got, want)
 	}
-	if got, want := call.path, "notify"; got != want {
+	if got, want := call.cmd.Path, "notify"; got != want {
 		t.Fatalf("unexpected command path: got %q want %q", got, want)
 	}
 }
@@ -103,15 +105,15 @@ func TestCommandNotifierRendersExecTemplates(t *testing.T) {
 		t.Fatalf("expected one notification command, got %d", got)
 	}
 	call := runner.calls[0]
-	if got, want := call.path, "bin/notify-runtime:resume"; got != want {
+	if got, want := call.cmd.Path, "bin/notify-runtime:resume"; got != want {
 		t.Fatalf("unexpected command path: got %q want %q", got, want)
 	}
-	if got, want := call.args, []string{"Restored", "7", "template-user"}; !slices.Equal(got, want) {
+	if got, want := commandArgs(call.cmd), []string{"Restored", "7", "template-user"}; !slices.Equal(got, want) {
 		t.Fatalf("unexpected command args: got %v want %v", got, want)
 	}
 	for _, want := range []string{"CUSTOM=1", "STATE=runtime:resume", "MESSAGE=Restored", "CID=7"} {
-		if !slices.Contains(call.env, want) {
-			t.Fatalf("expected env %q in %#v", want, call.env)
+		if !slices.Contains(call.cmd.Env, want) {
+			t.Fatalf("expected env %q in %#v", want, call.cmd.Env)
 		}
 	}
 }
@@ -232,10 +234,8 @@ func TestLaunchResumeNotifiesAfterMigrationAndContinue(t *testing.T) {
 }
 
 type notificationRunnerCall struct {
-	path string
-	args []string
-	dir  string
-	env  []string
+	name string
+	cmd  *exec.Cmd
 }
 
 type recordingNotificationRunner struct {
@@ -243,14 +243,32 @@ type recordingNotificationRunner struct {
 	err   error
 }
 
-func (r *recordingNotificationRunner) Run(ctx context.Context, path string, args []string, dir string, env []string) error {
+func (r *recordingNotificationRunner) Start(name string, cmd *exec.Cmd) (executor.Process, error) {
 	r.calls = append(r.calls, notificationRunnerCall{
-		path: path,
-		args: append([]string(nil), args...),
-		dir:  dir,
-		env:  append([]string(nil), env...),
+		name: name,
+		cmd:  cmd,
 	})
-	return r.err
+	return recordingNotificationProcess{err: r.err}, nil
+}
+
+type recordingNotificationProcess struct {
+	err error
+}
+
+func (p recordingNotificationProcess) Wait() error {
+	return p.err
+}
+
+func (p recordingNotificationProcess) Signal(os.Signal) error {
+	return nil
+}
+
+func (p recordingNotificationProcess) Kill() error {
+	return nil
+}
+
+func (p recordingNotificationProcess) PID() int {
+	return 0
 }
 
 type recordingNotification struct {

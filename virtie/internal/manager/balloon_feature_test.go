@@ -21,8 +21,8 @@ func TestBuildQEMUSpecAppendsBalloonFeatureArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build qemu spec: %v", err)
 	}
-	if !containsString(spec.Args, "virtio-balloon-pci,id=balloon0,deflate-on-oom=on,free-page-reporting=on") {
-		t.Fatalf("expected qemu args to include balloon device: %v", spec.Args)
+	if !containsString(commandArgs(spec), "virtio-balloon-pci,id=balloon0,deflate-on-oom=on,free-page-reporting=on") {
+		t.Fatalf("expected qemu args to include balloon device: %v", commandArgs(spec))
 	}
 }
 

@@ -1,10 +1,72 @@
 package executor
 
 import (
+	"os"
+	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestCommandLeavesEmptyEnvNil(t *testing.T) {
+	cmd := Command("/bin/echo", []string{"hello"}, nil)
+	if cmd.Env != nil {
+		t.Fatalf("expected empty env to leave command env nil, got %#v", cmd.Env)
+	}
+}
+
+func TestCommandAppendsEnvAfterEnviron(t *testing.T) {
+	environ := os.Environ()
+	additions := []string{"VIRTIE_TEST_ONE=1", "VIRTIE_TEST_TWO=2"}
+	cmd := Command("/bin/echo", nil, additions)
+	if len(cmd.Env) != len(environ)+len(additions) {
+		t.Fatalf("unexpected env length: got %d want %d", len(cmd.Env), len(environ)+len(additions))
+	}
+	if !slices.Equal(cmd.Env[:len(environ)], environ) {
+		t.Fatalf("expected command env to start with os.Environ()")
+	}
+	if !slices.Equal(cmd.Env[len(environ):], additions) {
+		t.Fatalf("unexpected appended env: got %#v want %#v", cmd.Env[len(environ):], additions)
+	}
+}
+
+func TestCommandPassesArgsAfterArgv0(t *testing.T) {
+	cmd := Command("/bin/echo", []string{"hello", "world"}, nil)
+	if !slices.Equal(cmd.Args, []string{"/bin/echo", "hello", "world"}) {
+		t.Fatalf("unexpected args: %#v", cmd.Args)
+	}
+}
+
+func TestRunnerStartsCommand(t *testing.T) {
+	if os.Getenv("EXECUTOR_RUNNER_CHILD") == "1" {
+		os.Exit(0)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve test executable: %v", err)
+	}
+	cmd := exec.Command(exe, "-test.run=TestRunnerStartsCommand")
+	cmd.Env = append(os.Environ(), "EXECUTOR_RUNNER_CHILD=1")
+	process, err := (&Runner{}).Start("child", cmd)
+	if err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	if process.PID() == 0 {
+		t.Fatalf("expected started process to have a pid")
+	}
+	if err := process.Wait(); err != nil {
+		t.Fatalf("wait child: %v", err)
+	}
+}
+
+func TestRunnerRejectsNilCommand(t *testing.T) {
+	_, err := (&Runner{}).Start("child", nil)
+	if err == nil || !strings.Contains(err.Error(), "command must not be nil") {
+		t.Fatalf("expected nil command error, got %v", err)
+	}
+}
 
 func TestRenderArgvAndEnv(t *testing.T) {
 	renderer, err := NewWithEnviron(Context{

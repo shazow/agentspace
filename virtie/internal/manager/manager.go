@@ -26,6 +26,7 @@ import (
 	backendfile "github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
 	shellquote "github.com/kballard/go-shellquote"
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
@@ -72,7 +73,6 @@ type manager struct {
 	qmpMigrationTimeout time.Duration
 	signals             <-chan os.Signal
 	pidSignaler         pidSignaler
-	notificationRunner  notificationRunner
 	notifier            notificationSink
 }
 
@@ -81,7 +81,7 @@ func newManager() *manager {
 	return &manager{
 		locker:              &fileLocker{},
 		vsockCIDChecker:     newHostVSockCIDChecker(),
-		runner:              &execRunner{},
+		runner:              &executor.Runner{},
 		socketWaiter:        &pollingSocketWaiter{},
 		qmpDialer:           &socketMonitorDialer{},
 		guestAgentDialer:    &socketGuestAgentDialer{},
@@ -328,11 +328,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		m.logger.Info("starting qemu")
 	}
 	stats.MarkBootStarted(time.Now())
-	qemuSpec, err := buildLaunchQEMUSpec(manifest, cid, resumeState != nil)
+	qemuCmd, err := buildLaunchQEMUSpec(manifest, cid, resumeState != nil)
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	qemu, err := m.startManagedProcess(qemuSpec)
+	qemu, err := m.startManagedProcess("qemu", qemuCmd)
 	if err != nil {
 		return &stageError{Stage: "vm startup", Err: err}
 	}
@@ -504,7 +504,7 @@ func (m *manager) acquireLaunchCID(manifest *manifest.Manifest, state *suspendSt
 	return state.CID, nil
 }
 
-func buildLaunchQEMUSpec(manifest *manifest.Manifest, cid int, resume bool) (processSpec, error) {
+func buildLaunchQEMUSpec(manifest *manifest.Manifest, cid int, resume bool) (*exec.Cmd, error) {
 	if resume {
 		return buildIncomingQEMUSpec(manifest, cid)
 	}
@@ -526,19 +526,19 @@ func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
 
 type managedProcess struct {
 	name     string
-	proc     process
+	proc     executor.Process
 	done     chan error
 	shutdown func() error
 }
 
-func (m *manager) startManagedProcess(spec processSpec) (*managedProcess, error) {
-	proc, err := m.runner.Start(spec)
+func (m *manager) startManagedProcess(name string, cmd *exec.Cmd) (*managedProcess, error) {
+	proc, err := m.runner.Start(name, cmd)
 	if err != nil {
 		return nil, err
 	}
 
 	mp := &managedProcess{
-		name: spec.Name,
+		name: name,
 		proc: proc,
 		done: make(chan error, 1),
 	}
@@ -569,16 +569,12 @@ func (m *manager) startRuns(cid int, manifest *manifest.Manifest) ([]*managedPro
 		} else {
 			m.logger.Info("starting run", "index", i)
 		}
-		process, err := m.startManagedProcess(processSpec{
-			Name:         name,
-			Path:         run.Exec[0],
-			Args:         run.Exec[1:],
-			Dir:          run.Dir,
-			Env:          run.Env,
-			ProcessGroup: true,
-			Stdout:       os.Stderr,
-			Stderr:       os.Stderr,
-		})
+		cmd := executor.Command(run.Exec[0], run.Exec[1:], run.Env)
+		cmd.Dir = run.Dir
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+		process, err := m.startManagedProcess(name, cmd)
 		if err != nil {
 			_ = m.stopAll(started)
 			return nil, &stageError{Stage: "run startup", Err: err}
@@ -796,13 +792,13 @@ func (m *manager) runSSHSession(
 		stderr := sshtools.NewRetryOutput(m.outputWriter(), false, sshRetryOutputRevealDelay)
 		attemptStarted := time.Now()
 		stats.MarkSSHAttempt(attemptStarted)
-		spec, err := buildSSHSpecWithArgv(launchManifest, cid, remoteCommand, argv)
+		cmd, err := buildSSHSpecWithArgv(launchManifest, cid, remoteCommand, argv)
 		if err != nil {
 			return &stageError{Stage: "active session", Err: err}
 		}
-		sessionLogger.Info("ssh command", "command", shellquote.Join(append([]string{spec.Path}, spec.Args...)...))
-		spec.Stderr = stderr
-		session, err := m.startManagedProcess(spec)
+		sessionLogger.Info("ssh command", "command", shellquote.Join(cmd.Args...))
+		cmd.Stderr = stderr
+		session, err := m.startManagedProcess("ssh", cmd)
 		if err != nil {
 			return &stageError{Stage: "active session", Err: err}
 		}
@@ -1188,37 +1184,33 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 	return nil
 }
 
-func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) (processSpec, error) {
+func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) (*exec.Cmd, error) {
 	return buildSSHSpecWithArgv(manifest, cid, remoteCommand, manifest.SSH.Argv)
 }
 
-func buildSSHSpecWithArgv(launchManifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) (processSpec, error) {
+func buildSSHSpecWithArgv(launchManifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) (*exec.Cmd, error) {
 	renderer, err := manifest.NewTemplateRenderer(manifest.SSHTemplateProvider{
 		CID:         cid,
 		User:        launchManifest.SSH.User,
 		Destination: sshtools.VSockDestination(launchManifest.SSH.User, cid),
 	})
 	if err != nil {
-		return processSpec{Name: "ssh"}, err
+		return nil, err
 	}
 	renderedArgv, err := renderer.RenderArgv(argv)
 	if err != nil {
-		return processSpec{Name: "ssh"}, err
+		return nil, err
 	}
 	command, err := sshtools.NewCommand(sshtools.Config{Exec: renderedArgv, User: launchManifest.SSH.User}, cid, remoteCommand)
 	if err != nil {
-		return processSpec{Name: "ssh"}, err
+		return nil, err
 	}
-	return processSpec{
-		Name:   "ssh",
-		Path:   command.Path,
-		Args:   command.Args,
-		Dir:    launchManifest.Paths.WorkingDir,
-		Env:    renderer.Env(),
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	}, nil
+	cmd := executor.Command(command.Path, command.Args, renderer.Env())
+	cmd.Dir = launchManifest.Paths.WorkingDir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd, nil
 }
 
 func buildSSHCommandHint(launchManifest *manifest.Manifest, cid int) (string, error) {
