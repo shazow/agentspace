@@ -3371,12 +3371,12 @@ func TestAllocateCIDReturnsHostCheckError(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
+func TestBuildQEMUCommandUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 
-	spec, err := buildQEMUSpec(manifest, 42)
+	spec, err := buildQEMUCommand(manifest, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 
 	if spec.Path != "/bin/qemu-system-x86_64" {
@@ -3405,13 +3405,13 @@ func TestBuildQEMUSpecUsesTypedConfigAndRuntimeCID(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecAddsPCIEHotplugPorts(t *testing.T) {
+func TestBuildQEMUCommandAddsPCIEHotplugPorts(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 	manifest.QEMU.Hotplug.PCIEPorts = 2
 
-	spec, err := buildQEMUSpec(manifest, 42)
+	spec, err := buildQEMUCommand(manifest, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 
 	for _, want := range []string{
@@ -3542,7 +3542,7 @@ func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
+func TestBuildQEMUCommandAddsGraphicsArgs(t *testing.T) {
 	tests := []struct {
 		name string
 		qemu manifest.QEMUGraphics
@@ -3566,9 +3566,9 @@ func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
 			manifest.QEMU.Knobs.NoGraphic = false
 			manifest.QEMU.Graphics = tt.qemu
 
-			spec, err := buildQEMUSpec(manifest, 42)
+			spec, err := buildQEMUCommand(manifest, 42, false)
 			if err != nil {
-				t.Fatalf("build qemu spec: %v", err)
+				t.Fatalf("build qemu command: %v", err)
 			}
 
 			if containsString(commandArgs(spec), "-nographic") {
@@ -3583,14 +3583,14 @@ func TestBuildQEMUSpecAddsGraphicsArgs(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecPreservesPassthroughGraphicsArgs(t *testing.T) {
+func TestBuildQEMUCommandPreservesPassthroughGraphicsArgs(t *testing.T) {
 	cfg := validManifest("/tmp/work")
 	cfg.QEMU.Knobs.NoGraphic = false
 	cfg.QEMU.PassthroughArgs = []string{"-display", "sdl", "-device", "virtio-vga"}
 
-	spec, err := buildQEMUSpec(cfg, 42)
+	spec, err := buildQEMUCommand(cfg, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 
 	if containsString(commandArgs(spec), "-nographic") {
@@ -3603,13 +3603,13 @@ func TestBuildQEMUSpecPreservesPassthroughGraphicsArgs(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecUsesRuntimeCPUCountWhenOmitted(t *testing.T) {
+func TestBuildQEMUCommandUsesRuntimeCPUCountWhenOmitted(t *testing.T) {
 	cfg := validManifest("/tmp/work")
 	cfg.QEMU.SMP.CPUs = manifest.CPUCount{}
 
-	spec, err := buildQEMUSpec(cfg, 42)
+	spec, err := buildQEMUCommand(cfg, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 
 	smpIndex := indexString(commandArgs(spec), "-smp")
@@ -3621,7 +3621,7 @@ func TestBuildQEMUSpecUsesRuntimeCPUCountWhenOmitted(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecAddsSerialConsoleArgsOnlyWhenEnabled(t *testing.T) {
+func TestBuildQEMUCommandAddsSerialConsoleArgsOnlyWhenEnabled(t *testing.T) {
 	tests := []struct {
 		name            string
 		console         manifest.QEMUConsole
@@ -3645,9 +3645,9 @@ func TestBuildQEMUSpecAddsSerialConsoleArgsOnlyWhenEnabled(t *testing.T) {
 			cfg := validManifest("/tmp/work")
 			cfg.QEMU.Console = tt.console
 
-			spec, err := buildQEMUSpec(cfg, 42)
+			spec, err := buildQEMUCommand(cfg, 42, false)
 			if err != nil {
-				t.Fatalf("build qemu spec: %v", err)
+				t.Fatalf("build qemu command: %v", err)
 			}
 			if got := containsString(commandArgs(spec), "stdio,id=stdio,signal=off"); got != tt.wantConsoleArgs {
 				t.Fatalf("unexpected stdio chardev presence: got %v want %v args=%v", got, tt.wantConsoleArgs, commandArgs(spec))
@@ -3659,14 +3659,14 @@ func TestBuildQEMUSpecAddsSerialConsoleArgsOnlyWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
+func TestBuildQEMUCommandAddsGuestAgentDevice(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 	manifest.QEMU.GuestAgent.SocketPath = "qga.sock"
 	manifest.QEMU.SSHReady.SocketPath = "ready.sock"
 
-	spec, err := buildQEMUSpec(manifest, 42)
+	spec, err := buildQEMUCommand(manifest, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 
 	if !containsString(commandArgs(spec), "socket,path=/tmp/work/qga.sock,server=on,wait=off,id=qga0") {
@@ -3689,13 +3689,13 @@ func TestBuildQEMUSpecAddsGuestAgentDevice(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecOmitsSSHReadyDeviceWhenSocketEmpty(t *testing.T) {
+func TestBuildQEMUCommandOmitsSSHReadyDeviceWhenSocketEmpty(t *testing.T) {
 	cfg := validManifest("/tmp/work")
 	cfg.QEMU.SSHReady.SocketPath = ""
 
-	spec, err := buildQEMUSpec(cfg, 42)
+	spec, err := buildQEMUCommand(cfg, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 
 	if containsString(commandArgs(spec), "ready_char") {
@@ -3709,7 +3709,7 @@ func TestBuildQEMUSpecOmitsSSHReadyDeviceWhenSocketEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecAddsNinePDevice(t *testing.T) {
+func TestBuildQEMUCommandAddsNinePDevice(t *testing.T) {
 	cfg := validManifest("/tmp/work")
 	cfg.QEMU.Devices.NineP = []manifest.QEMUNinePShare{
 		{
@@ -3722,9 +3722,9 @@ func TestBuildQEMUSpecAddsNinePDevice(t *testing.T) {
 		},
 	}
 
-	spec, err := buildQEMUSpec(cfg, 42)
+	spec, err := buildQEMUCommand(cfg, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 
 	if !containsString(commandArgs(spec), "local,id=fs9p0,path=/tmp/work/shares/cache,security_model=none,readonly=on") {
@@ -3735,7 +3735,7 @@ func TestBuildQEMUSpecAddsNinePDevice(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecPreservesOrderedMountDevices(t *testing.T) {
+func TestBuildQEMUCommandPreservesOrderedMountDevices(t *testing.T) {
 	cfg := validManifest("/tmp/work")
 	cfg.QEMU.Devices.Mounts = []manifest.QEMUMountDevice{
 		{
@@ -3769,9 +3769,9 @@ func TestBuildQEMUSpecPreservesOrderedMountDevices(t *testing.T) {
 		},
 	}
 
-	spec, err := buildQEMUSpec(cfg, 42)
+	spec, err := buildQEMUCommand(cfg, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 
 	ninePIndex := indexStringContaining(commandArgs(spec), "local,id=fs9p0,path=/tmp/work/shares/cache")
@@ -3785,7 +3785,7 @@ func TestBuildQEMUSpecPreservesOrderedMountDevices(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
+func TestBuildQEMUCommandAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest := validManifest("/tmp/work")
 	manifest.QEMU.Memory.Backend = "default"
 	manifest.QEMU.Memory.Shared = false
@@ -3795,9 +3795,9 @@ func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	manifest.Volumes = nil
 	manifest.Run = nil
 
-	spec, err := buildQEMUSpec(manifest, 42)
+	spec, err := buildQEMUCommand(manifest, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 
 	if containsString(commandArgs(spec), "vhost-user-fs") {
@@ -3820,7 +3820,7 @@ func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	}
 }
 
-func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
+func TestBuildQEMUCommandUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)
 
@@ -3828,9 +3828,9 @@ func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirXDG}
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 
-	spec, err := buildQEMUSpec(cfg, 42)
+	spec, err := buildQEMUCommand(cfg, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 
 	wantQMP := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "qmp.sock")

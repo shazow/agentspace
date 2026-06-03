@@ -12,14 +12,14 @@ import (
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
 )
 
-func TestBuildQEMUSpecAppendsBalloonFeatureArgs(t *testing.T) {
+func TestBuildQEMUCommandAppendsBalloonFeatureArgs(t *testing.T) {
 	manifest := validManifestWithBalloon("/tmp/work")
 	manifest.QEMU.Devices.Balloon.DeflateOnOOM = true
 	manifest.QEMU.Devices.Balloon.FreePageReporting = true
 
-	spec, err := buildQEMUSpec(manifest, 42)
+	spec, err := buildQEMUCommand(manifest, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 	if !containsString(commandArgs(spec), "virtio-balloon-pci,id=balloon0,deflate-on-oom=on,free-page-reporting=on") {
 		t.Fatalf("expected qemu args to include balloon device: %v", commandArgs(spec))

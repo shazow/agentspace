@@ -20,13 +20,13 @@ type fakeOptionalFeature struct {
 	stoppedAt              time.Time
 }
 
-func TestBuildQEMUSpecAppendsOptionalFeatureArgs(t *testing.T) {
+func TestBuildQEMUCommandAppendsOptionalFeatureArgs(t *testing.T) {
 	feature := &fakeOptionalFeature{appendMarker: "fake-feature-device"}
 	setOptionalFeaturesForTest(t, feature)
 
-	spec, err := buildQEMUSpec(validManifest("/tmp/work"), 42)
+	spec, err := buildQEMUCommand(validManifest("/tmp/work"), 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
 	if !containsString(commandArgs(spec), feature.appendMarker) {
 		t.Fatalf("expected qemu args to include optional feature marker %q: %v", feature.appendMarker, commandArgs(spec))

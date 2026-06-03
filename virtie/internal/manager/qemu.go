@@ -13,15 +13,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
-func buildQEMUSpec(manifest *manifest.Manifest, cid int) (*exec.Cmd, error) {
-	return buildQEMUSpecWithIncoming(manifest, cid, false)
-}
-
-func buildIncomingQEMUSpec(manifest *manifest.Manifest, cid int) (*exec.Cmd, error) {
-	return buildQEMUSpecWithIncoming(manifest, cid, true)
-}
-
-func buildQEMUSpecWithIncoming(manifest *manifest.Manifest, cid int, incoming bool) (*exec.Cmd, error) {
+func buildQEMUCommand(manifest *manifest.Manifest, cid int, incoming bool) (*exec.Cmd, error) {
 	qemu, err := manifest.ResolvedQEMU()
 	if err != nil {
 		return nil, err

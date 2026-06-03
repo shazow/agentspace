@@ -328,7 +328,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		m.logger.Info("starting qemu")
 	}
 	stats.MarkBootStarted(time.Now())
-	qemuCmd, err := buildLaunchQEMUSpec(manifest, cid, resumeState != nil)
+	qemuCmd, err := buildQEMUCommand(manifest, cid, resumeState != nil)
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -502,13 +502,6 @@ func (m *manager) acquireLaunchCID(manifest *manifest.Manifest, state *suspendSt
 		return 0, fmt.Errorf("saved vsock CID %d is outside manifest range %d-%d", state.CID, manifest.VSock.CIDRange.Start, manifest.VSock.CIDRange.End)
 	}
 	return state.CID, nil
-}
-
-func buildLaunchQEMUSpec(manifest *manifest.Manifest, cid int, resume bool) (*exec.Cmd, error) {
-	if resume {
-		return buildIncomingQEMUSpec(manifest, cid)
-	}
-	return buildQEMUSpec(manifest, cid)
 }
 
 func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
