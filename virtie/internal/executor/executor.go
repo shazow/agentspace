@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/template"
@@ -30,6 +31,7 @@ type Process interface {
 	Signal(sig os.Signal) error
 	Kill() error
 	PID() int
+	Name() string
 }
 
 // Runner starts external commands and returns process handles.
@@ -74,6 +76,13 @@ func (p *execProcess) PID() int {
 		return 0
 	}
 	return p.cmd.Process.Pid
+}
+
+func (p *execProcess) Name() string {
+	if p.cmd == nil {
+		return ""
+	}
+	return filepath.Base(p.cmd.Path)
 }
 
 // Renderer renders exec command templates from a fixed context.

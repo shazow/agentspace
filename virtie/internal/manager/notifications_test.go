@@ -271,6 +271,10 @@ func (p recordingNotificationProcess) PID() int {
 	return 0
 }
 
+func (p recordingNotificationProcess) Name() string {
+	return "notification"
+}
+
 type recordingNotification struct {
 	state   string
 	message string

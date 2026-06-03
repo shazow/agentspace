@@ -3,6 +3,7 @@ package executor
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -55,6 +56,9 @@ func TestRunnerStartsCommand(t *testing.T) {
 	}
 	if process.PID() == 0 {
 		t.Fatalf("expected started process to have a pid")
+	}
+	if got, want := process.Name(), filepath.Base(exe); got != want {
+		t.Fatalf("unexpected process name: got %q want %q", got, want)
 	}
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait child: %v", err)

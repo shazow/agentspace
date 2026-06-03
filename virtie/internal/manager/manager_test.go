@@ -4210,6 +4210,10 @@ func (p *fakeProcess) PID() int {
 	return 1
 }
 
+func (p *fakeProcess) Name() string {
+	return p.name
+}
+
 func (p *fakeProcess) complete(err error) {
 	p.once.Do(func() {
 		select {
