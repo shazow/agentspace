@@ -5,15 +5,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jessevdk/go-flags"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/loghandler"
 	"github.com/shazow/agentspace/virtie/internal/manager"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -38,7 +41,7 @@ func (c *launchCommand) Execute(args []string) error {
 		return fmt.Errorf("remote command arguments require --ssh")
 	}
 
-	baseLogger := slog.Default()
+	baseLogger := newBaseLogger(os.Stderr, len(c.options.Verbose), loghandler.ColorEnabled(os.Stderr))
 	discardLogger := slog.New(slog.DiscardHandler)
 	manifestLogger := discardLogger
 	manager.SetLogger(discardLogger)
@@ -89,7 +92,7 @@ type hotplugCommand struct {
 }
 
 func (c *hotplugCommand) Execute(args []string) error {
-	baseLogger := slog.Default()
+	baseLogger := newBaseLogger(os.Stderr, len(c.options.Verbose), loghandler.ColorEnabled(os.Stderr))
 	discardLogger := slog.New(slog.DiscardHandler)
 	manifestLogger := discardLogger
 	manager.SetLogger(discardLogger)
@@ -107,6 +110,18 @@ func (c *hotplugCommand) Execute(args []string) error {
 	defer cancel()
 
 	return manager.Hotplug(ctx, manifest, c.Args.ID, manager.HotplugOptions{Detach: c.Detach})
+}
+
+func newBaseLogger(w io.Writer, verbosity int, color bool) *slog.Logger {
+	level := slog.LevelInfo
+	if verbosity > 1 {
+		level = slog.LevelDebug
+	}
+	return loghandler.NewLogger(w, &loghandler.Options{
+		Level:      level,
+		NoColor:    !color,
+		TimeFormat: time.DateTime,
+	})
 }
 
 func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {

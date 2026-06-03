@@ -26,6 +26,7 @@ import (
 	"github.com/diskfs/go-diskfs/filesystem"
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
+	"github.com/shazow/agentspace/virtie/internal/loghandler"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
@@ -226,6 +227,120 @@ func TestBuildSSHSpecRendersManifestExecTemplates(t *testing.T) {
 	}
 }
 
+func TestStartManagedProcessLogsExecCommand(t *testing.T) {
+	var logs bytes.Buffer
+	runner := &fakeRunner{}
+	manager := &manager{
+		runner: runner,
+		logger: loghandler.NewLogger(&logs, &loghandler.Options{Level: slog.LevelDebug, NoColor: true}),
+	}
+
+	process, err := manager.startManagedProcess(processSpec{
+		Name: "qemu",
+		Path: "/bin/qemu",
+		Args: []string{"-name", "vm"},
+		Dir:  "/tmp/work",
+	})
+	if err != nil {
+		t.Fatalf("start process: %v", err)
+	}
+	runner.exitQEMU(nil)
+	if err := <-process.done; err != nil {
+		t.Fatalf("wait process: %v", err)
+	}
+
+	output := logs.String()
+	if !strings.Contains(output, `INF exec`) ||
+		!strings.Contains(output, `name=qemu`) ||
+		!strings.Contains(output, `argv="[/bin/qemu -name vm]"`) ||
+		!strings.Contains(output, `dir=/tmp/work`) {
+		t.Fatalf("exec log missing expected attributes:\n%s", output)
+	}
+}
+
+func TestStartManagedProcessDebugLogsOutputLines(t *testing.T) {
+	var logs bytes.Buffer
+	var stdoutVisible bytes.Buffer
+	var stderrVisible bytes.Buffer
+	manager := &manager{
+		runner: &execRunner{},
+		logger: loghandler.NewLogger(&logs, &loghandler.Options{Level: slog.LevelDebug, NoColor: true}),
+	}
+
+	process, err := manager.startManagedProcess(processSpec{
+		Name:        "qemu",
+		Path:        os.Args[0],
+		Args:        []string{"-test.run=TestExecRunnerOutputHelper", "--"},
+		Env:         []string{"GO_WANT_EXEC_RUNNER_OUTPUT_HELPER=1"},
+		DebugOutput: true,
+		Stdout:      &stdoutVisible,
+		Stderr:      &stderrVisible,
+	})
+	if err != nil {
+		t.Fatalf("start process: %v", err)
+	}
+	if err := <-process.done; err != nil {
+		t.Fatalf("wait process: %v", err)
+	}
+
+	if got, want := stdoutVisible.String(), "first stdout\npartial stdout"; got != want {
+		t.Fatalf("unexpected visible stdout: got %q want %q", got, want)
+	}
+	if got, want := stderrVisible.String(), "first stderr\npartial stderr"; got != want {
+		t.Fatalf("unexpected visible stderr: got %q want %q", got, want)
+	}
+	output := logs.String()
+	for _, want := range []string{
+		`DBG first stdout exec=qemu stream=stdout`,
+		`DBG partial stdout exec=qemu stream=stdout`,
+		`INF first stderr exec=qemu stream=stderr`,
+		`INF partial stderr exec=qemu stream=stderr`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("debug log missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestStartManagedProcessSkipsDebugOutputWhenDisabled(t *testing.T) {
+	var logs bytes.Buffer
+	var stdoutVisible bytes.Buffer
+	var stderrVisible bytes.Buffer
+	manager := &manager{
+		runner: &execRunner{},
+		logger: loghandler.NewLogger(&logs, &loghandler.Options{Level: slog.LevelDebug, NoColor: true}),
+	}
+
+	process, err := manager.startManagedProcess(processSpec{
+		Name:   "qemu",
+		Path:   os.Args[0],
+		Args:   []string{"-test.run=TestExecRunnerOutputHelper", "--"},
+		Env:    []string{"GO_WANT_EXEC_RUNNER_OUTPUT_HELPER=1"},
+		Stdout: &stdoutVisible,
+		Stderr: &stderrVisible,
+	})
+	if err != nil {
+		t.Fatalf("start process: %v", err)
+	}
+	if err := <-process.done; err != nil {
+		t.Fatalf("wait process: %v", err)
+	}
+
+	if got, want := stdoutVisible.String(), "first stdout\npartial stdout"; got != want {
+		t.Fatalf("unexpected visible stdout: got %q want %q", got, want)
+	}
+	if got, want := stderrVisible.String(), "first stderr\npartial stderr"; got != want {
+		t.Fatalf("unexpected visible stderr: got %q want %q", got, want)
+	}
+	output := logs.String()
+	if strings.Contains(output, "first stdout") ||
+		strings.Contains(output, "first stderr") ||
+		strings.Contains(output, "stream=stdout") ||
+		strings.Contains(output, "stream=stderr") {
+		t.Fatalf("unexpected debug output log:\n%s", output)
+	}
+}
+
 func TestBuildSSHCommandHintReturnsTemplateError(t *testing.T) {
 	manifest := &manifest.Manifest{
 		SSH: manifest.SSH{
@@ -318,7 +433,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		runner:            runner,
 		socketWaiter:      waiter,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:            loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:         &logOutput,
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
@@ -481,7 +596,7 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 		socketWaiter:      waiter,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		sshReadyDialer:    &fakeSSHReadyDialer{},
-		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:            loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:         &logOutput,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -577,7 +692,7 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 		locker:        &fileLocker{},
 		runner:        runner,
 		socketWaiter:  &fakeSocketWaiter{},
-		logger:        slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:        loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:     &logOutput,
 		shutdownDelay: 10 * time.Millisecond,
 	}
@@ -629,7 +744,7 @@ func TestManagerLaunchStopsStartedRunsWhenLaterRunFails(t *testing.T) {
 		locker:        &fileLocker{},
 		runner:        runner,
 		socketWaiter:  waiter,
-		logger:        slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:        loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:     &logOutput,
 		shutdownDelay: 10 * time.Millisecond,
 	}
@@ -681,7 +796,7 @@ func TestManagerLaunchRemovesCleanupPathAfterQMPStartupFailure(t *testing.T) {
 		runner:            runner,
 		socketWaiter:      waiter,
 		qmpDialer:         &fakeQMPDialer{},
-		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:            loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:         &logOutput,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -820,7 +935,7 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:            loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:         &logOutput,
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
@@ -848,7 +963,7 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	if got := len(runner.sshArgs); got != 0 {
 		t.Fatalf("expected no ssh starts, got %d", got)
 	}
-	if strings.Contains(logOutput.String(), "msg=\"ssh command\"") {
+	if strings.Contains(logOutput.String(), "INF ssh command") {
 		t.Fatalf("unexpected interactive ssh command log, got %q", logOutput.String())
 	}
 	if !strings.Contains(logOutput.String(), "connect with: /bin/ssh agent@vsock/3") {
@@ -887,7 +1002,7 @@ func TestManagerLaunchWithSSHAndEmptyExecSkipsAutoconnect(t *testing.T) {
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:            loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:         &logOutput,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -939,7 +1054,7 @@ func TestManagerLaunchRejectsRemoteCommandWithoutSSHExec(t *testing.T) {
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:            loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:         &logOutput,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -982,7 +1097,7 @@ func TestManagerLaunchStartsSSHOnceAfterReadiness(t *testing.T) {
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		sshReadyDialer:    &fakeSSHReadyDialer{},
-		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:            loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:         &logOutput,
 		shutdownDelay:     10 * time.Millisecond,
 		qmpRetryDelay:     0,
@@ -1008,7 +1123,7 @@ func TestManagerLaunchStartsSSHOnceAfterReadiness(t *testing.T) {
 	if !strings.Contains(logs, "waiting for ssh readiness") {
 		t.Fatalf("expected ssh readiness log, got %q", logs)
 	}
-	if !strings.Contains(logs, "msg=\"ssh command\"") {
+	if !strings.Contains(logs, "INF ssh command") {
 		t.Fatalf("expected per-attempt ssh command log, got %q", logs)
 	}
 	assertLaunchStatsLog(t, logs, []string{
@@ -1039,7 +1154,7 @@ func TestManagerLaunchWarnsAfterFiveSSHRetryFailures(t *testing.T) {
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		sshReadyDialer:    &fakeSSHReadyDialer{},
-		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:            loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:         &logOutput,
 		sshRetryDelay:     0,
 		shutdownDelay:     10 * time.Millisecond,
@@ -1184,7 +1299,7 @@ func TestManagerLaunchPrintsGuestInfoOnSIGUSR1(t *testing.T) {
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:    &fakeGuestAgentDialer{client: guestAgent},
-		logger:              slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:              loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:           &logOutput,
 		sshRetryDelay:       time.Hour,
 		shutdownDelay:       10 * time.Millisecond,
@@ -1241,7 +1356,7 @@ func TestManagerLaunchLogsGuestInfoFailureOnSIGUSR1(t *testing.T) {
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:    &fakeGuestAgentDialer{client: &fakeGuestAgentClient{execErr: errors.New("exec failed")}},
-		logger:              slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:              loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		logWriter:           &logOutput,
 		sshRetryDelay:       time.Hour,
 		shutdownDelay:       10 * time.Millisecond,
@@ -1894,7 +2009,7 @@ func TestManagerLaunchSkipsGuestFileWhenOverwriteFalseAndPathExists(t *testing.T
 	}
 	var logOutput bytes.Buffer
 	manager := &manager{
-		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logger:            loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true}),
 		locker:            &fileLocker{},
 		runner:            runner,
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
@@ -3473,6 +3588,9 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	if !runner.processGroups["hotplug[cache]"] {
 		t.Fatal("expected hotplug host process to run in its own process group")
 	}
+	if !runner.captureFileOutput["hotplug[cache]"] {
+		t.Fatal("expected hotplug host process output to be captured through debug logs")
+	}
 	if got := runner.virtiofsEnv["hotplug[cache]"]; !containsString(got, "VIRTIOFSD_SOCKET="+filepath.Join(tmpDir, ".virtie", "cache.sock")) {
 		t.Fatalf("expected rendered hotplug env, got %#v", got)
 	}
@@ -3816,6 +3934,9 @@ func TestBuildQEMUSpecAllowsInitrdApplianceWithoutStorageDevices(t *testing.T) {
 	if !containsString(spec.Args, "guest-cid=42") {
 		t.Fatalf("expected qemu args to retain vsock device: %v", spec.Args)
 	}
+	if !spec.CaptureFileOutput {
+		t.Fatal("expected qemu output to be captured through debug logs")
+	}
 }
 
 func TestBuildQEMUSpecUsesRuntimeDirForRelativeQMP(t *testing.T) {
@@ -3869,6 +3990,9 @@ func TestStartRunsUsesNamedVirtioFSRunEnv(t *testing.T) {
 	}
 	if !runner.processGroups["virtiofsd[workspace]"] {
 		t.Fatal("expected virtiofs run to run in its own process group")
+	}
+	if !runner.captureFileOutput["virtiofsd[workspace]"] {
+		t.Fatal("expected run output to be captured through debug logs")
 	}
 }
 
@@ -4020,6 +4144,7 @@ type fakeRunner struct {
 	runEnv                    map[string][]string
 	virtiofsEnv               map[string][]string
 	processGroups             map[string]bool
+	captureFileOutput         map[string]bool
 	processDirs               map[string]string
 	interactiveStarts         int
 	cancel                    context.CancelFunc
@@ -4047,6 +4172,10 @@ func (r *fakeRunner) Start(spec processSpec) (process, error) {
 		r.processGroups = make(map[string]bool)
 	}
 	r.processGroups[spec.Name] = spec.ProcessGroup
+	if r.captureFileOutput == nil {
+		r.captureFileOutput = make(map[string]bool)
+	}
+	r.captureFileOutput[spec.Name] = spec.CaptureFileOutput
 	if r.processDirs == nil {
 		r.processDirs = make(map[string]string)
 	}

@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"io"
+	"log/slog"
 	"os"
 	"time"
 )
@@ -39,13 +40,16 @@ type sshReadyDialer interface {
 }
 
 type processSpec struct {
-	Name         string
-	Path         string
-	Args         []string
-	Dir          string
-	Env          []string
-	ProcessGroup bool
-	Stdin        io.Reader
-	Stdout       io.Writer
-	Stderr       io.Writer
+	Name              string
+	Path              string
+	Args              []string
+	Dir               string
+	Env               []string
+	ProcessGroup      bool
+	DebugOutput       bool
+	CaptureFileOutput bool
+	Logger            *slog.Logger
+	Stdin             io.Reader
+	Stdout            io.Writer
+	Stderr            io.Writer
 }
