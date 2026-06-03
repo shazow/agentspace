@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/loghandler"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -25,7 +25,7 @@ func TestCommandNotifierHonorsStateAllowlistAndPassesEnv(t *testing.T) {
 		States: []string{notifyStateRuntimeResume},
 	}
 	runner := &recordingNotificationRunner{}
-	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
+	notifier := newCommandNotifier(cfg, loghandler.NewLogger(os.Stderr, &loghandler.Options{NoColor: true}), runner)
 
 	notifier.Notify(context.Background(), notifyStateRuntimeSuspend, "ignored", nil)
 	if len(runner.calls) != 0 {
@@ -68,7 +68,7 @@ func TestCommandNotifierKeepsCommandPathAndUsesAbsoluteWorkingDir(t *testing.T) 
 	cfg := validManifest("work")
 	cfg.Notifications.Command = manifest.Command{Path: "notify"}
 	runner := &recordingNotificationRunner{}
-	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
+	notifier := newCommandNotifier(cfg, loghandler.NewLogger(os.Stderr, &loghandler.Options{NoColor: true}), runner)
 
 	notifier.Notify(context.Background(), notifyStateRuntimeResume, "Restored", nil)
 
@@ -93,7 +93,7 @@ func TestCommandNotifierRendersExecTemplates(t *testing.T) {
 	}
 	t.Setenv("USER", "template-user")
 	runner := &recordingNotificationRunner{}
-	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
+	notifier := newCommandNotifier(cfg, loghandler.NewLogger(os.Stderr, &loghandler.Options{NoColor: true}), runner)
 
 	notifier.Notify(context.Background(), notifyStateRuntimeResume, "Restored", map[string]string{
 		"cid": "7",
@@ -121,7 +121,7 @@ func TestCommandNotifierLogsAndIgnoresHookFailure(t *testing.T) {
 	cfg.Notifications.Command = manifest.Command{Path: "/bin/notify"}
 	runner := &recordingNotificationRunner{err: errors.New("exit status 1")}
 	var logs bytes.Buffer
-	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(&logs, nil)), runner)
+	notifier := newCommandNotifier(cfg, loghandler.NewLogger(&logs, &loghandler.Options{NoColor: true}), runner)
 
 	notifier.Notify(context.Background(), notifyStateRuntimeResume, "Restored", nil)
 
@@ -206,7 +206,7 @@ func TestLaunchResumeNotifiesAfterMigrationAndContinue(t *testing.T) {
 		runner:              runner,
 		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
 		qmpDialer:           &fakeQMPDialer{client: qmpClient},
-		logger:              slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		logger:              loghandler.NewLogger(os.Stderr, &loghandler.Options{NoColor: true}),
 		sshRetryDelay:       0,
 		shutdownDelay:       10 * time.Millisecond,
 		qmpConnectTimeout:   time.Millisecond,

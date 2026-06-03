@@ -70,8 +70,11 @@ host process environment is available as `.Env` on every surface.
 - The manifest format is owned by this repository and is intentionally narrow.
   It carries evaluated launch facts while `virtie` derives the concrete
   host-side QEMU policy.
-- Verbose runtime logs use Go's default `log/slog` handler on stderr, with
-  package identity carried as an attribute such as `package=manager`.
+- Verbose runtime logs use `github.com/lmittmann/tint` on stderr, with package
+  identity carried as an attribute such as `package=manager`. `-v` includes
+  host command starts, while `-vv` also includes DEBUG records for host
+  daemon/helper stdout and stderr lines. Active SSH session output is not
+  duplicated into DEBUG logs.
 - Suspend/resume uses QEMU migration-to-file for disk-backed restore. The
   `SIGTSTP` signal is an internal control shim used by `virtie suspend`, not a
   terminal/job-control suspend. Live pause/resume and `SIGCONT` resume are not

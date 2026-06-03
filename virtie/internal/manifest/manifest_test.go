@@ -3,7 +3,6 @@ package manifest
 import (
 	"bytes"
 	"encoding/json"
-	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
+	"github.com/shazow/agentspace/virtie/internal/loghandler"
 )
 
 func writeFileText(text string) WriteFile {
@@ -422,7 +422,7 @@ func TestDocumentVirtioFSUsesExistingSocketWithoutRun(t *testing.T) {
 	document.WorkingDir = tmpDir
 
 	var logOutput bytes.Buffer
-	manifest, err := document.ManifestWithOptions(ResolveOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
+	manifest, err := document.ManifestWithOptions(ResolveOptions{Logger: loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true})})
 	if err != nil {
 		t.Fatalf("resolve manifest: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestDocumentVirtioFSStartsRunForStaleSocket(t *testing.T) {
 	document.WorkingDir = tmpDir
 
 	var logOutput bytes.Buffer
-	manifest, err := document.ManifestWithOptions(ResolveOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
+	manifest, err := document.ManifestWithOptions(ResolveOptions{Logger: loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true})})
 	if err != nil {
 		t.Fatalf("resolve manifest: %v", err)
 	}
@@ -495,7 +495,7 @@ func TestDocumentVirtioFSWarnsAndGeneratesRunForExistingNonSocket(t *testing.T) 
 	document.WorkingDir = tmpDir
 
 	var logOutput bytes.Buffer
-	manifest, err := document.ManifestWithOptions(ResolveOptions{Logger: slog.New(slog.NewTextHandler(&logOutput, nil))})
+	manifest, err := document.ManifestWithOptions(ResolveOptions{Logger: loghandler.NewLogger(&logOutput, &loghandler.Options{NoColor: true})})
 	if err != nil {
 		t.Fatalf("resolve manifest: %v", err)
 	}

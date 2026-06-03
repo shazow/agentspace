@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -148,6 +150,46 @@ func TestParserAcceptsSharedOptionsBeforeOrAfterSubcommand(t *testing.T) {
 				t.Fatalf("ParseArgs(%v) did not parse manifest path, got %v", tt.args, err)
 			}
 		})
+	}
+}
+
+func TestBaseLoggerEnablesDebugWithDoubleVerbose(t *testing.T) {
+	var logs bytes.Buffer
+	logger := newBaseLogger(&logs, 2, false)
+	logger.Debug("debug message")
+
+	if output := logs.String(); !strings.Contains(output, `DBG`) || !strings.Contains(output, `debug message`) {
+		t.Fatalf("expected debug log, got:\n%s", output)
+	}
+}
+
+func TestBaseLoggerSuppressesDebugWithSingleVerbose(t *testing.T) {
+	var logs bytes.Buffer
+	logger := newBaseLogger(&logs, 1, false)
+	logger.Debug("debug message")
+
+	if output := logs.String(); output != "" {
+		t.Fatalf("expected debug log to be suppressed, got:\n%s", output)
+	}
+}
+
+func TestBaseLoggerUsesDateTimeFormat(t *testing.T) {
+	var logs bytes.Buffer
+	logger := newBaseLogger(&logs, 1, false)
+	logger.Info("info message")
+
+	if output := logs.String(); !regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`).MatchString(output) {
+		t.Fatalf("expected time.DateTime timestamp, got:\n%q", output)
+	}
+}
+
+func TestBaseLoggerCanColorizeOutput(t *testing.T) {
+	var logs bytes.Buffer
+	logger := newBaseLogger(&logs, 1, true)
+	logger.Info("info message")
+
+	if output := logs.String(); !strings.Contains(output, "\x1b[") {
+		t.Fatalf("expected colorized output, got:\n%q", output)
 	}
 }
 

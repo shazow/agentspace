@@ -532,6 +532,10 @@ type managedProcess struct {
 }
 
 func (m *manager) startManagedProcess(spec processSpec) (*managedProcess, error) {
+	execLogger := m.effectiveLogger()
+	execLogger.Info("exec", "name", spec.Name, "argv", processArgv(spec), "dir", spec.Dir)
+	spec.Logger = execLogger
+
 	proc, err := m.runner.Start(spec)
 	if err != nil {
 		return nil, err
@@ -544,11 +548,26 @@ func (m *manager) startManagedProcess(spec processSpec) (*managedProcess, error)
 	}
 
 	go func() {
-		mp.done <- proc.Wait()
+		err := proc.Wait()
+		mp.done <- err
 		close(mp.done)
 	}()
 
 	return mp, nil
+}
+
+func (m *manager) effectiveLogger() *slog.Logger {
+	if m != nil && m.logger != nil {
+		return m.logger
+	}
+	return slog.New(slog.DiscardHandler)
+}
+
+func processArgv(spec processSpec) []string {
+	argv := make([]string, 0, 1+len(spec.Args))
+	argv = append(argv, spec.Path)
+	argv = append(argv, spec.Args...)
+	return argv
 }
 
 func (m *manager) startRuns(cid int, manifest *manifest.Manifest) ([]*managedProcess, error) {
@@ -570,14 +589,16 @@ func (m *manager) startRuns(cid int, manifest *manifest.Manifest) ([]*managedPro
 			m.logger.Info("starting run", "index", i)
 		}
 		process, err := m.startManagedProcess(processSpec{
-			Name:         name,
-			Path:         run.Exec[0],
-			Args:         run.Exec[1:],
-			Dir:          run.Dir,
-			Env:          run.Env,
-			ProcessGroup: true,
-			Stdout:       os.Stderr,
-			Stderr:       os.Stderr,
+			Name:              name,
+			Path:              run.Exec[0],
+			Args:              run.Exec[1:],
+			Dir:               run.Dir,
+			Env:               run.Env,
+			ProcessGroup:      true,
+			DebugOutput:       true,
+			CaptureFileOutput: true,
+			Stdout:            os.Stderr,
+			Stderr:            os.Stderr,
 		})
 		if err != nil {
 			_ = m.stopAll(started)

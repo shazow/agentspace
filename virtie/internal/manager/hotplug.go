@@ -85,14 +85,16 @@ type managerHotplugStarter struct {
 
 func (s managerHotplugStarter) Start(ctx context.Context, spec hotplug.ProcessSpec) (hotplug.Process, error) {
 	proc, err := s.m.startManagedProcess(processSpec{
-		Name:         spec.Name,
-		Path:         spec.Path,
-		Args:         spec.Args,
-		Dir:          spec.Dir,
-		Env:          spec.Env,
-		ProcessGroup: spec.ProcessGroup,
-		Stdout:       os.Stderr,
-		Stderr:       os.Stderr,
+		Name:              spec.Name,
+		Path:              spec.Path,
+		Args:              spec.Args,
+		Dir:               spec.Dir,
+		Env:               spec.Env,
+		ProcessGroup:      spec.ProcessGroup,
+		DebugOutput:       true,
+		CaptureFileOutput: true,
+		Stdout:            os.Stderr,
+		Stderr:            os.Stderr,
 	})
 	if err != nil {
 		return nil, err

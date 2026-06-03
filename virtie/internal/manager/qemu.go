@@ -30,13 +30,15 @@ func buildQEMUSpecWithIncoming(manifest *manifest.Manifest, cid int, incoming bo
 	}
 
 	return processSpec{
-		Name:         "qemu",
-		Path:         qemu.BinaryPath,
-		Args:         args,
-		Dir:          manifest.Paths.WorkingDir,
-		ProcessGroup: true,
-		Stdout:       os.Stderr,
-		Stderr:       os.Stderr,
+		Name:              "qemu",
+		Path:              qemu.BinaryPath,
+		Args:              args,
+		Dir:               manifest.Paths.WorkingDir,
+		ProcessGroup:      true,
+		DebugOutput:       true,
+		CaptureFileOutput: true,
+		Stdout:            os.Stderr,
+		Stderr:            os.Stderr,
 	}, nil
 }
 

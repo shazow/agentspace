@@ -12,12 +12,15 @@ Use stdlib `log/slog` for runtime diagnostics while keeping logging policy owned
 - Packages expose `SetLogger(*slog.Logger)` so callers can choose output, formatting, level, attributes, and package inclusion.
 - Subpackages depend only on `log/slog`, not on a shared internal logging package.
 - `main` decides verbosity and which package loggers are enabled.
+- `internal/loghandler` owns reusable CLI/test logger construction using
+  `github.com/lmittmann/tint` without changing package logger APIs.
 - Major structs may hold a `*slog.Logger` for tests or local customization.
 - Constructors initialize struct loggers, so internal methods can log directly without nil-guard wrapper methods.
 
 Out of scope:
 
-- A project-wide logging abstraction.
+- A project-wide logging abstraction beyond the concrete `slog.Handler`
+  implementation used by entrypoints and format-sensitive tests.
 - Per-package handler construction outside the command entrypoint.
 - Defensive nil handling for internal struct logger fields when constructors control initialization.
 - Tests that only assert logger setup wiring.
@@ -58,7 +61,10 @@ func SetLogger(l *slog.Logger) {
 The command entrypoint owns logging policy:
 
 ```go
-baseLogger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+baseLogger := loghandler.NewLogger(os.Stderr, &loghandler.Options{
+	Level:   slog.LevelInfo,
+	NoColor: !loghandler.ColorEnabled(os.Stderr),
+})
 discardLogger := slog.New(slog.DiscardHandler)
 
 manager.SetLogger(discardLogger)

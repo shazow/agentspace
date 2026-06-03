@@ -10,6 +10,7 @@ require (
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/kata-containers/govmm v0.0.0-20220119175834-88960a15dacd
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
+	github.com/lmittmann/tint v1.1.3
 	golang.org/x/crypto v0.51.0
 )
 
