@@ -296,7 +296,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	runner := &fakeRunner{cancel: cancel}
+	runner := &launchRunner{cancel: cancel}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -336,43 +336,43 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 
 	wantStarts := []string{"virtiofsd-ro-store", "virtiofsd-workspace", "qemu-system-x86_64", "ssh"}
-	if !reflect.DeepEqual(runner.starts, wantStarts) {
-		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
+	if !reflect.DeepEqual(runner.startedNames(), wantStarts) {
+		t.Fatalf("unexpected start order: got %v want %v", runner.startedNames(), wantStarts)
 	}
 
-	if !containsString(runner.qemuArgs, "-qmp") {
-		t.Fatalf("expected qemu args to contain qmp socket: %v", runner.qemuArgs)
+	if !containsString(runner.qemuArgs(), "-qmp") {
+		t.Fatalf("expected qemu args to contain qmp socket: %v", runner.qemuArgs())
 	}
-	if !containsString(runner.qemuArgs, "unix:"+filepath.Join(tmpDir, ".virtie", "qmp.sock")+",server,nowait") {
-		t.Fatalf("expected qemu args to contain resolved qmp socket path: %v", runner.qemuArgs)
+	if !containsString(runner.qemuArgs(), "unix:"+filepath.Join(tmpDir, ".virtie", "qmp.sock")+",server,nowait") {
+		t.Fatalf("expected qemu args to contain resolved qmp socket path: %v", runner.qemuArgs())
 	}
-	if !containsString(runner.qemuArgs, "guest-cid=3") {
-		t.Fatalf("expected qemu args to contain runtime vsock cid: %v", runner.qemuArgs)
+	if !containsString(runner.qemuArgs(), "guest-cid=3") {
+		t.Fatalf("expected qemu args to contain runtime vsock cid: %v", runner.qemuArgs())
 	}
-	if !containsString(runner.qemuArgs, "virtio-blk-pci,drive=vda") {
-		t.Fatalf("expected qemu args to contain virtio block device: %v", runner.qemuArgs)
+	if !containsString(runner.qemuArgs(), "virtio-blk-pci,drive=vda") {
+		t.Fatalf("expected qemu args to contain virtio block device: %v", runner.qemuArgs())
 	}
-	if !containsString(runner.qemuArgs, "vhost-user-fs-pci,chardev=char-fs1,tag=workspace") {
-		t.Fatalf("expected qemu args to contain virtiofs share: %v", runner.qemuArgs)
+	if !containsString(runner.qemuArgs(), "vhost-user-fs-pci,chardev=char-fs1,tag=workspace") {
+		t.Fatalf("expected qemu args to contain virtiofs share: %v", runner.qemuArgs())
 	}
-	if !containsString(runner.qemuArgs, "socket,path="+filepath.Join(tmpDir, ".virtie", "ready.sock")+",server=on,wait=off,id=ready_char") {
-		t.Fatalf("expected qemu args to contain ssh readiness socket: %v", runner.qemuArgs)
+	if !containsString(runner.qemuArgs(), "socket,path="+filepath.Join(tmpDir, ".virtie", "ready.sock")+",server=on,wait=off,id=ready_char") {
+		t.Fatalf("expected qemu args to contain ssh readiness socket: %v", runner.qemuArgs())
 	}
-	if !containsString(runner.qemuArgs, "virtserialport,chardev=ready_char,name=virtie.ready") {
-		t.Fatalf("expected qemu args to contain ssh readiness port: %v", runner.qemuArgs)
+	if !containsString(runner.qemuArgs(), "virtserialport,chardev=ready_char,name=virtie.ready") {
+		t.Fatalf("expected qemu args to contain ssh readiness port: %v", runner.qemuArgs())
 	}
-	if containsString(runner.qemuArgs, "balloon") {
-		t.Fatalf("expected qemu args to omit optional feature devices when disabled: %v", runner.qemuArgs)
+	if containsString(runner.qemuArgs(), "balloon") {
+		t.Fatalf("expected qemu args to omit optional feature devices when disabled: %v", runner.qemuArgs())
 	}
 
-	if got := runner.qemuEnv; len(got) != 0 {
+	if got := runner.qemuEnv(); len(got) != 0 {
 		t.Fatalf("unexpected qemu env: got %v want no extra env", got)
 	}
 
-	if got := len(runner.sshArgs); got != 1 {
+	if got := len(runner.sshArgs()); got != 1 {
 		t.Fatalf("unexpected ssh attempts: got %d want 1", got)
 	}
-	for i, args := range runner.sshArgs {
+	for i, args := range runner.sshArgs() {
 		if !containsString(args, "agent@vsock/3") {
 			t.Fatalf("ssh attempt %d missing runtime destination: %v", i, args)
 		}
@@ -382,8 +382,8 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 
 	wantSignals := []string{"ssh", "virtiofsd-workspace", "virtiofsd-ro-store"}
-	if !reflect.DeepEqual(runner.signals, wantSignals) {
-		t.Fatalf("unexpected stop order: got %v want %v", runner.signals, wantSignals)
+	if !reflect.DeepEqual(runner.signalNames(), wantSignals) {
+		t.Fatalf("unexpected stop order: got %v want %v", runner.signalNames(), wantSignals)
 	}
 	if qmpClient.quitCalls != 1 {
 		t.Fatalf("expected qmp quit to be used for qemu shutdown, got %d calls", qmpClient.quitCalls)
@@ -458,7 +458,7 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 		events = append(events, event)
 	}
 
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		finishInteractiveSSH: true,
 		onStart: func(name string, cmd *exec.Cmd) {
 			recordEvent("start:" + name)
@@ -497,29 +497,29 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 	}
 
 	runName := "proxy"
-	if !containsString(runner.starts, runName) {
-		t.Fatalf("expected run process start in %v", runner.starts)
+	if !containsString(runner.startedNames(), runName) {
+		t.Fatalf("expected run process start in %v", runner.startedNames())
 	}
-	if got, want := runner.starts, []string{"virtiofsd-workspace", runName, "qemu-system-x86_64", "ssh"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.startedNames(), []string{"virtiofsd-workspace", runName, "qemu-system-x86_64", "ssh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
-	if got, want := runner.processDirs[runName], tmpDir; got != want {
+	if got, want := runner.processDirs()[runName], tmpDir; got != want {
 		t.Fatalf("unexpected run working directory: got %q want %q", got, want)
 	}
-	if got, want := runner.runArgs[runName], []string{"--workspace=/home/agent/workspace", "--cid=3", "--name=notifications"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.runArgs()[runName], []string{"--workspace=/home/agent/workspace", "--cid=3", "--name=notifications"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected run args: got %#v want %#v", got, want)
 	}
 	for _, want := range []string{
 		"CID=3",
 		"NAME=notifications",
 	} {
-		if !containsString(runner.runEnv[runName], want) {
-			t.Fatalf("expected run env %q in %#v", want, runner.runEnv[runName])
+		if !containsString(runner.runEnv()[runName], want) {
+			t.Fatalf("expected run env %q in %#v", want, runner.runEnv()[runName])
 		}
 	}
-	for _, entry := range runner.runEnv[runName] {
+	for _, entry := range runner.runEnv()[runName] {
 		if strings.HasPrefix(entry, "WORKSPACE=") {
-			t.Fatalf("structured workspace should not produce scalar env in %#v", runner.runEnv[runName])
+			t.Fatalf("structured workspace should not produce scalar env in %#v", runner.runEnv()[runName])
 		}
 	}
 	wantSocketWaits := [][]string{
@@ -570,7 +570,7 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 		t.Fatalf("write cleanup file: %v", err)
 	}
 
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		startErrors: map[string]error{
 			"proxy": errors.New("proxy start failed"),
 		},
@@ -592,8 +592,8 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "proxy start failed") {
 		t.Fatalf("expected run process error, got %v", err)
 	}
-	if containsString(runner.starts, "qemu-system-x86_64") {
-		t.Fatalf("expected qemu not to start, got starts %v", runner.starts)
+	if containsString(runner.startedNames(), "qemu-system-x86_64") {
+		t.Fatalf("expected qemu not to start, got starts %v", runner.startedNames())
 	}
 	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
 		t.Fatalf("expected cleanup file to be removed before startup failure, stat err: %v", err)
@@ -621,7 +621,7 @@ func TestManagerLaunchStopsStartedRunsWhenLaterRunFails(t *testing.T) {
 
 	firstName := "proxy-one"
 	secondName := "proxy-two"
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		startErrors: map[string]error{
 			secondName: errors.New("start second run failed"),
 		},
@@ -641,20 +641,20 @@ func TestManagerLaunchStopsStartedRunsWhenLaterRunFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "run startup") || !strings.Contains(err.Error(), "start second run failed") {
 		t.Fatalf("expected second run startup error, got %v", err)
 	}
-	if got, want := runner.starts, []string{firstName, secondName}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.startedNames(), []string{firstName, secondName}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
-	if got, want := runner.signals, []string{firstName}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.signalNames(), []string{firstName}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected cleanup signals: got %v want %v", got, want)
 	}
 	if waiter.calls != 0 {
 		t.Fatalf("expected socket wait to be skipped after startup failure, got %d calls", waiter.calls)
 	}
-	if containsString(runner.starts, "qemu-system-x86_64") {
-		t.Fatalf("expected qemu not to start, got starts %v", runner.starts)
+	if containsString(runner.startedNames(), "qemu-system-x86_64") {
+		t.Fatalf("expected qemu not to start, got starts %v", runner.startedNames())
 	}
-	if containsString(runner.starts, "virtiofsd-workspace") {
-		t.Fatalf("expected virtiofsd not to start after tunnel failure, got starts %v", runner.starts)
+	if containsString(runner.startedNames(), "virtiofsd-workspace") {
+		t.Fatalf("expected virtiofsd not to start after tunnel failure, got starts %v", runner.startedNames())
 	}
 }
 
@@ -677,7 +677,7 @@ func TestManagerLaunchRemovesCleanupPathAfterQMPStartupFailure(t *testing.T) {
 			return errors.New("qmp did not start")
 		},
 	}
-	runner := &fakeRunner{}
+	runner := &launchRunner{}
 	var logOutput bytes.Buffer
 	manager := &manager{
 		locker:            &fileLocker{},
@@ -695,10 +695,10 @@ func TestManagerLaunchRemovesCleanupPathAfterQMPStartupFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "qmp did not start") {
 		t.Fatalf("expected qmp startup error, got %v", err)
 	}
-	if got, want := runner.starts, []string{"virtiofsd-workspace", "qemu-system-x86_64"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.startedNames(), []string{"virtiofsd-workspace", "qemu-system-x86_64"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
-	if got, want := runner.signals, []string{"qemu-system-x86_64", "virtiofsd-workspace"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.signalNames(), []string{"qemu-system-x86_64", "virtiofsd-workspace"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected cleanup signals: got %v want %v", got, want)
 	}
 	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
@@ -815,7 +815,7 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	cfg.QEMU.QMP.SocketPath = "qmp.sock"
 	cfg.Volumes[0].AutoCreate = false
 
-	runner := &fakeRunner{}
+	runner := &launchRunner{}
 	qmpClient := &fakeQMPClient{}
 	var logOutput bytes.Buffer
 	manager := &manager{
@@ -845,10 +845,10 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	<-exitReadyQEMU
 
 	wantStarts := []string{"virtiofsd-workspace", "qemu-system-x86_64"}
-	if !reflect.DeepEqual(runner.starts, wantStarts) {
-		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
+	if !reflect.DeepEqual(runner.startedNames(), wantStarts) {
+		t.Fatalf("unexpected start order: got %v want %v", runner.startedNames(), wantStarts)
 	}
-	if got := len(runner.sshArgs); got != 0 {
+	if got := len(runner.sshArgs()); got != 0 {
 		t.Fatalf("expected no ssh starts, got %d", got)
 	}
 	if strings.Contains(logOutput.String(), "msg=\"ssh command\"") {
@@ -882,7 +882,7 @@ func TestManagerLaunchWithSSHAndEmptyExecSkipsAutoconnect(t *testing.T) {
 	cfg.Volumes[0].AutoCreate = false
 	cfg.SSH.Argv = nil
 
-	runner := &fakeRunner{}
+	runner := &launchRunner{}
 	qmpClient := &fakeQMPClient{}
 	var logOutput bytes.Buffer
 	manager := &manager{
@@ -910,10 +910,10 @@ func TestManagerLaunchWithSSHAndEmptyExecSkipsAutoconnect(t *testing.T) {
 	}
 	<-exitReadyQEMU
 
-	if got, want := runner.starts, []string{"virtiofsd-workspace", "qemu-system-x86_64"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.startedNames(), []string{"virtiofsd-workspace", "qemu-system-x86_64"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
-	if got := len(runner.sshArgs); got != 0 {
+	if got := len(runner.sshArgs()); got != 0 {
 		t.Fatalf("expected no ssh starts, got %d", got)
 	}
 	if strings.Contains(logOutput.String(), "connect with:") {
@@ -930,7 +930,7 @@ func TestManagerLaunchRejectsRemoteCommandWithoutSSHExec(t *testing.T) {
 	cfg.Volumes[0].AutoCreate = false
 	cfg.SSH.Argv = nil
 
-	runner := &fakeRunner{}
+	runner := &launchRunner{}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -954,10 +954,10 @@ func TestManagerLaunchRejectsRemoteCommandWithoutSSHExec(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "remote command arguments require manifest.ssh.exec") {
 		t.Fatalf("expected missing ssh argv error, got %v", err)
 	}
-	if len(runner.starts) != 0 {
-		t.Fatalf("expected failure before starting processes, got starts %v", runner.starts)
+	if len(runner.startedNames()) != 0 {
+		t.Fatalf("expected failure before starting processes, got starts %v", runner.startedNames())
 	}
-	if got := len(runner.sshArgs); got != 0 {
+	if got := len(runner.sshArgs()); got != 0 {
 		t.Fatalf("expected no ssh starts, got %d", got)
 	}
 }
@@ -969,7 +969,7 @@ func TestManagerLaunchStartsSSHOnceAfterReadiness(t *testing.T) {
 	cfg.QEMU.QMP.SocketPath = "qmp.sock"
 	cfg.Volumes[0].AutoCreate = false
 
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		finishInteractiveSSH:      true,
 		finishInteractiveSSHDelay: 2 * defaultSocketPollInterval,
 	}
@@ -999,10 +999,10 @@ func TestManagerLaunchStartsSSHOnceAfterReadiness(t *testing.T) {
 	if err := manager.launchWithOptions(ctx, cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true}); err != nil {
 		t.Fatalf("launch with ssh: %v", err)
 	}
-	if got, want := len(runner.sshArgs), 1; got != want {
+	if got, want := len(runner.sshArgs()), 1; got != want {
 		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
 	}
-	for i, args := range runner.sshArgs {
+	for i, args := range runner.sshArgs() {
 		if containsString(args, "true") {
 			t.Fatalf("autoconnect retry %d unexpectedly used readiness probe: %v", i, args)
 		}
@@ -1026,7 +1026,7 @@ func TestManagerLaunchWarnsAfterFiveSSHRetryFailures(t *testing.T) {
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Volumes[0].AutoCreate = false
 
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		transientSSHFailures: 5,
 		finishInteractiveSSH: true,
 	}
@@ -1054,7 +1054,7 @@ func TestManagerLaunchWarnsAfterFiveSSHRetryFailures(t *testing.T) {
 	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: true}); err != nil {
 		t.Fatalf("launch with ssh retries: %v", err)
 	}
-	if got, want := len(runner.sshArgs), 6; got != want {
+	if got, want := len(runner.sshArgs()), 6; got != want {
 		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
 	}
 	logs := logOutput.String()
@@ -1163,7 +1163,7 @@ func TestManagerLaunchPrintsGuestInfoOnSIGUSR1(t *testing.T) {
 
 	signalCh := make(chan os.Signal, 8)
 	var logOutput bytes.Buffer
-	runner := &fakeRunner{}
+	runner := &launchRunner{}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -1231,7 +1231,7 @@ func TestManagerLaunchLogsGuestInfoFailureOnSIGUSR1(t *testing.T) {
 
 	signalCh := make(chan os.Signal, 8)
 	var logOutput bytes.Buffer
-	runner := &fakeRunner{}
+	runner := &launchRunner{}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -1337,7 +1337,7 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 		events = append(events, event)
 	}
 
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		finishInteractiveSSH: true,
 		onStart: func(name string, cmd *exec.Cmd) {
 			record("start:" + name)
@@ -1527,7 +1527,7 @@ func TestManagerLaunchWritesBackGuestFilesOnShutdown(t *testing.T) {
 		"/var/lib/virtie/host": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: hostPath}, Overwrite: overwrite, FollowLinks: true, WriteBack: writeBack},
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -1712,7 +1712,7 @@ func TestManagerLaunchAutoprovisionsSSHKeyAfterAuthFailure(t *testing.T) {
 	cfg.Volumes[0].AutoCreate = false
 	cfg.SSH.Autoprovision = true
 
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		authSSHFailures:           1,
 		finishInteractiveSSH:      true,
 		finishInteractiveSSHDelay: 2 * defaultSocketPollInterval,
@@ -1742,14 +1742,14 @@ func TestManagerLaunchAutoprovisionsSSHKeyAfterAuthFailure(t *testing.T) {
 	}
 
 	identityFile := filepath.Join(cfg.ResolvedPersistenceStateDir(), "id_ed25519")
-	if got, want := len(runner.sshArgs), 2; got != want {
+	if got, want := len(runner.sshArgs()), 2; got != want {
 		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
 	}
-	if containsString(runner.sshArgs[0], identityFile) {
-		t.Fatalf("first ssh attempt unexpectedly used autoprovisioned identity: %v", runner.sshArgs[0])
+	if containsString(runner.sshArgs()[0], identityFile) {
+		t.Fatalf("first ssh attempt unexpectedly used autoprovisioned identity: %v", runner.sshArgs()[0])
 	}
-	if !containsString(runner.sshArgs[1], identityFile) || !containsString(runner.sshArgs[1], "IdentitiesOnly=yes") {
-		t.Fatalf("second ssh attempt did not use autoprovisioned identity: %v", runner.sshArgs[1])
+	if !containsString(runner.sshArgs()[1], identityFile) || !containsString(runner.sshArgs()[1], "IdentitiesOnly=yes") {
+		t.Fatalf("second ssh attempt did not use autoprovisioned identity: %v", runner.sshArgs()[1])
 	}
 	if info, err := os.Stat(identityFile); err != nil {
 		t.Fatalf("stat autoprovisioned identity: %v", err)
@@ -1772,7 +1772,7 @@ func TestManagerLaunchDoesNotAutoprovisionWhenDisabled(t *testing.T) {
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.Volumes[0].AutoCreate = false
 
-	runner := &fakeRunner{authSSHFailures: 1}
+	runner := &launchRunner{authSSHFailures: 1}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -1797,7 +1797,7 @@ func TestManagerLaunchDoesNotAutoprovisionWhenDisabled(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "active session") {
 		t.Fatalf("expected active session auth failure, got %v", err)
 	}
-	if got, want := len(runner.sshArgs), 1; got != want {
+	if got, want := len(runner.sshArgs()), 1; got != want {
 		t.Fatalf("unexpected ssh starts: got %d want %d", got, want)
 	}
 	if guestDialer.attempts != 0 {
@@ -1820,7 +1820,7 @@ func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.
 		"/etc/virtie/inline": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: inlineText}, Chown: inlineChown, Overwrite: overwrite, FollowLinks: true},
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -1883,7 +1883,7 @@ func TestManagerLaunchSkipsGuestFileWhenOverwriteFalseAndPathExists(t *testing.T
 		"/etc/virtie/existing": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: hostPath}, Overwrite: overwrite, FollowLinks: true},
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -1946,7 +1946,7 @@ func TestManagerLaunchCreatesAllMissingGuestParentDirectoriesWithOwnerAndMode(t 
 		"/etc/virtie/nested/new": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: text}, Chown: chown, Mode: mode, Overwrite: overwrite, FollowLinks: true},
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -2039,7 +2039,7 @@ func TestManagerLaunchWritesGuestFileWhenOverwriteFalseAndPathMissing(t *testing
 		"/etc/virtie/new": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: text}, Overwrite: overwrite, FollowLinks: true},
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -2105,7 +2105,7 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 		"/etc/inline": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: inlineText}, Chown: inlineChown, Mode: inlineMode, Overwrite: overwrite, FollowLinks: true},
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -2154,8 +2154,8 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected guest execs after chown failure: got %#v want %#v", got, want)
 	}
-	if len(runner.sshArgs) != 0 {
-		t.Fatalf("expected chown failure before ssh starts, got ssh starts %v", runner.sshArgs)
+	if len(runner.sshArgs()) != 0 {
+		t.Fatalf("expected chown failure before ssh starts, got ssh starts %v", runner.sshArgs())
 	}
 }
 
@@ -2174,7 +2174,7 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 		"/etc/virtie/inline": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: inlineText}, Chown: inlineChown, Overwrite: overwrite, FollowLinks: true},
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -2232,8 +2232,8 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 	if len(guestAgent.writes) != 0 {
 		t.Fatalf("expected no guest writes after install failure, got %#v", guestAgent.writes)
 	}
-	if len(runner.sshArgs) != 0 {
-		t.Fatalf("expected install failure before ssh starts, got ssh starts %v", runner.sshArgs)
+	if len(runner.sshArgs()) != 0 {
+		t.Fatalf("expected install failure before ssh starts, got ssh starts %v", runner.sshArgs())
 	}
 }
 
@@ -2252,7 +2252,7 @@ func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
 		"/etc/inline": {Content: manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: inlineText}, Mode: inlineMode, Overwrite: overwrite, FollowLinks: true},
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -2293,8 +2293,8 @@ func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
 			t.Fatalf("expected error containing %q, got %v", want, err)
 		}
 	}
-	if len(runner.sshArgs) != 0 {
-		t.Fatalf("expected chmod failure before ssh starts, got ssh starts %v", runner.sshArgs)
+	if len(runner.sshArgs()) != 0 {
+		t.Fatalf("expected chmod failure before ssh starts, got ssh starts %v", runner.sshArgs())
 	}
 }
 
@@ -2327,7 +2327,7 @@ func TestManagerLaunchSkipsGuestFilesOnResume(t *testing.T) {
 		t.Fatalf("write suspend state: %v", err)
 	}
 
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		finishInteractiveSSH: true,
 	}
 	qmpClient := &fakeQMPClient{
@@ -2383,7 +2383,7 @@ func TestManagerLaunchWithoutSSHSavesQueuedSuspend(t *testing.T) {
 	cfg.Volumes[0].AutoCreate = false
 
 	signalCh := make(chan os.Signal, 8)
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		onStart: func(name string, cmd *exec.Cmd) {
 			if strings.HasPrefix(name, "qemu-system") {
 				signalCh <- syscall.SIGTSTP
@@ -2425,10 +2425,10 @@ func TestManagerLaunchWithoutSSHSavesQueuedSuspend(t *testing.T) {
 	if qmpClient.migrateCalls != 1 {
 		t.Fatalf("expected one migration over launch-owned qmp, got %d", qmpClient.migrateCalls)
 	}
-	if len(runner.sshArgs) != 0 {
-		t.Fatalf("expected no ssh starts, got %d", len(runner.sshArgs))
+	if len(runner.sshArgs()) != 0 {
+		t.Fatalf("expected no ssh starts, got %d", len(runner.sshArgs()))
 	}
-	for _, signal := range runner.processSignals {
+	for _, signal := range runner.processSignals() {
 		if signal.sig == syscall.SIGTSTP || signal.sig == syscall.SIGSTOP || signal.sig == syscall.SIGCONT {
 			t.Fatalf("unexpected job-control signal forwarded to %s: %v", signal.name, signal.sig)
 		}
@@ -2443,7 +2443,7 @@ func TestManagerLaunchHandlesDuplicateSuspendDuringActiveSessionWithoutForwardin
 	cfg.Volumes[0].AutoCreate = false
 
 	signalCh := make(chan os.Signal, 8)
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		onStart: func(name string, cmd *exec.Cmd) {
 			if name == "ssh" && !containsString(cmd.Args, "true") {
 				signalCh <- syscall.SIGTSTP
@@ -2486,10 +2486,10 @@ func TestManagerLaunchHandlesDuplicateSuspendDuringActiveSessionWithoutForwardin
 	if qmpClient.migrateCalls != 1 {
 		t.Fatalf("expected one migration over launch-owned qmp, got %d", qmpClient.migrateCalls)
 	}
-	if len(runner.sshArgs) != 1 {
-		t.Fatalf("expected one active ssh session, got %d ssh starts", len(runner.sshArgs))
+	if len(runner.sshArgs()) != 1 {
+		t.Fatalf("expected one active ssh session, got %d ssh starts", len(runner.sshArgs()))
 	}
-	for _, signal := range runner.processSignals {
+	for _, signal := range runner.processSignals() {
 		if signal.sig == syscall.SIGTSTP || signal.sig == syscall.SIGSTOP || signal.sig == syscall.SIGCONT {
 			t.Fatalf("unexpected job-control signal forwarded to %s: %v", signal.name, signal.sig)
 		}
@@ -2515,7 +2515,7 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	runner := &fakeRunner{cancel: cancel}
+	runner := &launchRunner{cancel: cancel}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -2543,8 +2543,8 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	if containsString(runner.starts, "virtiofsd-workspace") {
-		t.Fatalf("unexpected managed virtiofsd start for external socket: %v", runner.starts)
+	if containsString(runner.startedNames(), "virtiofsd-workspace") {
+		t.Fatalf("unexpected managed virtiofsd start for external socket: %v", runner.startedNames())
 	}
 	if _, err := os.Stat(externalSocket); err != nil {
 		t.Fatalf("expected external socket path to be left alone: %v", err)
@@ -2565,7 +2565,7 @@ func TestManagerLaunchRejectsMissingExternalVirtioFSSocket(t *testing.T) {
 	cfg.Run = nil
 	cfg.CleanupFiles = nil
 
-	runner := &fakeRunner{}
+	runner := &launchRunner{}
 	manager := &manager{
 		logger: slog.New(slog.DiscardHandler),
 		locker: &fileLocker{},
@@ -2576,8 +2576,8 @@ func TestManagerLaunchRejectsMissingExternalVirtioFSSocket(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "external virtiofs socket") || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("expected missing external socket error, got %v", err)
 	}
-	if len(runner.starts) != 0 {
-		t.Fatalf("expected launch to fail before starting processes, got starts %v", runner.starts)
+	if len(runner.startedNames()) != 0 {
+		t.Fatalf("expected launch to fail before starting processes, got starts %v", runner.startedNames())
 	}
 }
 
@@ -2593,7 +2593,7 @@ func TestManagerLaunchSkipsVirtioFSReadinessWhenNoVirtioFSDevices(t *testing.T) 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	runner := &fakeRunner{cancel: cancel}
+	runner := &launchRunner{cancel: cancel}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -2621,7 +2621,7 @@ func TestManagerLaunchSkipsVirtioFSReadinessWhenNoVirtioFSDevices(t *testing.T) 
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	if got, want := runner.starts, []string{"qemu-system-x86_64", "ssh"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.startedNames(), []string{"qemu-system-x86_64", "ssh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
 	if got, want := waiter.calls, 2; got != want {
@@ -2632,11 +2632,11 @@ func TestManagerLaunchSkipsVirtioFSReadinessWhenNoVirtioFSDevices(t *testing.T) 
 	if got, want := waiter.paths, [][]string{{qmpSocket}, {sshReadySocket}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected socket waits: got %v want %v", got, want)
 	}
-	if containsString(runner.qemuArgs, "vhost-user-fs") {
-		t.Fatalf("expected qemu args to omit virtiofs devices: %v", runner.qemuArgs)
+	if containsString(runner.qemuArgs(), "vhost-user-fs") {
+		t.Fatalf("expected qemu args to omit virtiofs devices: %v", runner.qemuArgs())
 	}
-	if containsString(runner.qemuArgs, "virtio-blk") {
-		t.Fatalf("expected qemu args to omit block devices: %v", runner.qemuArgs)
+	if containsString(runner.qemuArgs(), "virtio-blk") {
+		t.Fatalf("expected qemu args to omit block devices: %v", runner.qemuArgs())
 	}
 }
 
@@ -2661,7 +2661,7 @@ func TestManagerLaunchWithOnlyNinePShareDoesNotWaitForVirtioFS(t *testing.T) {
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	runner := &fakeRunner{cancel: cancel}
+	runner := &launchRunner{cancel: cancel}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -2689,7 +2689,7 @@ func TestManagerLaunchWithOnlyNinePShareDoesNotWaitForVirtioFS(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	if got, want := runner.starts, []string{"qemu-system-x86_64", "ssh"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.startedNames(), []string{"qemu-system-x86_64", "ssh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
 	qmpSocket := filepath.Join(tmpDir, "qmp.sock")
@@ -2697,11 +2697,11 @@ func TestManagerLaunchWithOnlyNinePShareDoesNotWaitForVirtioFS(t *testing.T) {
 	if got, want := waiter.paths, [][]string{{qmpSocket}, {sshReadySocket}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected socket waits: got %v want %v", got, want)
 	}
-	if containsString(runner.qemuArgs, "vhost-user-fs") {
-		t.Fatalf("expected qemu args to omit virtiofs devices: %v", runner.qemuArgs)
+	if containsString(runner.qemuArgs(), "vhost-user-fs") {
+		t.Fatalf("expected qemu args to omit virtiofs devices: %v", runner.qemuArgs())
 	}
-	if !containsString(runner.qemuArgs, "virtio-9p-pci,fsdev=fs9p0,mount_tag=shared") {
-		t.Fatalf("expected qemu args to include 9p device: %v", runner.qemuArgs)
+	if !containsString(runner.qemuArgs(), "virtio-9p-pci,fsdev=fs9p0,mount_tag=shared") {
+		t.Fatalf("expected qemu args to include 9p device: %v", runner.qemuArgs())
 	}
 }
 
@@ -3008,7 +3008,7 @@ func TestManagerLaunchResumeAutoFreshLaunchesWithoutSavedState(t *testing.T) {
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Volumes[0].AutoCreate = false
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		onQuit: func() {
 			runner.exitQEMU(nil)
@@ -3029,8 +3029,8 @@ func TestManagerLaunchResumeAutoFreshLaunchesWithoutSavedState(t *testing.T) {
 	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeAuto, SSH: true}); err != nil {
 		t.Fatalf("launch: %v", err)
 	}
-	if containsString(runner.qemuArgs, "-incoming") {
-		t.Fatalf("expected fresh qemu launch without incoming migration: %v", runner.qemuArgs)
+	if containsString(runner.qemuArgs(), "-incoming") {
+		t.Fatalf("expected fresh qemu launch without incoming migration: %v", runner.qemuArgs())
 	}
 	if qmpClient.migrateIncomingCalls != 0 || qmpClient.contCalls != 0 {
 		t.Fatalf("unexpected restore qmp calls: migrate-incoming=%d cont=%d", qmpClient.migrateIncomingCalls, qmpClient.contCalls)
@@ -3058,7 +3058,7 @@ func TestManagerLaunchResumeForceRestoresAndRemovesSavedState(t *testing.T) {
 		t.Fatalf("write suspend state: %v", err)
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		status: "paused",
 		onQuit: func() {
@@ -3081,8 +3081,8 @@ func TestManagerLaunchResumeForceRestoresAndRemovesSavedState(t *testing.T) {
 	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeForce, SSH: true}); err != nil {
 		t.Fatalf("launch resume: %v", err)
 	}
-	if !containsString(runner.qemuArgs, "-incoming") || !containsString(runner.qemuArgs, "defer") {
-		t.Fatalf("expected incoming qemu launch: %v", runner.qemuArgs)
+	if !containsString(runner.qemuArgs(), "-incoming") || !containsString(runner.qemuArgs(), "defer") {
+		t.Fatalf("expected incoming qemu launch: %v", runner.qemuArgs())
 	}
 	if qmpClient.migrateIncomingCalls != 1 || qmpClient.contCalls != 1 {
 		t.Fatalf("unexpected restore qmp calls: migrate-incoming=%d cont=%d", qmpClient.migrateIncomingCalls, qmpClient.contCalls)
@@ -3120,7 +3120,7 @@ func TestManagerLaunchResumeForceSavesSuspendDuringRestoredSession(t *testing.T)
 	}
 
 	signalCh := make(chan os.Signal, 8)
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		onStart: func(name string, cmd *exec.Cmd) {
 			if name == "ssh" && !containsString(cmd.Args, "true") {
 				signalCh <- syscall.SIGTSTP
@@ -3184,7 +3184,7 @@ func TestManagerLaunchResumeCancellationDuringActiveSessionIsNotSuspend(t *testi
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		onStart: func(name string, cmd *exec.Cmd) {
 			if name == "ssh" && !containsString(cmd.Args, "true") {
 				cancel()
@@ -3243,7 +3243,7 @@ func TestManagerLaunchResumeForcePreservesStateWhenSessionStartFails(t *testing.
 		t.Fatalf("write suspend state: %v", err)
 	}
 
-	runner := &fakeRunner{failInteractiveSSH: true}
+	runner := &launchRunner{failInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		status: "paused",
 		onQuit: func() {
@@ -3451,7 +3451,7 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 
 	qmpClient := &fakeQMPClient{}
 	guestClient := &fakeGuestAgentClient{}
-	runner := &fakeRunner{}
+	runner := &launchRunner{}
 	manager := &manager{
 		runner:            runner,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
@@ -3465,13 +3465,13 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 		t.Fatalf("attach hotplug: %v", err)
 	}
 
-	if got, want := runner.starts, []string{"virtiofsd"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.startedNames(), []string{"virtiofsd"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected starts: got %#v want %#v", got, want)
 	}
-	if !runner.processGroups["virtiofsd"] {
+	if !runner.processGroups()["virtiofsd"] {
 		t.Fatal("expected hotplug host process to run in its own process group")
 	}
-	if got := runner.virtiofsEnv["virtiofsd"]; !containsString(got, "VIRTIOFSD_SOCKET="+filepath.Join(tmpDir, ".virtie", "cache.sock")) {
+	if got := runner.virtiofsEnv()["virtiofsd"]; !containsString(got, "VIRTIOFSD_SOCKET="+filepath.Join(tmpDir, ".virtie", "cache.sock")) {
 		t.Fatalf("expected rendered hotplug env, got %#v", got)
 	}
 	if got := strings.Join(qmpClient.rawCommands, "\n"); !strings.Contains(got, `"execute":"chardev-add"`) || !strings.Contains(got, `"execute":"device_add"`) {
@@ -3516,7 +3516,7 @@ func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
 	qmpClient := &fakeQMPClient{}
 	guestClient := &fakeGuestAgentClient{}
 	manager := &manager{
-		runner:            &fakeRunner{},
+		runner:            &launchRunner{},
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
 		socketWaiter:      &fakeSocketWaiter{},
@@ -3852,7 +3852,7 @@ func TestStartRunsUsesNamedVirtioFSRunEnv(t *testing.T) {
 	wantSocket := filepath.Join(runtimeDir, "agentspace", cfg.Identity.HostName, "fs.sock")
 	cfg.Run[0].Vars["Socket"] = wantSocket
 
-	runner := &fakeRunner{}
+	runner := &launchRunner{}
 	manager := &manager{
 		logger: slog.New(slog.DiscardHandler),
 		runner: runner,
@@ -3862,10 +3862,10 @@ func TestStartRunsUsesNamedVirtioFSRunEnv(t *testing.T) {
 		t.Fatalf("start runs: %v", err)
 	}
 
-	if got := runner.virtiofsEnv["virtiofsd-workspace"]; !containsString(got, "VIRTIOFSD_SOCKET="+wantSocket) {
+	if got := runner.virtiofsEnv()["virtiofsd-workspace"]; !containsString(got, "VIRTIOFSD_SOCKET="+wantSocket) {
 		t.Fatalf("expected virtiofs run env to contain resolved socket path %q: %v", wantSocket, got)
 	}
-	if !runner.processGroups["virtiofsd-workspace"] {
+	if !runner.processGroups()["virtiofsd-workspace"] {
 		t.Fatal("expected virtiofs run to run in its own process group")
 	}
 }
@@ -4005,19 +4005,9 @@ func validManifestWithBalloon(workingDir string) *manifest.Manifest {
 	return manifest
 }
 
-type fakeRunner struct {
+type launchRunner struct {
+	base                      *executor.FakeRunner
 	mu                        sync.Mutex
-	starts                    []string
-	signals                   []string
-	processSignals            []processSignal
-	sshArgs                   [][]string
-	qemuArgs                  []string
-	qemuEnv                   []string
-	runArgs                   map[string][]string
-	runEnv                    map[string][]string
-	virtiofsEnv               map[string][]string
-	processGroups             map[string]bool
-	processDirs               map[string]string
 	interactiveStarts         int
 	cancel                    context.CancelFunc
 	cancelDelay               time.Duration
@@ -4032,70 +4022,68 @@ type fakeRunner struct {
 	onStart                   func(name string, cmd *exec.Cmd)
 }
 
-func (r *fakeRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (r *launchRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
+	r.ensureBase()
+	r.base.StartErrors = r.startErrors
+	r.base.OnStart = r.startProcess
 
-	args := commandArgs(cmd)
-	env := commandEnvAdditions(cmd.Env)
-	name := r.processName(cmd, env)
-	r.starts = append(r.starts, name)
+	return r.base.Start(cmd)
+}
+
+func (r *launchRunner) ensureBase() {
+	if r.base == nil {
+		r.base = &executor.FakeRunner{}
+	}
+}
+
+func (r *launchRunner) startProcess(start executor.FakeStart) (*executor.FakeProcess, error) {
+	name := start.Name
 	if r.onStart != nil {
-		r.onStart(name, cmd)
+		r.onStart(name, start.Cmd)
 	}
-	if r.processGroups == nil {
-		r.processGroups = make(map[string]bool)
-	}
-	r.processGroups[name] = commandProcessGroup(cmd)
-	if r.processDirs == nil {
-		r.processDirs = make(map[string]string)
-	}
-	r.processDirs[name] = cmd.Dir
-	if err := r.startErrors[name]; err != nil {
-		return nil, err
-	}
-
 	switch {
 	case strings.HasPrefix(name, "qemu-system"):
-		r.qemuArgs = append([]string(nil), args...)
-		r.qemuEnv = append([]string(nil), env...)
-		process := r.fakeProcess(name)
+		process := &executor.FakeProcess{FakeName: name}
+		r.mu.Lock()
 		r.qemu = process
-		return process.Process(), nil
+		r.mu.Unlock()
+		return process, nil
 	case name == "ssh":
-		r.sshArgs = append(r.sshArgs, append([]string(nil), args...))
+		r.mu.Lock()
 		r.interactiveStarts++
-		if r.interactiveStarts <= r.authSSHFailures {
-			if cmd.Stderr != nil {
-				_, _ = io.WriteString(cmd.Stderr, "agent@vsock/3: Permission denied (publickey).\n")
+		interactiveStarts := r.interactiveStarts
+		r.mu.Unlock()
+		if interactiveStarts <= r.authSSHFailures {
+			if start.Cmd.Stderr != nil {
+				_, _ = io.WriteString(start.Cmd.Stderr, "agent@vsock/3: Permission denied (publickey).\n")
 			}
-			return r.exitedFakeProcess(name, errors.New("exit status 255")).Process(), nil
+			return &executor.FakeProcess{FakeName: name, Exited: true, WaitErr: errors.New("exit status 255")}, nil
 		}
-		if r.interactiveStarts <= r.transientSSHFailures {
-			if cmd.Stderr != nil {
+		if interactiveStarts <= r.transientSSHFailures {
+			if start.Cmd.Stderr != nil {
 				output := "ssh: connect to host vsock/3 port 22: Connection refused\n"
-				if index := r.interactiveStarts - 1; index < len(r.transientSSHOutputs) {
+				if index := interactiveStarts - 1; index < len(r.transientSSHOutputs) {
 					output = r.transientSSHOutputs[index]
 				}
-				_, _ = io.WriteString(cmd.Stderr, output)
+				_, _ = io.WriteString(start.Cmd.Stderr, output)
 			}
-			return r.exitedFakeProcess(name, errors.New("exit status 255")).Process(), nil
+			return &executor.FakeProcess{FakeName: name, Exited: true, WaitErr: errors.New("exit status 255")}, nil
 		}
 		if r.failInteractiveSSH {
 			return nil, errors.New("session start failed")
 		}
 		if r.finishInteractiveSSH {
-			process := r.fakeProcess(name)
+			process := &executor.FakeProcess{FakeName: name}
 			go func() {
 				if r.finishInteractiveSSHDelay > 0 {
 					time.Sleep(r.finishInteractiveSSHDelay)
 				}
 				process.Complete(nil)
 			}()
-			return process.Process(), nil
+			return process, nil
 		}
 
-		process := r.fakeProcess(name)
+		process := &executor.FakeProcess{FakeName: name}
 		go func() {
 			if r.cancelDelay > 0 {
 				time.Sleep(r.cancelDelay)
@@ -4104,64 +4092,121 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 				r.cancel()
 			}
 		}()
-		return process.Process(), nil
+		return process, nil
 	default:
-		if strings.HasPrefix(name, "virtiofsd") {
-			if r.virtiofsEnv == nil {
-				r.virtiofsEnv = make(map[string][]string)
-			}
-			r.virtiofsEnv[name] = append([]string(nil), env...)
-			return r.fakeProcess(name).Process(), nil
+		return nil, nil
+	}
+}
+
+func (r *launchRunner) starts() []executor.FakeStart {
+	r.ensureBase()
+	return r.base.Starts()
+}
+
+func (r *launchRunner) startedNames() []string {
+	r.ensureBase()
+	return r.base.StartedNames()
+}
+
+func (r *launchRunner) signalNames() []string {
+	r.ensureBase()
+	return r.base.SignalNames()
+}
+
+func (r *launchRunner) processSignals() []processSignal {
+	r.ensureBase()
+	signals := r.base.ProcessSignals()
+	processSignals := make([]processSignal, 0, len(signals))
+	for _, signal := range signals {
+		processSignals = append(processSignals, processSignal{name: signal.Name, sig: signal.Signal})
+	}
+	return processSignals
+}
+
+func (r *launchRunner) qemuArgs() []string {
+	return r.firstArgs(func(start executor.FakeStart) bool {
+		return strings.HasPrefix(start.Name, "qemu-system")
+	})
+}
+
+func (r *launchRunner) qemuEnv() []string {
+	return r.firstEnv(func(start executor.FakeStart) bool {
+		return strings.HasPrefix(start.Name, "qemu-system")
+	})
+}
+
+func (r *launchRunner) sshArgs() [][]string {
+	var args [][]string
+	for _, start := range r.starts() {
+		if start.Name == "ssh" {
+			args = append(args, append([]string(nil), start.Args...))
 		}
-		if r.runArgs == nil {
-			r.runArgs = make(map[string][]string)
+	}
+	return args
+}
+
+func (r *launchRunner) runArgs() map[string][]string {
+	values := make(map[string][]string)
+	for _, start := range r.starts() {
+		if start.Name != "ssh" && !strings.HasPrefix(start.Name, "qemu-system") && !strings.HasPrefix(start.Name, "virtiofsd") {
+			values[start.Name] = append([]string(nil), start.Args...)
 		}
-		if r.runEnv == nil {
-			r.runEnv = make(map[string][]string)
+	}
+	return values
+}
+
+func (r *launchRunner) runEnv() map[string][]string {
+	values := make(map[string][]string)
+	for _, start := range r.starts() {
+		if start.Name != "ssh" && !strings.HasPrefix(start.Name, "qemu-system") && !strings.HasPrefix(start.Name, "virtiofsd") {
+			values[start.Name] = append([]string(nil), start.EnvAdditions...)
 		}
-		r.runArgs[name] = append([]string(nil), args...)
-		r.runEnv[name] = append([]string(nil), env...)
-		return r.fakeProcess(name).Process(), nil
 	}
+	return values
 }
 
-func (r *fakeRunner) fakeProcess(name string) *executor.FakeProcess {
-	return &executor.FakeProcess{
-		FakeName: name,
-		OnSignal: func(sig os.Signal) {
-			r.recordProcessSignal(name, sig)
-		},
-		OnKill: func() {
-			r.recordProcessSignal(name, nil)
-		},
+func (r *launchRunner) virtiofsEnv() map[string][]string {
+	values := make(map[string][]string)
+	for _, start := range r.starts() {
+		if strings.HasPrefix(start.Name, "virtiofsd") {
+			values[start.Name] = append([]string(nil), start.EnvAdditions...)
+		}
 	}
+	return values
 }
 
-func (r *fakeRunner) exitedFakeProcess(name string, err error) *executor.FakeProcess {
-	process := r.fakeProcess(name)
-	process.Exited = true
-	process.WaitErr = err
-	return process
+func (r *launchRunner) processGroups() map[string]bool {
+	values := make(map[string]bool)
+	for _, start := range r.starts() {
+		values[start.Name] = start.ProcessGroup
+	}
+	return values
 }
 
-func (r *fakeRunner) recordProcessSignal(name string, sig os.Signal) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.signals = append(r.signals, name)
-	r.processSignals = append(r.processSignals, processSignal{name: name, sig: sig})
+func (r *launchRunner) processDirs() map[string]string {
+	values := make(map[string]string)
+	for _, start := range r.starts() {
+		values[start.Name] = start.Dir
+	}
+	return values
 }
 
-func (r *fakeRunner) processName(cmd *exec.Cmd, env []string) string {
-	if cmd == nil {
-		return "command"
+func (r *launchRunner) firstArgs(match func(executor.FakeStart) bool) []string {
+	for _, start := range r.starts() {
+		if match(start) {
+			return append([]string(nil), start.Args...)
+		}
 	}
-	if len(cmd.Args) > 0 && cmd.Args[0] != "" {
-		return filepath.Base(cmd.Args[0])
+	return nil
+}
+
+func (r *launchRunner) firstEnv(match func(executor.FakeStart) bool) []string {
+	for _, start := range r.starts() {
+		if match(start) {
+			return append([]string(nil), start.EnvAdditions...)
+		}
 	}
-	if cmd.Path != "" {
-		return filepath.Base(cmd.Path)
-	}
-	return "command"
+	return nil
 }
 
 func commandArgs(cmd *exec.Cmd) []string {
@@ -4188,7 +4233,7 @@ func commandProcessGroup(cmd *exec.Cmd) bool {
 	return cmd != nil && cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid
 }
 
-func (r *fakeRunner) exitQEMU(err error) {
+func (r *launchRunner) exitQEMU(err error) {
 	r.mu.Lock()
 	process := r.qemu
 	r.mu.Unlock()

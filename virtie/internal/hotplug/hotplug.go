@@ -412,7 +412,7 @@ func (r Runtime) terminatePID(pid int) error {
 	if r.Start != nil {
 		return r.Start.SignalPIDGroup(pid, syscall.SIGTERM)
 	}
-	return terminateProcessGroup(pid)
+	return executor.SignalProcessGroup(pid, syscall.SIGTERM)
 }
 
 func StatePath(stateDir string, id string) (string, error) {
@@ -453,19 +453,6 @@ func ReadState(path string) (State, error) {
 		return State{}, fmt.Errorf("invalid hotplug state %q", path)
 	}
 	return state, nil
-}
-
-func terminateProcessGroup(pid int) error {
-	if pid <= 0 {
-		return nil
-	}
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err == nil || errors.Is(err, syscall.ESRCH) {
-		return nil
-	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return fmt.Errorf("signal hotplug pid %d: %w", pid, err)
-	}
-	return nil
 }
 
 func attachCommands(device Device, bus string) []string {

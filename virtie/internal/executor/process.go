@@ -32,18 +32,6 @@ func Wrap(handle RunningProcess) *Process {
 	return p
 }
 
-// FirstExit returns the first process that has exited without blocking.
-func FirstExit(processes ...*Process) (*Process, error, bool) {
-	group := NewGroup(processes...)
-	return group.FirstExit()
-}
-
-// StopAll stops processes in reverse order.
-func StopAll(processes []*Process, delay time.Duration) error {
-	group := NewGroup(processes...)
-	return group.StopAll(delay)
-}
-
 func (p *Process) Wait() error {
 	if p == nil {
 		return nil
@@ -159,6 +147,20 @@ func (p *Process) KillAndWait() error {
 		return fmt.Errorf("kill %s: %w", p.Name(), err)
 	}
 	_ = p.Wait()
+	return nil
+}
+
+// SignalProcessGroup signals pid's process group, falling back to pid itself.
+func SignalProcessGroup(pid int, sig syscall.Signal) error {
+	if pid <= 0 {
+		return nil
+	}
+	if err := syscall.Kill(-pid, sig); err == nil || errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	if err := syscall.Kill(pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("signal pid %d: %w", pid, err)
+	}
 	return nil
 }
 

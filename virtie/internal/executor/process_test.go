@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -34,19 +35,6 @@ func TestProcessPollExit(t *testing.T) {
 	exited, err := process.PollExit()
 	if !exited || err == nil || err.Error() != "failed" {
 		t.Fatalf("poll after exit: exited=%v err=%v", exited, err)
-	}
-}
-
-func TestFirstExit(t *testing.T) {
-	first := Wrap(&FakeProcess{FakeName: "first"})
-	secondProcess := &FakeProcess{FakeName: "second"}
-	second := Wrap(secondProcess)
-	secondProcess.Complete(errors.New("second failed"))
-	<-second.Done()
-
-	process, err, ok := FirstExit(first, second)
-	if !ok || process != second || err == nil || err.Error() != "second failed" {
-		t.Fatalf("first exit: process=%v ok=%v err=%v", process, ok, err)
 	}
 }
 
@@ -108,19 +96,16 @@ func TestProcessKillAndWait(t *testing.T) {
 	}
 }
 
-func TestStopAllStopsInReverseOrder(t *testing.T) {
-	firstProcess := &FakeProcess{FakeName: "first"}
-	secondProcess := &FakeProcess{FakeName: "second"}
-	first := Wrap(firstProcess)
-	second := Wrap(secondProcess)
+func TestSignalProcessGroupIgnoresMissingProcess(t *testing.T) {
+	if err := SignalProcessGroup(999999, syscall.SIGTERM); err != nil {
+		t.Fatalf("signal missing process: %v", err)
+	}
+}
 
-	if err := StopAll([]*Process{first, second}, time.Second); err != nil {
-		t.Fatalf("stop all: %v", err)
-	}
-	if got, want := []FakeProcessEventKind{secondProcess.EventKinds()[0], firstProcess.EventKinds()[0]}, []FakeProcessEventKind{FakeProcessSignal, FakeProcessSignal}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("events: got %v want %v", got, want)
-	}
-	if secondProcess.Events()[0].Sequence >= firstProcess.Events()[0].Sequence {
-		t.Fatalf("expected second to stop before first: second=%d first=%d", secondProcess.Events()[0].Sequence, firstProcess.Events()[0].Sequence)
+func TestSignalProcessGroupIgnoresNonPositivePID(t *testing.T) {
+	for _, pid := range []int{0, -1} {
+		if err := SignalProcessGroup(pid, syscall.SIGTERM); err != nil {
+			t.Fatalf("signal pid %d: %v", pid, err)
+		}
 	}
 }

@@ -103,7 +103,7 @@ func (s managerHotplugStarter) Stop(process *executor.Process) error {
 }
 
 func (s managerHotplugStarter) SignalPIDGroup(pid int, signal syscall.Signal) error {
-	return terminateHotplugProcess(pid)
+	return executor.SignalProcessGroup(pid, signal)
 }
 
 type managerHotplugSocketWaiter struct {
@@ -171,17 +171,4 @@ func writeHotplugState(path string, state hotplug.State) error {
 
 func readHotplugState(path string) (hotplug.State, error) {
 	return hotplug.ReadState(path)
-}
-
-func terminateHotplugProcess(pid int) error {
-	if pid <= 0 {
-		return nil
-	}
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err == nil || err == syscall.ESRCH {
-		return nil
-	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && err != syscall.ESRCH {
-		return fmt.Errorf("signal hotplug pid %d: %w", pid, err)
-	}
-	return nil
 }

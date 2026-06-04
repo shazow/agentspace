@@ -576,12 +576,27 @@ func (m *manager) allocateCID(manifest *manifest.Manifest) (int, error) {
 }
 
 func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths []string, watchers executor.Group) error {
+	return m.waitForAsyncStage(ctx, stage, watchers, func(waitCtx context.Context) error {
+		return m.socketWaiter.Wait(waitCtx, socketPaths)
+	})
+}
+
+func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpClient, error) {
+	if err := m.waitForAsyncStage(ctx, "vm startup", watchers, func(waitCtx context.Context) error {
+		return m.socketWaiter.Wait(waitCtx, []string{socketPath})
+	}); err != nil {
+		return nil, err
+	}
+	return m.connectQMP(ctx, socketPath, watchers)
+}
+
+func (m *manager) waitForAsyncStage(ctx context.Context, stage string, watchers executor.Group, wait func(context.Context) error) error {
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- m.socketWaiter.Wait(waitCtx, socketPaths)
+		errCh <- wait(waitCtx)
 	}()
 
 	ticker := time.NewTicker(defaultSocketPollInterval)
@@ -600,35 +615,6 @@ func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths 
 			}
 		case <-ctx.Done():
 			return &stageError{Stage: stage, Err: ctx.Err()}
-		}
-	}
-}
-
-func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpClient, error) {
-	waitCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- m.socketWaiter.Wait(waitCtx, []string{socketPath})
-	}()
-
-	ticker := time.NewTicker(defaultSocketPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case err := <-errCh:
-			if err != nil {
-				return nil, &stageError{Stage: "vm startup", Err: err}
-			}
-			return m.connectQMP(ctx, socketPath, watchers)
-		case <-ticker.C:
-			if err := firstUnexpectedExit("vm startup", watchers); err != nil {
-				return nil, err
-			}
-		case <-ctx.Done():
-			return nil, &stageError{Stage: "vm startup", Err: ctx.Err()}
 		}
 	}
 }
@@ -819,26 +805,7 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 		return nil
 	}
 
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	ticker := time.NewTicker(defaultSocketPollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-timer.C:
-			return nil
-		case <-suspendRequests:
-			return suspendHandler.saveAndExit(ctx)
-		case <-infoRequests:
-			m.printGuestInfo(ctx, guestAgentSocketPath, watchers)
-		case <-ticker.C:
-			if err := firstUnexpectedExit("active session", watchers); err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			return &stageError{Stage: "active session", Err: ctx.Err()}
-		}
-	}
+	return m.waitForLifecycleEvent(ctx, "active session", nil, delay, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers)
 }
 
 type sshRetryLogger struct {
@@ -881,53 +848,59 @@ func (l *sshRetryLogger) Log(err error, stderr string) {
 }
 
 func (m *manager) waitForSession(ctx context.Context, session *executor.Process, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
-	ticker := time.NewTicker(defaultSocketPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-session.Done():
-			err := session.Wait()
-			if err != nil {
-				return wrapCommandError("active session", session.Name(), err)
-			}
-			return nil
-		case <-suspendRequests:
-			return suspendHandler.saveAndExit(ctx)
-		case <-infoRequests:
-			m.printGuestInfo(ctx, guestAgentSocketPath, watchers)
-		case <-ticker.C:
-			if err := firstUnexpectedExit("active session", watchers); err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			return &stageError{Stage: "active session", Err: ctx.Err()}
-		}
+	if err := m.waitForLifecycleEvent(ctx, "active session", session, 0, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers); err != nil {
+		return err
 	}
+	err := session.Wait()
+	if err != nil {
+		return wrapCommandError("active session", session.Name(), err)
+	}
+	return nil
 }
 
 func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+	if err := m.waitForLifecycleEvent(ctx, "vm session", qemu, 0, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers); err != nil {
+		return err
+	}
+	err := qemu.Wait()
+	if err != nil {
+		return wrapCommandError("vm session", qemu.Name(), err)
+	}
+	return nil
+}
+
+func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, process *executor.Process, delay time.Duration, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+	var processDone <-chan struct{}
+	if process != nil {
+		processDone = process.Done()
+	}
+	var delayDone <-chan time.Time
+	var timer *time.Timer
+	if delay > 0 {
+		timer = time.NewTimer(delay)
+		delayDone = timer.C
+		defer timer.Stop()
+	}
+
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-qemu.Done():
-			err := qemu.Wait()
-			if err != nil {
-				return wrapCommandError("vm session", qemu.Name(), err)
-			}
+		case <-processDone:
+			return nil
+		case <-delayDone:
 			return nil
 		case <-suspendRequests:
 			return suspendHandler.saveAndExit(ctx)
 		case <-infoRequests:
 			m.printGuestInfo(ctx, guestAgentSocketPath, watchers)
 		case <-ticker.C:
-			if err := firstUnexpectedExit("vm session", watchers); err != nil {
+			if err := firstUnexpectedExit(stage, watchers); err != nil {
 				return err
 			}
 		case <-ctx.Done():
-			return &stageError{Stage: "vm session", Err: ctx.Err()}
+			return &stageError{Stage: stage, Err: ctx.Err()}
 		}
 	}
 }

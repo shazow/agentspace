@@ -3,133 +3,127 @@ package manager
 import (
 	"bytes"
 	"context"
-	"errors"
+	"encoding/json"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
 func TestCommandNotifierHonorsStateAllowlistAndPassesEnv(t *testing.T) {
-	cfg := validManifest("/tmp/work")
+	tmpDir := t.TempDir()
+	recordPath := filepath.Join(tmpDir, "notify.json")
+	cfg := validManifest(tmpDir)
 	cfg.Notifications = manifest.Notifications{
-		Command: manifest.Command{
-			Path: "bin/notify",
-			Args: []string{"--flag"},
-		},
-		States: []string{notifyStateRuntimeResume},
+		Command: notificationHookCommand(t, recordPath, "--flag"),
+		States:  []string{notifyStateRuntimeResume},
 	}
-	runner := &recordingNotificationRunner{}
-	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
+	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	notifier.Notify(context.Background(), notifyStateRuntimeSuspend, "ignored", nil)
-	if len(runner.calls) != 0 {
-		t.Fatalf("expected allowlist to suppress suspend notification, got %#v", runner.calls)
+	if _, err := os.Stat(recordPath); !os.IsNotExist(err) {
+		t.Fatalf("expected allowlist to suppress suspend notification, stat err=%v", err)
 	}
 
 	notifier.Notify(context.Background(), notifyStateRuntimeResume, "Restored", map[string]string{
 		"vmStatePath": "/tmp/work/state",
 		"cid":         "7",
 	})
-	if got, want := len(runner.calls), 1; got != want {
-		t.Fatalf("expected one notification command, got %d", got)
-	}
-	call := runner.calls[0]
-	if got, want := call.cmd.Path, "bin/notify"; got != want {
-		t.Fatalf("unexpected command path: got %q want %q", got, want)
-	}
-	if got, want := commandArgs(call.cmd), []string{"--flag"}; !slices.Equal(got, want) {
+	record := readNotificationHookRecord(t, recordPath)
+	if got, want := notificationHookArgs(record.Args), []string{"--flag"}; !slices.Equal(got, want) {
 		t.Fatalf("unexpected command args: got %v want %v", got, want)
 	}
-	if got, want := call.cmd.Dir, "/tmp/work"; got != want {
+	if got, want := record.Dir, tmpDir; got != want {
 		t.Fatalf("unexpected command dir: got %q want %q", got, want)
 	}
 	for _, want := range []string{
-		"VIRTIE_NOTIFY_STATE=runtime:resume",
-		"VIRTIE_NOTIFY_MESSAGE=Restored",
-		"VIRTIE_NOTIFY_CONTEXT_CID=7",
-		"VIRTIE_NOTIFY_CONTEXT_VM_STATE_PATH=/tmp/work/state",
+		"VIRTIE_NOTIFY_STATE",
+		"VIRTIE_NOTIFY_MESSAGE",
+		"VIRTIE_NOTIFY_CONTEXT_CID",
+		"VIRTIE_NOTIFY_CONTEXT_VM_STATE_PATH",
 	} {
-		if !slices.Contains(call.cmd.Env, want) {
-			t.Fatalf("expected env %q in %#v", want, call.cmd.Env)
+		if record.Env[want] == "" {
+			t.Fatalf("expected env %q in %#v", want, record.Env)
 		}
+	}
+	if got, want := record.Env["VIRTIE_NOTIFY_STATE"], notifyStateRuntimeResume; got != want {
+		t.Fatalf("unexpected state env: got %q want %q", got, want)
 	}
 }
 
 func TestCommandNotifierKeepsCommandPathAndUsesAbsoluteWorkingDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
+	if err := os.Mkdir("work", 0o755); err != nil {
+		t.Fatalf("create work dir: %v", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve test executable: %v", err)
+	}
+	notifyPath := filepath.Join(tmpDir, "notify")
+	if err := os.Symlink(exe, notifyPath); err != nil {
+		t.Fatalf("symlink notify command: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+	recordPath := filepath.Join(tmpDir, "notify.json")
 
 	cfg := validManifest("work")
-	cfg.Notifications.Command = manifest.Command{Path: "notify"}
-	runner := &recordingNotificationRunner{}
-	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
+	cfg.Notifications.Command = notificationHookCommandWithPath(recordPath, "notify")
+	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	notifier.Notify(context.Background(), notifyStateRuntimeResume, "Restored", nil)
 
-	if got, want := len(runner.calls), 1; got != want {
-		t.Fatalf("expected one notification command, got %d", got)
-	}
-	call := runner.calls[0]
-	if got, want := call.cmd.Dir, filepath.Join(tmpDir, "work"); got != want {
+	record := readNotificationHookRecord(t, recordPath)
+	if got, want := record.Dir, filepath.Join(tmpDir, "work"); got != want {
 		t.Fatalf("unexpected command dir: got %q want %q", got, want)
 	}
-	if got, want := call.cmd.Path, "notify"; got != want {
-		t.Fatalf("unexpected command path: got %q want %q", got, want)
+	if got, want := filepath.Base(record.Path), "notify"; got != want {
+		t.Fatalf("unexpected command path: got %q want basename %q", record.Path, want)
 	}
 }
 
 func TestCommandNotifierRendersExecTemplates(t *testing.T) {
-	cfg := validManifest("/tmp/work")
-	cfg.Notifications.Command = manifest.Command{
-		Path: "bin/notify-{{.State}}",
-		Args: []string{"{{.Message}}", "{{.cid}}", "{{.Env.USER}}"},
-		Env:  []string{"CUSTOM=1"},
-	}
+	tmpDir := t.TempDir()
+	recordPath := filepath.Join(tmpDir, "notify.json")
+	cfg := validManifest(tmpDir)
+	cfg.Notifications.Command = notificationHookCommand(t, recordPath, "{{.Message}}", "{{.cid}}", "{{.Env.USER}}")
+	cfg.Notifications.Command.Env = append(cfg.Notifications.Command.Env, "CUSTOM=1", "STATE={{.State}}", "MESSAGE={{.Message}}", "CID={{.cid}}")
 	t.Setenv("USER", "template-user")
-	runner := &recordingNotificationRunner{}
-	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)), runner)
+	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	notifier.Notify(context.Background(), notifyStateRuntimeResume, "Restored", map[string]string{
 		"cid": "7",
 	})
 
-	if got, want := len(runner.calls), 1; got != want {
-		t.Fatalf("expected one notification command, got %d", got)
-	}
-	call := runner.calls[0]
-	if got, want := call.cmd.Path, "bin/notify-runtime:resume"; got != want {
-		t.Fatalf("unexpected command path: got %q want %q", got, want)
-	}
-	if got, want := commandArgs(call.cmd), []string{"Restored", "7", "template-user"}; !slices.Equal(got, want) {
+	record := readNotificationHookRecord(t, recordPath)
+	if got, want := notificationHookArgs(record.Args), []string{"Restored", "7", "template-user"}; !slices.Equal(got, want) {
 		t.Fatalf("unexpected command args: got %v want %v", got, want)
 	}
-	for _, want := range []string{"CUSTOM=1", "STATE=runtime:resume", "MESSAGE=Restored", "CID=7"} {
-		if !slices.Contains(call.cmd.Env, want) {
-			t.Fatalf("expected env %q in %#v", want, call.cmd.Env)
+	for key, want := range map[string]string{"CUSTOM": "1", "STATE": "runtime:resume", "MESSAGE": "Restored", "CID": "7"} {
+		if got := record.Env[key]; got != want {
+			t.Fatalf("env %s: got %q want %q", key, got, want)
 		}
 	}
 }
 
 func TestCommandNotifierLogsAndIgnoresHookFailure(t *testing.T) {
-	cfg := validManifest("/tmp/work")
-	cfg.Notifications.Command = manifest.Command{Path: "/bin/notify"}
-	runner := &recordingNotificationRunner{err: errors.New("exit status 1")}
+	tmpDir := t.TempDir()
+	recordPath := filepath.Join(tmpDir, "notify.json")
+	cfg := validManifest(tmpDir)
+	cfg.Notifications.Command = notificationHookCommand(t, recordPath)
+	cfg.Notifications.Command.Env = append(cfg.Notifications.Command.Env, "VIRTIE_NOTIFY_EXIT=1")
 	var logs bytes.Buffer
-	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(&logs, nil)), runner)
+	notifier := newCommandNotifier(cfg, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	notifier.Notify(context.Background(), notifyStateRuntimeResume, "Restored", nil)
 
-	if got, want := len(runner.calls), 1; got != want {
-		t.Fatalf("expected one notification command, got %d", got)
-	}
+	_ = readNotificationHookRecord(t, recordPath)
 	if !strings.Contains(logs.String(), "notification hook failed") || !strings.Contains(logs.String(), "state=runtime:resume") {
 		t.Fatalf("expected hook failure log, got %q", logs.String())
 	}
@@ -187,7 +181,7 @@ func TestLaunchResumeNotifiesAfterMigrationAndContinue(t *testing.T) {
 		t.Fatalf("write suspend state: %v", err)
 	}
 
-	runner := &fakeRunner{finishInteractiveSSH: true}
+	runner := &launchRunner{finishInteractiveSSH: true}
 	qmpClient := &fakeQMPClient{
 		status: "paused",
 		onQuit: func() {
@@ -233,20 +227,93 @@ func TestLaunchResumeNotifiesAfterMigrationAndContinue(t *testing.T) {
 	}
 }
 
-type notificationRunnerCall struct {
-	cmd *exec.Cmd
+type notificationHookRecord struct {
+	Path string            `json:"path"`
+	Args []string          `json:"args"`
+	Env  map[string]string `json:"env"`
+	Dir  string            `json:"dir"`
 }
 
-type recordingNotificationRunner struct {
-	calls []notificationRunnerCall
-	err   error
+func TestNotificationHookChild(t *testing.T) {
+	if os.Getenv("VIRTIE_NOTIFY_CHILD") != "1" {
+		return
+	}
+	recordPath := os.Getenv("VIRTIE_NOTIFY_RECORD")
+	if recordPath == "" {
+		t.Fatal("missing VIRTIE_NOTIFY_RECORD")
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	env := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			env[key] = value
+		}
+	}
+	record := notificationHookRecord{
+		Path: os.Args[0],
+		Args: append([]string(nil), os.Args[1:]...),
+		Env:  env,
+		Dir:  dir,
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("encode record: %v", err)
+	}
+	if err := os.WriteFile(recordPath, data, 0o644); err != nil {
+		t.Fatalf("write record: %v", err)
+	}
+	if os.Getenv("VIRTIE_NOTIFY_EXIT") != "" {
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
-func (r *recordingNotificationRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
-	r.calls = append(r.calls, notificationRunnerCall{
-		cmd: cmd,
-	})
-	return (&executor.FakeProcess{FakeName: "notification", Exited: true, WaitErr: r.err}).Process(), nil
+func notificationHookCommand(t *testing.T, recordPath string, args ...string) manifest.Command {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve test executable: %v", err)
+	}
+	return notificationHookCommandWithPath(recordPath, exe, args...)
+}
+
+func notificationHookCommandWithPath(recordPath string, path string, args ...string) manifest.Command {
+	commandArgs := []string{"-test.run=TestNotificationHookChild", "--"}
+	commandArgs = append(commandArgs, args...)
+	return manifest.Command{
+		Path: path,
+		Args: commandArgs,
+		Env: []string{
+			"VIRTIE_NOTIFY_CHILD=1",
+			"VIRTIE_NOTIFY_RECORD=" + recordPath,
+		},
+	}
+}
+
+func readNotificationHookRecord(t *testing.T, path string) notificationHookRecord {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read notification hook record: %v", err)
+	}
+	var record notificationHookRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("decode notification hook record: %v", err)
+	}
+	return record
+}
+
+func notificationHookArgs(args []string) []string {
+	for i, arg := range args {
+		if arg == "--" {
+			return append([]string(nil), args[i+1:]...)
+		}
+	}
+	return nil
 }
 
 type recordingNotification struct {

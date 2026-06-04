@@ -30,7 +30,6 @@ type commandNotifier struct {
 	command manifest.Command
 	states  map[string]struct{}
 	dir     string
-	runner  runner
 	logger  *slog.Logger
 }
 
@@ -38,19 +37,16 @@ func (m *manager) effectiveNotifier(manifest *manifest.Manifest) notificationSin
 	if m.notifier != nil {
 		return m.notifier
 	}
-	return newCommandNotifier(manifest, m.logger, m.runner)
+	return newCommandNotifier(manifest, m.logger)
 }
 
-func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner runner) notificationSink {
+func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger) notificationSink {
 	if manifest == nil {
 		return noopNotifier{}
 	}
 	notifications := manifest.Notifications
 	if notifications.Command.IsZero() || notifications.Command.Path == "" {
 		return noopNotifier{}
-	}
-	if runner == nil {
-		runner = &executor.Runner{}
 	}
 	// Normalize only the working directory; the configured command path is
 	// resolved by the executor environment exactly as provided.
@@ -76,7 +72,6 @@ func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner
 		command: command,
 		states:  states,
 		dir:     dir,
-		runner:  runner,
 		logger:  logger,
 	}
 }
@@ -111,34 +106,15 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 		return
 	}
 	env = append(env, command.Env...)
-	cmd := executor.Command(command.Path, command.Args, env)
+	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Dir = n.dir
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	if err := runNotificationCommand(ctx, n.runner, cmd); err != nil && n.logger != nil {
+	if err := cmd.Run(); err != nil && n.logger != nil {
 		n.logger.Info("notification hook failed", "state", state, "err", err)
-	}
-}
-
-func runNotificationCommand(ctx context.Context, runner runner, cmd *exec.Cmd) error {
-	process, err := runner.Start(cmd)
-	if err != nil {
-		return err
-	}
-
-	done := make(chan error, 1)
-	go func() {
-		done <- process.Wait()
-		close(done)
-	}()
-
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		_ = process.Kill()
-		<-done
-		return ctx.Err()
 	}
 }
 

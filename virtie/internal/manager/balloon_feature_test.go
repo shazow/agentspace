@@ -38,7 +38,7 @@ func TestManagerLaunchStartsBalloonControllerAndStopsItBeforeQuit(t *testing.T) 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		cancel:      cancel,
 		cancelDelay: 2 * time.Second,
 	}
@@ -109,7 +109,7 @@ func TestManagerLaunchDoesNotAbortOnBalloonControllerFailure(t *testing.T) {
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	runner := &fakeRunner{cancel: cancel}
+	runner := &launchRunner{cancel: cancel}
 	qmpClient := (&fakeQMPClient{
 		enableBalloonStatsErr: errors.New("guest stats unavailable"),
 		onQuit: func() {
@@ -148,7 +148,7 @@ func TestManagerLaunchDoesNotAbortOnBalloonControllerFailure(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	if got, want := len(runner.sshArgs), 1; got != want {
+	if got, want := len(runner.sshArgs()), 1; got != want {
 		t.Fatalf("expected ssh session to start despite balloon controller failure, got %d ssh starts", got)
 	}
 	if got, want := qmpClient.quitCount(), 1; got != want {

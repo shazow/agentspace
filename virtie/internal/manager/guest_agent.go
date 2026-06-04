@@ -727,32 +727,12 @@ func minDuration(a time.Duration, b time.Duration) time.Duration {
 }
 
 func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (guestAgentClient, error) {
-	waitCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- m.socketWaiter.Wait(waitCtx, []string{socketPath})
-	}()
-
-	ticker := time.NewTicker(defaultSocketPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case err := <-errCh:
-			if err != nil {
-				return nil, &stageError{Stage: "guest agent", Err: err}
-			}
-			return m.connectGuestAgent(ctx, socketPath, watchers)
-		case <-ticker.C:
-			if err := firstUnexpectedExit("guest agent", watchers); err != nil {
-				return nil, err
-			}
-		case <-ctx.Done():
-			return nil, &stageError{Stage: "guest agent", Err: ctx.Err()}
-		}
+	if err := m.waitForAsyncStage(ctx, "guest agent", watchers, func(waitCtx context.Context) error {
+		return m.socketWaiter.Wait(waitCtx, []string{socketPath})
+	}); err != nil {
+		return nil, err
 	}
+	return m.connectGuestAgent(ctx, socketPath, watchers)
 }
 
 func (m *manager) connectGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (guestAgentClient, error) {

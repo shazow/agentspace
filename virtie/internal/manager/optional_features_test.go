@@ -15,7 +15,7 @@ import (
 
 type fakeOptionalFeature struct {
 	appendMarker           string
-	runner                 *fakeRunner
+	runner                 *launchRunner
 	startedAfterSSHSession int
 	stoppedAt              time.Time
 }
@@ -41,7 +41,7 @@ func TestManagerLaunchStartsOptionalFeatureBeforeSSHSessionAndStopsItBeforeQuit(
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		cancel:      cancel,
 		cancelDelay: 2 * time.Second,
 	}
