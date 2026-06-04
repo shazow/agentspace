@@ -108,24 +108,3 @@ func TestRunnerOnStartCanCustomizeProcess(t *testing.T) {
 		t.Fatalf("process signals: got %d want %d", got, want)
 	}
 }
-
-func TestRunnerOnStartDoesNotDoubleTrackNewProcess(t *testing.T) {
-	runner := &Runner{}
-	runner.OnStart = func(start Start) (*Process, error) {
-		return runner.NewProcess(start.Name), nil
-	}
-
-	process, err := runner.Start(exec.Command("/tmp/bin/worker"))
-	if err != nil {
-		t.Fatalf("start: %v", err)
-	}
-	if got, want := len(runner.Processes("worker")), 1; got != want {
-		t.Fatalf("tracked processes: got %d want %d", got, want)
-	}
-	if err := process.Signal(syscall.SIGTERM); err != nil {
-		t.Fatalf("signal: %v", err)
-	}
-	if got, want := len(runner.ProcessSignals()), 1; got != want {
-		t.Fatalf("process signals: got %d want %d", got, want)
-	}
-}

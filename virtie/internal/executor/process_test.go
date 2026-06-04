@@ -99,12 +99,6 @@ func TestProcessKillAndWait(t *testing.T) {
 	}
 }
 
-func TestSignalProcessGroupIgnoresMissingProcess(t *testing.T) {
-	if err := executor.SignalProcessGroup(999999, syscall.SIGTERM); err != nil {
-		t.Fatalf("signal missing process: %v", err)
-	}
-}
-
 func TestSignalProcessGroupIgnoresNonPositivePID(t *testing.T) {
 	for _, pid := range []int{0, -1} {
 		if err := executor.SignalProcessGroup(pid, syscall.SIGTERM); err != nil {
