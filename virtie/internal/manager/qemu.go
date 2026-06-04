@@ -3,41 +3,33 @@ package manager
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
-func buildQEMUSpec(manifest *manifest.Manifest, cid int) (processSpec, error) {
-	return buildQEMUSpecWithIncoming(manifest, cid, false)
-}
-
-func buildIncomingQEMUSpec(manifest *manifest.Manifest, cid int) (processSpec, error) {
-	return buildQEMUSpecWithIncoming(manifest, cid, true)
-}
-
-func buildQEMUSpecWithIncoming(manifest *manifest.Manifest, cid int, incoming bool) (processSpec, error) {
+func buildQEMUCommand(manifest *manifest.Manifest, cid int, incoming bool) (*exec.Cmd, error) {
 	qemu, err := manifest.ResolvedQEMU()
 	if err != nil {
-		return processSpec{}, err
+		return nil, err
 	}
 
 	args, err := buildQEMUArgs(qemu, cid, incoming)
 	if err != nil {
-		return processSpec{}, err
+		return nil, err
 	}
 
-	return processSpec{
-		Name:         "qemu",
-		Path:         qemu.BinaryPath,
-		Args:         args,
-		Dir:          manifest.Paths.WorkingDir,
-		ProcessGroup: true,
-		Stdout:       os.Stderr,
-		Stderr:       os.Stderr,
-	}, nil
+	cmd := executor.Command(qemu.BinaryPath, args, nil)
+	cmd.Dir = manifest.Paths.WorkingDir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd, nil
 }
 
 func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error) {

@@ -116,7 +116,6 @@ type Notifications struct {
 }
 
 type Run struct {
-	Name string         `json:"name,omitempty"`
 	Exec []string       `json:"exec"`
 	Env  []string       `json:"env,omitempty"`
 	Vars map[string]any `json:"vars,omitempty"`
@@ -158,7 +157,6 @@ type ResolvedWriteFile struct {
 }
 
 type ResolvedRun struct {
-	Name string
 	Exec []string
 	Env  []string
 	Dir  string

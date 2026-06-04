@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 type Info struct {
@@ -17,7 +19,7 @@ type guestProcess struct {
 	Command string
 }
 
-func (m *manager) collectGuestInfo(ctx context.Context, socketPath string, watchers ...*managedProcess) (Info, error) {
+func (m *manager) collectGuestInfo(ctx context.Context, socketPath string, watchers executor.Group) (Info, error) {
 	if socketPath == "" {
 		return Info{}, fmt.Errorf("guest agent socket is not configured")
 	}
@@ -29,7 +31,7 @@ func (m *manager) collectGuestInfo(ctx context.Context, socketPath string, watch
 	infoCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	client, err := m.connectGuestAgent(infoCtx, socketPath, watchers...)
+	client, err := m.connectGuestAgent(infoCtx, socketPath, watchers)
 	if err != nil {
 		return Info{}, err
 	}
@@ -46,8 +48,8 @@ func (m *manager) collectGuestInfo(ctx context.Context, socketPath string, watch
 	return Info{ProcessList: formatGuestProcesses(parseGuestProcesses(decodeGuestExecData(status.OutData)))}, nil
 }
 
-func (m *manager) printGuestInfo(ctx context.Context, socketPath string, watchers ...*managedProcess) {
-	info, err := m.collectGuestInfo(ctx, socketPath, watchers...)
+func (m *manager) printGuestInfo(ctx context.Context, socketPath string, watchers executor.Group) {
+	info, err := m.collectGuestInfo(ctx, socketPath, watchers)
 	if err != nil {
 		m.logger.Info("guest info failed", "err", err)
 		return

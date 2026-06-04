@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 type Kind string
@@ -78,26 +81,13 @@ type Runtime struct {
 }
 
 type ProcessStarter interface {
-	Start(ctx context.Context, spec ProcessSpec) (Process, error)
-	Stop(process Process) error
+	Start(ctx context.Context, cmd *exec.Cmd) (*executor.Process, error)
+	Stop(process *executor.Process) error
 	SignalPIDGroup(pid int, signal syscall.Signal) error
 }
 
-type Process interface {
-	PID() int
-}
-
-type ProcessSpec struct {
-	Name         string
-	Path         string
-	Args         []string
-	Dir          string
-	Env          []string
-	ProcessGroup bool
-}
-
 type SocketWaiter interface {
-	Wait(ctx context.Context, stage string, socketPaths []string, process Process) error
+	Wait(ctx context.Context, stage string, socketPaths []string, process *executor.Process) error
 }
 
 type QMPClient interface {
@@ -198,9 +188,9 @@ func (h hotplugBase) ID() string {
 	return h.id
 }
 
-func (h hotplugBase) attach(device Device, attachHost func() (Process, error), detachHost func(Process)) error {
+func (h hotplugBase) attach(device Device, attachHost func() (*executor.Process, error), detachHost func(*executor.Process)) error {
 	if detachHost == nil {
-		detachHost = func(Process) {}
+		detachHost = func(*executor.Process) {}
 	}
 	statePath, err := StatePath(h.runtime.StateDir, h.id)
 	if err != nil {
@@ -212,7 +202,7 @@ func (h hotplugBase) attach(device Device, attachHost func() (Process, error), d
 		return fmt.Errorf("stat hotplug state %q: %w", statePath, err)
 	}
 
-	var proc Process
+	var proc *executor.Process
 	if attachHost != nil {
 		proc, err = attachHost()
 		if err != nil {
@@ -302,11 +292,11 @@ func (h HotplugVirtioFS) device() Device {
 	return Device{Kind: KindVirtioFS, ID: h.id, VirtioFS: h.VirtioFS}
 }
 
-func (h HotplugVirtioFS) attachHost() (Process, error) {
+func (h HotplugVirtioFS) attachHost() (*executor.Process, error) {
 	return h.runtime.attachVirtioFSHost(h.ctx, h.device())
 }
 
-func (h HotplugVirtioFS) detachHost(proc Process) {
+func (h HotplugVirtioFS) detachHost(proc *executor.Process) {
 	h.runtime.rollbackHost(proc)
 }
 
@@ -344,19 +334,15 @@ func (h HotplugBlock) device() Device {
 	return Device{Kind: KindBlock, ID: h.id, Block: h.Block}
 }
 
-func (r Runtime) attachVirtioFSHost(ctx context.Context, device Device) (Process, error) {
+func (r Runtime) attachVirtioFSHost(ctx context.Context, device Device) (*executor.Process, error) {
 	fs := device.VirtioFS
 	if r.Start == nil {
 		return nil, fmt.Errorf("hotplug process starter is not configured")
 	}
-	proc, err := r.Start.Start(ctx, ProcessSpec{
-		Name:         "hotplug[" + device.ID + "]",
-		Path:         fs.Bin,
-		Args:         fs.Args,
-		Dir:          r.WorkDir,
-		Env:          []string{"VIRTIOFSD_SOCKET=" + fs.SocketPath},
-		ProcessGroup: true,
-	})
+	cmd := executor.Command(fs.Bin, fs.Args, []string{"VIRTIOFSD_SOCKET=" + fs.SocketPath})
+	cmd.Dir = r.WorkDir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	proc, err := r.Start.Start(ctx, cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +402,7 @@ func (r Runtime) detachGuest(ctx context.Context, device Device) error {
 	return r.Guest.Run(ctx, []string{"/run/current-system/sw/bin/umount", device.VirtioFS.Target})
 }
 
-func (r Runtime) rollbackHost(proc Process) {
+func (r Runtime) rollbackHost(proc *executor.Process) {
 	if proc != nil && r.Start != nil {
 		_ = r.Start.Stop(proc)
 	}
@@ -426,7 +412,7 @@ func (r Runtime) terminatePID(pid int) error {
 	if r.Start != nil {
 		return r.Start.SignalPIDGroup(pid, syscall.SIGTERM)
 	}
-	return terminateProcessGroup(pid)
+	return executor.SignalProcessGroup(pid, syscall.SIGTERM)
 }
 
 func StatePath(stateDir string, id string) (string, error) {
@@ -467,19 +453,6 @@ func ReadState(path string) (State, error) {
 		return State{}, fmt.Errorf("invalid hotplug state %q", path)
 	}
 	return state, nil
-}
-
-func terminateProcessGroup(pid int) error {
-	if pid <= 0 {
-		return nil
-	}
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err == nil || errors.Is(err, syscall.ESRCH) {
-		return nil
-	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return fmt.Errorf("signal hotplug pid %d: %w", pid, err)
-	}
-	return nil
 }
 
 func attachCommands(device Device, bus string) []string {

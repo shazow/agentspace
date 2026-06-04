@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -249,7 +250,7 @@ func (c *socketGuestAgentClient) run(timeout time.Duration, execute string, argu
 	}
 }
 
-func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *launchStats, watchers ...*managedProcess) error {
+func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *launchStats, watchers executor.Group) error {
 	files := launchManifest.ResolvedWriteFiles()
 	mountCWD := launchManifest.Workspace.MountCWD
 	if len(files) == 0 && !mountCWD {
@@ -262,7 +263,7 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 	}
 
 	m.logger.Info("waiting for guest agent readiness")
-	client, err := m.waitForGuestAgent(ctx, socketPath, watchers...)
+	client, err := m.waitForGuestAgent(ctx, socketPath, watchers)
 	if err != nil {
 		return err
 	}
@@ -315,7 +316,7 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 
 const guestFileReadChunkSize = 1024 * 1024
 
-func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, watchers ...*managedProcess) error {
+func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, watchers executor.Group) error {
 	files := launchManifest.ResolvedWriteFiles()
 	writeBackFiles := make([]manifest.ResolvedWriteFile, 0, len(files))
 	for _, file := range files {
@@ -333,7 +334,7 @@ func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manif
 	}
 
 	m.logger.Info("waiting for guest agent readiness for write-back")
-	client, err := m.waitForGuestAgent(ctx, socketPath, watchers...)
+	client, err := m.waitForGuestAgent(ctx, socketPath, watchers)
 	if err != nil {
 		return &stageError{Stage: "guest file write-back", Err: err}
 	}
@@ -725,36 +726,16 @@ func minDuration(a time.Duration, b time.Duration) time.Duration {
 	return b
 }
 
-func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watchers ...*managedProcess) (guestAgentClient, error) {
-	waitCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- m.socketWaiter.Wait(waitCtx, []string{socketPath})
-	}()
-
-	ticker := time.NewTicker(defaultSocketPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case err := <-errCh:
-			if err != nil {
-				return nil, &stageError{Stage: "guest agent", Err: err}
-			}
-			return m.connectGuestAgent(ctx, socketPath, watchers...)
-		case <-ticker.C:
-			if err := firstUnexpectedExit("guest agent", watchers...); err != nil {
-				return nil, err
-			}
-		case <-ctx.Done():
-			return nil, &stageError{Stage: "guest agent", Err: ctx.Err()}
-		}
+func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (guestAgentClient, error) {
+	if err := m.waitForAsyncStage(ctx, "guest agent", watchers, func(waitCtx context.Context) error {
+		return m.socketWaiter.Wait(waitCtx, []string{socketPath})
+	}); err != nil {
+		return nil, err
 	}
+	return m.connectGuestAgent(ctx, socketPath, watchers)
 }
 
-func (m *manager) connectGuestAgent(ctx context.Context, socketPath string, watchers ...*managedProcess) (guestAgentClient, error) {
+func (m *manager) connectGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (guestAgentClient, error) {
 	dialer := m.guestAgentDialer
 	if dialer == nil {
 		dialer = &socketGuestAgentDialer{}
@@ -775,7 +756,7 @@ func (m *manager) connectGuestAgent(ctx context.Context, socketPath string, watc
 		case <-timer.C:
 		}
 
-		if err := firstUnexpectedExit("guest agent", watchers...); err != nil {
+		if err := firstUnexpectedExit("guest agent", watchers); err != nil {
 			return nil, err
 		}
 

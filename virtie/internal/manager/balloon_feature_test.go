@@ -12,17 +12,17 @@ import (
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
 )
 
-func TestBuildQEMUSpecAppendsBalloonFeatureArgs(t *testing.T) {
+func TestBuildQEMUCommandAppendsBalloonFeatureArgs(t *testing.T) {
 	manifest := validManifestWithBalloon("/tmp/work")
 	manifest.QEMU.Devices.Balloon.DeflateOnOOM = true
 	manifest.QEMU.Devices.Balloon.FreePageReporting = true
 
-	spec, err := buildQEMUSpec(manifest, 42)
+	spec, err := buildQEMUCommand(manifest, 42, false)
 	if err != nil {
-		t.Fatalf("build qemu spec: %v", err)
+		t.Fatalf("build qemu command: %v", err)
 	}
-	if !containsString(spec.Args, "virtio-balloon-pci,id=balloon0,deflate-on-oom=on,free-page-reporting=on") {
-		t.Fatalf("expected qemu args to include balloon device: %v", spec.Args)
+	if !containsString(commandArgs(spec), "virtio-balloon-pci,id=balloon0,deflate-on-oom=on,free-page-reporting=on") {
+		t.Fatalf("expected qemu args to include balloon device: %v", commandArgs(spec))
 	}
 }
 
@@ -38,7 +38,7 @@ func TestManagerLaunchStartsBalloonControllerAndStopsItBeforeQuit(t *testing.T) 
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	runner := &fakeRunner{
+	runner := &launchRunner{
 		cancel:      cancel,
 		cancelDelay: 2 * time.Second,
 	}
@@ -109,7 +109,7 @@ func TestManagerLaunchDoesNotAbortOnBalloonControllerFailure(t *testing.T) {
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	runner := &fakeRunner{cancel: cancel}
+	runner := &launchRunner{cancel: cancel}
 	qmpClient := (&fakeQMPClient{
 		enableBalloonStatsErr: errors.New("guest stats unavailable"),
 		onQuit: func() {
@@ -148,7 +148,7 @@ func TestManagerLaunchDoesNotAbortOnBalloonControllerFailure(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	if got, want := len(runner.sshArgs), 1; got != want {
+	if got, want := len(runner.sshArgs()), 1; got != want {
 		t.Fatalf("expected ssh session to start despite balloon controller failure, got %d ssh starts", got)
 	}
 	if got, want := qmpClient.quitCount(), 1; got != want {

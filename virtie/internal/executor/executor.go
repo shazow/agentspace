@@ -1,10 +1,12 @@
-// Package executor renders exec command templates and their environment.
+// Package executor renders exec command templates and manages external processes.
 package executor
 
 import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/template"
@@ -13,6 +15,89 @@ import (
 
 // Context holds named values available to exec command templates.
 type Context map[string]any
+
+// Command builds an external command with virtie's environment inheritance rules.
+func Command(path string, args []string, env []string) *exec.Cmd {
+	cmd := exec.Command(path, args...)
+	cmd.Env = WrapEnv(env)
+	return cmd
+}
+
+// WrapEnv returns env additions appended after the current process environment.
+func WrapEnv(additions []string) []string {
+	if len(additions) == 0 {
+		return nil
+	}
+	env := os.Environ()
+	return append(env, additions...)
+}
+
+// RunningProcess is an already-started process that can be wrapped by Process.
+type RunningProcess interface {
+	Wait() error
+	Signal(sig os.Signal) error
+	Kill() error
+	PID() int
+	Name() string
+}
+
+// Runner starts external commands and returns process handles.
+type Runner struct{}
+
+// Start starts cmd and returns its process handle.
+func (r *Runner) Start(cmd *exec.Cmd) (*Process, error) {
+	if cmd == nil {
+		return nil, fmt.Errorf("start command: command must not be nil")
+	}
+	handle := &execCmdHandle{cmd: cmd}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start %s: %w", handle.Name(), err)
+	}
+
+	return Wrap(handle), nil
+}
+
+type execCmdHandle struct {
+	cmd *exec.Cmd
+}
+
+func (p *execCmdHandle) Wait() error {
+	return p.cmd.Wait()
+}
+
+func (p *execCmdHandle) Signal(sig os.Signal) error {
+	if p.cmd.Process == nil {
+		return nil
+	}
+	return p.cmd.Process.Signal(sig)
+}
+
+func (p *execCmdHandle) Kill() error {
+	if p.cmd.Process == nil {
+		return nil
+	}
+	return p.cmd.Process.Kill()
+}
+
+func (p *execCmdHandle) PID() int {
+	if p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
+}
+
+func (p *execCmdHandle) Name() string {
+	if p == nil || p.cmd == nil {
+		return ""
+	}
+	if len(p.cmd.Args) > 0 && p.cmd.Args[0] != "" {
+		return filepath.Base(p.cmd.Args[0])
+	}
+	if p.cmd.Path != "" {
+		return filepath.Base(p.cmd.Path)
+	}
+	return "command"
+}
 
 // Renderer renders exec command templates from a fixed context.
 type Renderer struct {

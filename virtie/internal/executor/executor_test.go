@@ -1,10 +1,95 @@
 package executor
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestCommandLeavesEmptyEnvNil(t *testing.T) {
+	cmd := Command("/bin/echo", []string{"hello"}, nil)
+	if cmd.Env != nil {
+		t.Fatalf("expected empty env to leave command env nil, got %#v", cmd.Env)
+	}
+}
+
+func TestCommandAppendsEnvAfterEnviron(t *testing.T) {
+	additions := []string{"VIRTIE_TEST_ONE=1", "VIRTIE_TEST_TWO=2"}
+	cmd := Command("/bin/echo", nil, additions)
+	if !slices.Equal(cmd.Env, WrapEnv(additions)) {
+		t.Fatalf("unexpected env: got %#v want %#v", cmd.Env, WrapEnv(additions))
+	}
+}
+
+func TestWrapEnv(t *testing.T) {
+	if env := WrapEnv(nil); env != nil {
+		t.Fatalf("empty env: got %#v want nil", env)
+	}
+
+	environ := os.Environ()
+	additions := []string{"VIRTIE_TEST_ONE=1", "VIRTIE_TEST_TWO=2"}
+	env := WrapEnv(additions)
+	if len(env) != len(environ)+len(additions) {
+		t.Fatalf("unexpected env length: got %d want %d", len(env), len(environ)+len(additions))
+	}
+	if !slices.Equal(env[:len(environ)], environ) {
+		t.Fatalf("expected env to start with os.Environ()")
+	}
+	if !slices.Equal(env[len(environ):], additions) {
+		t.Fatalf("unexpected appended env: got %#v want %#v", env[len(environ):], additions)
+	}
+}
+
+func TestCommandPassesArgsAfterArgv0(t *testing.T) {
+	cmd := Command("/bin/echo", []string{"hello", "world"}, nil)
+	if !slices.Equal(cmd.Args, []string{"/bin/echo", "hello", "world"}) {
+		t.Fatalf("unexpected args: %#v", cmd.Args)
+	}
+}
+
+func TestRunnerStartsCommand(t *testing.T) {
+	if os.Getenv("EXECUTOR_RUNNER_CHILD") == "1" {
+		os.Exit(0)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve test executable: %v", err)
+	}
+	cmd := exec.Command(exe, "-test.run=TestRunnerStartsCommand")
+	cmd.Env = append(os.Environ(), "EXECUTOR_RUNNER_CHILD=1")
+	process, err := (&Runner{}).Start(cmd)
+	if err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	if process.PID() == 0 {
+		t.Fatalf("expected started process to have a pid")
+	}
+	if got, want := process.Name(), filepath.Base(exe); got != want {
+		t.Fatalf("unexpected process name: got %q want %q", got, want)
+	}
+	if err := process.Wait(); err != nil {
+		t.Fatalf("wait child: %v", err)
+	}
+}
+
+func TestRunnerRejectsNilCommand(t *testing.T) {
+	_, err := (&Runner{}).Start(nil)
+	if err == nil || !strings.Contains(err.Error(), "command must not be nil") {
+		t.Fatalf("expected nil command error, got %v", err)
+	}
+}
+
+func TestProcessNameFallsBackToCommandPath(t *testing.T) {
+	process := &execCmdHandle{cmd: &exec.Cmd{Path: "/tmp/bin/custom"}}
+	if got, want := process.Name(), "custom"; got != want {
+		t.Fatalf("unexpected process name: got %q want %q", got, want)
+	}
+}
 
 func TestRenderArgvAndEnv(t *testing.T) {
 	renderer, err := NewWithEnviron(Context{

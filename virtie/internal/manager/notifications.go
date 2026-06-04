@@ -26,26 +26,10 @@ type noopNotifier struct{}
 
 func (noopNotifier) Notify(context.Context, string, string, map[string]string) {}
 
-type notificationRunner interface {
-	Run(ctx context.Context, path string, args []string, dir string, env []string) error
-}
-
-type execNotificationRunner struct{}
-
-func (execNotificationRunner) Run(ctx context.Context, path string, args []string, dir string, env []string) error {
-	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
 type commandNotifier struct {
 	command manifest.Command
 	states  map[string]struct{}
 	dir     string
-	runner  notificationRunner
 	logger  *slog.Logger
 }
 
@@ -53,10 +37,10 @@ func (m *manager) effectiveNotifier(manifest *manifest.Manifest) notificationSin
 	if m.notifier != nil {
 		return m.notifier
 	}
-	return newCommandNotifier(manifest, m.logger, m.notificationRunner)
+	return newCommandNotifier(manifest, m.logger)
 }
 
-func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner notificationRunner) notificationSink {
+func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger) notificationSink {
 	if manifest == nil {
 		return noopNotifier{}
 	}
@@ -64,10 +48,14 @@ func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner
 	if notifications.Command.IsZero() || notifications.Command.Path == "" {
 		return noopNotifier{}
 	}
-	if runner == nil {
-		runner = execNotificationRunner{}
+	// Normalize only the working directory; the configured command path is
+	// resolved by the executor environment exactly as provided.
+	dir := manifest.Paths.WorkingDir
+	if !filepath.IsAbs(dir) {
+		if absDir, err := filepath.Abs(dir); err == nil {
+			dir = absDir
+		}
 	}
-	dir := resolvedNotificationWorkingDir(manifest.Paths.WorkingDir)
 	command := notifications.Command
 	command.Args = append([]string(nil), command.Args...)
 	command.Env = append([]string(nil), command.Env...)
@@ -84,20 +72,8 @@ func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner
 		command: command,
 		states:  states,
 		dir:     dir,
-		runner:  runner,
 		logger:  logger,
 	}
-}
-
-func resolvedNotificationWorkingDir(dir string) string {
-	if filepath.IsAbs(dir) {
-		return dir
-	}
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		return dir
-	}
-	return absDir
 }
 
 func (n *commandNotifier) Notify(ctx context.Context, state string, message string, values map[string]string) {
@@ -130,7 +106,12 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 		return
 	}
 	env = append(env, command.Env...)
-	if err := n.runner.Run(ctx, command.Path, command.Args, n.dir, env); err != nil && n.logger != nil {
+	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
+	cmd.Env = executor.WrapEnv(env)
+	cmd.Dir = n.dir
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil && n.logger != nil {
 		n.logger.Info("notification hook failed", "state", state, "err", err)
 	}
 }
@@ -144,11 +125,10 @@ func (n *commandNotifier) enabled(state string) bool {
 }
 
 func notificationEnv(state string, message string, values map[string]string) ([]string, error) {
-	env := append([]string(nil), os.Environ()...)
-	env = append(env,
-		"VIRTIE_NOTIFY_STATE="+state,
-		"VIRTIE_NOTIFY_MESSAGE="+message,
-	)
+	env := []string{
+		"VIRTIE_NOTIFY_STATE=" + state,
+		"VIRTIE_NOTIFY_MESSAGE=" + message,
+	}
 
 	keys := make([]string, 0, len(values))
 	for key := range values {

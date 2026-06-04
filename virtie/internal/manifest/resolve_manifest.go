@@ -600,7 +600,6 @@ func (m *Manifest) resolveVirtioFSRuns(mounts []VirtioFSMountInput, options Reso
 			}
 		}
 		runs = append(runs, Run{
-			Name: fmt.Sprintf("virtiofsd[%s]", mount.Tag),
 			Exec: append([]string{m.resolveOptionalBin(bin, "virtiofsd")}, args...),
 			Env:  []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
 			Vars: VirtioFSTemplateProvider{

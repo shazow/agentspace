@@ -23,8 +23,14 @@ func (w *pollingSocketWaiter) Wait(ctx context.Context, socketPaths []string) er
 	defer ticker.Stop()
 
 	for {
-		missing := missingSocketPaths(socketPaths)
-		if len(missing) == 0 {
+		allReady := true
+		for _, path := range socketPaths {
+			if _, err := os.Stat(path); err != nil {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
 			return nil
 		}
 
@@ -34,14 +40,4 @@ func (w *pollingSocketWaiter) Wait(ctx context.Context, socketPaths []string) er
 		case <-ticker.C:
 		}
 	}
-}
-
-func missingSocketPaths(paths []string) []string {
-	var missing []string
-	for _, path := range paths {
-		if _, err := os.Stat(path); err != nil {
-			missing = append(missing, path)
-		}
-	}
-	return missing
 }
