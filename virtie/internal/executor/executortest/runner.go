@@ -1,4 +1,4 @@
-package executor
+package executortest
 
 import (
 	"fmt"
@@ -6,10 +6,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
-// FakeStart records a command started by FakeRunner.
-type FakeStart struct {
+// Start records a command started by Runner.
+type Start struct {
 	Name         string
 	Args         []string
 	Env          []string
@@ -19,26 +21,26 @@ type FakeStart struct {
 	Cmd          *exec.Cmd
 }
 
-// FakeRunnerSignal records a signal or kill observed by a fake runner process.
-type FakeRunnerSignal struct {
+// RunnerSignal records a signal or kill observed by a fake runner process.
+type RunnerSignal struct {
 	Name   string
 	Signal os.Signal
 }
 
-// FakeRunner is a test implementation of the Runner Start API.
-type FakeRunner struct {
-	OnStart     func(FakeStart) (*FakeProcess, error)
+// Runner is a test implementation of the Runner Start API.
+type Runner struct {
+	OnStart     func(Start) (*Process, error)
 	StartErrors map[string]error
 
 	mu             sync.Mutex
-	starts         []FakeStart
-	processes      map[string][]*FakeProcess
-	processSignals []FakeRunnerSignal
+	starts         []Start
+	processes      map[string][]*Process
+	processSignals []RunnerSignal
 }
 
 // Start records cmd and returns a fake process.
-func (r *FakeRunner) Start(cmd *exec.Cmd) (*Process, error) {
-	start := fakeStart(cmd)
+func (r *Runner) Start(cmd *exec.Cmd) (*executor.Process, error) {
+	start := runnerStart(cmd)
 
 	r.mu.Lock()
 	r.starts = append(r.starts, start)
@@ -67,15 +69,15 @@ func (r *FakeRunner) Start(cmd *exec.Cmd) (*Process, error) {
 }
 
 // NewProcess returns a tracked fake process with signal recording callbacks.
-func (r *FakeRunner) NewProcess(name string) *FakeProcess {
-	process := &FakeProcess{FakeName: name}
+func (r *Runner) NewProcess(name string) *Process {
+	process := &Process{NameValue: name}
 	r.configureProcess(name, process)
 	r.trackProcess(name, process)
 	return process
 }
 
 // ExitedProcess returns a tracked fake process that has already exited.
-func (r *FakeRunner) ExitedProcess(name string, err error) *FakeProcess {
+func (r *Runner) ExitedProcess(name string, err error) *Process {
 	process := r.NewProcess(name)
 	process.Exited = true
 	process.WaitErr = err
@@ -83,14 +85,14 @@ func (r *FakeRunner) ExitedProcess(name string, err error) *FakeProcess {
 }
 
 // Starts returns recorded command starts.
-func (r *FakeRunner) Starts() []FakeStart {
+func (r *Runner) Starts() []Start {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]FakeStart(nil), r.starts...)
+	return append([]Start(nil), r.starts...)
 }
 
 // StartedNames returns recorded process names in start order.
-func (r *FakeRunner) StartedNames() []string {
+func (r *Runner) StartedNames() []string {
 	starts := r.Starts()
 	names := make([]string, 0, len(starts))
 	for _, start := range starts {
@@ -100,14 +102,14 @@ func (r *FakeRunner) StartedNames() []string {
 }
 
 // Processes returns processes created for name.
-func (r *FakeRunner) Processes(name string) []*FakeProcess {
+func (r *Runner) Processes(name string) []*Process {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]*FakeProcess(nil), r.processes[name]...)
+	return append([]*Process(nil), r.processes[name]...)
 }
 
 // LastProcess returns the most recent process created for name.
-func (r *FakeRunner) LastProcess(name string) *FakeProcess {
+func (r *Runner) LastProcess(name string) *Process {
 	processes := r.Processes(name)
 	if len(processes) == 0 {
 		return nil
@@ -116,14 +118,14 @@ func (r *FakeRunner) LastProcess(name string) *FakeProcess {
 }
 
 // ProcessSignals returns signal and kill events in observed order.
-func (r *FakeRunner) ProcessSignals() []FakeRunnerSignal {
+func (r *Runner) ProcessSignals() []RunnerSignal {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]FakeRunnerSignal(nil), r.processSignals...)
+	return append([]RunnerSignal(nil), r.processSignals...)
 }
 
 // SignalNames returns process names for signal and kill events.
-func (r *FakeRunner) SignalNames() []string {
+func (r *Runner) SignalNames() []string {
 	signals := r.ProcessSignals()
 	names := make([]string, 0, len(signals))
 	for _, signal := range signals {
@@ -132,16 +134,16 @@ func (r *FakeRunner) SignalNames() []string {
 	return names
 }
 
-func (r *FakeRunner) trackProcess(name string, process *FakeProcess) {
+func (r *Runner) trackProcess(name string, process *Process) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.processes == nil {
-		r.processes = make(map[string][]*FakeProcess)
+		r.processes = make(map[string][]*Process)
 	}
 	r.processes[name] = append(r.processes[name], process)
 }
 
-func (r *FakeRunner) configureProcess(name string, process *FakeProcess) {
+func (r *Runner) configureProcess(name string, process *Process) {
 	onSignal := process.OnSignal
 	onKill := process.OnKill
 	process.OnSignal = func(sig os.Signal) {
@@ -158,13 +160,13 @@ func (r *FakeRunner) configureProcess(name string, process *FakeProcess) {
 	}
 }
 
-func (r *FakeRunner) recordProcessSignal(name string, sig os.Signal) {
+func (r *Runner) recordProcessSignal(name string, sig os.Signal) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.processSignals = append(r.processSignals, FakeRunnerSignal{Name: name, Signal: sig})
+	r.processSignals = append(r.processSignals, RunnerSignal{Name: name, Signal: sig})
 }
 
-func fakeStart(cmd *exec.Cmd) FakeStart {
+func runnerStart(cmd *exec.Cmd) Start {
 	name := "command"
 	if cmd != nil {
 		if len(cmd.Args) > 0 && cmd.Args[0] != "" {
@@ -173,32 +175,32 @@ func fakeStart(cmd *exec.Cmd) FakeStart {
 			name = filepath.Base(cmd.Path)
 		}
 	}
-	return FakeStart{
+	return Start{
 		Name:         name,
-		Args:         fakeCommandArgs(cmd),
-		Env:          fakeCommandEnv(cmd),
-		EnvAdditions: fakeCommandEnvAdditions(fakeCommandEnv(cmd)),
-		Dir:          fakeCommandDir(cmd),
-		ProcessGroup: fakeCommandProcessGroup(cmd),
+		Args:         commandArgs(cmd),
+		Env:          commandEnv(cmd),
+		EnvAdditions: commandEnvAdditions(commandEnv(cmd)),
+		Dir:          commandDir(cmd),
+		ProcessGroup: commandProcessGroup(cmd),
 		Cmd:          cmd,
 	}
 }
 
-func fakeCommandArgs(cmd *exec.Cmd) []string {
+func commandArgs(cmd *exec.Cmd) []string {
 	if cmd == nil || len(cmd.Args) == 0 {
 		return nil
 	}
 	return append([]string(nil), cmd.Args[1:]...)
 }
 
-func fakeCommandEnv(cmd *exec.Cmd) []string {
+func commandEnv(cmd *exec.Cmd) []string {
 	if cmd == nil {
 		return nil
 	}
 	return append([]string(nil), cmd.Env...)
 }
 
-func fakeCommandEnvAdditions(env []string) []string {
+func commandEnvAdditions(env []string) []string {
 	environ := os.Environ()
 	if len(env) < len(environ) {
 		return append([]string(nil), env...)
@@ -211,21 +213,21 @@ func fakeCommandEnvAdditions(env []string) []string {
 	return append([]string(nil), env[len(environ):]...)
 }
 
-func fakeCommandDir(cmd *exec.Cmd) string {
+func commandDir(cmd *exec.Cmd) string {
 	if cmd == nil {
 		return ""
 	}
 	return cmd.Dir
 }
 
-func fakeCommandProcessGroup(cmd *exec.Cmd) bool {
+func commandProcessGroup(cmd *exec.Cmd) bool {
 	return cmd != nil && cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid
 }
 
-func (s FakeStart) String() string {
+func (s Start) String() string {
 	return fmt.Sprintf("%s %v", s.Name, s.Args)
 }
 
 var _ interface {
-	Start(*exec.Cmd) (*Process, error)
-} = (*FakeRunner)(nil)
+	Start(*exec.Cmd) (*executor.Process, error)
+} = (*Runner)(nil)

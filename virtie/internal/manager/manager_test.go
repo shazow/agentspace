@@ -27,6 +27,7 @@ import (
 	"github.com/diskfs/go-diskfs/filesystem"
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/units"
@@ -1067,7 +1068,7 @@ func TestManagerLaunchWarnsAfterFiveSSHRetryFailures(t *testing.T) {
 }
 
 func TestWaitForSSHReadyFailsWhenQEMUExitsFirst(t *testing.T) {
-	qemuProcess := &executor.FakeProcess{FakeName: "qemu"}
+	qemuProcess := &executortest.Process{NameValue: "qemu"}
 	qemu := qemuProcess.Process()
 	waiterStarted := make(chan struct{})
 	manager := &manager{
@@ -3296,7 +3297,7 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	session := (&executor.FakeProcess{FakeName: "ssh"}).Process()
+	session := (&executortest.Process{NameValue: "ssh"}).Process()
 
 	err := (&manager{}).waitForSession(ctx, session, make(chan struct{}), make(chan struct{}), nil, "", executor.Group{})
 	if err == nil {
@@ -4006,7 +4007,7 @@ func validManifestWithBalloon(workingDir string) *manifest.Manifest {
 }
 
 type launchRunner struct {
-	base                      *executor.FakeRunner
+	base                      *executortest.Runner
 	mu                        sync.Mutex
 	interactiveStarts         int
 	cancel                    context.CancelFunc
@@ -4018,7 +4019,7 @@ type launchRunner struct {
 	transientSSHOutputs       []string
 	authSSHFailures           int
 	startErrors               map[string]error
-	qemu                      *executor.FakeProcess
+	qemu                      *executortest.Process
 	onStart                   func(name string, cmd *exec.Cmd)
 }
 
@@ -4032,18 +4033,18 @@ func (r *launchRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 
 func (r *launchRunner) ensureBase() {
 	if r.base == nil {
-		r.base = &executor.FakeRunner{}
+		r.base = &executortest.Runner{}
 	}
 }
 
-func (r *launchRunner) startProcess(start executor.FakeStart) (*executor.FakeProcess, error) {
+func (r *launchRunner) startProcess(start executortest.Start) (*executortest.Process, error) {
 	name := start.Name
 	if r.onStart != nil {
 		r.onStart(name, start.Cmd)
 	}
 	switch {
 	case strings.HasPrefix(name, "qemu-system"):
-		process := &executor.FakeProcess{FakeName: name}
+		process := &executortest.Process{NameValue: name}
 		r.mu.Lock()
 		r.qemu = process
 		r.mu.Unlock()
@@ -4057,7 +4058,7 @@ func (r *launchRunner) startProcess(start executor.FakeStart) (*executor.FakePro
 			if start.Cmd.Stderr != nil {
 				_, _ = io.WriteString(start.Cmd.Stderr, "agent@vsock/3: Permission denied (publickey).\n")
 			}
-			return &executor.FakeProcess{FakeName: name, Exited: true, WaitErr: errors.New("exit status 255")}, nil
+			return &executortest.Process{NameValue: name, Exited: true, WaitErr: errors.New("exit status 255")}, nil
 		}
 		if interactiveStarts <= r.transientSSHFailures {
 			if start.Cmd.Stderr != nil {
@@ -4067,13 +4068,13 @@ func (r *launchRunner) startProcess(start executor.FakeStart) (*executor.FakePro
 				}
 				_, _ = io.WriteString(start.Cmd.Stderr, output)
 			}
-			return &executor.FakeProcess{FakeName: name, Exited: true, WaitErr: errors.New("exit status 255")}, nil
+			return &executortest.Process{NameValue: name, Exited: true, WaitErr: errors.New("exit status 255")}, nil
 		}
 		if r.failInteractiveSSH {
 			return nil, errors.New("session start failed")
 		}
 		if r.finishInteractiveSSH {
-			process := &executor.FakeProcess{FakeName: name}
+			process := &executortest.Process{NameValue: name}
 			go func() {
 				if r.finishInteractiveSSHDelay > 0 {
 					time.Sleep(r.finishInteractiveSSHDelay)
@@ -4083,7 +4084,7 @@ func (r *launchRunner) startProcess(start executor.FakeStart) (*executor.FakePro
 			return process, nil
 		}
 
-		process := &executor.FakeProcess{FakeName: name}
+		process := &executortest.Process{NameValue: name}
 		go func() {
 			if r.cancelDelay > 0 {
 				time.Sleep(r.cancelDelay)
@@ -4098,7 +4099,7 @@ func (r *launchRunner) startProcess(start executor.FakeStart) (*executor.FakePro
 	}
 }
 
-func (r *launchRunner) starts() []executor.FakeStart {
+func (r *launchRunner) starts() []executortest.Start {
 	r.ensureBase()
 	return r.base.Starts()
 }
@@ -4124,13 +4125,13 @@ func (r *launchRunner) processSignals() []processSignal {
 }
 
 func (r *launchRunner) qemuArgs() []string {
-	return r.firstArgs(func(start executor.FakeStart) bool {
+	return r.firstArgs(func(start executortest.Start) bool {
 		return strings.HasPrefix(start.Name, "qemu-system")
 	})
 }
 
 func (r *launchRunner) qemuEnv() []string {
-	return r.firstEnv(func(start executor.FakeStart) bool {
+	return r.firstEnv(func(start executortest.Start) bool {
 		return strings.HasPrefix(start.Name, "qemu-system")
 	})
 }
@@ -4191,7 +4192,7 @@ func (r *launchRunner) processDirs() map[string]string {
 	return values
 }
 
-func (r *launchRunner) firstArgs(match func(executor.FakeStart) bool) []string {
+func (r *launchRunner) firstArgs(match func(executortest.Start) bool) []string {
 	for _, start := range r.starts() {
 		if match(start) {
 			return append([]string(nil), start.Args...)
@@ -4200,7 +4201,7 @@ func (r *launchRunner) firstArgs(match func(executor.FakeStart) bool) []string {
 	return nil
 }
 
-func (r *launchRunner) firstEnv(match func(executor.FakeStart) bool) []string {
+func (r *launchRunner) firstEnv(match func(executortest.Start) bool) []string {
 	for _, start := range r.starts() {
 		if match(start) {
 			return append([]string(nil), start.EnvAdditions...)

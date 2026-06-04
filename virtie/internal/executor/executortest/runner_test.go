@@ -1,4 +1,4 @@
-package executor
+package executortest
 
 import (
 	"errors"
@@ -8,11 +8,13 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
-func TestFakeRunnerRecordsCommandMetadata(t *testing.T) {
-	runner := &FakeRunner{}
-	cmd := Command("/tmp/bin/worker", []string{"--flag"}, []string{"EXTRA=1"})
+func TestRunnerRecordsCommandMetadata(t *testing.T) {
+	runner := &Runner{}
+	cmd := executor.Command("/tmp/bin/worker", []string{"--flag"}, []string{"EXTRA=1"})
 	cmd.Dir = "/tmp/work"
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
@@ -49,8 +51,8 @@ func TestFakeRunnerRecordsCommandMetadata(t *testing.T) {
 	}
 }
 
-func TestFakeRunnerReturnsStartErrors(t *testing.T) {
-	runner := &FakeRunner{StartErrors: map[string]error{"worker": errors.New("boom")}}
+func TestRunnerReturnsStartErrors(t *testing.T) {
+	runner := &Runner{StartErrors: map[string]error{"worker": errors.New("boom")}}
 
 	_, err := runner.Start(exec.Command("/tmp/bin/worker"))
 	if err == nil || err.Error() != "boom" {
@@ -58,8 +60,8 @@ func TestFakeRunnerReturnsStartErrors(t *testing.T) {
 	}
 }
 
-func TestFakeRunnerRecordsProcessSignals(t *testing.T) {
-	runner := &FakeRunner{}
+func TestRunnerRecordsProcessSignals(t *testing.T) {
+	runner := &Runner{}
 	process, err := runner.Start(exec.Command("/tmp/bin/worker"))
 	if err != nil {
 		t.Fatalf("start: %v", err)
@@ -77,9 +79,9 @@ func TestFakeRunnerRecordsProcessSignals(t *testing.T) {
 	}
 }
 
-func TestFakeRunnerOnStartCanCustomizeProcess(t *testing.T) {
-	runner := &FakeRunner{}
-	runner.OnStart = func(start FakeStart) (*FakeProcess, error) {
+func TestRunnerOnStartCanCustomizeProcess(t *testing.T) {
+	runner := &Runner{}
+	runner.OnStart = func(start Start) (*Process, error) {
 		process := runner.NewProcess(start.Name)
 		process.IgnoreSignals = true
 		go func() {

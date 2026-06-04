@@ -1,35 +1,37 @@
-package executor
+package executortest
 
 import (
 	"os"
 	"sync"
 	"sync/atomic"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
-// FakeProcessEventKind identifies a lifecycle event recorded by FakeProcess.
-type FakeProcessEventKind string
+// EventKind identifies a lifecycle event recorded by Process.
+type EventKind string
 
 const (
-	FakeProcessSignal FakeProcessEventKind = "signal"
-	FakeProcessKill   FakeProcessEventKind = "kill"
+	Signal EventKind = "signal"
+	Kill   EventKind = "kill"
 )
 
-var fakeProcessEventSequence atomic.Int64
+var eventSequence atomic.Int64
 
-// FakeProcessEvent records a signal or kill operation on a FakeProcess.
-type FakeProcessEvent struct {
-	Kind     FakeProcessEventKind
+// Event records a signal or kill operation on a Process.
+type Event struct {
+	Kind     EventKind
 	Signal   os.Signal
 	Sequence int64
 }
 
-// FakeProcess is a test implementation of RunningProcess.
+// Process is a test implementation of RunningProcess.
 //
 // The zero value is a running process named "fake" with PID 1. Set Exited to
 // true to make Wait return immediately with WaitErr.
-type FakeProcess struct {
-	FakeName string
-	FakePID  int
+type Process struct {
+	NameValue string
+	PIDValue  int
 
 	Exited  bool
 	WaitErr error
@@ -46,18 +48,18 @@ type FakeProcess struct {
 	completed bool
 	waitErr   error
 	signals   []os.Signal
-	events    []FakeProcessEvent
+	events    []Event
 }
 
-var _ RunningProcess = (*FakeProcess)(nil)
+var _ executor.RunningProcess = (*Process)(nil)
 
 // Process wraps p as an executor Process.
-func (p *FakeProcess) Process() *Process {
-	return Wrap(p)
+func (p *Process) Process() *executor.Process {
+	return executor.Wrap(p)
 }
 
 // Complete marks p as exited and unblocks Wait.
-func (p *FakeProcess) Complete(err error) {
+func (p *Process) Complete(err error) {
 	if p == nil {
 		return
 	}
@@ -65,7 +67,7 @@ func (p *FakeProcess) Complete(err error) {
 }
 
 // Done returns a channel closed when p exits.
-func (p *FakeProcess) Done() <-chan struct{} {
+func (p *Process) Done() <-chan struct{} {
 	if p == nil {
 		return closedDone()
 	}
@@ -75,8 +77,14 @@ func (p *FakeProcess) Done() <-chan struct{} {
 	return done
 }
 
+func closedDone() <-chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
+}
+
 // Wait blocks until p exits and returns its completion error.
-func (p *FakeProcess) Wait() error {
+func (p *Process) Wait() error {
 	if p == nil {
 		return nil
 	}
@@ -91,11 +99,11 @@ func (p *FakeProcess) Wait() error {
 }
 
 // Signal records sig, invokes OnSignal, and completes p unless IgnoreSignals is set.
-func (p *FakeProcess) Signal(sig os.Signal) error {
+func (p *Process) Signal(sig os.Signal) error {
 	if p == nil {
 		return nil
 	}
-	p.recordEvent(FakeProcessSignal, sig)
+	p.recordEvent(Signal, sig)
 	if p.OnSignal != nil {
 		p.OnSignal(sig)
 	}
@@ -109,11 +117,11 @@ func (p *FakeProcess) Signal(sig os.Signal) error {
 }
 
 // Kill records a kill event, invokes OnKill, and completes p.
-func (p *FakeProcess) Kill() error {
+func (p *Process) Kill() error {
 	if p == nil {
 		return nil
 	}
-	p.recordEvent(FakeProcessKill, nil)
+	p.recordEvent(Kill, nil)
 	if p.OnKill != nil {
 		p.OnKill()
 	}
@@ -124,30 +132,30 @@ func (p *FakeProcess) Kill() error {
 	return nil
 }
 
-// PID returns FakePID, or 1 when FakePID is zero.
-func (p *FakeProcess) PID() int {
+// PID returns PIDValue, or 1 when PIDValue is zero.
+func (p *Process) PID() int {
 	if p == nil {
 		return 0
 	}
-	if p.FakePID != 0 {
-		return p.FakePID
+	if p.PIDValue != 0 {
+		return p.PIDValue
 	}
 	return 1
 }
 
-// Name returns FakeName, or "fake" when FakeName is empty.
-func (p *FakeProcess) Name() string {
+// Name returns NameValue, or "fake" when NameValue is empty.
+func (p *Process) Name() string {
 	if p == nil {
 		return ""
 	}
-	if p.FakeName != "" {
-		return p.FakeName
+	if p.NameValue != "" {
+		return p.NameValue
 	}
 	return "fake"
 }
 
 // Signals returns the signals recorded by Signal.
-func (p *FakeProcess) Signals() []os.Signal {
+func (p *Process) Signals() []os.Signal {
 	if p == nil {
 		return nil
 	}
@@ -157,30 +165,30 @@ func (p *FakeProcess) Signals() []os.Signal {
 }
 
 // Events returns signal and kill events in the order p observed them.
-func (p *FakeProcess) Events() []FakeProcessEvent {
+func (p *Process) Events() []Event {
 	if p == nil {
 		return nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]FakeProcessEvent(nil), p.events...)
+	return append([]Event(nil), p.events...)
 }
 
 // EventKinds returns the kinds of events recorded by p.
-func (p *FakeProcess) EventKinds() []FakeProcessEventKind {
+func (p *Process) EventKinds() []EventKind {
 	if p == nil {
 		return nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	kinds := make([]FakeProcessEventKind, 0, len(p.events))
+	kinds := make([]EventKind, 0, len(p.events))
 	for _, event := range p.events {
 		kinds = append(kinds, event.Kind)
 	}
 	return kinds
 }
 
-func (p *FakeProcess) complete(err error) {
+func (p *Process) complete(err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.completed {
@@ -192,7 +200,7 @@ func (p *FakeProcess) complete(err error) {
 	close(done)
 }
 
-func (p *FakeProcess) doneLocked() chan struct{} {
+func (p *Process) doneLocked() chan struct{} {
 	if p.done == nil {
 		p.done = make(chan struct{})
 		if p.Exited {
@@ -204,14 +212,14 @@ func (p *FakeProcess) doneLocked() chan struct{} {
 	return p.done
 }
 
-func (p *FakeProcess) recordEvent(kind FakeProcessEventKind, sig os.Signal) {
-	event := FakeProcessEvent{
+func (p *Process) recordEvent(kind EventKind, sig os.Signal) {
+	event := Event{
 		Kind:     kind,
 		Signal:   sig,
-		Sequence: fakeProcessEventSequence.Add(1),
+		Sequence: eventSequence.Add(1),
 	}
 	p.mu.Lock()
-	if kind == FakeProcessSignal {
+	if kind == Signal {
 		p.signals = append(p.signals, sig)
 	}
 	p.events = append(p.events, event)

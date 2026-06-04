@@ -1,16 +1,20 @@
-package executor
+package executor_test
 
 import (
 	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
+
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	"time"
 )
 
 func TestGroupAddRemoveLen(t *testing.T) {
-	first := Wrap(&FakeProcess{FakeName: "first"})
-	second := Wrap(&FakeProcess{FakeName: "second"})
-	group := NewGroup(first)
+	first := executor.Wrap(&executortest.Process{NameValue: "first"})
+	second := executor.Wrap(&executortest.Process{NameValue: "second"})
+	group := executor.NewGroup(first)
 
 	group.Add(nil, second)
 	if got, want := group.Len(), 2; got != want {
@@ -22,21 +26,21 @@ func TestGroupAddRemoveLen(t *testing.T) {
 	if group.Remove(first) {
 		t.Fatal("expected second removal to fail")
 	}
-	if got, want := group.Processes(), []*Process{second}; !reflect.DeepEqual(got, want) {
+	if got, want := group.Processes(), []*executor.Process{second}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("processes after remove: got %#v want %#v", got, want)
 	}
 }
 
 func TestGroupSnapshotIsIndependent(t *testing.T) {
-	first := Wrap(&FakeProcess{FakeName: "first"})
-	second := Wrap(&FakeProcess{FakeName: "second"})
-	group := NewGroup(first)
+	first := executor.Wrap(&executortest.Process{NameValue: "first"})
+	second := executor.Wrap(&executortest.Process{NameValue: "second"})
+	group := executor.NewGroup(first)
 	snapshot := group.Snapshot()
 
 	group.Add(second)
 	snapshot.Remove(first)
 
-	if got, want := group.Processes(), []*Process{first, second}; !reflect.DeepEqual(got, want) {
+	if got, want := group.Processes(), []*executor.Process{first, second}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("group changed unexpectedly: got %#v want %#v", got, want)
 	}
 	if got := snapshot.Len(); got != 0 {
@@ -45,22 +49,22 @@ func TestGroupSnapshotIsIndependent(t *testing.T) {
 }
 
 func TestGroupProcessesReturnsCopy(t *testing.T) {
-	first := Wrap(&FakeProcess{FakeName: "first"})
-	second := Wrap(&FakeProcess{FakeName: "second"})
-	group := NewGroup(first, second)
+	first := executor.Wrap(&executortest.Process{NameValue: "first"})
+	second := executor.Wrap(&executortest.Process{NameValue: "second"})
+	group := executor.NewGroup(first, second)
 	processes := group.Processes()
 	processes[0] = nil
 
-	if got, want := group.Processes(), []*Process{first, second}; !reflect.DeepEqual(got, want) {
+	if got, want := group.Processes(), []*executor.Process{first, second}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("group was mutated through processes copy: got %#v want %#v", got, want)
 	}
 }
 
 func TestGroupFirstExit(t *testing.T) {
-	first := Wrap(&FakeProcess{FakeName: "first"})
-	secondProcess := &FakeProcess{FakeName: "second"}
-	second := Wrap(secondProcess)
-	group := NewGroup(first, second)
+	first := executor.Wrap(&executortest.Process{NameValue: "first"})
+	secondProcess := &executortest.Process{NameValue: "second"}
+	second := executor.Wrap(secondProcess)
+	group := executor.NewGroup(first, second)
 	secondProcess.Complete(errors.New("second failed"))
 	<-second.Done()
 
@@ -71,16 +75,16 @@ func TestGroupFirstExit(t *testing.T) {
 }
 
 func TestGroupStopAllStopsInReverseOrder(t *testing.T) {
-	firstProcess := &FakeProcess{FakeName: "first"}
-	secondProcess := &FakeProcess{FakeName: "second"}
-	first := Wrap(firstProcess)
-	second := Wrap(secondProcess)
-	group := NewGroup(first, second)
+	firstProcess := &executortest.Process{NameValue: "first"}
+	secondProcess := &executortest.Process{NameValue: "second"}
+	first := executor.Wrap(firstProcess)
+	second := executor.Wrap(secondProcess)
+	group := executor.NewGroup(first, second)
 
 	if err := group.StopAll(time.Second); err != nil {
 		t.Fatalf("stop all: %v", err)
 	}
-	if got, want := []FakeProcessEventKind{secondProcess.EventKinds()[0], firstProcess.EventKinds()[0]}, []FakeProcessEventKind{FakeProcessSignal, FakeProcessSignal}; !reflect.DeepEqual(got, want) {
+	if got, want := []executortest.EventKind{secondProcess.EventKinds()[0], firstProcess.EventKinds()[0]}, []executortest.EventKind{executortest.Signal, executortest.Signal}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %v want %v", got, want)
 	}
 	if secondProcess.Events()[0].Sequence >= firstProcess.Events()[0].Sequence {
@@ -89,7 +93,7 @@ func TestGroupStopAllStopsInReverseOrder(t *testing.T) {
 }
 
 func TestGroupZeroValueAndEmpty(t *testing.T) {
-	var group Group
+	var group executor.Group
 	group.Add(nil)
 	if group.Remove(nil) {
 		t.Fatal("empty group unexpectedly removed process")

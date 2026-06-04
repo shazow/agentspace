@@ -1,4 +1,4 @@
-package executor
+package executor_test
 
 import (
 	"errors"
@@ -6,12 +6,16 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
+
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	"time"
 )
 
 func TestProcessCachesWaitResult(t *testing.T) {
-	handle := &FakeProcess{FakeName: "worker"}
-	process := Wrap(handle)
+	handle := &executortest.Process{NameValue: "worker"}
+	process := executor.Wrap(handle)
 	handle.Complete(errors.New("done"))
 
 	for i := 0; i < 2; i++ {
@@ -23,8 +27,8 @@ func TestProcessCachesWaitResult(t *testing.T) {
 }
 
 func TestProcessPollExit(t *testing.T) {
-	handle := &FakeProcess{FakeName: "worker"}
-	process := Wrap(handle)
+	handle := &executortest.Process{NameValue: "worker"}
+	process := executor.Wrap(handle)
 	if exited, err := process.PollExit(); exited || err != nil {
 		t.Fatalf("poll before exit: exited=%v err=%v", exited, err)
 	}
@@ -39,8 +43,8 @@ func TestProcessPollExit(t *testing.T) {
 }
 
 func TestProcessStopUsesShutdownCallback(t *testing.T) {
-	handle := &FakeProcess{FakeName: "worker"}
-	process := Wrap(handle)
+	handle := &executortest.Process{NameValue: "worker"}
+	process := executor.Wrap(handle)
 	called := false
 	process.SetShutdown(func() error {
 		called = true
@@ -60,20 +64,20 @@ func TestProcessStopUsesShutdownCallback(t *testing.T) {
 }
 
 func TestProcessStopSignalsThenKills(t *testing.T) {
-	handle := &FakeProcess{FakeName: "worker", IgnoreSignals: true}
-	process := Wrap(handle)
+	handle := &executortest.Process{NameValue: "worker", IgnoreSignals: true}
+	process := executor.Wrap(handle)
 
 	if err := process.Stop(time.Millisecond); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
-	if got, want := handle.EventKinds(), []FakeProcessEventKind{FakeProcessSignal, FakeProcessKill}; !reflect.DeepEqual(got, want) {
+	if got, want := handle.EventKinds(), []executortest.EventKind{executortest.Signal, executortest.Kill}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %v want %v", got, want)
 	}
 }
 
 func TestProcessStopReportsShutdownAndSignalErrors(t *testing.T) {
-	handle := &FakeProcess{FakeName: "worker", SignalErr: errors.New("signal failed")}
-	process := Wrap(handle)
+	handle := &executortest.Process{NameValue: "worker", SignalErr: errors.New("signal failed")}
+	process := executor.Wrap(handle)
 	process.SetShutdown(func() error {
 		return errors.New("shutdown failed")
 	})
@@ -85,26 +89,26 @@ func TestProcessStopReportsShutdownAndSignalErrors(t *testing.T) {
 }
 
 func TestProcessKillAndWait(t *testing.T) {
-	handle := &FakeProcess{FakeName: "worker"}
-	process := Wrap(handle)
+	handle := &executortest.Process{NameValue: "worker"}
+	process := executor.Wrap(handle)
 
 	if err := process.KillAndWait(); err != nil {
 		t.Fatalf("kill and wait: %v", err)
 	}
-	if got, want := handle.EventKinds(), []FakeProcessEventKind{FakeProcessKill}; !reflect.DeepEqual(got, want) {
+	if got, want := handle.EventKinds(), []executortest.EventKind{executortest.Kill}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %v want %v", got, want)
 	}
 }
 
 func TestSignalProcessGroupIgnoresMissingProcess(t *testing.T) {
-	if err := SignalProcessGroup(999999, syscall.SIGTERM); err != nil {
+	if err := executor.SignalProcessGroup(999999, syscall.SIGTERM); err != nil {
 		t.Fatalf("signal missing process: %v", err)
 	}
 }
 
 func TestSignalProcessGroupIgnoresNonPositivePID(t *testing.T) {
 	for _, pid := range []int{0, -1} {
-		if err := SignalProcessGroup(pid, syscall.SIGTERM); err != nil {
+		if err := executor.SignalProcessGroup(pid, syscall.SIGTERM); err != nil {
 			t.Fatalf("signal pid %d: %v", pid, err)
 		}
 	}

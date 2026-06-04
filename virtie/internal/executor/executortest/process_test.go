@@ -1,4 +1,4 @@
-package executor
+package executortest
 
 import (
 	"errors"
@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-func TestFakeProcessWaitBlocksUntilComplete(t *testing.T) {
-	process := &FakeProcess{FakeName: "worker"}
+func TestProcessWaitBlocksUntilComplete(t *testing.T) {
+	process := &Process{NameValue: "worker"}
 
 	select {
 	case <-process.Done():
@@ -24,16 +24,16 @@ func TestFakeProcessWaitBlocksUntilComplete(t *testing.T) {
 	}
 }
 
-func TestFakeProcessExitedWaitsImmediately(t *testing.T) {
-	process := &FakeProcess{Exited: true, WaitErr: errors.New("failed")}
+func TestProcessExitedWaitsImmediately(t *testing.T) {
+	process := &Process{Exited: true, WaitErr: errors.New("failed")}
 
 	if err := process.Wait(); err == nil || err.Error() != "failed" {
 		t.Fatalf("wait: %v", err)
 	}
 }
 
-func TestFakeProcessProcessCachesWaitResult(t *testing.T) {
-	handle := &FakeProcess{FakeName: "worker"}
+func TestProcessProcessCachesWaitResult(t *testing.T) {
+	handle := &Process{NameValue: "worker"}
 	process := handle.Process()
 	handle.Complete(errors.New("done"))
 
@@ -45,8 +45,8 @@ func TestFakeProcessProcessCachesWaitResult(t *testing.T) {
 	}
 }
 
-func TestFakeProcessSignalCompletesByDefault(t *testing.T) {
-	process := &FakeProcess{WaitErr: errors.New("stopped")}
+func TestSignalCompletesByDefault(t *testing.T) {
+	process := &Process{WaitErr: errors.New("stopped")}
 
 	if err := process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("signal: %v", err)
@@ -59,8 +59,8 @@ func TestFakeProcessSignalCompletesByDefault(t *testing.T) {
 	}
 }
 
-func TestFakeProcessIgnoreSignalsAllowsKillEscalation(t *testing.T) {
-	handle := &FakeProcess{IgnoreSignals: true}
+func TestProcessIgnoreSignalsAllowsKillEscalation(t *testing.T) {
+	handle := &Process{IgnoreSignals: true}
 	process := handle.Process()
 
 	if err := process.Stop(time.Millisecond); err != nil {
@@ -71,13 +71,13 @@ func TestFakeProcessIgnoreSignalsAllowsKillEscalation(t *testing.T) {
 	if got, want := len(events), 2; got != want {
 		t.Fatalf("events: got %d want %d (%v)", got, want, events)
 	}
-	if events[0].Kind != FakeProcessSignal || events[1].Kind != FakeProcessKill {
+	if events[0].Kind != Signal || events[1].Kind != Kill {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 }
 
-func TestFakeProcessRecordsErrorsAndEvents(t *testing.T) {
-	process := &FakeProcess{
+func TestProcessRecordsErrorsAndEvents(t *testing.T) {
+	process := &Process{
 		SignalErr: errors.New("signal failed"),
 		KillErr:   errors.New("kill failed"),
 	}
@@ -93,14 +93,14 @@ func TestFakeProcessRecordsErrorsAndEvents(t *testing.T) {
 	if got, want := len(events), 2; got != want {
 		t.Fatalf("events: got %d want %d (%v)", got, want, events)
 	}
-	if events[0].Kind != FakeProcessSignal || events[1].Kind != FakeProcessKill {
+	if events[0].Kind != Signal || events[1].Kind != Kill {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 }
 
-func TestFakeProcessEventSequenceOrdersProcesses(t *testing.T) {
-	first := &FakeProcess{FakeName: "first"}
-	second := &FakeProcess{FakeName: "second"}
+func TestEventSequenceOrdersProcesses(t *testing.T) {
+	first := &Process{NameValue: "first"}
+	second := &Process{NameValue: "second"}
 
 	if err := second.Signal(os.Interrupt); err != nil {
 		t.Fatalf("signal second: %v", err)

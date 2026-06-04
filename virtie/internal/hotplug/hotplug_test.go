@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 )
 
 func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
@@ -290,7 +291,7 @@ func (s *fakeStarter) Start(ctx context.Context, cmd *exec.Cmd) (*executor.Proce
 		name = filepath.Base(cmd.Args[0])
 	}
 	s.starts = append(s.starts, name)
-	return (&executor.FakeProcess{FakeName: name, FakePID: 100, Exited: true}).Process(), nil
+	return (&executortest.Process{NameValue: name, PIDValue: 100, Exited: true}).Process(), nil
 }
 
 func (s *fakeStarter) Stop(process *executor.Process) error {
