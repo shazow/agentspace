@@ -73,7 +73,7 @@ func TestRunnerRejectsNilCommand(t *testing.T) {
 }
 
 func TestProcessNameFallsBackToCommandPath(t *testing.T) {
-	process := &execProcess{cmd: &exec.Cmd{Path: "/tmp/bin/custom"}}
+	process := &execCmdHandle{cmd: &exec.Cmd{Path: "/tmp/bin/custom"}}
 	if got, want := process.Name(), "custom"; got != want {
 		t.Fatalf("unexpected process name: got %q want %q", got, want)
 	}

@@ -302,16 +302,16 @@ type fakeStarter struct {
 	stopped []int
 }
 
-func (s *fakeStarter) Start(ctx context.Context, cmd *exec.Cmd) (executor.Process, error) {
+func (s *fakeStarter) Start(ctx context.Context, cmd *exec.Cmd) (*executor.Process, error) {
 	name := filepath.Base(cmd.Path)
 	if len(cmd.Args) > 0 && cmd.Args[0] != "" {
 		name = filepath.Base(cmd.Args[0])
 	}
 	s.starts = append(s.starts, name)
-	return fakeProcess{name: name, pid: 100}, nil
+	return executor.Wrap(fakeProcess{name: name, pid: 100}), nil
 }
 
-func (s *fakeStarter) Stop(process executor.Process) error {
+func (s *fakeStarter) Stop(process *executor.Process) error {
 	s.stopped = append(s.stopped, process.PID())
 	return nil
 }
@@ -323,7 +323,7 @@ func (s *fakeStarter) SignalPIDGroup(pid int, signal syscall.Signal) error {
 
 type fakeSockets struct{}
 
-func (fakeSockets) Wait(ctx context.Context, stage string, socketPaths []string, process executor.Process) error {
+func (fakeSockets) Wait(ctx context.Context, stage string, socketPaths []string, process *executor.Process) error {
 	return nil
 }
 

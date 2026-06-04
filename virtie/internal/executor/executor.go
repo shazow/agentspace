@@ -1,4 +1,4 @@
-// Package executor renders exec command templates and their environment.
+// Package executor renders exec command templates and manages external processes.
 package executor
 
 import (
@@ -25,8 +25,8 @@ func Command(path string, args []string, env []string) *exec.Cmd {
 	return cmd
 }
 
-// Process is a started external process.
-type Process interface {
+// RunningProcess is an already-started process that can be wrapped by Process.
+type RunningProcess interface {
 	Wait() error
 	Signal(sig os.Signal) error
 	Kill() error
@@ -38,48 +38,48 @@ type Process interface {
 type Runner struct{}
 
 // Start starts cmd and returns its process handle.
-func (r *Runner) Start(cmd *exec.Cmd) (Process, error) {
+func (r *Runner) Start(cmd *exec.Cmd) (*Process, error) {
 	if cmd == nil {
 		return nil, fmt.Errorf("start command: command must not be nil")
 	}
-	process := &execProcess{cmd: cmd}
+	handle := &execCmdHandle{cmd: cmd}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start %s: %w", process.Name(), err)
+		return nil, fmt.Errorf("start %s: %w", handle.Name(), err)
 	}
 
-	return process, nil
+	return Wrap(handle), nil
 }
 
-type execProcess struct {
+type execCmdHandle struct {
 	cmd *exec.Cmd
 }
 
-func (p *execProcess) Wait() error {
+func (p *execCmdHandle) Wait() error {
 	return p.cmd.Wait()
 }
 
-func (p *execProcess) Signal(sig os.Signal) error {
+func (p *execCmdHandle) Signal(sig os.Signal) error {
 	if p.cmd.Process == nil {
 		return nil
 	}
 	return p.cmd.Process.Signal(sig)
 }
 
-func (p *execProcess) Kill() error {
+func (p *execCmdHandle) Kill() error {
 	if p.cmd.Process == nil {
 		return nil
 	}
 	return p.cmd.Process.Kill()
 }
 
-func (p *execProcess) PID() int {
+func (p *execCmdHandle) PID() int {
 	if p.cmd.Process == nil {
 		return 0
 	}
 	return p.cmd.Process.Pid
 }
 
-func (p *execProcess) Name() string {
+func (p *execCmdHandle) Name() string {
 	if p == nil || p.cmd == nil {
 		return ""
 	}

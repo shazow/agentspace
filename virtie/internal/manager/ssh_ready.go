@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/readiness"
 )
 
@@ -33,12 +34,12 @@ func (d *unixSSHReadyDialer) Dial(ctx context.Context, socketPath string, timeou
 	return conn, nil
 }
 
-func (m *manager) waitForSSHReady(ctx context.Context, socketPath string, watchers ...*managedProcess) error {
+func (m *manager) waitForSSHReady(ctx context.Context, socketPath string, watchers executor.Group) error {
 	timeout := m.effectiveSSHReadyTimeout()
 	readyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if err := m.waitForSocketWithStage(readyCtx, "vm startup", socketPath, watchers...); err != nil {
+	if err := m.waitForSocketWithStage(readyCtx, "vm startup", socketPath, watchers); err != nil {
 		if readyCtx.Err() != nil {
 			return &stageError{Stage: "vm startup", Err: fmt.Errorf("wait for ssh readiness: %w", readyCtx.Err())}
 		}
@@ -75,7 +76,7 @@ func (m *manager) waitForSSHReady(ctx context.Context, socketPath string, watche
 			}
 			return nil
 		case <-ticker.C:
-			if err := firstUnexpectedExit("vm startup", watchers...); err != nil {
+			if err := firstUnexpectedExit("vm startup", watchers); err != nil {
 				return err
 			}
 		case <-readyCtx.Done():
@@ -84,8 +85,8 @@ func (m *manager) waitForSSHReady(ctx context.Context, socketPath string, watche
 	}
 }
 
-func (m *manager) waitForSocketWithStage(ctx context.Context, stage, socketPath string, watchers ...*managedProcess) error {
-	return m.waitForSockets(ctx, stage, []string{socketPath}, watchers...)
+func (m *manager) waitForSocketWithStage(ctx context.Context, stage, socketPath string, watchers executor.Group) error {
+	return m.waitForSockets(ctx, stage, []string{socketPath}, watchers)
 }
 
 func (m *manager) effectiveSSHReadyTimeout() time.Duration {

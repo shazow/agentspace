@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
@@ -30,12 +31,12 @@ func (m *manager) ensureSSHAutoprovisionKey(launchManifest *manifest.Manifest) (
 	}, nil
 }
 
-func (m *manager) installSSHAutoprovisionKey(ctx context.Context, launchManifest *manifest.Manifest, key sshAutoprovisionKey, watchers ...*managedProcess) error {
+func (m *manager) installSSHAutoprovisionKey(ctx context.Context, launchManifest *manifest.Manifest, key sshAutoprovisionKey, watchers executor.Group) error {
 	socketPath, err := launchManifest.ResolvedGuestAgentSocketPath()
 	if err != nil {
 		return &stageError{Stage: "ssh autoprovision", Err: err}
 	}
-	client, err := m.waitForGuestAgent(ctx, socketPath, watchers...)
+	client, err := m.waitForGuestAgent(ctx, socketPath, watchers)
 	if err != nil {
 		return err
 	}

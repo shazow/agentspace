@@ -276,7 +276,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return &stageError{Stage: "preflight", Err: err}
 	}
 
-	var started []*managedProcess
+	started := executor.NewGroup()
 	var qmpClient qmpClient
 	var featureTasks managedTaskGroup
 	writeBackOnExit := false
@@ -287,14 +287,14 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 		if writeBackOnExit && !savedSuspend {
 			writeBackCtx, cancelWriteBack := context.WithTimeout(context.Background(), m.effectiveQMPCommandTimeout())
-			writeBackErr := m.writeBackGuestFiles(writeBackCtx, manifest)
+			writeBackErr := m.writeBackGuestFiles(writeBackCtx, manifest, executor.Group{})
 			cancelWriteBack()
 			if writeBackErr != nil {
 				err = errors.Join(err, writeBackErr)
 			}
 		}
 		featureErr := featureTasks.Stop()
-		stopErr := m.stopAll(started)
+		stopErr := started.StopAll(m.shutdownDelay)
 		var disconnectErr error
 		if qmpClient != nil {
 			disconnectErr = qmpClient.Disconnect()
@@ -321,11 +321,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return err
 	}
-	started = append(started, runProcesses...)
+	started.Add(runProcesses.Processes()...)
 
 	if len(virtioFSSocketPaths) > 0 {
 		m.logger.Info("waiting for virtiofs sockets")
-		if err := m.waitForSockets(launchCtx, "virtiofs startup", virtioFSSocketPaths, started...); err != nil {
+		if err := m.waitForSockets(launchCtx, "virtiofs startup", virtioFSSocketPaths, started); err != nil {
 			return err
 		}
 	}
@@ -344,17 +344,17 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return &stageError{Stage: "vm startup", Err: err}
 	}
-	started = append(started, qemu)
+	started.Add(qemu)
 
 	m.logger.Info("waiting for qmp readiness")
-	qmpClient, err = m.waitForQMP(launchCtx, qmpSocketPath, started...)
+	qmpClient, err = m.waitForQMP(launchCtx, qmpSocketPath, started)
 	if err != nil {
 		return err
 	}
 	stats.MarkQMPReady(time.Now())
-	qemu.shutdown = func() error {
+	qemu.SetShutdown(func() error {
 		return qmpClient.Quit(m.effectiveQMPQuitTimeout())
-	}
+	})
 	if resumeState != nil {
 		m.logger.Info("restoring vm state", "path", resumeState.VMStatePath)
 		if err := qmpClient.MigrateIncoming(m.effectiveQMPMigrationTimeout(), resumeState.VMStatePath); err != nil {
@@ -385,7 +385,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 
 	if resumeState == nil {
-		if err := m.writeGuestFiles(launchCtx, manifest, stats, started...); err != nil {
+		if err := m.writeGuestFiles(launchCtx, manifest, stats, started); err != nil {
 			return err
 		}
 		writeBackOnExit = true
@@ -393,7 +393,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 
 		if sshReadySocketPath != "" {
 			m.logger.Info("waiting for ssh readiness")
-			if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, started...); err != nil {
+			if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, started); err != nil {
 				return err
 			}
 		}
@@ -440,7 +440,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	} else if hint != "" {
 		fmt.Fprintf(m.outputWriter(), "connect with: %s\n", hint)
 	}
-	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, started[:len(started)-1]...); err != nil {
+	vmWatchers := started.Snapshot()
+	vmWatchers.Remove(qemu)
+	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, vmWatchers); err != nil {
 		return err
 	}
 	return nil
@@ -519,41 +521,20 @@ func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
 	}
 }
 
-type managedProcess struct {
-	proc     executor.Process
-	done     chan error
-	shutdown func() error
+func (m *manager) startManagedProcess(cmd *exec.Cmd) (*executor.Process, error) {
+	return m.runner.Start(cmd)
 }
 
-func (m *manager) startManagedProcess(cmd *exec.Cmd) (*managedProcess, error) {
-	proc, err := m.runner.Start(cmd)
-	if err != nil {
-		return nil, err
-	}
-
-	mp := &managedProcess{
-		proc: proc,
-		done: make(chan error, 1),
-	}
-
-	go func() {
-		mp.done <- proc.Wait()
-		close(mp.done)
-	}()
-
-	return mp, nil
-}
-
-func (m *manager) startRuns(cid int, manifest *manifest.Manifest) ([]*managedProcess, error) {
+func (m *manager) startRuns(cid int, manifest *manifest.Manifest) (executor.Group, error) {
 	runs, err := manifest.ResolvedRuns(cid)
 	if err != nil {
-		return nil, &stageError{Stage: "run startup", Err: err}
+		return executor.Group{}, &stageError{Stage: "run startup", Err: err}
 	}
 	if len(runs) == 0 {
-		return nil, nil
+		return executor.NewGroup(), nil
 	}
 
-	started := make([]*managedProcess, 0, len(runs))
+	started := executor.NewGroup()
 	for i, run := range runs {
 		m.logger.Info("starting run", "index", i)
 		cmd := executor.Command(run.Exec[0], run.Exec[1:], run.Env)
@@ -563,10 +544,10 @@ func (m *manager) startRuns(cid int, manifest *manifest.Manifest) ([]*managedPro
 		cmd.Stderr = os.Stderr
 		process, err := m.startManagedProcess(cmd)
 		if err != nil {
-			_ = m.stopAll(started)
-			return nil, &stageError{Stage: "run startup", Err: err}
+			_ = started.StopAll(m.shutdownDelay)
+			return executor.Group{}, &stageError{Stage: "run startup", Err: err}
 		}
-		started = append(started, process)
+		started.Add(process)
 	}
 
 	return started, nil
@@ -594,7 +575,7 @@ func (m *manager) allocateCID(manifest *manifest.Manifest) (int, error) {
 	)
 }
 
-func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths []string, watchers ...*managedProcess) error {
+func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths []string, watchers executor.Group) error {
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -614,7 +595,7 @@ func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths 
 			}
 			return nil
 		case <-ticker.C:
-			if err := firstUnexpectedExit(stage, watchers...); err != nil {
+			if err := firstUnexpectedExit(stage, watchers); err != nil {
 				return err
 			}
 		case <-ctx.Done():
@@ -623,7 +604,7 @@ func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths 
 	}
 }
 
-func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers ...*managedProcess) (qmpClient, error) {
+func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpClient, error) {
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -641,9 +622,9 @@ func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers ..
 			if err != nil {
 				return nil, &stageError{Stage: "vm startup", Err: err}
 			}
-			return m.connectQMP(ctx, socketPath, watchers...)
+			return m.connectQMP(ctx, socketPath, watchers)
 		case <-ticker.C:
-			if err := firstUnexpectedExit("vm startup", watchers...); err != nil {
+			if err := firstUnexpectedExit("vm startup", watchers); err != nil {
 				return nil, err
 			}
 		case <-ctx.Done():
@@ -652,7 +633,7 @@ func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers ..
 	}
 }
 
-func (m *manager) connectQMP(ctx context.Context, socketPath string, watchers ...*managedProcess) (qmpClient, error) {
+func (m *manager) connectQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpClient, error) {
 	dialer := m.qmpDialer
 	if dialer == nil {
 		dialer = &socketMonitorDialer{}
@@ -673,7 +654,7 @@ func (m *manager) connectQMP(ctx context.Context, socketPath string, watchers ..
 		case <-timer.C:
 		}
 
-		if err := firstUnexpectedExit("vm startup", watchers...); err != nil {
+		if err := firstUnexpectedExit("vm startup", watchers); err != nil {
 			return nil, err
 		}
 
@@ -741,7 +722,7 @@ func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpS
 func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 	h.once.Do(func() {
 		if h.writeBack != nil && h.writeBack() {
-			if err := h.manager.writeBackGuestFiles(ctx, h.manifest); err != nil {
+			if err := h.manager.writeBackGuestFiles(ctx, h.manifest, executor.Group{}); err != nil {
 				h.err = err
 				return
 			}
@@ -765,7 +746,7 @@ func (m *manager) runSSHSession(
 	infoRequests <-chan struct{},
 	suspendHandler *launchSuspendHandler,
 	guestAgentSocketPath string,
-	started *[]*managedProcess,
+	started *executor.Group,
 ) error {
 	argv := append([]string(nil), launchManifest.SSH.Argv...)
 	sessionLogger := m.logger
@@ -789,11 +770,11 @@ func (m *manager) runSSHSession(
 		if err != nil {
 			return &stageError{Stage: "active session", Err: err}
 		}
-		watchers := append([]*managedProcess(nil), (*started)...)
-		*started = append(*started, session)
+		watchers := started.Snapshot()
+		started.Add(session)
 		stats.MarkSSHStarted(attemptStarted)
 
-		err = m.waitForSession(ctx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers...)
+		err = m.waitForSession(ctx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers)
 		stderrText := stderr.String()
 		if err == nil {
 			stderr.Flush()
@@ -802,21 +783,21 @@ func (m *manager) runSSHSession(
 		if sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureTransient {
 			stderr.Suppress()
 			retryLog.Log(err, stderrText)
-			removeStartedProcess(started, session)
-			if waitErr := m.waitBeforeSSHRetry(ctx, launchManifest, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers...); waitErr != nil {
+			started.Remove(session)
+			if waitErr := m.waitBeforeSSHRetry(ctx, launchManifest, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers); waitErr != nil {
 				return waitErr
 			}
 			continue
 		}
 		if launchManifest.SSH.Autoprovision && !provisioned && sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureAuthentication {
 			stderr.Suppress()
-			removeStartedProcess(started, session)
+			started.Remove(session)
 			sessionLogger.Info("ssh authentication failed; autoprovisioning a key", "state_dir", launchManifest.ResolvedPersistenceStateDir(), "user", launchManifest.SSH.User)
 			key, keyErr := m.ensureSSHAutoprovisionKey(launchManifest)
 			if keyErr != nil {
 				return &stageError{Stage: "ssh autoprovision", Err: keyErr}
 			}
-			if installErr := m.installSSHAutoprovisionKey(ctx, launchManifest, key, watchers...); installErr != nil {
+			if installErr := m.installSSHAutoprovisionKey(ctx, launchManifest, key, watchers); installErr != nil {
 				return installErr
 			}
 			sessionLogger.Info("installed autoprovisioned ssh key; retrying ssh", "identity_file", key.IdentityFile, "public_key_file", key.PublicKeyFile)
@@ -829,19 +810,7 @@ func (m *manager) runSSHSession(
 	}
 }
 
-func removeStartedProcess(started *[]*managedProcess, process *managedProcess) {
-	if started == nil || process == nil {
-		return
-	}
-	for i := len(*started) - 1; i >= 0; i-- {
-		if (*started)[i] == process {
-			*started = append((*started)[:i], (*started)[i+1:]...)
-			return
-		}
-	}
-}
-
-func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
+func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	delay := launchManifest.SSHRetryDelay(m.sshRetryDelay)
 	if delay <= 0 {
 		delay = m.sshRetryDelay
@@ -861,9 +830,9 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 		case <-suspendRequests:
 			return suspendHandler.saveAndExit(ctx)
 		case <-infoRequests:
-			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
+			m.printGuestInfo(ctx, guestAgentSocketPath, watchers)
 		case <-ticker.C:
-			if err := firstUnexpectedExit("active session", watchers...); err != nil {
+			if err := firstUnexpectedExit("active session", watchers); err != nil {
 				return err
 			}
 		case <-ctx.Done():
@@ -911,13 +880,14 @@ func (l *sshRetryLogger) Log(err error, stderr string) {
 	}
 }
 
-func (m *manager) waitForSession(ctx context.Context, session *managedProcess, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
+func (m *manager) waitForSession(ctx context.Context, session *executor.Process, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case err := <-session.done:
+		case <-session.Done():
+			err := session.Wait()
 			if err != nil {
 				return wrapCommandError("active session", session.Name(), err)
 			}
@@ -925,9 +895,9 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, s
 		case <-suspendRequests:
 			return suspendHandler.saveAndExit(ctx)
 		case <-infoRequests:
-			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
+			m.printGuestInfo(ctx, guestAgentSocketPath, watchers)
 		case <-ticker.C:
-			if err := firstUnexpectedExit("active session", watchers...); err != nil {
+			if err := firstUnexpectedExit("active session", watchers); err != nil {
 				return err
 			}
 		case <-ctx.Done():
@@ -936,13 +906,14 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, s
 	}
 }
 
-func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers ...*managedProcess) error {
+func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	ticker := time.NewTicker(defaultSocketPollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case err := <-qemu.done:
+		case <-qemu.Done():
+			err := qemu.Wait()
 			if err != nil {
 				return wrapCommandError("vm session", qemu.Name(), err)
 			}
@@ -950,9 +921,9 @@ func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRe
 		case <-suspendRequests:
 			return suspendHandler.saveAndExit(ctx)
 		case <-infoRequests:
-			m.printGuestInfo(ctx, guestAgentSocketPath, watchers...)
+			m.printGuestInfo(ctx, guestAgentSocketPath, watchers)
 		case <-ticker.C:
-			if err := firstUnexpectedExit("vm session", watchers...); err != nil {
+			if err := firstUnexpectedExit("vm session", watchers); err != nil {
 				return err
 			}
 		case <-ctx.Done():
@@ -1049,135 +1020,18 @@ func (m *manager) waitForMigration(ctx context.Context, client qmpClient) error 
 	}
 }
 
-func (m *manager) stopAll(processes []*managedProcess) error {
-	var errs []error
-	for i := len(processes) - 1; i >= 0; i-- {
-		if err := m.stopProcess(processes[i]); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
-func (m *manager) killProcess(process *managedProcess) error {
-	if process == nil {
-		return nil
-	}
-
-	if exited, _ := process.pollExit(); exited {
-		return nil
-	}
-
-	if err := process.proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("kill %s: %w", process.Name(), err)
-	}
-
-	<-process.done
-	return nil
-}
-
-func (m *manager) stopProcess(process *managedProcess) error {
-	if process == nil {
-		return nil
-	}
-
-	if exited, _ := process.pollExit(); exited {
-		return nil
-	}
-
-	var shutdownErr error
-	if process.shutdown != nil {
-		if err := process.shutdown(); err != nil {
-			shutdownErr = fmt.Errorf("shutdown %s: %w", process.Name(), err)
-		} else {
-			timer := time.NewTimer(m.shutdownDelay)
-			defer timer.Stop()
-
-			select {
-			case <-process.done:
-				return shutdownErr
-			case <-timer.C:
-			}
-		}
-	}
-
-	if err := process.proc.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		if shutdownErr != nil {
-			return errors.Join(shutdownErr, fmt.Errorf("stop %s: %w", process.Name(), err))
-		}
-		return fmt.Errorf("stop %s: %w", process.Name(), err)
-	}
-
-	timer := time.NewTimer(m.shutdownDelay)
-	defer timer.Stop()
-
-	select {
-	case <-process.done:
-		return shutdownErr
-	case <-timer.C:
-		if err := process.proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			if shutdownErr != nil {
-				return errors.Join(shutdownErr, fmt.Errorf("kill %s: %w", process.Name(), err))
-			}
-			return fmt.Errorf("kill %s: %w", process.Name(), err)
-		}
-		<-process.done
-		return shutdownErr
-	}
-}
-
-func (p *managedProcess) pollExit() (bool, error) {
-	select {
-	case err, ok := <-p.done:
-		if !ok {
-			return true, nil
-		}
-		return true, err
-	default:
-		return false, nil
-	}
-}
-
-func (p *managedProcess) Name() string {
-	if p == nil || p.proc == nil {
-		return ""
-	}
-	return p.proc.Name()
-}
-
-func (p *managedProcess) Wait() error {
-	if p == nil {
-		return nil
-	}
-	err, ok := <-p.done
+func firstUnexpectedExit(stage string, watchers executor.Group) error {
+	process, err, ok := watchers.FirstExit()
 	if !ok {
 		return nil
 	}
-	return err
-}
-
-func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
-	for _, process := range processes {
-		if process == nil {
-			continue
+	if err == nil {
+		return &stageError{
+			Stage: stage,
+			Err:   fmt.Errorf("%s exited unexpectedly", process.Name()),
 		}
-
-		exited, err := process.pollExit()
-		if !exited {
-			continue
-		}
-
-		if err == nil {
-			return &stageError{
-				Stage: stage,
-				Err:   fmt.Errorf("%s exited unexpectedly", process.Name()),
-			}
-		}
-
-		return wrapCommandError(stage, process.Name(), err)
 	}
-
-	return nil
+	return wrapCommandError(stage, process.Name(), err)
 }
 
 func buildSSHSpec(manifest *manifest.Manifest, cid int, remoteCommand []string) (*exec.Cmd, error) {

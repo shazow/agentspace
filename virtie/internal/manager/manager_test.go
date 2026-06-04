@@ -1068,7 +1068,7 @@ func TestManagerLaunchWarnsAfterFiveSSHRetryFailures(t *testing.T) {
 
 func TestWaitForSSHReadyFailsWhenQEMUExitsFirst(t *testing.T) {
 	done := make(chan error, 1)
-	qemu := &managedProcess{proc: &fakeProcess{name: "qemu"}, done: done}
+	qemu := executor.Wrap(&fakeProcess{name: "qemu", done: done})
 	waiterStarted := make(chan struct{})
 	manager := &manager{
 		socketWaiter: &fakeSocketWaiter{
@@ -1089,7 +1089,7 @@ func TestWaitForSSHReadyFailsWhenQEMUExitsFirst(t *testing.T) {
 		close(done)
 	}()
 
-	err := manager.waitForSSHReady(context.Background(), "/tmp/ready.sock", qemu)
+	err := manager.waitForSSHReady(context.Background(), "/tmp/ready.sock", executor.NewGroup(qemu))
 	if err == nil || !strings.Contains(err.Error(), "vm startup") || !strings.Contains(err.Error(), "qemu failed") {
 		t.Fatalf("expected qemu exit startup error, got %v", err)
 	}
@@ -1102,7 +1102,7 @@ func TestWaitForSSHReadyFailsOnTimeout(t *testing.T) {
 		sshReadyTimeout: 10 * time.Millisecond,
 	}
 
-	err := manager.waitForSSHReady(context.Background(), "/tmp/ready.sock")
+	err := manager.waitForSSHReady(context.Background(), "/tmp/ready.sock", executor.Group{})
 	if err == nil || !strings.Contains(err.Error(), "wait for ssh readiness") || !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Fatalf("expected readiness timeout error, got %v", err)
 	}
@@ -1117,7 +1117,7 @@ func TestWaitForSocketsReportsConfiguredStage(t *testing.T) {
 		},
 	}
 
-	err := manager.waitForSockets(context.Background(), "virtiofs startup", []string{"/tmp/fs.sock"})
+	err := manager.waitForSockets(context.Background(), "virtiofs startup", []string{"/tmp/fs.sock"}, executor.Group{})
 	if err == nil || !strings.Contains(err.Error(), "virtiofs startup") || !strings.Contains(err.Error(), "socket unavailable") {
 		t.Fatalf("expected virtiofs startup socket error, got %v", err)
 	}
@@ -1148,7 +1148,7 @@ func TestWaitForSSHReadyRejectsUnexpectedToken(t *testing.T) {
 		sshReadyTimeout: time.Second,
 	}
 
-	err := manager.waitForSSHReady(context.Background(), "/tmp/ready.sock")
+	err := manager.waitForSSHReady(context.Background(), "/tmp/ready.sock", executor.Group{})
 	if err == nil || !strings.Contains(err.Error(), "unexpected readiness token") || !strings.Contains(err.Error(), "NOT_READY") {
 		t.Fatalf("expected unexpected token error, got %v", err)
 	}
@@ -1287,7 +1287,7 @@ func TestManagerMountsWorkspaceCWD(t *testing.T) {
 		qmpConnectTimeout: time.Second,
 	}
 
-	if err := manager.writeGuestFiles(context.Background(), cfg, nil); err != nil {
+	if err := manager.writeGuestFiles(context.Background(), cfg, nil, executor.Group{}); err != nil {
 		t.Fatalf("mount workspace cwd: %v", err)
 	}
 
@@ -1643,7 +1643,7 @@ func TestWriteBackGuestFilesDoesNotReplaceHostOnGuestReadError(t *testing.T) {
 		qmpConnectTimeout: time.Millisecond,
 	}
 
-	err := manager.writeBackGuestFiles(context.Background(), cfg)
+	err := manager.writeBackGuestFiles(context.Background(), cfg, executor.Group{})
 	if err == nil || !strings.Contains(err.Error(), "guest file write-back") {
 		t.Fatalf("expected staged write-back error, got %v", err)
 	}
@@ -1685,7 +1685,7 @@ func TestWriteBackGuestFilesFollowsHostSymlinkWhenFollowLinksEnabled(t *testing.
 		qmpConnectTimeout: time.Millisecond,
 	}
 
-	if err := manager.writeBackGuestFiles(context.Background(), cfg); err != nil {
+	if err := manager.writeBackGuestFiles(context.Background(), cfg, executor.Group{}); err != nil {
 		t.Fatalf("write back guest files: %v", err)
 	}
 	targetData, err := os.ReadFile(targetPath)
@@ -3297,12 +3297,9 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	session := &managedProcess{
-		proc: &fakeProcess{name: "ssh"},
-		done: make(chan error, 1),
-	}
+	session := executor.Wrap(&fakeProcess{name: "ssh", done: make(chan error, 1)})
 
-	err := (&manager{}).waitForSession(ctx, session, make(chan struct{}), make(chan struct{}), nil, "")
+	err := (&manager{}).waitForSession(ctx, session, make(chan struct{}), make(chan struct{}), nil, "", executor.Group{})
 	if err == nil {
 		t.Fatal("expected active session cancellation error")
 	}
@@ -4036,7 +4033,7 @@ type fakeRunner struct {
 	onStart                   func(name string, cmd *exec.Cmd)
 }
 
-func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
+func (r *fakeRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -4065,7 +4062,7 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
 		r.qemuEnv = append([]string(nil), env...)
 		process := &fakeProcess{name: name, runner: r, done: make(chan error, 1)}
 		r.qemu = process
-		return process, nil
+		return executor.Wrap(process), nil
 	case name == "ssh":
 		r.sshArgs = append(r.sshArgs, append([]string(nil), args...))
 		r.interactiveStarts++
@@ -4073,11 +4070,11 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
 			if cmd.Stderr != nil {
 				_, _ = io.WriteString(cmd.Stderr, "agent@vsock/3: Permission denied (publickey).\n")
 			}
-			return &fakeProcess{
+			return executor.Wrap(&fakeProcess{
 				name:   name,
 				runner: r,
 				done:   closedErrorChannel(errors.New("exit status 255")),
-			}, nil
+			}), nil
 		}
 		if r.interactiveStarts <= r.transientSSHFailures {
 			if cmd.Stderr != nil {
@@ -4087,11 +4084,11 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
 				}
 				_, _ = io.WriteString(cmd.Stderr, output)
 			}
-			return &fakeProcess{
+			return executor.Wrap(&fakeProcess{
 				name:   name,
 				runner: r,
 				done:   closedErrorChannel(errors.New("exit status 255")),
-			}, nil
+			}), nil
 		}
 		if r.failInteractiveSSH {
 			return nil, errors.New("session start failed")
@@ -4108,7 +4105,7 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
 				}
 				process.complete(nil)
 			}()
-			return process, nil
+			return executor.Wrap(process), nil
 		}
 
 		process := &fakeProcess{name: name, runner: r, done: make(chan error, 1)}
@@ -4120,14 +4117,14 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
 				r.cancel()
 			}
 		}()
-		return process, nil
+		return executor.Wrap(process), nil
 	default:
 		if strings.HasPrefix(name, "virtiofsd") {
 			if r.virtiofsEnv == nil {
 				r.virtiofsEnv = make(map[string][]string)
 			}
 			r.virtiofsEnv[name] = append([]string(nil), env...)
-			return &fakeProcess{name: name, runner: r, done: make(chan error, 1)}, nil
+			return executor.Wrap(&fakeProcess{name: name, runner: r, done: make(chan error, 1)}), nil
 		}
 		if r.runArgs == nil {
 			r.runArgs = make(map[string][]string)
@@ -4137,7 +4134,7 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
 		}
 		r.runArgs[name] = append([]string(nil), args...)
 		r.runEnv[name] = append([]string(nil), env...)
-		return &fakeProcess{name: name, runner: r, done: make(chan error, 1)}, nil
+		return executor.Wrap(&fakeProcess{name: name, runner: r, done: make(chan error, 1)}), nil
 	}
 }
 

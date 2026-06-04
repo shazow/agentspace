@@ -242,11 +242,11 @@ type recordingNotificationRunner struct {
 	err   error
 }
 
-func (r *recordingNotificationRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
+func (r *recordingNotificationRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 	r.calls = append(r.calls, notificationRunnerCall{
 		cmd: cmd,
 	})
-	return recordingNotificationProcess{err: r.err}, nil
+	return executor.Wrap(recordingNotificationProcess{err: r.err}), nil
 }
 
 type recordingNotificationProcess struct {

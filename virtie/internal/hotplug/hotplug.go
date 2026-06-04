@@ -81,13 +81,13 @@ type Runtime struct {
 }
 
 type ProcessStarter interface {
-	Start(ctx context.Context, cmd *exec.Cmd) (executor.Process, error)
-	Stop(process executor.Process) error
+	Start(ctx context.Context, cmd *exec.Cmd) (*executor.Process, error)
+	Stop(process *executor.Process) error
 	SignalPIDGroup(pid int, signal syscall.Signal) error
 }
 
 type SocketWaiter interface {
-	Wait(ctx context.Context, stage string, socketPaths []string, process executor.Process) error
+	Wait(ctx context.Context, stage string, socketPaths []string, process *executor.Process) error
 }
 
 type QMPClient interface {
@@ -188,9 +188,9 @@ func (h hotplugBase) ID() string {
 	return h.id
 }
 
-func (h hotplugBase) attach(device Device, attachHost func() (executor.Process, error), detachHost func(executor.Process)) error {
+func (h hotplugBase) attach(device Device, attachHost func() (*executor.Process, error), detachHost func(*executor.Process)) error {
 	if detachHost == nil {
-		detachHost = func(executor.Process) {}
+		detachHost = func(*executor.Process) {}
 	}
 	statePath, err := StatePath(h.runtime.StateDir, h.id)
 	if err != nil {
@@ -202,7 +202,7 @@ func (h hotplugBase) attach(device Device, attachHost func() (executor.Process, 
 		return fmt.Errorf("stat hotplug state %q: %w", statePath, err)
 	}
 
-	var proc executor.Process
+	var proc *executor.Process
 	if attachHost != nil {
 		proc, err = attachHost()
 		if err != nil {
@@ -292,11 +292,11 @@ func (h HotplugVirtioFS) device() Device {
 	return Device{Kind: KindVirtioFS, ID: h.id, VirtioFS: h.VirtioFS}
 }
 
-func (h HotplugVirtioFS) attachHost() (executor.Process, error) {
+func (h HotplugVirtioFS) attachHost() (*executor.Process, error) {
 	return h.runtime.attachVirtioFSHost(h.ctx, h.device())
 }
 
-func (h HotplugVirtioFS) detachHost(proc executor.Process) {
+func (h HotplugVirtioFS) detachHost(proc *executor.Process) {
 	h.runtime.rollbackHost(proc)
 }
 
@@ -334,7 +334,7 @@ func (h HotplugBlock) device() Device {
 	return Device{Kind: KindBlock, ID: h.id, Block: h.Block}
 }
 
-func (r Runtime) attachVirtioFSHost(ctx context.Context, device Device) (executor.Process, error) {
+func (r Runtime) attachVirtioFSHost(ctx context.Context, device Device) (*executor.Process, error) {
 	fs := device.VirtioFS
 	if r.Start == nil {
 		return nil, fmt.Errorf("hotplug process starter is not configured")
@@ -402,7 +402,7 @@ func (r Runtime) detachGuest(ctx context.Context, device Device) error {
 	return r.Guest.Run(ctx, []string{"/run/current-system/sw/bin/umount", device.VirtioFS.Target})
 }
 
-func (r Runtime) rollbackHost(proc executor.Process) {
+func (r Runtime) rollbackHost(proc *executor.Process) {
 	if proc != nil && r.Start != nil {
 		_ = r.Start.Stop(proc)
 	}

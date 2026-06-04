@@ -49,7 +49,7 @@ func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.M
 	if err != nil {
 		return hotplug.Runtime{}, err
 	}
-	client, err := m.waitForQMP(ctx, socketPath)
+	client, err := m.waitForQMP(ctx, socketPath, executor.Group{})
 	if err != nil {
 		return hotplug.Runtime{}, err
 	}
@@ -85,24 +85,21 @@ type managerHotplugStarter struct {
 	m *manager
 }
 
-func (s managerHotplugStarter) Start(ctx context.Context, cmd *exec.Cmd) (executor.Process, error) {
+func (s managerHotplugStarter) Start(ctx context.Context, cmd *exec.Cmd) (*executor.Process, error) {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	proc, err := s.m.startManagedProcess(cmd)
 	if err != nil {
 		return nil, err
 	}
-	return managerHotplugProcess{managed: proc}, nil
+	return proc, nil
 }
 
-func (s managerHotplugStarter) Stop(process executor.Process) error {
+func (s managerHotplugStarter) Stop(process *executor.Process) error {
 	if process == nil {
 		return nil
 	}
-	if wrapped, ok := process.(managerHotplugProcess); ok {
-		return s.m.stopAll([]*managedProcess{wrapped.managed})
-	}
-	return terminateHotplugProcess(process.PID())
+	return process.Stop(s.m.shutdownDelay)
 }
 
 func (s managerHotplugStarter) SignalPIDGroup(pid int, signal syscall.Signal) error {
@@ -113,38 +110,11 @@ type managerHotplugSocketWaiter struct {
 	m *manager
 }
 
-func (w managerHotplugSocketWaiter) Wait(ctx context.Context, stage string, socketPaths []string, process executor.Process) error {
-	if wrapped, ok := process.(managerHotplugProcess); ok {
-		return w.m.waitForSockets(ctx, stage, socketPaths, wrapped.managed)
+func (w managerHotplugSocketWaiter) Wait(ctx context.Context, stage string, socketPaths []string, process *executor.Process) error {
+	if process != nil {
+		return w.m.waitForSockets(ctx, stage, socketPaths, executor.NewGroup(process))
 	}
-	return w.m.waitForSockets(ctx, stage, socketPaths)
-}
-
-type managerHotplugProcess struct {
-	managed *managedProcess
-}
-
-func (p managerHotplugProcess) PID() int {
-	return p.managed.proc.PID()
-}
-
-func (p managerHotplugProcess) Name() string {
-	return p.managed.Name()
-}
-
-func (p managerHotplugProcess) Wait() error {
-	if p.managed == nil {
-		return nil
-	}
-	return p.managed.Wait()
-}
-
-func (p managerHotplugProcess) Signal(signal os.Signal) error {
-	return p.managed.proc.Signal(signal)
-}
-
-func (p managerHotplugProcess) Kill() error {
-	return p.managed.proc.Kill()
+	return w.m.waitForSockets(ctx, stage, socketPaths, executor.Group{})
 }
 
 type managerHotplugQMP struct {
@@ -176,7 +146,7 @@ func (g managerHotplugGuest) Run(ctx context.Context, command []string) error {
 	if err != nil {
 		return err
 	}
-	client, err := g.m.waitForGuestAgent(ctx, socketPath)
+	client, err := g.m.waitForGuestAgent(ctx, socketPath, executor.Group{})
 	if err != nil {
 		return err
 	}
