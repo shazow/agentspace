@@ -19,10 +19,17 @@ type Context map[string]any
 // Command builds an external command with virtie's environment inheritance rules.
 func Command(path string, args []string, env []string) *exec.Cmd {
 	cmd := exec.Command(path, args...)
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	cmd.Env = WrapEnv(env)
 	return cmd
+}
+
+// WrapEnv returns env additions appended after the current process environment.
+func WrapEnv(additions []string) []string {
+	if len(additions) == 0 {
+		return nil
+	}
+	env := os.Environ()
+	return append(env, additions...)
 }
 
 // RunningProcess is an already-started process that can be wrapped by Process.

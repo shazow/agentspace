@@ -107,9 +107,7 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 	}
 	env = append(env, command.Env...)
 	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	cmd.Env = executor.WrapEnv(env)
 	cmd.Dir = n.dir
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

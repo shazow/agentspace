@@ -82,7 +82,7 @@ func TestRunnerRecordsProcessSignals(t *testing.T) {
 func TestRunnerOnStartCanCustomizeProcess(t *testing.T) {
 	runner := &Runner{}
 	runner.OnStart = func(start Start) (*Process, error) {
-		process := runner.NewProcess(start.Name)
+		process := ProcessFor(start.Name)
 		process.IgnoreSignals = true
 		go func() {
 			time.Sleep(time.Millisecond)
@@ -97,5 +97,35 @@ func TestRunnerOnStartCanCustomizeProcess(t *testing.T) {
 	}
 	if err := process.Wait(); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("wait: got %v want %v", err, os.ErrClosed)
+	}
+	if got, want := len(runner.Processes("worker")), 1; got != want {
+		t.Fatalf("tracked processes: got %d want %d", got, want)
+	}
+	if err := process.Kill(); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	if got, want := len(runner.ProcessSignals()), 1; got != want {
+		t.Fatalf("process signals: got %d want %d", got, want)
+	}
+}
+
+func TestRunnerOnStartDoesNotDoubleTrackNewProcess(t *testing.T) {
+	runner := &Runner{}
+	runner.OnStart = func(start Start) (*Process, error) {
+		return runner.NewProcess(start.Name), nil
+	}
+
+	process, err := runner.Start(exec.Command("/tmp/bin/worker"))
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if got, want := len(runner.Processes("worker")), 1; got != want {
+		t.Fatalf("tracked processes: got %d want %d", got, want)
+	}
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal: %v", err)
+	}
+	if got, want := len(runner.ProcessSignals()), 1; got != want {
+		t.Fatalf("process signals: got %d want %d", got, want)
 	}
 }

@@ -35,6 +35,7 @@ type Runner struct {
 	mu             sync.Mutex
 	starts         []Start
 	processes      map[string][]*Process
+	prepared       map[*Process]struct{}
 	processSignals []RunnerSignal
 }
 
@@ -57,22 +58,26 @@ func (r *Runner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 			return nil, err
 		}
 		if process == nil {
-			process = r.NewProcess(start.Name)
+			process = ProcessFor(start.Name)
 		} else {
-			r.configureProcess(start.Name, process)
-			r.trackProcess(start.Name, process)
+			process.OverrideName = defaultName(process.OverrideName, start.Name)
 		}
+		r.prepareProcess(start.Name, process)
 		return process.Process(), nil
 	}
 
 	return r.NewProcess(start.Name).Process(), nil
 }
 
+// ProcessFor returns an untracked test process for use from Runner.OnStart.
+func ProcessFor(name string) *Process {
+	return &Process{OverrideName: name}
+}
+
 // NewProcess returns a tracked test process with signal recording callbacks.
 func (r *Runner) NewProcess(name string) *Process {
-	process := &Process{OverrideName: name}
-	r.configureProcess(name, process)
-	r.trackProcess(name, process)
+	process := ProcessFor(name)
+	r.prepareProcess(name, process)
 	return process
 }
 
@@ -134,13 +139,30 @@ func (r *Runner) SignalNames() []string {
 	return names
 }
 
-func (r *Runner) trackProcess(name string, process *Process) {
+func (r *Runner) prepareProcess(name string, process *Process) {
+	if process == nil {
+		return
+	}
+	if r.markPrepared(name, process) {
+		r.configureProcess(name, process)
+	}
+}
+
+func (r *Runner) markPrepared(name string, process *Process) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.prepared == nil {
+		r.prepared = make(map[*Process]struct{})
+	}
+	if _, ok := r.prepared[process]; ok {
+		return false
+	}
+	r.prepared[process] = struct{}{}
 	if r.processes == nil {
 		r.processes = make(map[string][]*Process)
 	}
 	r.processes[name] = append(r.processes[name], process)
+	return true
 }
 
 func (r *Runner) configureProcess(name string, process *Process) {
@@ -184,6 +206,13 @@ func runnerStart(cmd *exec.Cmd) Start {
 		ProcessGroup: commandProcessGroup(cmd),
 		Cmd:          cmd,
 	}
+}
+
+func defaultName(name string, fallback string) string {
+	if name != "" {
+		return name
+	}
+	return fallback
 }
 
 func commandArgs(cmd *exec.Cmd) []string {

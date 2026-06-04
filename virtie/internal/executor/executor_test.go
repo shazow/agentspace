@@ -32,6 +32,25 @@ func TestCommandAppendsEnvAfterEnviron(t *testing.T) {
 	}
 }
 
+func TestWrapEnv(t *testing.T) {
+	if env := WrapEnv(nil); env != nil {
+		t.Fatalf("empty env: got %#v want nil", env)
+	}
+
+	environ := os.Environ()
+	additions := []string{"VIRTIE_TEST_ONE=1", "VIRTIE_TEST_TWO=2"}
+	env := WrapEnv(additions)
+	if len(env) != len(environ)+len(additions) {
+		t.Fatalf("unexpected env length: got %d want %d", len(env), len(environ)+len(additions))
+	}
+	if !slices.Equal(env[:len(environ)], environ) {
+		t.Fatalf("expected env to start with os.Environ()")
+	}
+	if !slices.Equal(env[len(environ):], additions) {
+		t.Fatalf("unexpected appended env: got %#v want %#v", env[len(environ):], additions)
+	}
+}
+
 func TestCommandPassesArgsAfterArgv0(t *testing.T) {
 	cmd := Command("/bin/echo", []string{"hello", "world"}, nil)
 	if !slices.Equal(cmd.Args, []string{"/bin/echo", "hello", "world"}) {

@@ -6,11 +6,10 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
-
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
-	"time"
 )
 
 func TestProcessCachesWaitResult(t *testing.T) {

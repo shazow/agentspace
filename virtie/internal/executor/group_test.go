@@ -4,11 +4,10 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
-
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
-	"time"
 )
 
 func TestGroupAddRemoveLen(t *testing.T) {
