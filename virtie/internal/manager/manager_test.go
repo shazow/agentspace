@@ -1067,8 +1067,8 @@ func TestManagerLaunchWarnsAfterFiveSSHRetryFailures(t *testing.T) {
 }
 
 func TestWaitForSSHReadyFailsWhenQEMUExitsFirst(t *testing.T) {
-	done := make(chan error, 1)
-	qemu := executor.Wrap(&fakeProcess{name: "qemu", done: done})
+	qemuProcess := &executor.FakeProcess{FakeName: "qemu"}
+	qemu := qemuProcess.Process()
 	waiterStarted := make(chan struct{})
 	manager := &manager{
 		socketWaiter: &fakeSocketWaiter{
@@ -1085,8 +1085,7 @@ func TestWaitForSSHReadyFailsWhenQEMUExitsFirst(t *testing.T) {
 
 	go func() {
 		<-waiterStarted
-		done <- errors.New("qemu failed")
-		close(done)
+		qemuProcess.Complete(errors.New("qemu failed"))
 	}()
 
 	err := manager.waitForSSHReady(context.Background(), "/tmp/ready.sock", executor.NewGroup(qemu))
@@ -3297,7 +3296,7 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	session := executor.Wrap(&fakeProcess{name: "ssh", done: make(chan error, 1)})
+	session := (&executor.FakeProcess{FakeName: "ssh"}).Process()
 
 	err := (&manager{}).waitForSession(ctx, session, make(chan struct{}), make(chan struct{}), nil, "", executor.Group{})
 	if err == nil {
@@ -4029,7 +4028,7 @@ type fakeRunner struct {
 	transientSSHOutputs       []string
 	authSSHFailures           int
 	startErrors               map[string]error
-	qemu                      *fakeProcess
+	qemu                      *executor.FakeProcess
 	onStart                   func(name string, cmd *exec.Cmd)
 }
 
@@ -4060,9 +4059,9 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 	case strings.HasPrefix(name, "qemu-system"):
 		r.qemuArgs = append([]string(nil), args...)
 		r.qemuEnv = append([]string(nil), env...)
-		process := &fakeProcess{name: name, runner: r, done: make(chan error, 1)}
+		process := r.fakeProcess(name)
 		r.qemu = process
-		return executor.Wrap(process), nil
+		return process.Process(), nil
 	case name == "ssh":
 		r.sshArgs = append(r.sshArgs, append([]string(nil), args...))
 		r.interactiveStarts++
@@ -4070,11 +4069,7 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 			if cmd.Stderr != nil {
 				_, _ = io.WriteString(cmd.Stderr, "agent@vsock/3: Permission denied (publickey).\n")
 			}
-			return executor.Wrap(&fakeProcess{
-				name:   name,
-				runner: r,
-				done:   closedErrorChannel(errors.New("exit status 255")),
-			}), nil
+			return r.exitedFakeProcess(name, errors.New("exit status 255")).Process(), nil
 		}
 		if r.interactiveStarts <= r.transientSSHFailures {
 			if cmd.Stderr != nil {
@@ -4084,31 +4079,23 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 				}
 				_, _ = io.WriteString(cmd.Stderr, output)
 			}
-			return executor.Wrap(&fakeProcess{
-				name:   name,
-				runner: r,
-				done:   closedErrorChannel(errors.New("exit status 255")),
-			}), nil
+			return r.exitedFakeProcess(name, errors.New("exit status 255")).Process(), nil
 		}
 		if r.failInteractiveSSH {
 			return nil, errors.New("session start failed")
 		}
 		if r.finishInteractiveSSH {
-			process := &fakeProcess{
-				name:   name,
-				runner: r,
-				done:   make(chan error, 1),
-			}
+			process := r.fakeProcess(name)
 			go func() {
 				if r.finishInteractiveSSHDelay > 0 {
 					time.Sleep(r.finishInteractiveSSHDelay)
 				}
-				process.complete(nil)
+				process.Complete(nil)
 			}()
-			return executor.Wrap(process), nil
+			return process.Process(), nil
 		}
 
-		process := &fakeProcess{name: name, runner: r, done: make(chan error, 1)}
+		process := r.fakeProcess(name)
 		go func() {
 			if r.cancelDelay > 0 {
 				time.Sleep(r.cancelDelay)
@@ -4117,14 +4104,14 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 				r.cancel()
 			}
 		}()
-		return executor.Wrap(process), nil
+		return process.Process(), nil
 	default:
 		if strings.HasPrefix(name, "virtiofsd") {
 			if r.virtiofsEnv == nil {
 				r.virtiofsEnv = make(map[string][]string)
 			}
 			r.virtiofsEnv[name] = append([]string(nil), env...)
-			return executor.Wrap(&fakeProcess{name: name, runner: r, done: make(chan error, 1)}), nil
+			return r.fakeProcess(name).Process(), nil
 		}
 		if r.runArgs == nil {
 			r.runArgs = make(map[string][]string)
@@ -4134,8 +4121,34 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 		}
 		r.runArgs[name] = append([]string(nil), args...)
 		r.runEnv[name] = append([]string(nil), env...)
-		return executor.Wrap(&fakeProcess{name: name, runner: r, done: make(chan error, 1)}), nil
+		return r.fakeProcess(name).Process(), nil
 	}
+}
+
+func (r *fakeRunner) fakeProcess(name string) *executor.FakeProcess {
+	return &executor.FakeProcess{
+		FakeName: name,
+		OnSignal: func(sig os.Signal) {
+			r.recordProcessSignal(name, sig)
+		},
+		OnKill: func() {
+			r.recordProcessSignal(name, nil)
+		},
+	}
+}
+
+func (r *fakeRunner) exitedFakeProcess(name string, err error) *executor.FakeProcess {
+	process := r.fakeProcess(name)
+	process.Exited = true
+	process.WaitErr = err
+	return process
+}
+
+func (r *fakeRunner) recordProcessSignal(name string, sig os.Signal) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.signals = append(r.signals, name)
+	r.processSignals = append(r.processSignals, processSignal{name: name, sig: sig})
 }
 
 func (r *fakeRunner) processName(cmd *exec.Cmd, env []string) string {
@@ -4182,53 +4195,7 @@ func (r *fakeRunner) exitQEMU(err error) {
 	if process == nil {
 		return
 	}
-	process.complete(err)
-}
-
-type fakeProcess struct {
-	name   string
-	runner *fakeRunner
-	done   chan error
-	once   sync.Once
-}
-
-func (p *fakeProcess) Wait() error {
-	err, ok := <-p.done
-	if !ok {
-		return nil
-	}
-	return err
-}
-
-func (p *fakeProcess) Signal(sig os.Signal) error {
-	p.runner.mu.Lock()
-	p.runner.signals = append(p.runner.signals, p.name)
-	p.runner.processSignals = append(p.runner.processSignals, processSignal{name: p.name, sig: sig})
-	p.runner.mu.Unlock()
-	p.complete(nil)
-	return nil
-}
-
-func (p *fakeProcess) Kill() error {
-	return p.Signal(nil)
-}
-
-func (p *fakeProcess) PID() int {
-	return 1
-}
-
-func (p *fakeProcess) Name() string {
-	return p.name
-}
-
-func (p *fakeProcess) complete(err error) {
-	p.once.Do(func() {
-		select {
-		case p.done <- err:
-		default:
-		}
-		close(p.done)
-	})
+	process.Complete(err)
 }
 
 type fakeSocketWaiter struct {
@@ -4930,13 +4897,6 @@ func mapsClone(src map[string]int64) map[string]int64 {
 		dst[key] = value
 	}
 	return dst
-}
-
-func closedErrorChannel(err error) chan error {
-	ch := make(chan error, 1)
-	ch <- err
-	close(ch)
-	return ch
 }
 
 func containsString(values []string, needle string) bool {

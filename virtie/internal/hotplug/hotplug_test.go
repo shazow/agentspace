@@ -279,24 +279,6 @@ func (h fakeHotplug) Attach() error { return nil }
 func (h fakeHotplug) Detach() error { return nil }
 func (h fakeHotplug) ID() string    { return h.id }
 
-type fakeProcess struct {
-	name string
-	pid  int
-}
-
-func (p fakeProcess) PID() int { return p.pid }
-func (p fakeProcess) Name() string {
-	if p.name != "" {
-		return p.name
-	}
-	return "fake"
-}
-func (p fakeProcess) Wait() error { return nil }
-func (p fakeProcess) Signal(signal os.Signal) error {
-	return nil
-}
-func (p fakeProcess) Kill() error { return nil }
-
 type fakeStarter struct {
 	starts  []string
 	stopped []int
@@ -308,7 +290,7 @@ func (s *fakeStarter) Start(ctx context.Context, cmd *exec.Cmd) (*executor.Proce
 		name = filepath.Base(cmd.Args[0])
 	}
 	s.starts = append(s.starts, name)
-	return executor.Wrap(fakeProcess{name: name, pid: 100}), nil
+	return (&executor.FakeProcess{FakeName: name, FakePID: 100, Exited: true}).Process(), nil
 }
 
 func (s *fakeStarter) Stop(process *executor.Process) error {

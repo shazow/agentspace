@@ -246,31 +246,7 @@ func (r *recordingNotificationRunner) Start(cmd *exec.Cmd) (*executor.Process, e
 	r.calls = append(r.calls, notificationRunnerCall{
 		cmd: cmd,
 	})
-	return executor.Wrap(recordingNotificationProcess{err: r.err}), nil
-}
-
-type recordingNotificationProcess struct {
-	err error
-}
-
-func (p recordingNotificationProcess) Wait() error {
-	return p.err
-}
-
-func (p recordingNotificationProcess) Signal(os.Signal) error {
-	return nil
-}
-
-func (p recordingNotificationProcess) Kill() error {
-	return nil
-}
-
-func (p recordingNotificationProcess) PID() int {
-	return 0
-}
-
-func (p recordingNotificationProcess) Name() string {
-	return "notification"
+	return (&executor.FakeProcess{FakeName: "notification", Exited: true, WaitErr: r.err}).Process(), nil
 }
 
 type recordingNotification struct {

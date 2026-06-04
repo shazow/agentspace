@@ -2,18 +2,16 @@ package executor
 
 import (
 	"errors"
-	"os"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
 
 func TestProcessCachesWaitResult(t *testing.T) {
-	handle := newProcessTestHandle("worker")
+	handle := &FakeProcess{FakeName: "worker"}
 	process := Wrap(handle)
-	handle.complete(errors.New("done"))
+	handle.Complete(errors.New("done"))
 
 	for i := 0; i < 2; i++ {
 		err := process.Wait()
@@ -24,13 +22,13 @@ func TestProcessCachesWaitResult(t *testing.T) {
 }
 
 func TestProcessPollExit(t *testing.T) {
-	handle := newProcessTestHandle("worker")
+	handle := &FakeProcess{FakeName: "worker"}
 	process := Wrap(handle)
 	if exited, err := process.PollExit(); exited || err != nil {
 		t.Fatalf("poll before exit: exited=%v err=%v", exited, err)
 	}
 
-	handle.complete(errors.New("failed"))
+	handle.Complete(errors.New("failed"))
 	<-process.Done()
 
 	exited, err := process.PollExit()
@@ -40,10 +38,10 @@ func TestProcessPollExit(t *testing.T) {
 }
 
 func TestFirstExit(t *testing.T) {
-	first := Wrap(newProcessTestHandle("first"))
-	secondProcess := newProcessTestHandle("second")
+	first := Wrap(&FakeProcess{FakeName: "first"})
+	secondProcess := &FakeProcess{FakeName: "second"}
 	second := Wrap(secondProcess)
-	secondProcess.complete(errors.New("second failed"))
+	secondProcess.Complete(errors.New("second failed"))
 	<-second.Done()
 
 	process, err, ok := FirstExit(first, second)
@@ -53,12 +51,12 @@ func TestFirstExit(t *testing.T) {
 }
 
 func TestProcessStopUsesShutdownCallback(t *testing.T) {
-	handle := newProcessTestHandle("worker")
+	handle := &FakeProcess{FakeName: "worker"}
 	process := Wrap(handle)
 	called := false
 	process.SetShutdown(func() error {
 		called = true
-		handle.complete(nil)
+		handle.Complete(nil)
 		return nil
 	})
 
@@ -68,27 +66,25 @@ func TestProcessStopUsesShutdownCallback(t *testing.T) {
 	if !called {
 		t.Fatal("expected shutdown callback")
 	}
-	if len(handle.signals) != 0 {
-		t.Fatalf("unexpected signals: %v", handle.signals)
+	if signals := handle.Signals(); len(signals) != 0 {
+		t.Fatalf("unexpected signals: %v", signals)
 	}
 }
 
 func TestProcessStopSignalsThenKills(t *testing.T) {
-	handle := newProcessTestHandle("worker")
-	handle.ignoreSignals = true
+	handle := &FakeProcess{FakeName: "worker", IgnoreSignals: true}
 	process := Wrap(handle)
 
 	if err := process.Stop(time.Millisecond); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
-	if got, want := handle.signals, []string{"signal", "kill"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("signals: got %v want %v", got, want)
+	if got, want := handle.EventKinds(), []FakeProcessEventKind{FakeProcessSignal, FakeProcessKill}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: got %v want %v", got, want)
 	}
 }
 
 func TestProcessStopReportsShutdownAndSignalErrors(t *testing.T) {
-	handle := newProcessTestHandle("worker")
-	handle.signalErr = errors.New("signal failed")
+	handle := &FakeProcess{FakeName: "worker", SignalErr: errors.New("signal failed")}
 	process := Wrap(handle)
 	process.SetShutdown(func() error {
 		return errors.New("shutdown failed")
@@ -101,98 +97,30 @@ func TestProcessStopReportsShutdownAndSignalErrors(t *testing.T) {
 }
 
 func TestProcessKillAndWait(t *testing.T) {
-	handle := newProcessTestHandle("worker")
+	handle := &FakeProcess{FakeName: "worker"}
 	process := Wrap(handle)
 
 	if err := process.KillAndWait(); err != nil {
 		t.Fatalf("kill and wait: %v", err)
 	}
-	if got, want := handle.signals, []string{"kill"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("signals: got %v want %v", got, want)
+	if got, want := handle.EventKinds(), []FakeProcessEventKind{FakeProcessKill}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: got %v want %v", got, want)
 	}
 }
 
 func TestStopAllStopsInReverseOrder(t *testing.T) {
-	firstProcess := newProcessTestHandle("first")
-	secondProcess := newProcessTestHandle("second")
+	firstProcess := &FakeProcess{FakeName: "first"}
+	secondProcess := &FakeProcess{FakeName: "second"}
 	first := Wrap(firstProcess)
 	second := Wrap(secondProcess)
 
 	if err := StopAll([]*Process{first, second}, time.Second); err != nil {
 		t.Fatalf("stop all: %v", err)
 	}
-	if got, want := []string{secondProcess.signals[0], firstProcess.signals[0]}, []string{"signal", "signal"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("signals: got %v want %v", got, want)
+	if got, want := []FakeProcessEventKind{secondProcess.EventKinds()[0], firstProcess.EventKinds()[0]}, []FakeProcessEventKind{FakeProcessSignal, FakeProcessSignal}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: got %v want %v", got, want)
 	}
-	if secondProcess.signalIndex >= firstProcess.signalIndex {
-		t.Fatalf("expected second to stop before first: second=%d first=%d", secondProcess.signalIndex, firstProcess.signalIndex)
+	if secondProcess.Events()[0].Sequence >= firstProcess.Events()[0].Sequence {
+		t.Fatalf("expected second to stop before first: second=%d first=%d", secondProcess.Events()[0].Sequence, firstProcess.Events()[0].Sequence)
 	}
-}
-
-type processTestHandle struct {
-	name          string
-	done          chan error
-	once          sync.Once
-	mu            sync.Mutex
-	signals       []string
-	signalIndex   int
-	ignoreSignals bool
-	signalErr     error
-}
-
-var processSignalCounter int
-
-func newProcessTestHandle(name string) *processTestHandle {
-	return &processTestHandle{name: name, done: make(chan error, 1)}
-}
-
-func (p *processTestHandle) Wait() error {
-	err, ok := <-p.done
-	if !ok {
-		return nil
-	}
-	return err
-}
-
-func (p *processTestHandle) Signal(sig os.Signal) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	processSignalCounter++
-	p.signalIndex = processSignalCounter
-	p.signals = append(p.signals, "signal")
-	if p.signalErr != nil {
-		return p.signalErr
-	}
-	if !p.ignoreSignals {
-		p.complete(nil)
-	}
-	return nil
-}
-
-func (p *processTestHandle) Kill() error {
-	p.mu.Lock()
-	processSignalCounter++
-	p.signalIndex = processSignalCounter
-	p.signals = append(p.signals, "kill")
-	p.mu.Unlock()
-	p.complete(nil)
-	return nil
-}
-
-func (p *processTestHandle) PID() int {
-	return 1
-}
-
-func (p *processTestHandle) Name() string {
-	return p.name
-}
-
-func (p *processTestHandle) complete(err error) {
-	p.once.Do(func() {
-		select {
-		case p.done <- err:
-		default:
-		}
-		close(p.done)
-	})
 }

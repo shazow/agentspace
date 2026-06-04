@@ -8,8 +8,8 @@ import (
 )
 
 func TestGroupAddRemoveLen(t *testing.T) {
-	first := Wrap(newProcessTestHandle("first"))
-	second := Wrap(newProcessTestHandle("second"))
+	first := Wrap(&FakeProcess{FakeName: "first"})
+	second := Wrap(&FakeProcess{FakeName: "second"})
 	group := NewGroup(first)
 
 	group.Add(nil, second)
@@ -28,8 +28,8 @@ func TestGroupAddRemoveLen(t *testing.T) {
 }
 
 func TestGroupSnapshotIsIndependent(t *testing.T) {
-	first := Wrap(newProcessTestHandle("first"))
-	second := Wrap(newProcessTestHandle("second"))
+	first := Wrap(&FakeProcess{FakeName: "first"})
+	second := Wrap(&FakeProcess{FakeName: "second"})
 	group := NewGroup(first)
 	snapshot := group.Snapshot()
 
@@ -45,8 +45,8 @@ func TestGroupSnapshotIsIndependent(t *testing.T) {
 }
 
 func TestGroupProcessesReturnsCopy(t *testing.T) {
-	first := Wrap(newProcessTestHandle("first"))
-	second := Wrap(newProcessTestHandle("second"))
+	first := Wrap(&FakeProcess{FakeName: "first"})
+	second := Wrap(&FakeProcess{FakeName: "second"})
 	group := NewGroup(first, second)
 	processes := group.Processes()
 	processes[0] = nil
@@ -57,11 +57,11 @@ func TestGroupProcessesReturnsCopy(t *testing.T) {
 }
 
 func TestGroupFirstExit(t *testing.T) {
-	first := Wrap(newProcessTestHandle("first"))
-	secondProcess := newProcessTestHandle("second")
+	first := Wrap(&FakeProcess{FakeName: "first"})
+	secondProcess := &FakeProcess{FakeName: "second"}
 	second := Wrap(secondProcess)
 	group := NewGroup(first, second)
-	secondProcess.complete(errors.New("second failed"))
+	secondProcess.Complete(errors.New("second failed"))
 	<-second.Done()
 
 	process, err, ok := group.FirstExit()
@@ -71,8 +71,8 @@ func TestGroupFirstExit(t *testing.T) {
 }
 
 func TestGroupStopAllStopsInReverseOrder(t *testing.T) {
-	firstProcess := newProcessTestHandle("first")
-	secondProcess := newProcessTestHandle("second")
+	firstProcess := &FakeProcess{FakeName: "first"}
+	secondProcess := &FakeProcess{FakeName: "second"}
 	first := Wrap(firstProcess)
 	second := Wrap(secondProcess)
 	group := NewGroup(first, second)
@@ -80,11 +80,11 @@ func TestGroupStopAllStopsInReverseOrder(t *testing.T) {
 	if err := group.StopAll(time.Second); err != nil {
 		t.Fatalf("stop all: %v", err)
 	}
-	if got, want := []string{secondProcess.signals[0], firstProcess.signals[0]}, []string{"signal", "signal"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("signals: got %v want %v", got, want)
+	if got, want := []FakeProcessEventKind{secondProcess.EventKinds()[0], firstProcess.EventKinds()[0]}, []FakeProcessEventKind{FakeProcessSignal, FakeProcessSignal}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: got %v want %v", got, want)
 	}
-	if secondProcess.signalIndex >= firstProcess.signalIndex {
-		t.Fatalf("expected second to stop before first: second=%d first=%d", secondProcess.signalIndex, firstProcess.signalIndex)
+	if secondProcess.Events()[0].Sequence >= firstProcess.Events()[0].Sequence {
+		t.Fatalf("expected second to stop before first: second=%d first=%d", secondProcess.Events()[0].Sequence, firstProcess.Events()[0].Sequence)
 	}
 }
 
