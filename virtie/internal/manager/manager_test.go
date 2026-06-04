@@ -4035,14 +4035,16 @@ type fakeRunner struct {
 	startErrors               map[string]error
 	qemu                      *fakeProcess
 	onStart                   func(name string, cmd *exec.Cmd)
+	runStartIndex             int
 }
 
-func (r *fakeRunner) Start(name string, cmd *exec.Cmd) (executor.Process, error) {
+func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	args := commandArgs(cmd)
 	env := commandEnvAdditions(cmd.Env)
+	name := r.processName(cmd, env)
 	r.starts = append(r.starts, name)
 	if r.onStart != nil {
 		r.onStart(name, cmd)
@@ -4142,6 +4144,45 @@ func (r *fakeRunner) Start(name string, cmd *exec.Cmd) (executor.Process, error)
 		}
 		return nil, errors.New("unexpected process")
 	}
+}
+
+func (r *fakeRunner) processName(cmd *exec.Cmd, env []string) string {
+	base := ""
+	if cmd != nil {
+		if len(cmd.Args) > 0 {
+			base = filepath.Base(cmd.Args[0])
+		}
+		if base == "" || base == "." {
+			base = filepath.Base(cmd.Path)
+		}
+	}
+	switch {
+	case strings.HasPrefix(base, "qemu-system"):
+		return "qemu"
+	case base == "ssh":
+		return "ssh"
+	case strings.HasPrefix(base, "virtiofsd-"):
+		r.runStartIndex++
+		return "virtiofsd[" + strings.TrimPrefix(base, "virtiofsd-") + "]"
+	case base == "virtiofsd":
+		if socket := envValue(env, "VIRTIOFSD_SOCKET"); socket != "" {
+			id := strings.TrimSuffix(filepath.Base(socket), filepath.Ext(socket))
+			return "hotplug[" + id + "]"
+		}
+	}
+	name := fmt.Sprintf("run[%d]", r.runStartIndex)
+	r.runStartIndex++
+	return name
+}
+
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
 }
 
 func commandArgs(cmd *exec.Cmd) []string {

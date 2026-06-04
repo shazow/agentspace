@@ -38,15 +38,16 @@ type Process interface {
 type Runner struct{}
 
 // Start starts cmd and returns its process handle.
-func (r *Runner) Start(name string, cmd *exec.Cmd) (Process, error) {
+func (r *Runner) Start(cmd *exec.Cmd) (Process, error) {
 	if cmd == nil {
-		return nil, fmt.Errorf("start %s: command must not be nil", name)
+		return nil, fmt.Errorf("start command: command must not be nil")
 	}
+	process := &execProcess{cmd: cmd}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start %s: %w", name, err)
+		return nil, fmt.Errorf("start %s: %w", process.Name(), err)
 	}
 
-	return &execProcess{cmd: cmd}, nil
+	return process, nil
 }
 
 type execProcess struct {
@@ -79,10 +80,16 @@ func (p *execProcess) PID() int {
 }
 
 func (p *execProcess) Name() string {
-	if p.cmd == nil {
+	if p == nil || p.cmd == nil {
 		return ""
 	}
-	return filepath.Base(p.cmd.Path)
+	if len(p.cmd.Args) > 0 && p.cmd.Args[0] != "" {
+		return filepath.Base(p.cmd.Args[0])
+	}
+	if p.cmd.Path != "" {
+		return filepath.Base(p.cmd.Path)
+	}
+	return "command"
 }
 
 // Renderer renders exec command templates from a fixed context.

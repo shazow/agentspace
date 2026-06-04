@@ -234,8 +234,7 @@ func TestLaunchResumeNotifiesAfterMigrationAndContinue(t *testing.T) {
 }
 
 type notificationRunnerCall struct {
-	name string
-	cmd  *exec.Cmd
+	cmd *exec.Cmd
 }
 
 type recordingNotificationRunner struct {
@@ -243,10 +242,9 @@ type recordingNotificationRunner struct {
 	err   error
 }
 
-func (r *recordingNotificationRunner) Start(name string, cmd *exec.Cmd) (executor.Process, error) {
+func (r *recordingNotificationRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
 	r.calls = append(r.calls, notificationRunnerCall{
-		name: name,
-		cmd:  cmd,
+		cmd: cmd,
 	})
 	return recordingNotificationProcess{err: r.err}, nil
 }

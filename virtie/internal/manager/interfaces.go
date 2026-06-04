@@ -22,7 +22,7 @@ type vsockCIDChecker interface {
 }
 
 type runner interface {
-	Start(name string, cmd *exec.Cmd) (executor.Process, error)
+	Start(cmd *exec.Cmd) (executor.Process, error)
 }
 
 type socketWaiter interface {

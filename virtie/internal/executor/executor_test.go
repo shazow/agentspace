@@ -50,7 +50,7 @@ func TestRunnerStartsCommand(t *testing.T) {
 	}
 	cmd := exec.Command(exe, "-test.run=TestRunnerStartsCommand")
 	cmd.Env = append(os.Environ(), "EXECUTOR_RUNNER_CHILD=1")
-	process, err := (&Runner{}).Start("child", cmd)
+	process, err := (&Runner{}).Start(cmd)
 	if err != nil {
 		t.Fatalf("start child: %v", err)
 	}
@@ -66,9 +66,16 @@ func TestRunnerStartsCommand(t *testing.T) {
 }
 
 func TestRunnerRejectsNilCommand(t *testing.T) {
-	_, err := (&Runner{}).Start("child", nil)
+	_, err := (&Runner{}).Start(nil)
 	if err == nil || !strings.Contains(err.Error(), "command must not be nil") {
 		t.Fatalf("expected nil command error, got %v", err)
+	}
+}
+
+func TestProcessNameFallsBackToCommandPath(t *testing.T) {
+	process := &execProcess{cmd: &exec.Cmd{Path: "/tmp/bin/custom"}}
+	if got, want := process.Name(), "custom"; got != want {
+		t.Fatalf("unexpected process name: got %q want %q", got, want)
 	}
 }
 

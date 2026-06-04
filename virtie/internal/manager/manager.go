@@ -525,7 +525,7 @@ type managedProcess struct {
 }
 
 func (m *manager) startManagedProcess(name string, cmd *exec.Cmd) (*managedProcess, error) {
-	proc, err := m.runner.Start(name, cmd)
+	proc, err := m.runner.Start(cmd)
 	if err != nil {
 		return nil, err
 	}

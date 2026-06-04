@@ -125,7 +125,7 @@ func (n *commandNotifier) Notify(ctx context.Context, state string, message stri
 }
 
 func runNotificationCommand(ctx context.Context, runner runner, cmd *exec.Cmd) error {
-	process, err := runner.Start("notification", cmd)
+	process, err := runner.Start(cmd)
 	if err != nil {
 		return err
 	}
