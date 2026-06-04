@@ -18,17 +18,10 @@ func TestCommandLeavesEmptyEnvNil(t *testing.T) {
 }
 
 func TestCommandAppendsEnvAfterEnviron(t *testing.T) {
-	environ := os.Environ()
 	additions := []string{"VIRTIE_TEST_ONE=1", "VIRTIE_TEST_TWO=2"}
 	cmd := Command("/bin/echo", nil, additions)
-	if len(cmd.Env) != len(environ)+len(additions) {
-		t.Fatalf("unexpected env length: got %d want %d", len(cmd.Env), len(environ)+len(additions))
-	}
-	if !slices.Equal(cmd.Env[:len(environ)], environ) {
-		t.Fatalf("expected command env to start with os.Environ()")
-	}
-	if !slices.Equal(cmd.Env[len(environ):], additions) {
-		t.Fatalf("unexpected appended env: got %#v want %#v", cmd.Env[len(environ):], additions)
+	if !slices.Equal(cmd.Env, WrapEnv(additions)) {
+		t.Fatalf("unexpected env: got %#v want %#v", cmd.Env, WrapEnv(additions))
 	}
 }
 

@@ -10,14 +10,29 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 )
 
-func TestGroupAddRemoveLen(t *testing.T) {
+func TestGroupCollectionSemantics(t *testing.T) {
 	first := executor.Wrap(&executortest.Process{OverrideName: "first"})
 	second := executor.Wrap(&executortest.Process{OverrideName: "second"})
 	group := executor.NewGroup(first)
+	snapshot := group.Snapshot()
 
 	group.Add(nil, second)
 	if got, want := group.Len(), 2; got != want {
 		t.Fatalf("len after add: got %d want %d", got, want)
+	}
+	snapshot.Remove(first)
+
+	if got, want := group.Processes(), []*executor.Process{first, second}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("group changed unexpectedly: got %#v want %#v", got, want)
+	}
+	if got := snapshot.Len(); got != 0 {
+		t.Fatalf("snapshot len: got %d want 0", got)
+	}
+	processes := group.Processes()
+	processes[0] = nil
+
+	if got, want := group.Processes(), []*executor.Process{first, second}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("group was mutated through processes copy: got %#v want %#v", got, want)
 	}
 	if !group.Remove(first) {
 		t.Fatal("expected first removal to succeed")
@@ -27,35 +42,6 @@ func TestGroupAddRemoveLen(t *testing.T) {
 	}
 	if got, want := group.Processes(), []*executor.Process{second}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("processes after remove: got %#v want %#v", got, want)
-	}
-}
-
-func TestGroupSnapshotIsIndependent(t *testing.T) {
-	first := executor.Wrap(&executortest.Process{OverrideName: "first"})
-	second := executor.Wrap(&executortest.Process{OverrideName: "second"})
-	group := executor.NewGroup(first)
-	snapshot := group.Snapshot()
-
-	group.Add(second)
-	snapshot.Remove(first)
-
-	if got, want := group.Processes(), []*executor.Process{first, second}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("group changed unexpectedly: got %#v want %#v", got, want)
-	}
-	if got := snapshot.Len(); got != 0 {
-		t.Fatalf("snapshot len: got %d want 0", got)
-	}
-}
-
-func TestGroupProcessesReturnsCopy(t *testing.T) {
-	first := executor.Wrap(&executortest.Process{OverrideName: "first"})
-	second := executor.Wrap(&executortest.Process{OverrideName: "second"})
-	group := executor.NewGroup(first, second)
-	processes := group.Processes()
-	processes[0] = nil
-
-	if got, want := group.Processes(), []*executor.Process{first, second}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("group was mutated through processes copy: got %#v want %#v", got, want)
 	}
 }
 

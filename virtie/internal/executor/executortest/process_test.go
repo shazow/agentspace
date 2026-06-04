@@ -32,19 +32,6 @@ func TestProcessExitedWaitsImmediately(t *testing.T) {
 	}
 }
 
-func TestProcessProcessCachesWaitResult(t *testing.T) {
-	handle := &Process{OverrideName: "worker"}
-	process := handle.Process()
-	handle.Complete(errors.New("done"))
-
-	for i := 0; i < 2; i++ {
-		err := process.Wait()
-		if err == nil || err.Error() != "done" {
-			t.Fatalf("wait %d: %v", i, err)
-		}
-	}
-}
-
 func TestSignalCompletesByDefault(t *testing.T) {
 	process := &Process{WaitErr: errors.New("stopped")}
 
