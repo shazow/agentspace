@@ -275,7 +275,10 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		{ID: "fs0", SocketPath: "sock-a", Tag: "ro-store", Transport: "pci"},
 		{ID: "fs1", SocketPath: "sock-b", Tag: "workspace", Transport: "pci"},
 	}
-	if err := writeSuspendState(cfg, filepath.Join(tmpDir, "old-qmp.sock"), "paused"); err != nil {
+	if err := writeSuspendStateData(cfg, suspendState{
+		QMPSocketPath: filepath.Join(tmpDir, "old-qmp.sock"),
+		Status:        "paused",
+	}); err != nil {
 		t.Fatalf("write stale suspend state: %v", err)
 	}
 

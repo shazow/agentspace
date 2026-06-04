@@ -52,7 +52,14 @@ func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner
 	if runner == nil {
 		runner = &executor.Runner{}
 	}
-	dir := resolvedNotificationWorkingDir(manifest.Paths.WorkingDir)
+	// Normalize only the working directory; the configured command path is
+	// resolved by the executor environment exactly as provided.
+	dir := manifest.Paths.WorkingDir
+	if !filepath.IsAbs(dir) {
+		if absDir, err := filepath.Abs(dir); err == nil {
+			dir = absDir
+		}
+	}
 	command := notifications.Command
 	command.Args = append([]string(nil), command.Args...)
 	command.Env = append([]string(nil), command.Env...)
@@ -72,17 +79,6 @@ func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger, runner
 		runner:  runner,
 		logger:  logger,
 	}
-}
-
-func resolvedNotificationWorkingDir(dir string) string {
-	if filepath.IsAbs(dir) {
-		return dir
-	}
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		return dir
-	}
-	return absDir
 }
 
 func (n *commandNotifier) Notify(ctx context.Context, state string, message string, values map[string]string) {

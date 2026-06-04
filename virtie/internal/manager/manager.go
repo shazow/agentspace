@@ -203,8 +203,12 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if err := ensureSavedVMStateAvailable(resumeState); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+	if resumeState != nil {
+		// Recheck after acquiring the launch lock so restore does not race a
+		// concurrent launch/suspend cleanup.
+		if _, err := os.Stat(resumeState.VMStatePath); err != nil {
+			return &stageError{Stage: "preflight", Err: fmt.Errorf("saved vm state %q is not available: %w", resumeState.VMStatePath, err)}
+		}
 	}
 	if err := writeLaunchPID(manifest, os.Getpid()); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -245,7 +249,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err := ensureExistingSocketPaths(externalVirtioFSSocketPaths); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := ensureParentDirectories(volumeImagePaths(volumes)); err != nil {
+	volumeImagePaths := make([]string, 0, len(volumes))
+	for _, volume := range volumes {
+		volumeImagePaths = append(volumeImagePaths, volume.ImagePath)
+	}
+	if err := ensureParentDirectories(volumeImagePaths); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 	if err := removeSocketPaths([]string{qmpSocketPath}); err != nil {
@@ -368,8 +376,12 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid, notifier, func() bool {
 		return writeBackOnExit
 	})
-	if err := m.handlePendingSuspendRequest(launchCtx, suspendRequests, suspendHandler); err != nil {
-		return err
+	// Honor a suspend signal queued during startup before guest-file install or
+	// SSH startup proceeds.
+	select {
+	case <-suspendRequests:
+		return suspendHandler.saveAndExit(launchCtx)
+	default:
 	}
 
 	if resumeState == nil {
@@ -482,16 +494,6 @@ func resolveLaunchResumeState(manifest *manifest.Manifest, mode ResumeMode) (*su
 		return nil, &stageError{Stage: "restore", Err: fmt.Errorf("saved vm state %q is not available: %w", state.VMStatePath, err)}
 	}
 	return &state, nil
-}
-
-func ensureSavedVMStateAvailable(state *suspendState) error {
-	if state == nil {
-		return nil
-	}
-	if _, err := os.Stat(state.VMStatePath); err != nil {
-		return fmt.Errorf("saved vm state %q is not available: %w", state.VMStatePath, err)
-	}
-	return nil
 }
 
 func (m *manager) acquireLaunchCID(manifest *manifest.Manifest, state *suspendState) (int, error) {
@@ -967,15 +969,6 @@ func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRe
 	}
 }
 
-func (m *manager) handlePendingSuspendRequest(ctx context.Context, suspendRequests <-chan struct{}, suspendHandler *launchSuspendHandler) error {
-	select {
-	case <-suspendRequests:
-		return suspendHandler.saveAndExit(ctx)
-	default:
-		return nil
-	}
-}
-
 func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink) error {
 	timeout := m.effectiveQMPCommandTimeout()
 
@@ -1241,14 +1234,6 @@ func ensureDirectories(directories []string) error {
 		}
 	}
 	return nil
-}
-
-func volumeImagePaths(volumes []manifest.Volume) []string {
-	paths := make([]string, 0, len(volumes))
-	for _, volume := range volumes {
-		paths = append(paths, volume.ImagePath)
-	}
-	return paths
 }
 
 func ensureVolumeImages(volumes []manifest.Volume, logger *slog.Logger) error {

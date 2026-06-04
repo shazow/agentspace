@@ -35,15 +35,6 @@ func launchPIDPath(manifest *manifest.Manifest) string {
 	return filepath.Join(manifest.ResolvedPersistenceStateDir(), manifest.Identity.HostName+".pid")
 }
 
-func writeSuspendState(manifest *manifest.Manifest, qmpSocketPath string, status string) error {
-	return writeSuspendStateData(manifest, suspendState{
-		HostName:      manifest.Identity.HostName,
-		QMPSocketPath: qmpSocketPath,
-		Timestamp:     time.Now().UTC(),
-		Status:        status,
-	})
-}
-
 func writeSuspendStateData(manifest *manifest.Manifest, state suspendState) error {
 	if state.HostName == "" {
 		state.HostName = manifest.Identity.HostName
