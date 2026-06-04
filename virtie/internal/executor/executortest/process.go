@@ -12,8 +12,8 @@ import (
 type EventKind string
 
 const (
-	Signal EventKind = "signal"
-	Kill   EventKind = "kill"
+	EventSignal EventKind = "signal"
+	EventKill   EventKind = "kill"
 )
 
 var eventSequence atomic.Int64
@@ -30,8 +30,8 @@ type Event struct {
 // The zero value is a running process named "fake" with PID 1. Set Exited to
 // true to make Wait return immediately with WaitErr.
 type Process struct {
-	NameValue string
-	PIDValue  int
+	OverrideName string
+	OverridePID  int
 
 	Exited  bool
 	WaitErr error
@@ -103,7 +103,7 @@ func (p *Process) Signal(sig os.Signal) error {
 	if p == nil {
 		return nil
 	}
-	p.recordEvent(Signal, sig)
+	p.recordEvent(EventSignal, sig)
 	if p.OnSignal != nil {
 		p.OnSignal(sig)
 	}
@@ -121,7 +121,7 @@ func (p *Process) Kill() error {
 	if p == nil {
 		return nil
 	}
-	p.recordEvent(Kill, nil)
+	p.recordEvent(EventKill, nil)
 	if p.OnKill != nil {
 		p.OnKill()
 	}
@@ -132,24 +132,24 @@ func (p *Process) Kill() error {
 	return nil
 }
 
-// PID returns PIDValue, or 1 when PIDValue is zero.
+// PID returns OverridePID, or 1 when OverridePID is zero.
 func (p *Process) PID() int {
 	if p == nil {
 		return 0
 	}
-	if p.PIDValue != 0 {
-		return p.PIDValue
+	if p.OverridePID != 0 {
+		return p.OverridePID
 	}
 	return 1
 }
 
-// Name returns NameValue, or "fake" when NameValue is empty.
+// Name returns OverrideName, or "fake" when OverrideName is empty.
 func (p *Process) Name() string {
 	if p == nil {
 		return ""
 	}
-	if p.NameValue != "" {
-		return p.NameValue
+	if p.OverrideName != "" {
+		return p.OverrideName
 	}
 	return "fake"
 }
@@ -219,7 +219,7 @@ func (p *Process) recordEvent(kind EventKind, sig os.Signal) {
 		Sequence: eventSequence.Add(1),
 	}
 	p.mu.Lock()
-	if kind == Signal {
+	if kind == EventSignal {
 		p.signals = append(p.signals, sig)
 	}
 	p.events = append(p.events, event)

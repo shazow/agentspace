@@ -1068,7 +1068,7 @@ func TestManagerLaunchWarnsAfterFiveSSHRetryFailures(t *testing.T) {
 }
 
 func TestWaitForSSHReadyFailsWhenQEMUExitsFirst(t *testing.T) {
-	qemuProcess := &executortest.Process{NameValue: "qemu"}
+	qemuProcess := &executortest.Process{OverrideName: "qemu"}
 	qemu := qemuProcess.Process()
 	waiterStarted := make(chan struct{})
 	manager := &manager{
@@ -3297,7 +3297,7 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	session := (&executortest.Process{NameValue: "ssh"}).Process()
+	session := (&executortest.Process{OverrideName: "ssh"}).Process()
 
 	err := (&manager{}).waitForSession(ctx, session, make(chan struct{}), make(chan struct{}), nil, "", executor.Group{})
 	if err == nil {
@@ -4044,7 +4044,7 @@ func (r *launchRunner) startProcess(start executortest.Start) (*executortest.Pro
 	}
 	switch {
 	case strings.HasPrefix(name, "qemu-system"):
-		process := &executortest.Process{NameValue: name}
+		process := &executortest.Process{OverrideName: name}
 		r.mu.Lock()
 		r.qemu = process
 		r.mu.Unlock()
@@ -4058,7 +4058,7 @@ func (r *launchRunner) startProcess(start executortest.Start) (*executortest.Pro
 			if start.Cmd.Stderr != nil {
 				_, _ = io.WriteString(start.Cmd.Stderr, "agent@vsock/3: Permission denied (publickey).\n")
 			}
-			return &executortest.Process{NameValue: name, Exited: true, WaitErr: errors.New("exit status 255")}, nil
+			return &executortest.Process{OverrideName: name, Exited: true, WaitErr: errors.New("exit status 255")}, nil
 		}
 		if interactiveStarts <= r.transientSSHFailures {
 			if start.Cmd.Stderr != nil {
@@ -4068,13 +4068,13 @@ func (r *launchRunner) startProcess(start executortest.Start) (*executortest.Pro
 				}
 				_, _ = io.WriteString(start.Cmd.Stderr, output)
 			}
-			return &executortest.Process{NameValue: name, Exited: true, WaitErr: errors.New("exit status 255")}, nil
+			return &executortest.Process{OverrideName: name, Exited: true, WaitErr: errors.New("exit status 255")}, nil
 		}
 		if r.failInteractiveSSH {
 			return nil, errors.New("session start failed")
 		}
 		if r.finishInteractiveSSH {
-			process := &executortest.Process{NameValue: name}
+			process := &executortest.Process{OverrideName: name}
 			go func() {
 				if r.finishInteractiveSSHDelay > 0 {
 					time.Sleep(r.finishInteractiveSSHDelay)
@@ -4084,7 +4084,7 @@ func (r *launchRunner) startProcess(start executortest.Start) (*executortest.Pro
 			return process, nil
 		}
 
-		process := &executortest.Process{NameValue: name}
+		process := &executortest.Process{OverrideName: name}
 		go func() {
 			if r.cancelDelay > 0 {
 				time.Sleep(r.cancelDelay)

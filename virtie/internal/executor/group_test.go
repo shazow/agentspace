@@ -12,8 +12,8 @@ import (
 )
 
 func TestGroupAddRemoveLen(t *testing.T) {
-	first := executor.Wrap(&executortest.Process{NameValue: "first"})
-	second := executor.Wrap(&executortest.Process{NameValue: "second"})
+	first := executor.Wrap(&executortest.Process{OverrideName: "first"})
+	second := executor.Wrap(&executortest.Process{OverrideName: "second"})
 	group := executor.NewGroup(first)
 
 	group.Add(nil, second)
@@ -32,8 +32,8 @@ func TestGroupAddRemoveLen(t *testing.T) {
 }
 
 func TestGroupSnapshotIsIndependent(t *testing.T) {
-	first := executor.Wrap(&executortest.Process{NameValue: "first"})
-	second := executor.Wrap(&executortest.Process{NameValue: "second"})
+	first := executor.Wrap(&executortest.Process{OverrideName: "first"})
+	second := executor.Wrap(&executortest.Process{OverrideName: "second"})
 	group := executor.NewGroup(first)
 	snapshot := group.Snapshot()
 
@@ -49,8 +49,8 @@ func TestGroupSnapshotIsIndependent(t *testing.T) {
 }
 
 func TestGroupProcessesReturnsCopy(t *testing.T) {
-	first := executor.Wrap(&executortest.Process{NameValue: "first"})
-	second := executor.Wrap(&executortest.Process{NameValue: "second"})
+	first := executor.Wrap(&executortest.Process{OverrideName: "first"})
+	second := executor.Wrap(&executortest.Process{OverrideName: "second"})
 	group := executor.NewGroup(first, second)
 	processes := group.Processes()
 	processes[0] = nil
@@ -61,8 +61,8 @@ func TestGroupProcessesReturnsCopy(t *testing.T) {
 }
 
 func TestGroupFirstExit(t *testing.T) {
-	first := executor.Wrap(&executortest.Process{NameValue: "first"})
-	secondProcess := &executortest.Process{NameValue: "second"}
+	first := executor.Wrap(&executortest.Process{OverrideName: "first"})
+	secondProcess := &executortest.Process{OverrideName: "second"}
 	second := executor.Wrap(secondProcess)
 	group := executor.NewGroup(first, second)
 	secondProcess.Complete(errors.New("second failed"))
@@ -75,8 +75,8 @@ func TestGroupFirstExit(t *testing.T) {
 }
 
 func TestGroupStopAllStopsInReverseOrder(t *testing.T) {
-	firstProcess := &executortest.Process{NameValue: "first"}
-	secondProcess := &executortest.Process{NameValue: "second"}
+	firstProcess := &executortest.Process{OverrideName: "first"}
+	secondProcess := &executortest.Process{OverrideName: "second"}
 	first := executor.Wrap(firstProcess)
 	second := executor.Wrap(secondProcess)
 	group := executor.NewGroup(first, second)
@@ -84,7 +84,7 @@ func TestGroupStopAllStopsInReverseOrder(t *testing.T) {
 	if err := group.StopAll(time.Second); err != nil {
 		t.Fatalf("stop all: %v", err)
 	}
-	if got, want := []executortest.EventKind{secondProcess.EventKinds()[0], firstProcess.EventKinds()[0]}, []executortest.EventKind{executortest.Signal, executortest.Signal}; !reflect.DeepEqual(got, want) {
+	if got, want := []executortest.EventKind{secondProcess.EventKinds()[0], firstProcess.EventKinds()[0]}, []executortest.EventKind{executortest.EventSignal, executortest.EventSignal}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %v want %v", got, want)
 	}
 	if secondProcess.Events()[0].Sequence >= firstProcess.Events()[0].Sequence {

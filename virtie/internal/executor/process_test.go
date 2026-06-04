@@ -14,7 +14,7 @@ import (
 )
 
 func TestProcessCachesWaitResult(t *testing.T) {
-	handle := &executortest.Process{NameValue: "worker"}
+	handle := &executortest.Process{OverrideName: "worker"}
 	process := executor.Wrap(handle)
 	handle.Complete(errors.New("done"))
 
@@ -27,7 +27,7 @@ func TestProcessCachesWaitResult(t *testing.T) {
 }
 
 func TestProcessPollExit(t *testing.T) {
-	handle := &executortest.Process{NameValue: "worker"}
+	handle := &executortest.Process{OverrideName: "worker"}
 	process := executor.Wrap(handle)
 	if exited, err := process.PollExit(); exited || err != nil {
 		t.Fatalf("poll before exit: exited=%v err=%v", exited, err)
@@ -43,7 +43,7 @@ func TestProcessPollExit(t *testing.T) {
 }
 
 func TestProcessStopUsesShutdownCallback(t *testing.T) {
-	handle := &executortest.Process{NameValue: "worker"}
+	handle := &executortest.Process{OverrideName: "worker"}
 	process := executor.Wrap(handle)
 	called := false
 	process.SetShutdown(func() error {
@@ -64,19 +64,19 @@ func TestProcessStopUsesShutdownCallback(t *testing.T) {
 }
 
 func TestProcessStopSignalsThenKills(t *testing.T) {
-	handle := &executortest.Process{NameValue: "worker", IgnoreSignals: true}
+	handle := &executortest.Process{OverrideName: "worker", IgnoreSignals: true}
 	process := executor.Wrap(handle)
 
 	if err := process.Stop(time.Millisecond); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
-	if got, want := handle.EventKinds(), []executortest.EventKind{executortest.Signal, executortest.Kill}; !reflect.DeepEqual(got, want) {
+	if got, want := handle.EventKinds(), []executortest.EventKind{executortest.EventSignal, executortest.EventKill}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %v want %v", got, want)
 	}
 }
 
 func TestProcessStopReportsShutdownAndSignalErrors(t *testing.T) {
-	handle := &executortest.Process{NameValue: "worker", SignalErr: errors.New("signal failed")}
+	handle := &executortest.Process{OverrideName: "worker", SignalErr: errors.New("signal failed")}
 	process := executor.Wrap(handle)
 	process.SetShutdown(func() error {
 		return errors.New("shutdown failed")
@@ -89,13 +89,13 @@ func TestProcessStopReportsShutdownAndSignalErrors(t *testing.T) {
 }
 
 func TestProcessKillAndWait(t *testing.T) {
-	handle := &executortest.Process{NameValue: "worker"}
+	handle := &executortest.Process{OverrideName: "worker"}
 	process := executor.Wrap(handle)
 
 	if err := process.KillAndWait(); err != nil {
 		t.Fatalf("kill and wait: %v", err)
 	}
-	if got, want := handle.EventKinds(), []executortest.EventKind{executortest.Kill}; !reflect.DeepEqual(got, want) {
+	if got, want := handle.EventKinds(), []executortest.EventKind{executortest.EventKill}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %v want %v", got, want)
 	}
 }

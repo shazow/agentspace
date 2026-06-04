@@ -291,7 +291,7 @@ func (s *fakeStarter) Start(ctx context.Context, cmd *exec.Cmd) (*executor.Proce
 		name = filepath.Base(cmd.Args[0])
 	}
 	s.starts = append(s.starts, name)
-	return (&executortest.Process{NameValue: name, PIDValue: 100, Exited: true}).Process(), nil
+	return (&executortest.Process{OverrideName: name, OverridePID: 100, Exited: true}).Process(), nil
 }
 
 func (s *fakeStarter) Stop(process *executor.Process) error {

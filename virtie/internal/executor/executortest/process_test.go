@@ -9,7 +9,7 @@ import (
 )
 
 func TestProcessWaitBlocksUntilComplete(t *testing.T) {
-	process := &Process{NameValue: "worker"}
+	process := &Process{OverrideName: "worker"}
 
 	select {
 	case <-process.Done():
@@ -33,7 +33,7 @@ func TestProcessExitedWaitsImmediately(t *testing.T) {
 }
 
 func TestProcessProcessCachesWaitResult(t *testing.T) {
-	handle := &Process{NameValue: "worker"}
+	handle := &Process{OverrideName: "worker"}
 	process := handle.Process()
 	handle.Complete(errors.New("done"))
 
@@ -71,7 +71,7 @@ func TestProcessIgnoreSignalsAllowsKillEscalation(t *testing.T) {
 	if got, want := len(events), 2; got != want {
 		t.Fatalf("events: got %d want %d (%v)", got, want, events)
 	}
-	if events[0].Kind != Signal || events[1].Kind != Kill {
+	if events[0].Kind != EventSignal || events[1].Kind != EventKill {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 }
@@ -93,14 +93,14 @@ func TestProcessRecordsErrorsAndEvents(t *testing.T) {
 	if got, want := len(events), 2; got != want {
 		t.Fatalf("events: got %d want %d (%v)", got, want, events)
 	}
-	if events[0].Kind != Signal || events[1].Kind != Kill {
+	if events[0].Kind != EventSignal || events[1].Kind != EventKill {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 }
 
 func TestEventSequenceOrdersProcesses(t *testing.T) {
-	first := &Process{NameValue: "first"}
-	second := &Process{NameValue: "second"}
+	first := &Process{OverrideName: "first"}
+	second := &Process{OverrideName: "second"}
 
 	if err := second.Signal(os.Interrupt); err != nil {
 		t.Fatalf("signal second: %v", err)

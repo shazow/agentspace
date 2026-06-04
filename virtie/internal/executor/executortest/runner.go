@@ -21,7 +21,7 @@ type Start struct {
 	Cmd          *exec.Cmd
 }
 
-// RunnerSignal records a signal or kill observed by a fake runner process.
+// RunnerSignal records a signal or kill observed by a runner process.
 type RunnerSignal struct {
 	Name   string
 	Signal os.Signal
@@ -38,7 +38,7 @@ type Runner struct {
 	processSignals []RunnerSignal
 }
 
-// Start records cmd and returns a fake process.
+// Start records cmd and returns a test process.
 func (r *Runner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 	start := runnerStart(cmd)
 
@@ -68,15 +68,15 @@ func (r *Runner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 	return r.NewProcess(start.Name).Process(), nil
 }
 
-// NewProcess returns a tracked fake process with signal recording callbacks.
+// NewProcess returns a tracked test process with signal recording callbacks.
 func (r *Runner) NewProcess(name string) *Process {
-	process := &Process{NameValue: name}
+	process := &Process{OverrideName: name}
 	r.configureProcess(name, process)
 	r.trackProcess(name, process)
 	return process
 }
 
-// ExitedProcess returns a tracked fake process that has already exited.
+// ExitedProcess returns a tracked test process that has already exited.
 func (r *Runner) ExitedProcess(name string, err error) *Process {
 	process := r.NewProcess(name)
 	process.Exited = true
