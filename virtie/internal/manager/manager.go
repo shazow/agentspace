@@ -340,7 +340,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	qemu, err := m.startManagedProcess("qemu", qemuCmd)
+	qemu, err := m.startManagedProcess(qemuCmd)
 	if err != nil {
 		return &stageError{Stage: "vm startup", Err: err}
 	}
@@ -520,20 +520,18 @@ func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
 }
 
 type managedProcess struct {
-	name     string
 	proc     executor.Process
 	done     chan error
 	shutdown func() error
 }
 
-func (m *manager) startManagedProcess(name string, cmd *exec.Cmd) (*managedProcess, error) {
+func (m *manager) startManagedProcess(cmd *exec.Cmd) (*managedProcess, error) {
 	proc, err := m.runner.Start(cmd)
 	if err != nil {
 		return nil, err
 	}
 
 	mp := &managedProcess{
-		name: name,
 		proc: proc,
 		done: make(chan error, 1),
 	}
@@ -557,19 +555,13 @@ func (m *manager) startRuns(cid int, manifest *manifest.Manifest) ([]*managedPro
 
 	started := make([]*managedProcess, 0, len(runs))
 	for i, run := range runs {
-		name := fmt.Sprintf("run[%d]", i)
-		if run.Name != "" {
-			name = run.Name
-			m.logger.Info("starting run", "name", name, "index", i)
-		} else {
-			m.logger.Info("starting run", "index", i)
-		}
+		m.logger.Info("starting run", "index", i)
 		cmd := executor.Command(run.Exec[0], run.Exec[1:], run.Env)
 		cmd.Dir = run.Dir
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
-		process, err := m.startManagedProcess(name, cmd)
+		process, err := m.startManagedProcess(cmd)
 		if err != nil {
 			_ = m.stopAll(started)
 			return nil, &stageError{Stage: "run startup", Err: err}
@@ -793,7 +785,7 @@ func (m *manager) runSSHSession(
 		}
 		sessionLogger.Info("ssh command", "command", shellquote.Join(cmd.Args...))
 		cmd.Stderr = stderr
-		session, err := m.startManagedProcess("ssh", cmd)
+		session, err := m.startManagedProcess(cmd)
 		if err != nil {
 			return &stageError{Stage: "active session", Err: err}
 		}
@@ -927,7 +919,7 @@ func (m *manager) waitForSession(ctx context.Context, session *managedProcess, s
 		select {
 		case err := <-session.done:
 			if err != nil {
-				return wrapCommandError("active session", session.name, err)
+				return wrapCommandError("active session", session.Name(), err)
 			}
 			return nil
 		case <-suspendRequests:
@@ -952,7 +944,7 @@ func (m *manager) waitForVM(ctx context.Context, qemu *managedProcess, suspendRe
 		select {
 		case err := <-qemu.done:
 			if err != nil {
-				return wrapCommandError("vm session", qemu.name, err)
+				return wrapCommandError("vm session", qemu.Name(), err)
 			}
 			return nil
 		case <-suspendRequests:
@@ -1077,7 +1069,7 @@ func (m *manager) killProcess(process *managedProcess) error {
 	}
 
 	if err := process.proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("kill %s: %w", process.name, err)
+		return fmt.Errorf("kill %s: %w", process.Name(), err)
 	}
 
 	<-process.done
@@ -1096,7 +1088,7 @@ func (m *manager) stopProcess(process *managedProcess) error {
 	var shutdownErr error
 	if process.shutdown != nil {
 		if err := process.shutdown(); err != nil {
-			shutdownErr = fmt.Errorf("shutdown %s: %w", process.name, err)
+			shutdownErr = fmt.Errorf("shutdown %s: %w", process.Name(), err)
 		} else {
 			timer := time.NewTimer(m.shutdownDelay)
 			defer timer.Stop()
@@ -1111,9 +1103,9 @@ func (m *manager) stopProcess(process *managedProcess) error {
 
 	if err := process.proc.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		if shutdownErr != nil {
-			return errors.Join(shutdownErr, fmt.Errorf("stop %s: %w", process.name, err))
+			return errors.Join(shutdownErr, fmt.Errorf("stop %s: %w", process.Name(), err))
 		}
-		return fmt.Errorf("stop %s: %w", process.name, err)
+		return fmt.Errorf("stop %s: %w", process.Name(), err)
 	}
 
 	timer := time.NewTimer(m.shutdownDelay)
@@ -1125,9 +1117,9 @@ func (m *manager) stopProcess(process *managedProcess) error {
 	case <-timer.C:
 		if err := process.proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			if shutdownErr != nil {
-				return errors.Join(shutdownErr, fmt.Errorf("kill %s: %w", process.name, err))
+				return errors.Join(shutdownErr, fmt.Errorf("kill %s: %w", process.Name(), err))
 			}
-			return fmt.Errorf("kill %s: %w", process.name, err)
+			return fmt.Errorf("kill %s: %w", process.Name(), err)
 		}
 		<-process.done
 		return shutdownErr
@@ -1146,6 +1138,24 @@ func (p *managedProcess) pollExit() (bool, error) {
 	}
 }
 
+func (p *managedProcess) Name() string {
+	if p == nil || p.proc == nil {
+		return ""
+	}
+	return p.proc.Name()
+}
+
+func (p *managedProcess) Wait() error {
+	if p == nil {
+		return nil
+	}
+	err, ok := <-p.done
+	if !ok {
+		return nil
+	}
+	return err
+}
+
 func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 	for _, process := range processes {
 		if process == nil {
@@ -1160,11 +1170,11 @@ func firstUnexpectedExit(stage string, processes ...*managedProcess) error {
 		if err == nil {
 			return &stageError{
 				Stage: stage,
-				Err:   fmt.Errorf("%s exited unexpectedly", process.name),
+				Err:   fmt.Errorf("%s exited unexpectedly", process.Name()),
 			}
 		}
 
-		return wrapCommandError(stage, process.name, err)
+		return wrapCommandError(stage, process.Name(), err)
 	}
 
 	return nil

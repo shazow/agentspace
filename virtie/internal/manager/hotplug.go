@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -84,22 +85,17 @@ type managerHotplugStarter struct {
 	m *manager
 }
 
-func (s managerHotplugStarter) Start(ctx context.Context, spec hotplug.ProcessSpec) (hotplug.Process, error) {
-	cmd := executor.Command(spec.Path, spec.Args, spec.Env)
-	cmd.Dir = spec.Dir
-	if spec.ProcessGroup {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+func (s managerHotplugStarter) Start(ctx context.Context, cmd *exec.Cmd) (executor.Process, error) {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	proc, err := s.m.startManagedProcess(spec.Name, cmd)
+	proc, err := s.m.startManagedProcess(cmd)
 	if err != nil {
 		return nil, err
 	}
 	return managerHotplugProcess{managed: proc}, nil
 }
 
-func (s managerHotplugStarter) Stop(process hotplug.Process) error {
+func (s managerHotplugStarter) Stop(process executor.Process) error {
 	if process == nil {
 		return nil
 	}
@@ -117,7 +113,7 @@ type managerHotplugSocketWaiter struct {
 	m *manager
 }
 
-func (w managerHotplugSocketWaiter) Wait(ctx context.Context, stage string, socketPaths []string, process hotplug.Process) error {
+func (w managerHotplugSocketWaiter) Wait(ctx context.Context, stage string, socketPaths []string, process executor.Process) error {
 	if wrapped, ok := process.(managerHotplugProcess); ok {
 		return w.m.waitForSockets(ctx, stage, socketPaths, wrapped.managed)
 	}
@@ -130,6 +126,25 @@ type managerHotplugProcess struct {
 
 func (p managerHotplugProcess) PID() int {
 	return p.managed.proc.PID()
+}
+
+func (p managerHotplugProcess) Name() string {
+	return p.managed.Name()
+}
+
+func (p managerHotplugProcess) Wait() error {
+	if p.managed == nil {
+		return nil
+	}
+	return p.managed.Wait()
+}
+
+func (p managerHotplugProcess) Signal(signal os.Signal) error {
+	return p.managed.proc.Signal(signal)
+}
+
+func (p managerHotplugProcess) Kill() error {
+	return p.managed.proc.Kill()
 }
 
 type managerHotplugQMP struct {

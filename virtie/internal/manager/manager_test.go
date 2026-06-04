@@ -261,12 +261,10 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	}
 	cfg.Run = []manifest.Run{
 		{
-			Name: "virtiofsd[ro-store]",
 			Exec: []string{"/bin/virtiofsd-ro-store"},
 			Vars: map[string]any{"Socket": filepath.Join(tmpDir, ".virtie", "sock-a")},
 		},
 		{
-			Name: "virtiofsd[workspace]",
 			Exec: []string{"/bin/virtiofsd-workspace"},
 			Vars: map[string]any{"Socket": filepath.Join(tmpDir, ".virtie", "sock-b")},
 		},
@@ -337,7 +335,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	wantStarts := []string{"virtiofsd[ro-store]", "virtiofsd[workspace]", "qemu", "ssh"}
+	wantStarts := []string{"virtiofsd-ro-store", "virtiofsd-workspace", "qemu-system-x86_64", "ssh"}
 	if !reflect.DeepEqual(runner.starts, wantStarts) {
 		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
 	}
@@ -383,7 +381,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		}
 	}
 
-	wantSignals := []string{"ssh", "virtiofsd[workspace]", "virtiofsd[ro-store]"}
+	wantSignals := []string{"ssh", "virtiofsd-workspace", "virtiofsd-ro-store"}
 	if !reflect.DeepEqual(runner.signals, wantSignals) {
 		t.Fatalf("unexpected stop order: got %v want %v", runner.signals, wantSignals)
 	}
@@ -498,11 +496,11 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 		t.Fatalf("launch with run: %v", err)
 	}
 
-	runName := "run[1]"
+	runName := "proxy"
 	if !containsString(runner.starts, runName) {
 		t.Fatalf("expected run process start in %v", runner.starts)
 	}
-	if got, want := runner.starts, []string{"virtiofsd[workspace]", runName, "qemu", "ssh"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.starts, []string{"virtiofsd-workspace", runName, "qemu-system-x86_64", "ssh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
 	if got, want := runner.processDirs[runName], tmpDir; got != want {
@@ -538,10 +536,10 @@ func TestManagerLaunchStartsRunCommands(t *testing.T) {
 	gotEvents := append([]string(nil), events...)
 	eventsMu.Unlock()
 	wantEvents := []string{
-		"start:virtiofsd[workspace]",
+		"start:virtiofsd-workspace",
 		"start:" + runName,
 		"wait:fs.sock",
-		"start:qemu",
+		"start:qemu-system-x86_64",
 		"wait:qmp.sock",
 		"start:ssh",
 	}
@@ -574,7 +572,7 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 
 	runner := &fakeRunner{
 		startErrors: map[string]error{
-			"run[0]": errors.New("proxy start failed"),
+			"proxy": errors.New("proxy start failed"),
 		},
 	}
 	var logOutput bytes.Buffer
@@ -594,7 +592,7 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "proxy start failed") {
 		t.Fatalf("expected run process error, got %v", err)
 	}
-	if containsString(runner.starts, "qemu") {
+	if containsString(runner.starts, "qemu-system-x86_64") {
 		t.Fatalf("expected qemu not to start, got starts %v", runner.starts)
 	}
 	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
@@ -621,8 +619,8 @@ func TestManagerLaunchStopsStartedRunsWhenLaterRunFails(t *testing.T) {
 		},
 	}
 
-	firstName := "run[0]"
-	secondName := "run[1]"
+	firstName := "proxy-one"
+	secondName := "proxy-two"
 	runner := &fakeRunner{
 		startErrors: map[string]error{
 			secondName: errors.New("start second run failed"),
@@ -652,10 +650,10 @@ func TestManagerLaunchStopsStartedRunsWhenLaterRunFails(t *testing.T) {
 	if waiter.calls != 0 {
 		t.Fatalf("expected socket wait to be skipped after startup failure, got %d calls", waiter.calls)
 	}
-	if containsString(runner.starts, "qemu") {
+	if containsString(runner.starts, "qemu-system-x86_64") {
 		t.Fatalf("expected qemu not to start, got starts %v", runner.starts)
 	}
-	if containsString(runner.starts, "virtiofsd[workspace]") {
+	if containsString(runner.starts, "virtiofsd-workspace") {
 		t.Fatalf("expected virtiofsd not to start after tunnel failure, got starts %v", runner.starts)
 	}
 }
@@ -697,10 +695,10 @@ func TestManagerLaunchRemovesCleanupPathAfterQMPStartupFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "qmp did not start") {
 		t.Fatalf("expected qmp startup error, got %v", err)
 	}
-	if got, want := runner.starts, []string{"virtiofsd[workspace]", "qemu"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.starts, []string{"virtiofsd-workspace", "qemu-system-x86_64"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
-	if got, want := runner.signals, []string{"qemu", "virtiofsd[workspace]"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.signals, []string{"qemu-system-x86_64", "virtiofsd-workspace"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected cleanup signals: got %v want %v", got, want)
 	}
 	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
@@ -846,7 +844,7 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 	<-exitReadyQEMU
 
-	wantStarts := []string{"virtiofsd[workspace]", "qemu"}
+	wantStarts := []string{"virtiofsd-workspace", "qemu-system-x86_64"}
 	if !reflect.DeepEqual(runner.starts, wantStarts) {
 		t.Fatalf("unexpected start order: got %v want %v", runner.starts, wantStarts)
 	}
@@ -912,7 +910,7 @@ func TestManagerLaunchWithSSHAndEmptyExecSkipsAutoconnect(t *testing.T) {
 	}
 	<-exitReadyQEMU
 
-	if got, want := runner.starts, []string{"virtiofsd[workspace]", "qemu"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.starts, []string{"virtiofsd-workspace", "qemu-system-x86_64"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
 	if got := len(runner.sshArgs); got != 0 {
@@ -1070,7 +1068,7 @@ func TestManagerLaunchWarnsAfterFiveSSHRetryFailures(t *testing.T) {
 
 func TestWaitForSSHReadyFailsWhenQEMUExitsFirst(t *testing.T) {
 	done := make(chan error, 1)
-	qemu := &managedProcess{name: "qemu", done: done}
+	qemu := &managedProcess{proc: &fakeProcess{name: "qemu"}, done: done}
 	waiterStarted := make(chan struct{})
 	manager := &manager{
 		socketWaiter: &fakeSocketWaiter{
@@ -2388,7 +2386,7 @@ func TestManagerLaunchWithoutSSHSavesQueuedSuspend(t *testing.T) {
 	signalCh := make(chan os.Signal, 8)
 	runner := &fakeRunner{
 		onStart: func(name string, cmd *exec.Cmd) {
-			if name == "qemu" {
+			if strings.HasPrefix(name, "qemu-system") {
 				signalCh <- syscall.SIGTSTP
 			}
 		},
@@ -2546,7 +2544,7 @@ func TestManagerLaunchUsesExternalVirtioFSSocketWithoutManagingDaemon(t *testing
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	if containsString(runner.starts, "virtiofsd[workspace]") {
+	if containsString(runner.starts, "virtiofsd-workspace") {
 		t.Fatalf("unexpected managed virtiofsd start for external socket: %v", runner.starts)
 	}
 	if _, err := os.Stat(externalSocket); err != nil {
@@ -2624,7 +2622,7 @@ func TestManagerLaunchSkipsVirtioFSReadinessWhenNoVirtioFSDevices(t *testing.T) 
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	if got, want := runner.starts, []string{"qemu", "ssh"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.starts, []string{"qemu-system-x86_64", "ssh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
 	if got, want := waiter.calls, 2; got != want {
@@ -2692,7 +2690,7 @@ func TestManagerLaunchWithOnlyNinePShareDoesNotWaitForVirtioFS(t *testing.T) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 
-	if got, want := runner.starts, []string{"qemu", "ssh"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.starts, []string{"qemu-system-x86_64", "ssh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected start order: got %v want %v", got, want)
 	}
 	qmpSocket := filepath.Join(tmpDir, "qmp.sock")
@@ -2943,7 +2941,6 @@ func TestEffectiveSuspendSignalTimeoutIncludesMigrationAndTeardown(t *testing.T)
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Run = append(cfg.Run, manifest.Run{
-		Name: "virtiofsd[cache]",
 		Exec: []string{"/tmp/virtiofsd-cache"},
 	})
 
@@ -3301,7 +3298,7 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	session := &managedProcess{
-		name: "ssh",
+		proc: &fakeProcess{name: "ssh"},
 		done: make(chan error, 1),
 	}
 
@@ -3472,13 +3469,13 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 		t.Fatalf("attach hotplug: %v", err)
 	}
 
-	if got, want := runner.starts, []string{"hotplug[cache]"}; !reflect.DeepEqual(got, want) {
+	if got, want := runner.starts, []string{"virtiofsd"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected starts: got %#v want %#v", got, want)
 	}
-	if !runner.processGroups["hotplug[cache]"] {
+	if !runner.processGroups["virtiofsd"] {
 		t.Fatal("expected hotplug host process to run in its own process group")
 	}
-	if got := runner.virtiofsEnv["hotplug[cache]"]; !containsString(got, "VIRTIOFSD_SOCKET="+filepath.Join(tmpDir, ".virtie", "cache.sock")) {
+	if got := runner.virtiofsEnv["virtiofsd"]; !containsString(got, "VIRTIOFSD_SOCKET="+filepath.Join(tmpDir, ".virtie", "cache.sock")) {
 		t.Fatalf("expected rendered hotplug env, got %#v", got)
 	}
 	if got := strings.Join(qmpClient.rawCommands, "\n"); !strings.Contains(got, `"execute":"chardev-add"`) || !strings.Contains(got, `"execute":"device_add"`) {
@@ -3869,10 +3866,10 @@ func TestStartRunsUsesNamedVirtioFSRunEnv(t *testing.T) {
 		t.Fatalf("start runs: %v", err)
 	}
 
-	if got := runner.virtiofsEnv["virtiofsd[workspace]"]; !containsString(got, "VIRTIOFSD_SOCKET="+wantSocket) {
+	if got := runner.virtiofsEnv["virtiofsd-workspace"]; !containsString(got, "VIRTIOFSD_SOCKET="+wantSocket) {
 		t.Fatalf("expected virtiofs run env to contain resolved socket path %q: %v", wantSocket, got)
 	}
-	if !runner.processGroups["virtiofsd[workspace]"] {
+	if !runner.processGroups["virtiofsd-workspace"] {
 		t.Fatal("expected virtiofs run to run in its own process group")
 	}
 }
@@ -3990,7 +3987,6 @@ func validManifest(workingDir string) *manifest.Manifest {
 		},
 		Run: []manifest.Run{
 			{
-				Name: "virtiofsd[workspace]",
 				Exec: []string{"/tmp/virtiofsd-workspace", "--socket-path={{.Socket}}", "--shared-dir={{.MountSource}}", "--tag={{.MountTag}}"},
 				Env:  []string{"VIRTIOFSD_SOCKET={{.Socket}}"},
 				Vars: map[string]any{
@@ -4038,7 +4034,6 @@ type fakeRunner struct {
 	startErrors               map[string]error
 	qemu                      *fakeProcess
 	onStart                   func(name string, cmd *exec.Cmd)
-	runStartIndex             int
 }
 
 func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
@@ -4064,14 +4059,14 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
 		return nil, err
 	}
 
-	switch name {
-	case "qemu":
+	switch {
+	case strings.HasPrefix(name, "qemu-system"):
 		r.qemuArgs = append([]string(nil), args...)
 		r.qemuEnv = append([]string(nil), env...)
 		process := &fakeProcess{name: name, runner: r, done: make(chan error, 1)}
 		r.qemu = process
 		return process, nil
-	case "ssh":
+	case name == "ssh":
 		r.sshArgs = append(r.sshArgs, append([]string(nil), args...))
 		r.interactiveStarts++
 		if r.interactiveStarts <= r.authSSHFailures {
@@ -4127,65 +4122,36 @@ func (r *fakeRunner) Start(cmd *exec.Cmd) (executor.Process, error) {
 		}()
 		return process, nil
 	default:
-		if strings.HasPrefix(name, "run[") {
-			if r.runArgs == nil {
-				r.runArgs = make(map[string][]string)
-			}
-			if r.runEnv == nil {
-				r.runEnv = make(map[string][]string)
-			}
-			r.runArgs[name] = append([]string(nil), args...)
-			r.runEnv[name] = append([]string(nil), env...)
-			return &fakeProcess{name: name, runner: r, done: make(chan error, 1)}, nil
-		}
-		if strings.HasPrefix(name, "virtiofsd[") || strings.HasPrefix(name, "hotplug[") {
+		if strings.HasPrefix(name, "virtiofsd") {
 			if r.virtiofsEnv == nil {
 				r.virtiofsEnv = make(map[string][]string)
 			}
 			r.virtiofsEnv[name] = append([]string(nil), env...)
 			return &fakeProcess{name: name, runner: r, done: make(chan error, 1)}, nil
 		}
-		return nil, errors.New("unexpected process")
+		if r.runArgs == nil {
+			r.runArgs = make(map[string][]string)
+		}
+		if r.runEnv == nil {
+			r.runEnv = make(map[string][]string)
+		}
+		r.runArgs[name] = append([]string(nil), args...)
+		r.runEnv[name] = append([]string(nil), env...)
+		return &fakeProcess{name: name, runner: r, done: make(chan error, 1)}, nil
 	}
 }
 
 func (r *fakeRunner) processName(cmd *exec.Cmd, env []string) string {
-	base := ""
-	if cmd != nil {
-		if len(cmd.Args) > 0 {
-			base = filepath.Base(cmd.Args[0])
-		}
-		if base == "" || base == "." {
-			base = filepath.Base(cmd.Path)
-		}
+	if cmd == nil {
+		return "command"
 	}
-	switch {
-	case strings.HasPrefix(base, "qemu-system"):
-		return "qemu"
-	case base == "ssh":
-		return "ssh"
-	case strings.HasPrefix(base, "virtiofsd-"):
-		r.runStartIndex++
-		return "virtiofsd[" + strings.TrimPrefix(base, "virtiofsd-") + "]"
-	case base == "virtiofsd":
-		if socket := envValue(env, "VIRTIOFSD_SOCKET"); socket != "" {
-			id := strings.TrimSuffix(filepath.Base(socket), filepath.Ext(socket))
-			return "hotplug[" + id + "]"
-		}
+	if len(cmd.Args) > 0 && cmd.Args[0] != "" {
+		return filepath.Base(cmd.Args[0])
 	}
-	name := fmt.Sprintf("run[%d]", r.runStartIndex)
-	r.runStartIndex++
-	return name
-}
-
-func envValue(env []string, key string) string {
-	prefix := key + "="
-	for _, entry := range env {
-		if strings.HasPrefix(entry, prefix) {
-			return strings.TrimPrefix(entry, prefix)
-		}
+	if cmd.Path != "" {
+		return filepath.Base(cmd.Path)
 	}
-	return ""
+	return "command"
 }
 
 func commandArgs(cmd *exec.Cmd) []string {

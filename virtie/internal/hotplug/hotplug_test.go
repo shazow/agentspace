@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
@@ -29,7 +32,7 @@ func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
 	if err := runtime.Attach(context.Background(), "cache"); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	if got, want := starter.starts, []string{"hotplug[cache]"}; !reflect.DeepEqual(got, want) {
+	if got, want := starter.starts, []string{"virtiofsd"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("starts: got %#v want %#v", got, want)
 	}
 	if !strings.Contains(strings.Join(qmp.commands, "\n"), `"execute":"chardev-add"`) {
@@ -277,22 +280,38 @@ func (h fakeHotplug) Detach() error { return nil }
 func (h fakeHotplug) ID() string    { return h.id }
 
 type fakeProcess struct {
-	pid int
+	name string
+	pid  int
 }
 
 func (p fakeProcess) PID() int { return p.pid }
+func (p fakeProcess) Name() string {
+	if p.name != "" {
+		return p.name
+	}
+	return "fake"
+}
+func (p fakeProcess) Wait() error { return nil }
+func (p fakeProcess) Signal(signal os.Signal) error {
+	return nil
+}
+func (p fakeProcess) Kill() error { return nil }
 
 type fakeStarter struct {
 	starts  []string
 	stopped []int
 }
 
-func (s *fakeStarter) Start(ctx context.Context, spec ProcessSpec) (Process, error) {
-	s.starts = append(s.starts, spec.Name)
-	return fakeProcess{pid: 100}, nil
+func (s *fakeStarter) Start(ctx context.Context, cmd *exec.Cmd) (executor.Process, error) {
+	name := filepath.Base(cmd.Path)
+	if len(cmd.Args) > 0 && cmd.Args[0] != "" {
+		name = filepath.Base(cmd.Args[0])
+	}
+	s.starts = append(s.starts, name)
+	return fakeProcess{name: name, pid: 100}, nil
 }
 
-func (s *fakeStarter) Stop(process Process) error {
+func (s *fakeStarter) Stop(process executor.Process) error {
 	s.stopped = append(s.stopped, process.PID())
 	return nil
 }
@@ -304,7 +323,7 @@ func (s *fakeStarter) SignalPIDGroup(pid int, signal syscall.Signal) error {
 
 type fakeSockets struct{}
 
-func (fakeSockets) Wait(ctx context.Context, stage string, socketPaths []string, process Process) error {
+func (fakeSockets) Wait(ctx context.Context, stage string, socketPaths []string, process executor.Process) error {
 	return nil
 }
 

@@ -470,7 +470,7 @@ func TestDocumentVirtioFSStartsRunForStaleSocket(t *testing.T) {
 		t.Fatalf("resolve manifest: %v", err)
 	}
 
-	if len(manifest.Run) != 1 || manifest.Run[0].Name != "virtiofsd[workspace]" {
+	if len(manifest.Run) != 1 || filepath.Base(manifest.Run[0].Exec[0]) != "virtiofsd-workspace" {
 		t.Fatalf("expected generated virtiofs run, got %#v", manifest.Run)
 	}
 	if got, want := manifest.CleanupFiles, []string{"fs.sock"}; !reflect.DeepEqual(got, want) {
@@ -500,7 +500,7 @@ func TestDocumentVirtioFSWarnsAndGeneratesRunForExistingNonSocket(t *testing.T) 
 		t.Fatalf("resolve manifest: %v", err)
 	}
 
-	if len(manifest.Run) != 1 || manifest.Run[0].Name != "virtiofsd[workspace]" {
+	if len(manifest.Run) != 1 || filepath.Base(manifest.Run[0].Exec[0]) != "virtiofsd-workspace" {
 		t.Fatalf("expected generated virtiofs run, got %#v", manifest.Run)
 	}
 	if got, want := manifest.CleanupFiles, []string{"fs.sock"}; !reflect.DeepEqual(got, want) {

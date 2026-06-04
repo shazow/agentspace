@@ -241,7 +241,6 @@ func (m *Manifest) ResolvedRuns(cid int) ([]ResolvedRun, error) {
 		}
 		env = append(env, renderer.Env()...)
 		runs = append(runs, ResolvedRun{
-			Name: run.Name,
 			Exec: exec,
 			Env:  env,
 			Dir:  m.Paths.WorkingDir,
