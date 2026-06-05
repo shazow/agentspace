@@ -1,11 +1,9 @@
 package hotplug
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -134,66 +132,6 @@ func TestVirtioFSDetachWaitsForDeviceDeletedBeforeChardevRemove(t *testing.T) {
 	if got, want := qmp.events, []string{"device_del:dev-cache", "run:chardev-remove"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %#v want %#v", got, want)
 	}
-}
-
-func TestVirtioFSAttachLogsLifecycle(t *testing.T) {
-	tmpDir := t.TempDir()
-	runtime, _, _, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
-	var logOutput bytes.Buffer
-	runtime.Logger = slog.New(slog.NewTextHandler(&logOutput, nil))
-
-	if err := runtime.Attach(context.Background(), "cache"); err != nil {
-		t.Fatalf("attach: %v", err)
-	}
-
-	assertLogContains(t, logOutput.String(), []string{
-		"hotplug attach requested",
-		"building hotplug registry",
-		"registering hotplug device",
-		"starting hotplug attach",
-		"checking hotplug state",
-		"starting hotplug host process",
-		"waiting for virtiofs hotplug socket",
-		"running hotplug qmp attach command",
-		"ensuring hotplug guest target directory",
-		"mounting hotplug virtiofs in guest",
-		"writing hotplug state",
-		"hotplug attach complete",
-		"id=cache",
-		"kind=virtiofs",
-		"bus=pcie.hotplug.0",
-	})
-}
-
-func TestVirtioFSDetachLogsLifecycle(t *testing.T) {
-	tmpDir := t.TempDir()
-	runtime, _, _, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
-	var logOutput bytes.Buffer
-	runtime.Logger = slog.New(slog.NewTextHandler(&logOutput, nil))
-	statePath := filepath.Join(tmpDir, "state", "hotplug", "cache.json")
-	if err := WriteState(statePath, State{ID: "cache", Kind: KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
-		t.Fatalf("write state: %v", err)
-	}
-
-	if err := runtime.Detach(context.Background(), "cache"); err != nil {
-		t.Fatalf("detach: %v", err)
-	}
-
-	assertLogContains(t, logOutput.String(), []string{
-		"hotplug detach requested",
-		"starting hotplug detach",
-		"reading hotplug state",
-		"hotplug state loaded",
-		"unmounting hotplug virtiofs in guest",
-		"running hotplug qmp device_del",
-		"running hotplug qmp detach command",
-		"cleaning up hotplug host resources",
-		"signaling hotplug host process group",
-		"removing hotplug state",
-		"hotplug detach complete",
-		"id=cache",
-		"pid=42",
-	})
 }
 
 func TestNetAttachDetachCommands(t *testing.T) {
@@ -331,15 +269,6 @@ func TestHotplugRegistryRejectsUnsupportedKind(t *testing.T) {
 	err := runtime.Attach(context.Background(), "cache")
 	if err == nil || !strings.Contains(err.Error(), `manifest.hotplug id "bad" has unsupported kind "unsupported"`) {
 		t.Fatalf("expected unsupported kind error, got %v", err)
-	}
-}
-
-func assertLogContains(t *testing.T, logs string, want []string) {
-	t.Helper()
-	for _, entry := range want {
-		if !strings.Contains(logs, entry) {
-			t.Fatalf("expected logs to contain %q, got %q", entry, logs)
-		}
 	}
 }
 

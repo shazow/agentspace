@@ -29,6 +29,11 @@ let
     persistence.homeImage = null;
   };
 
+  vmVSockDisabled = mkSandbox {
+    persistence.homeImage = null;
+    vsock.enable = false;
+  };
+
   vmVirtieFeatureRich = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = mkExecSSH {
@@ -389,6 +394,7 @@ let
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
+  vsockDisabledManifest = vmVSockDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
   customSSHExecManifest = vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
@@ -474,13 +480,16 @@ let
     ) virtiofsDaemonMounts;
     assert !(pkgs.lib.hasInfix "--sandbox=none" virtiofsDaemonScript);
     assert !(pkgs.lib.hasInfix "--sandbox=namespace" virtiofsDaemonScript);
+    assert !(pkgs.lib.hasInfix "--posix-acl" virtiofsDaemonScript);
+    assert !(pkgs.lib.hasInfix "--xattr" virtiofsDaemonScript);
     assert pkgs.lib.hasInfix "ulimit -Hn" virtiofsDaemonScript;
     assert pkgs.lib.hasInfix "--inode-file-handles=never" virtiofsDaemonScript;
     assert pkgs.lib.hasInfix "--inode-file-handles=prefer" inodeFileHandlesPreferVirtiofsDaemonScript;
     assert pkgs.lib.hasInfix "--inode-file-handles=prefer"
       nativeInodeFileHandlesPreferVirtiofsDaemonScript;
     assert builtins.any (mount: mount.tag == "workspace_cwd") virtiofsDaemonMounts;
-    assert !(manifest ? vsock);
+    assert manifest.vsock == { };
+    assert vsockDisabledManifest.vsock.disabled == true;
     assert !(manifest.ssh ? destination);
     assert !(manifest ? qemuConfig);
     assert !(manifest ? microvmRun);

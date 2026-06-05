@@ -88,7 +88,6 @@ func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.M
 		Sockets:  managerHotplugSocketWaiter{m: m},
 		QMP:      managerHotplugQMP{client: client, timeout: m.effectiveQMPCommandTimeout()},
 		Guest:    managerHotplugGuest{m: m, manifest: launchManifest},
-		Logger:   log.With("component", "hotplug"),
 	}, nil
 }
 

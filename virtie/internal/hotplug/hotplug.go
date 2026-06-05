@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,7 +78,6 @@ type Runtime struct {
 	Sockets  SocketWaiter
 	QMP      QMPClient
 	Guest    GuestRunner
-	Logger   *slog.Logger
 }
 
 type ProcessStarter interface {
@@ -103,7 +101,6 @@ type GuestRunner interface {
 }
 
 func (r Runtime) Attach(ctx context.Context, id string) error {
-	r.logger().Info("hotplug attach requested", "id", id)
 	registry, err := r.hotplugRegistry(ctx)
 	if err != nil {
 		return err
@@ -112,12 +109,10 @@ func (r Runtime) Attach(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	r.logger().Info("hotplug attach resolved", "id", hotplug.ID())
 	return hotplug.Attach()
 }
 
 func (r Runtime) Detach(ctx context.Context, id string) error {
-	r.logger().Info("hotplug detach requested", "id", id)
 	registry, err := r.hotplugRegistry(ctx)
 	if err != nil {
 		return err
@@ -126,21 +121,12 @@ func (r Runtime) Detach(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	r.logger().Info("hotplug detach resolved", "id", hotplug.ID())
 	return hotplug.Detach()
-}
-
-func (r Runtime) logger() *slog.Logger {
-	if r.Logger != nil {
-		return r.Logger
-	}
-	return slog.New(slog.DiscardHandler)
 }
 
 type hotplugRegistry map[string]Hotplug
 
 func (r Runtime) hotplugRegistry(ctx context.Context) (hotplugRegistry, error) {
-	r.logger().Info("building hotplug registry", "devices", len(r.Devices))
 	registry := make(hotplugRegistry, len(r.Devices))
 	for i, device := range r.Devices {
 		hotplug, err := r.hotplug(ctx, device, i)
@@ -156,7 +142,6 @@ func (r Runtime) hotplugRegistry(ctx context.Context) (hotplugRegistry, error) {
 
 func (r Runtime) hotplug(ctx context.Context, device Device, index int) (Hotplug, error) {
 	bus := fmt.Sprintf("pcie.hotplug.%d", index)
-	r.logger().Info("registering hotplug device", "id", device.ID, "kind", device.Kind, "bus", bus)
 	base := hotplugBase{
 		ctx:     ctx,
 		runtime: &r,
@@ -209,69 +194,51 @@ func (h hotplugBase) attach(device Device, attachHost func() (*executor.Process,
 	if detachHost == nil {
 		detachHost = func(*executor.Process) {}
 	}
-	logger := h.runtime.logger().With("id", h.id, "kind", h.kind, "bus", h.bus)
-	logger.Info("starting hotplug attach")
 	statePath, err := StatePath(h.runtime.StateDir, h.id)
 	if err != nil {
 		return err
 	}
-	logger.Info("checking hotplug state", "state_path", statePath)
 	if _, err := os.Stat(statePath); err == nil {
 		return fmt.Errorf("hotplug %q is already attached; state exists at %q", h.id, statePath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat hotplug state %q: %w", statePath, err)
 	}
-	logger.Info("hotplug state is absent", "state_path", statePath)
 
 	var proc *executor.Process
 	if attachHost != nil {
-		logger.Info("starting hotplug host process")
 		proc, err = attachHost()
 		if err != nil {
 			return err
 		}
-		logger.Info("hotplug host process ready", "pid", proc.PID())
 	}
 
 	state := State{ID: h.id, Kind: h.kind, Bus: h.bus}
 	if proc != nil {
 		state.PID = proc.PID()
 	}
-	logger.Info("attaching hotplug qmp device")
 	if err := h.runtime.attachQMP(h.ctx, device, h.bus); err != nil {
-		logger.Info("rolling back hotplug host process after qmp failure", "err", err)
 		detachHost(proc)
 		return err
 	}
-	logger.Info("hotplug qmp device attached")
-	logger.Info("attaching hotplug guest resources")
 	if err := h.runtime.attachGuest(h.ctx, device); err != nil {
-		logger.Info("rolling back hotplug attach after guest failure", "err", err)
 		_ = h.runtime.detachQMP(h.ctx, device)
 		detachHost(proc)
 		return err
 	}
-	logger.Info("hotplug guest resources attached")
-	logger.Info("writing hotplug state", "state_path", statePath, "pid", state.PID)
 	if err := WriteState(statePath, state); err != nil {
-		logger.Info("rolling back hotplug attach after state write failure", "err", err)
 		_ = h.runtime.detachGuest(h.ctx, device)
 		_ = h.runtime.detachQMP(h.ctx, device)
 		detachHost(proc)
 		return err
 	}
-	logger.Info("hotplug attach complete", "state_path", statePath)
 	return nil
 }
 
 func (h hotplugBase) detach(device Device, cleanup func(State) error) error {
-	logger := h.runtime.logger().With("id", h.id, "kind", h.kind, "bus", h.bus)
-	logger.Info("starting hotplug detach")
 	statePath, err := StatePath(h.runtime.StateDir, h.id)
 	if err != nil {
 		return err
 	}
-	logger.Info("reading hotplug state", "state_path", statePath)
 	state, err := ReadState(statePath)
 	if err != nil {
 		return err
@@ -282,30 +249,21 @@ func (h hotplugBase) detach(device Device, cleanup func(State) error) error {
 	if state.Kind != h.kind {
 		return fmt.Errorf("hotplug state %q is kind %q, not current manifest kind %q", statePath, state.Kind, h.kind)
 	}
-	logger.Info("hotplug state loaded", "state_path", statePath, "pid", state.PID)
 
-	logger.Info("detaching hotplug guest resources")
 	if err := h.runtime.detachGuest(h.ctx, device); err != nil {
 		return err
 	}
-	logger.Info("hotplug guest resources detached")
-	logger.Info("detaching hotplug qmp device")
 	if err := h.runtime.detachQMP(h.ctx, device); err != nil {
 		return err
 	}
-	logger.Info("hotplug qmp device detached")
 	if cleanup != nil {
-		logger.Info("cleaning up hotplug host resources", "pid", state.PID)
 		if err := cleanup(state); err != nil {
 			return err
 		}
-		logger.Info("hotplug host resources cleaned up")
 	}
-	logger.Info("removing hotplug state", "state_path", statePath)
 	if err := os.Remove(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove hotplug state %q: %w", statePath, err)
 	}
-	logger.Info("hotplug detach complete", "state_path", statePath)
 	return nil
 }
 
@@ -383,24 +341,18 @@ func (r Runtime) attachVirtioFSHost(ctx context.Context, device Device) (*execut
 	if r.Start == nil {
 		return nil, fmt.Errorf("hotplug process starter is not configured")
 	}
-	logger := r.logger().With("id", device.ID, "kind", device.Kind, "socket", fs.SocketPath)
 	cmd := executor.Command(fs.Bin, fs.Args, []string{"VIRTIOFSD_SOCKET=" + fs.SocketPath})
 	cmd.Dir = r.WorkDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	logger.Info("starting virtiofs hotplug host command", "bin", fs.Bin, "args", strings.Join(fs.Args, " "), "work_dir", r.WorkDir)
 	proc, err := r.Start.Start(ctx, cmd)
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("virtiofs hotplug host command started", "pid", proc.PID())
 	if fs.SocketPath != "" && r.Sockets != nil {
-		logger.Info("waiting for virtiofs hotplug socket")
 		if err := r.Sockets.Wait(ctx, "hotplug host exec", []string{fs.SocketPath}, proc); err != nil {
-			logger.Info("stopping virtiofs hotplug host command after socket wait failure", "err", err, "pid", proc.PID())
 			_ = r.Start.Stop(proc)
 			return nil, err
 		}
-		logger.Info("virtiofs hotplug socket ready")
 	}
 	return proc, nil
 }
@@ -408,13 +360,10 @@ func (r Runtime) attachVirtioFSHost(ctx context.Context, device Device) (*execut
 func (r Runtime) attachQMP(ctx context.Context, device Device, bus string) error {
 	commands := attachCommands(device, bus)
 	for i, command := range commands {
-		r.logger().Info("running hotplug qmp attach command", "id", device.ID, "kind", device.Kind, "bus", bus, "step", i+1, "commands", len(commands), "command", command)
 		if err := r.QMP.Run(ctx, command); err != nil {
-			r.logger().Info("hotplug qmp attach command failed", "id", device.ID, "kind", device.Kind, "bus", bus, "step", i+1, "err", err)
 			r.rollbackAttachQMP(ctx, device, i)
 			return err
 		}
-		r.logger().Info("hotplug qmp attach command complete", "id", device.ID, "kind", device.Kind, "bus", bus, "step", i+1)
 	}
 	return nil
 }
@@ -424,38 +373,30 @@ func (r Runtime) rollbackAttachQMP(ctx context.Context, device Device, successfu
 		return
 	}
 	for _, command := range rollbackAttachCommands(device, successful) {
-		r.logger().Info("running hotplug qmp rollback command", "id", device.ID, "kind", device.Kind, "command", command)
 		_ = r.QMP.Run(ctx, command)
 	}
 }
 
 func (r Runtime) detachQMP(ctx context.Context, device Device) error {
 	deviceID := qemuDeviceID(device.ID)
-	r.logger().Info("running hotplug qmp device_del", "id", device.ID, "kind", device.Kind, "device_id", deviceID)
 	if err := r.QMP.DeviceDel(ctx, deviceID); err != nil {
 		return err
 	}
-	r.logger().Info("hotplug qmp device_del complete", "id", device.ID, "kind", device.Kind, "device_id", deviceID)
 	for _, command := range detachPostDeviceDelCommands(device) {
-		r.logger().Info("running hotplug qmp detach command", "id", device.ID, "kind", device.Kind, "command", command)
 		if err := r.QMP.Run(ctx, command); err != nil {
 			return err
 		}
-		r.logger().Info("hotplug qmp detach command complete", "id", device.ID, "kind", device.Kind)
 	}
 	return nil
 }
 
 func (r Runtime) attachGuest(ctx context.Context, device Device) error {
 	if device.Kind != KindVirtioFS || device.VirtioFS.Target == "" {
-		r.logger().Info("hotplug guest attach skipped", "id", device.ID, "kind", device.Kind)
 		return nil
 	}
-	r.logger().Info("ensuring hotplug guest target directory", "id", device.ID, "target", device.VirtioFS.Target)
 	if err := r.Guest.EnsureDirectory(ctx, device.VirtioFS.Target); err != nil {
 		return err
 	}
-	r.logger().Info("mounting hotplug virtiofs in guest", "id", device.ID, "target", device.VirtioFS.Target)
 	return r.Guest.Run(ctx, []string{
 		"/run/current-system/sw/bin/sh",
 		"-c",
@@ -484,22 +425,18 @@ exec /run/current-system/sw/bin/mount -t virtiofs "$tag" "$target"
 
 func (r Runtime) detachGuest(ctx context.Context, device Device) error {
 	if device.Kind != KindVirtioFS || device.VirtioFS.Target == "" {
-		r.logger().Info("hotplug guest detach skipped", "id", device.ID, "kind", device.Kind)
 		return nil
 	}
-	r.logger().Info("unmounting hotplug virtiofs in guest", "id", device.ID, "target", device.VirtioFS.Target)
 	return r.Guest.Run(ctx, []string{"/run/current-system/sw/bin/umount", device.VirtioFS.Target})
 }
 
 func (r Runtime) rollbackHost(proc *executor.Process) {
 	if proc != nil && r.Start != nil {
-		r.logger().Info("stopping hotplug host process", "pid", proc.PID())
 		_ = r.Start.Stop(proc)
 	}
 }
 
 func (r Runtime) terminatePID(pid int) error {
-	r.logger().Info("signaling hotplug host process group", "pid", pid, "signal", syscall.SIGTERM.String())
 	if r.Start != nil {
 		return r.Start.SignalPIDGroup(pid, syscall.SIGTERM)
 	}

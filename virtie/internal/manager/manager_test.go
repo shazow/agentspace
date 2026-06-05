@@ -3492,7 +3492,33 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	}
 	wantGuestExecs := []guestExecCall{
 		{path: guestInstallPath, args: []string{"-d", "/mnt/cache"}, captureOutput: true},
-		{path: guestMountPath, args: []string{"-t", "virtiofs", "cache", "/mnt/cache"}, captureOutput: true},
+		{
+			path: "/run/current-system/sw/bin/sh",
+			args: []string{
+				"-c",
+				`
+target=$1
+tag=$2
+i=0
+mount_err=/tmp/virtie-hotplug-mount.err
+while [ "$i" -lt 50 ]; do
+	echo 1 > /sys/bus/pci/rescan 2>/dev/null || true
+	if /run/current-system/sw/bin/mount -t virtiofs "$tag" "$target" 2>"$mount_err"; then
+		exit 0
+	fi
+	i=$((i + 1))
+	/run/current-system/sw/bin/sleep 0.1
+done
+/run/current-system/sw/bin/cat "$mount_err" >&2 || true
+/run/current-system/sw/bin/dmesg | /run/current-system/sw/bin/tail -n 80 >&2 || true
+exec /run/current-system/sw/bin/mount -t virtiofs "$tag" "$target"
+`,
+				"virtie-hotplug-mount",
+				"/mnt/cache",
+				"cache",
+			},
+			captureOutput: true,
+		},
 		{path: "/run/current-system/sw/bin/umount", args: []string{"/mnt/cache"}, captureOutput: true},
 	}
 	if !reflect.DeepEqual(guestClient.execs, wantGuestExecs) {
@@ -3511,8 +3537,6 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 		"hotplug command starting",
 		"waiting for hotplug qmp readiness",
 		"hotplug qmp ready",
-		"component=hotplug",
-		"hotplug attach requested",
 		"hotplug attached; waiting for shutdown signal",
 		"hotplug shutdown signal received",
 		"hotplug cleanup detach starting",
@@ -4670,6 +4694,9 @@ func (c *fakeGuestAgentClient) Exec(timeout time.Duration, path string, args []s
 	}
 	if c.record != nil && path == guestMountPath && len(args) > 0 {
 		c.record("guest-mount:" + args[len(args)-1])
+	}
+	if c.record != nil && path == "/run/current-system/sw/bin/sh" && len(args) >= 5 && args[2] == "virtie-hotplug-mount" {
+		c.record("guest-mount:" + args[3])
 	}
 	if c.record != nil && path == "/run/current-system/sw/bin/umount" && len(args) > 0 {
 		c.record("guest-umount:" + args[len(args)-1])
