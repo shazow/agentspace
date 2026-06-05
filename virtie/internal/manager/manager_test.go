@@ -3451,18 +3451,30 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	}
 
 	qmpClient := &fakeQMPClient{}
-	guestClient := &fakeGuestAgentClient{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	guestClient := &fakeGuestAgentClient{
+		record: func(event string) {
+			if event == "guest-mount:/mnt/cache" {
+				cancel()
+			}
+		},
+	}
 	runner := &launchRunner{}
+	signaler := &fakePIDSignaler{}
+	var logOutput bytes.Buffer
 	manager := &manager{
 		runner:            runner,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
 		socketWaiter:      &fakeSocketWaiter{},
+		pidSignaler:       signaler,
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
 		qmpConnectTimeout: time.Second,
 		qmpRetryDelay:     time.Millisecond,
 	}
 
-	if err := manager.hotplug(context.Background(), cfg, "cache", HotplugOptions{}); err != nil {
+	if err := manager.hotplug(ctx, cfg, "cache", HotplugOptions{}); err != nil {
 		t.Fatalf("attach hotplug: %v", err)
 	}
 
@@ -3478,15 +3490,159 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	if got := strings.Join(qmpClient.rawCommands, "\n"); !strings.Contains(got, `"execute":"chardev-add"`) || !strings.Contains(got, `"execute":"device_add"`) {
 		t.Fatalf("unexpected qmp commands: got %#v", qmpClient.rawCommands)
 	}
-	if len(guestClient.execs) != 1 || guestClient.execs[0].path != "/run/current-system/sw/bin/mount" || !reflect.DeepEqual(guestClient.execs[0].args, []string{"-t", "virtiofs", "cache", "/mnt/cache"}) {
+	wantGuestExecs := []guestExecCall{
+		{path: guestInstallPath, args: []string{"-d", "/mnt/cache"}, captureOutput: true},
+		{path: guestMountPath, args: []string{"-t", "virtiofs", "cache", "/mnt/cache"}, captureOutput: true},
+		{path: "/run/current-system/sw/bin/umount", args: []string{"/mnt/cache"}, captureOutput: true},
+	}
+	if !reflect.DeepEqual(guestClient.execs, wantGuestExecs) {
 		t.Fatalf("unexpected guest execs: %#v", guestClient.execs)
 	}
-	state, err := readHotplugState(filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json"))
-	if err != nil {
-		t.Fatalf("read hotplug state: %v", err)
+	if got, want := qmpClient.deviceDelWaits, []string{"dev-cache"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup qmp commands: got %#v want %#v", got, want)
 	}
-	if state.ID != "cache" || state.Kind != hotplug.KindVirtioFS || state.Bus != "pcie.hotplug.0" || state.PID != 1 {
-		t.Fatalf("unexpected hotplug state: %#v", state)
+	if got, want := signaler.signals, []pidSignal{{pid: -1, sig: syscall.SIGTERM}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup signals: got %#v want %#v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected hotplug state cleanup, got err=%v", err)
+	}
+	assertLogContains(t, logOutput.String(), []string{
+		"hotplug command starting",
+		"waiting for hotplug qmp readiness",
+		"hotplug qmp ready",
+		"component=hotplug",
+		"hotplug attach requested",
+		"hotplug attached; waiting for shutdown signal",
+		"hotplug shutdown signal received",
+		"hotplug cleanup detach starting",
+		"hotplug command complete",
+	})
+}
+
+func TestManagerHotplugAttachStartsOnlyRequestedHotplugDaemon(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.QEMU.Hotplug.PCIEPorts = 2
+	cfg.Run = []manifest.Run{
+		{Exec: []string{"/bin/virtiofsd-workspace"}},
+		{Exec: []string{"/bin/launch-daemon"}},
+	}
+	cfg.Hotplug = []hotplug.Device{
+		{
+			Kind: hotplug.KindVirtioFS,
+			ID:   "cache",
+			VirtioFS: hotplug.VirtioFS{
+				Source:     filepath.Join(tmpDir, "cache"),
+				Target:     "/mnt/cache",
+				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
+				Bin:        "/bin/virtiofsd-cache",
+				Args:       []string{"--socket=" + filepath.Join(tmpDir, ".virtie", "cache.sock")},
+			},
+		},
+		{
+			Kind: hotplug.KindVirtioFS,
+			ID:   "scratch",
+			VirtioFS: hotplug.VirtioFS{
+				Source:     filepath.Join(tmpDir, "scratch"),
+				Target:     "/mnt/scratch",
+				SocketPath: filepath.Join(tmpDir, ".virtie", "scratch.sock"),
+				Bin:        "/bin/virtiofsd-scratch",
+				Args:       []string{"--socket=" + filepath.Join(tmpDir, ".virtie", "scratch.sock")},
+			},
+		},
+	}
+
+	qmpClient := &fakeQMPClient{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	guestClient := &fakeGuestAgentClient{
+		record: func(event string) {
+			if event == "guest-mount:/mnt/scratch" {
+				cancel()
+			}
+		},
+	}
+	runner := &launchRunner{}
+	signaler := &fakePIDSignaler{}
+	manager := &manager{
+		runner:            runner,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
+		socketWaiter:      &fakeSocketWaiter{},
+		pidSignaler:       signaler,
+		qmpConnectTimeout: time.Second,
+		qmpRetryDelay:     time.Millisecond,
+	}
+
+	if err := manager.hotplug(ctx, cfg, "scratch", HotplugOptions{}); err != nil {
+		t.Fatalf("attach hotplug: %v", err)
+	}
+
+	if got, want := runner.startedNames(), []string{"virtiofsd-scratch"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected starts: got %#v want %#v", got, want)
+	}
+	if got, want := signaler.signals, []pidSignal{{pid: -1, sig: syscall.SIGTERM}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup signals: got %#v want %#v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".virtie", "hotplug", "scratch.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected hotplug state cleanup, got err=%v", err)
+	}
+}
+
+func TestManagerHotplugAttachFailsWhenTargetDirectoryCannotBeCreated(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.QEMU.Hotplug.PCIEPorts = 1
+	cfg.Hotplug = []hotplug.Device{
+		{
+			Kind: hotplug.KindVirtioFS,
+			ID:   "cache",
+			VirtioFS: hotplug.VirtioFS{
+				Source:     filepath.Join(tmpDir, "cache"),
+				Target:     "/mnt/cache",
+				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
+				Bin:        "/bin/virtiofsd",
+				Args:       []string{"--socket=" + filepath.Join(tmpDir, ".virtie", "cache.sock")},
+			},
+		},
+	}
+
+	qmpClient := &fakeQMPClient{}
+	guestClient := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{{Exited: true, ExitCode: 1, ErrData: "aW5zdGFsbCBmYWlsZWQ="}},
+	}
+	manager := &manager{
+		runner:            &launchRunner{},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
+		socketWaiter:      &fakeSocketWaiter{},
+		pidSignaler:       &fakePIDSignaler{},
+		qmpConnectTimeout: time.Second,
+		qmpRetryDelay:     time.Millisecond,
+	}
+
+	err := manager.hotplug(context.Background(), cfg, "cache", HotplugOptions{})
+	if err == nil || !strings.Contains(err.Error(), "hotplug guest") || !strings.Contains(err.Error(), "install failed") {
+		t.Fatalf("expected hotplug guest install failure, got %v", err)
+	}
+	wantGuestExecs := []guestExecCall{
+		{path: guestInstallPath, args: []string{"-d", "/mnt/cache"}, captureOutput: true},
+	}
+	if !reflect.DeepEqual(guestClient.execs, wantGuestExecs) {
+		t.Fatalf("unexpected guest execs: got %#v want %#v", guestClient.execs, wantGuestExecs)
+	}
+	if got, want := qmpClient.deviceDelWaits, []string{"dev-cache"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected qmp rollback: got %#v want %#v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no hotplug state, got err=%v", err)
 	}
 }
 
@@ -3817,6 +3973,20 @@ func TestBuildQEMUCommandAllowsInitrdApplianceWithoutStorageDevices(t *testing.T
 	}
 }
 
+func TestBuildQEMUCommandOmitsDisabledVSOCKDevice(t *testing.T) {
+	cfg := validManifest("/tmp/work")
+	cfg.QEMU.Devices.VSOCK.Disabled = true
+
+	spec, err := buildQEMUCommand(cfg, 42, false)
+	if err != nil {
+		t.Fatalf("build qemu command: %v", err)
+	}
+
+	if containsString(commandArgs(spec), "guest-cid=42") || containsString(commandArgs(spec), "vhost-vsock") {
+		t.Fatalf("expected qemu args to omit vsock device: %v", commandArgs(spec))
+	}
+}
+
 func TestBuildQEMUCommandUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)
@@ -3885,6 +4055,16 @@ func assertLaunchStatsLog(t *testing.T, logs string, want []string, unwanted []s
 	for _, field := range unwanted {
 		if strings.Contains(logs, field) {
 			t.Fatalf("unexpected launch stats field %q in logs %q", field, logs)
+		}
+	}
+}
+
+func assertLogContains(t *testing.T, logs string, want []string) {
+	t.Helper()
+
+	for _, entry := range want {
+		if !strings.Contains(logs, entry) {
+			t.Fatalf("expected logs to contain %q, got %q", entry, logs)
 		}
 	}
 }
@@ -4487,6 +4667,12 @@ func (c *fakeGuestAgentClient) Exec(timeout time.Duration, path string, args []s
 	}
 	if c.record != nil && path == guestInstallPath && len(args) > 0 {
 		c.record("guest-install-dir:" + args[len(args)-1])
+	}
+	if c.record != nil && path == guestMountPath && len(args) > 0 {
+		c.record("guest-mount:" + args[len(args)-1])
+	}
+	if c.record != nil && path == "/run/current-system/sw/bin/umount" && len(args) > 0 {
+		c.record("guest-umount:" + args[len(args)-1])
 	}
 	if c.record != nil && path == guestTestPath && len(args) > 0 {
 		c.record("guest-test-dir:" + args[len(args)-1])

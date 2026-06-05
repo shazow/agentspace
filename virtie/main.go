@@ -98,7 +98,7 @@ func (c *hotplugCommand) Execute(args []string) error {
 		manager.SetLogger(baseLogger.With("package", "manager"))
 	}
 
-	manifest, err := loadLaunchManifest(c.options.Manifest, manifestLogger)
+	manifest, err := loadHotplugManifest(c.options.Manifest, manifestLogger)
 	if err != nil {
 		return err
 	}
@@ -110,6 +110,14 @@ func (c *hotplugCommand) Execute(args []string) error {
 }
 
 func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {
+	return loadResolvedManifest(path, manifest.ResolveOptions{Logger: logger})
+}
+
+func loadHotplugManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {
+	return loadResolvedManifest(path, manifest.ResolveOptions{Logger: logger, SkipLaunchRuns: true})
+}
+
+func loadResolvedManifest(path string, options manifest.ResolveOptions) (*manifest.Manifest, error) {
 	doc, resolvedPath, data, err := loadManifestDocumentData(path)
 	if err != nil {
 		return nil, err
@@ -129,7 +137,7 @@ func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, e
 		}
 	}
 
-	return doc.ManifestWithOptions(manifest.ResolveOptions{Logger: logger})
+	return doc.ManifestWithOptions(options)
 }
 
 func loadManifest(path string) (*manifest.Manifest, error) {

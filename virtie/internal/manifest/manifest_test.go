@@ -1548,6 +1548,16 @@ func TestManifestValidatesQEMUDeviceTransports(t *testing.T) {
 	}
 }
 
+func TestManifestAllowsDisabledVSOCKWithoutValidTransport(t *testing.T) {
+	manifest := validManifest()
+	manifest.QEMU.Devices.VSOCK.Disabled = true
+	manifest.QEMU.Devices.VSOCK.Transport = "usb"
+
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("validate manifest: %v", err)
+	}
+}
+
 func TestManifestValidatesQEMUGraphicsBackend(t *testing.T) {
 	for _, backend := range []string{"gtk", "cocoa"} {
 		t.Run("allows "+backend, func(t *testing.T) {
@@ -2059,6 +2069,40 @@ func TestDocumentHotplugVirtioFSMountGeneratesHotplugEntry(t *testing.T) {
 	}
 	if !containsString(device.VirtioFS.Args, "--shared-dir=/tmp/work/shares/cache") {
 		t.Fatalf("expected resolved source arg, got %#v", device.VirtioFS.Args)
+	}
+}
+
+func TestDocumentHotplugResolveSkipsLaunchRuns(t *testing.T) {
+	document := validDocument()
+	document.Run = []RunInput{
+		{Exec: []string{"/tmp/launch-daemon"}},
+	}
+	document.Hotplug.Mounts = MountsInput{
+		VirtioFSMountInput{
+			MountInput: MountInput{
+				Tag:        "cache",
+				SourcePath: "shares/cache",
+			},
+			VirtioFS: VirtioFSInput{Bin: "/tmp/virtiofsd-cache"},
+		},
+	}
+
+	manifest, err := document.ManifestWithOptions(ResolveOptions{SkipLaunchRuns: true})
+	if err != nil {
+		t.Fatalf("resolve hotplug manifest: %v", err)
+	}
+
+	if len(manifest.Run) != 0 {
+		t.Fatalf("expected hotplug resolution to skip launch runs, got %#v", manifest.Run)
+	}
+	if len(manifest.Hotplug) != 1 {
+		t.Fatalf("expected resolved hotplug entry, got %#v", manifest.Hotplug)
+	}
+	if got, want := manifest.Hotplug[0].VirtioFS.Bin, "/tmp/virtiofsd-cache"; got != want {
+		t.Fatalf("unexpected hotplug virtiofs bin: got %q want %q", got, want)
+	}
+	if !containsString(manifest.Hotplug[0].VirtioFS.Args, "--socket-path=/tmp/work/.virtie/cache.sock") {
+		t.Fatalf("expected resolved hotplug args, got %#v", manifest.Hotplug[0].VirtioFS.Args)
 	}
 }
 

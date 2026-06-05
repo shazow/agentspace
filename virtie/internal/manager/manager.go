@@ -340,6 +340,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	m.logger.Info("qemu command", "command", shellquote.Join(qemuCmd.Args...))
 	qemu, err := m.startManagedProcess(qemuCmd)
 	if err != nil {
 		return &stageError{Stage: "vm startup", Err: err}
@@ -432,6 +433,24 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if err := removeSuspendState(manifest); err != nil {
 			return &stageError{Stage: "restore", Err: err}
 		}
+	}
+
+	if qmpClient != nil {
+		m.logger.Info("releasing qmp client for foreground launch")
+		if err := qmpClient.Disconnect(); err != nil {
+			return &stageError{Stage: "vm startup", Err: err}
+		}
+		qmpClient = nil
+		qemu.SetShutdown(func() error {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), m.effectiveQMPConnectTimeout()+m.effectiveQMPQuitTimeout())
+			defer cancel()
+			client, err := m.connectQMP(shutdownCtx, qmpSocketPath, executor.Group{})
+			if err != nil {
+				return err
+			}
+			defer client.Disconnect()
+			return client.Quit(m.effectiveQMPQuitTimeout())
+		})
 	}
 
 	hint, err := buildSSHCommandHint(manifest, cid)

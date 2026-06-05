@@ -262,6 +262,7 @@ type SSHInput struct {
 
 type VSockInput struct {
 	CIDRange RangeInput `json:"cid_range,omitempty" toml:"cid_range"`
+	Disabled bool       `json:"disabled,omitempty" toml:"disabled"`
 }
 
 type RangeInput struct {

@@ -1,9 +1,11 @@
 package hotplug
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +41,9 @@ func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
 	if !strings.Contains(strings.Join(qmp.commands, "\n"), `"execute":"chardev-add"`) {
 		t.Fatalf("expected chardev-add, got %#v", qmp.commands)
 	}
+	if got, want := guest.ensureDirs, []string{"/mnt/cache"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("guest ensure dirs: got %#v want %#v", got, want)
+	}
 	if got, want := guest.commands, [][]string{{"/run/current-system/sw/bin/mount", "-t", "virtiofs", "cache", "/mnt/cache"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("guest commands: got %#v want %#v", got, want)
 	}
@@ -73,10 +78,32 @@ func TestVirtioFSAttachQMPFailureRollsBackHost(t *testing.T) {
 func TestVirtioFSAttachGuestFailureRollsBackQMPAndHost(t *testing.T) {
 	tmpDir := t.TempDir()
 	runtime, starter, qmp, guest := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
-	guest.err = errors.New("mount failed")
+	guest.runErr = errors.New("mount failed")
 
 	if err := runtime.Attach(context.Background(), "cache"); err == nil {
 		t.Fatal("expected attach failure")
+	}
+	if got, want := qmp.deviceDels, []string{"dev-cache"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("device dels: got %#v want %#v", got, want)
+	}
+	if got, want := starter.stopped, []int{100}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("stopped: got %#v want %#v", got, want)
+	}
+}
+
+func TestVirtioFSAttachEnsureDirectoryFailureRollsBackQMPAndHost(t *testing.T) {
+	tmpDir := t.TempDir()
+	runtime, starter, qmp, guest := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
+	guest.ensureErr = errors.New("install failed")
+
+	if err := runtime.Attach(context.Background(), "cache"); err == nil {
+		t.Fatal("expected attach failure")
+	}
+	if got, want := guest.ensureDirs, []string{"/mnt/cache"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("guest ensure dirs: got %#v want %#v", got, want)
+	}
+	if len(guest.commands) != 0 {
+		t.Fatalf("expected no mount after ensure failure, got %#v", guest.commands)
 	}
 	if got, want := qmp.deviceDels, []string{"dev-cache"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("device dels: got %#v want %#v", got, want)
@@ -100,6 +127,66 @@ func TestVirtioFSDetachWaitsForDeviceDeletedBeforeChardevRemove(t *testing.T) {
 	if got, want := qmp.events, []string{"device_del:dev-cache", "run:chardev-remove"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %#v want %#v", got, want)
 	}
+}
+
+func TestVirtioFSAttachLogsLifecycle(t *testing.T) {
+	tmpDir := t.TempDir()
+	runtime, _, _, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
+	var logOutput bytes.Buffer
+	runtime.Logger = slog.New(slog.NewTextHandler(&logOutput, nil))
+
+	if err := runtime.Attach(context.Background(), "cache"); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+
+	assertLogContains(t, logOutput.String(), []string{
+		"hotplug attach requested",
+		"building hotplug registry",
+		"registering hotplug device",
+		"starting hotplug attach",
+		"checking hotplug state",
+		"starting hotplug host process",
+		"waiting for virtiofs hotplug socket",
+		"running hotplug qmp attach command",
+		"ensuring hotplug guest target directory",
+		"mounting hotplug virtiofs in guest",
+		"writing hotplug state",
+		"hotplug attach complete",
+		"id=cache",
+		"kind=virtiofs",
+		"bus=pcie.hotplug.0",
+	})
+}
+
+func TestVirtioFSDetachLogsLifecycle(t *testing.T) {
+	tmpDir := t.TempDir()
+	runtime, _, _, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
+	var logOutput bytes.Buffer
+	runtime.Logger = slog.New(slog.NewTextHandler(&logOutput, nil))
+	statePath := filepath.Join(tmpDir, "state", "hotplug", "cache.json")
+	if err := WriteState(statePath, State{ID: "cache", Kind: KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	if err := runtime.Detach(context.Background(), "cache"); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+
+	assertLogContains(t, logOutput.String(), []string{
+		"hotplug detach requested",
+		"starting hotplug detach",
+		"reading hotplug state",
+		"hotplug state loaded",
+		"unmounting hotplug virtiofs in guest",
+		"running hotplug qmp device_del",
+		"running hotplug qmp detach command",
+		"cleaning up hotplug host resources",
+		"signaling hotplug host process group",
+		"removing hotplug state",
+		"hotplug detach complete",
+		"id=cache",
+		"pid=42",
+	})
 }
 
 func TestNetAttachDetachCommands(t *testing.T) {
@@ -240,6 +327,15 @@ func TestHotplugRegistryRejectsUnsupportedKind(t *testing.T) {
 	}
 }
 
+func assertLogContains(t *testing.T, logs string, want []string) {
+	t.Helper()
+	for _, entry := range want {
+		if !strings.Contains(logs, entry) {
+			t.Fatalf("expected logs to contain %q, got %q", entry, logs)
+		}
+	}
+}
+
 func testRuntime(tmpDir string, device Device) (Runtime, *fakeStarter, *fakeQMP, *fakeGuest) {
 	return testRuntimeDevices(tmpDir, []Device{device})
 }
@@ -337,13 +433,20 @@ func (q *fakeQMP) DeviceDel(ctx context.Context, id string) error {
 }
 
 type fakeGuest struct {
-	commands [][]string
-	err      error
+	ensureDirs []string
+	commands   [][]string
+	ensureErr  error
+	runErr     error
+}
+
+func (g *fakeGuest) EnsureDirectory(ctx context.Context, path string) error {
+	g.ensureDirs = append(g.ensureDirs, path)
+	return g.ensureErr
 }
 
 func (g *fakeGuest) Run(ctx context.Context, command []string) error {
 	g.commands = append(g.commands, append([]string(nil), command...))
-	return g.err
+	return g.runErr
 }
 
 func jsonUnmarshal(data string, v any) error {

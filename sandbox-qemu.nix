@@ -119,6 +119,19 @@ in
         description = "Whether the generated launch wrapper should attach an SSH session automatically.";
       };
 
+      readySocket = lib.mkOption {
+        type = lib.types.str;
+        default = "ready.sock";
+        description = "Runtime socket used for the guest SSH readiness signal. Set to an empty string to disable SSH readiness waiting.";
+      };
+    };
+
+    vsock = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Whether virtie should attach a host vsock device to the guest.";
+      };
     };
 
     persistence = {
@@ -852,8 +865,11 @@ in
         ssh = {
           exec = sshExec;
           user = cfg.user;
-          ready_socket = "ready.sock";
+          ready_socket = cfg.ssh.readySocket;
           autoprovision = sshAutoprovision;
+        };
+        vsock = lib.optionalAttrs (!cfg.vsock.enable) {
+          disabled = true;
         };
         balloon =
           if config.microvm.balloon then

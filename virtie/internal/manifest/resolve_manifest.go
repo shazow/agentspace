@@ -61,6 +61,7 @@ func (d Document) ManifestWithOptions(options ResolveOptions) (*Manifest, error)
 				Start: d.VSock.CIDRange.Min,
 				End:   d.VSock.CIDRange.Max,
 			},
+			Disabled: d.VSock.Disabled,
 		},
 		Notifications: resolveNotifications(d.Notifications),
 		Workspace:     resolveWorkspace(d.Workspace),
@@ -95,11 +96,13 @@ func (d Document) ManifestWithOptions(options ResolveOptions) (*Manifest, error)
 	}
 	m.QEMU = qemu
 	m.Volumes = resolveVolumes(imageMounts)
-	virtioFSRuns, err := m.resolveVirtioFSRuns(virtioFSMounts, options)
-	if err != nil {
-		return nil, err
+	if !options.SkipLaunchRuns {
+		virtioFSRuns, err := m.resolveVirtioFSRuns(virtioFSMounts, options)
+		if err != nil {
+			return nil, err
+		}
+		m.Run = append(virtioFSRuns, resolveRun(d.Run)...)
 	}
-	m.Run = append(virtioFSRuns, resolveRun(d.Run)...)
 	hotplug, err := m.resolveHotplug(d)
 	if err != nil {
 		return nil, err
@@ -265,6 +268,7 @@ func (d Document) resolveQEMU(host HostInput, hostName string, workingDir string
 			VSOCK: QEMUVSOCKDevice{
 				ID:        "vsock0",
 				Transport: transport,
+				Disabled:  d.VSock.Disabled,
 			},
 		},
 		MachineID:       stringValue(d.Machine.ID),

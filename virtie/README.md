@@ -39,8 +39,10 @@ be placed before or after the subcommand.
 - Starts `virtiofsd`, launches QEMU, waits for SSH readiness, and either
   prints the SSH command or attaches the active session with `--ssh`.
 - Uses QMP for readiness and graceful shutdown.
-- Attaches or detaches typed hotplug devices. Virtiofs includes optional guest
-  mount/umount; net and block currently attach only the QEMU-side device.
+- Attaches or detaches typed hotplug devices. Attach mode stays in the
+  foreground and detaches its device on shutdown; virtiofs includes optional
+  guest mount/umount, while net and block currently attach only the QEMU-side
+  device.
 - Records the active launch PID under the manifest persistence state directory.
   `virtie suspend` validates that PID and sends `SIGTSTP` as a caught control
   signal; the launch process saves QEMU migration state through its existing

@@ -4,6 +4,36 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-06-05: virtie hotplug attach owns cleanup
+
+### Who Is Affected
+
+- Direct `virtie hotplug ID` users and scripts that expected attach to return
+  immediately after the device was added.
+
+### What Changed
+
+`virtie hotplug ID` now remains in the foreground after a successful attach.
+When that hotplug command receives `SIGINT` or `SIGTERM`, it runs the matching
+detach sequence before exiting. This cleanup is only owned by the standalone
+hotplug command; `virtie launch` does not detach hotplug devices when the QEMU
+owner process shuts down.
+
+Virtiofs hotplug targets are also created through guest-agent `install -d`
+before the guest mount command runs.
+
+### Migration Steps
+
+For one-shot detach, continue using:
+
+```console
+virtie --manifest=MANIFEST hotplug --detach ID
+```
+
+For scripts that need attach to run in the background, start `virtie hotplug ID`
+as a supervised process and stop that process when the device should be
+detached.
+
 ## 2026-06-02: virtie shared flags are available across commands
 
 ### Who Is Affected

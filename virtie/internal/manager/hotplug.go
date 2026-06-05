@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,8 @@ func Hotplug(ctx context.Context, manifest *manifest.Manifest, id string, option
 }
 
 func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest, id string, options HotplugOptions) error {
+	log := m.hotplugLogger()
+	log.Info("hotplug command starting", "id", id, "detach", options.Detach)
 	if err := launchManifest.Validate(); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -31,17 +34,38 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 	if err != nil {
 		return &stageError{Stage: "hotplug", Err: err}
 	}
-	defer runtime.QMP.(managerHotplugQMP).client.Disconnect()
+	defer func() {
+		log.Info("disconnecting hotplug qmp client", "id", id)
+		_ = runtime.QMP.(managerHotplugQMP).client.Disconnect()
+	}()
 	if options.Detach {
 		if err := runtime.Detach(ctx, id); err != nil {
 			return wrapHotplugError(err)
 		}
+		log.Info("hotplug command complete", "id", id, "detach", true)
 		return nil
 	}
 	if err := runtime.Attach(ctx, id); err != nil {
 		return wrapHotplugError(err)
 	}
+	log.Info("hotplug attached; waiting for shutdown signal", "id", id)
+	<-ctx.Done()
+	log.Info("hotplug shutdown signal received", "id", id, "err", ctx.Err())
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), m.effectiveQMPCommandTimeout()+m.shutdownDelay)
+	defer cancel()
+	log.Info("hotplug cleanup detach starting", "id", id)
+	if err := runtime.Detach(cleanupCtx, id); err != nil {
+		return wrapHotplugError(err)
+	}
+	log.Info("hotplug command complete", "id", id, "detach", false)
 	return nil
+}
+
+func (m *manager) hotplugLogger() *slog.Logger {
+	if m.logger != nil {
+		return m.logger
+	}
+	return logger
 }
 
 func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.Manifest) (hotplug.Runtime, error) {
@@ -49,10 +73,13 @@ func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.M
 	if err != nil {
 		return hotplug.Runtime{}, err
 	}
+	log := m.hotplugLogger()
+	log.Info("waiting for hotplug qmp readiness", "socket", socketPath)
 	client, err := m.waitForQMP(ctx, socketPath, executor.Group{})
 	if err != nil {
 		return hotplug.Runtime{}, err
 	}
+	log.Info("hotplug qmp ready", "socket", socketPath)
 	return hotplug.Runtime{
 		StateDir: launchManifest.ResolvedPersistenceStateDir(),
 		WorkDir:  launchManifest.Paths.WorkingDir,
@@ -61,6 +88,7 @@ func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.M
 		Sockets:  managerHotplugSocketWaiter{m: m},
 		QMP:      managerHotplugQMP{client: client, timeout: m.effectiveQMPCommandTimeout()},
 		Guest:    managerHotplugGuest{m: m, manifest: launchManifest},
+		Logger:   log.With("component", "hotplug"),
 	}, nil
 }
 
@@ -70,7 +98,7 @@ func wrapHotplugError(err error) error {
 	}
 	message := err.Error()
 	switch {
-	case strings.Contains(message, "guest command"):
+	case strings.Contains(message, "guest command"), strings.Contains(message, "install -d"), strings.Contains(message, "mount "), strings.Contains(message, "umount "):
 		return &stageError{Stage: "hotplug guest", Err: err}
 	case strings.Contains(message, "qmp"), strings.Contains(message, "device_del"), strings.Contains(message, "chardev"), strings.Contains(message, "netdev"), strings.Contains(message, "blockdev"):
 		return &stageError{Stage: "hotplug qmp", Err: err}
@@ -103,6 +131,9 @@ func (s managerHotplugStarter) Stop(process *executor.Process) error {
 }
 
 func (s managerHotplugStarter) SignalPIDGroup(pid int, signal syscall.Signal) error {
+	if s.m.pidSignaler != nil {
+		return s.m.pidSignaler.Signal(-pid, signal)
+	}
 	return executor.SignalProcessGroup(pid, signal)
 }
 
@@ -159,6 +190,19 @@ func (g managerHotplugGuest) Run(ctx context.Context, command []string) error {
 		return fmt.Errorf("guest command %q exited with status %d%s", strings.Join(command, " "), status.ExitCode, guestExecOutputSuffix(status))
 	}
 	return nil
+}
+
+func (g managerHotplugGuest) EnsureDirectory(ctx context.Context, guestPath string) error {
+	socketPath, err := g.manifest.ResolvedGuestAgentSocketPath()
+	if err != nil {
+		return err
+	}
+	client, err := g.m.waitForGuestAgent(ctx, socketPath, executor.Group{})
+	if err != nil {
+		return err
+	}
+	defer client.Disconnect()
+	return g.m.ensureGuestDirectory(ctx, client, guestPath)
 }
 
 func hotplugStatePath(launchManifest *manifest.Manifest, id string) (string, error) {
