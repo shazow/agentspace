@@ -46,7 +46,6 @@ let
         --shared-dir="''${VIRTIOFSD_SOURCE-${lib.escapeShellArg source}}" \
         "''${opt_rlimit[@]}" \
         --thread-pool-size ${toString threadPoolSize} \
-        --posix-acl --xattr \
         --cache=${cache} \
         "''${opt_inode_file_handles[@]}" \
         ${lib.optionalString (hypervisor == "crosvm") "--tag=${tag}"} \

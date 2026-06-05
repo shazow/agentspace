@@ -32,10 +32,11 @@ import (
 )
 
 const (
-	defaultSSHRetryDelay      = 500 * time.Millisecond
-	defaultShutdownDelay      = 15 * time.Second
-	defaultMigrationPollDelay = 100 * time.Millisecond
-	sshRetryOutputRevealDelay = 250 * time.Millisecond
+	defaultSSHRetryDelay       = 500 * time.Millisecond
+	defaultShutdownDelay       = 15 * time.Second
+	defaultMigrationPollDelay  = 100 * time.Millisecond
+	defaultGuestCommandTimeout = 30 * time.Second
+	sshRetryOutputRevealDelay  = 250 * time.Millisecond
 )
 
 var errSavedSuspendExit = errors.New("saved suspend requested")
@@ -71,6 +72,7 @@ type manager struct {
 	qmpConnectTimeout   time.Duration
 	qmpQuitTimeout      time.Duration
 	qmpMigrationTimeout time.Duration
+	guestCommandTimeout time.Duration
 	signals             <-chan os.Signal
 	pidSignaler         pidSignaler
 	notifier            notificationSink
@@ -95,6 +97,7 @@ func newManager() *manager {
 		qmpConnectTimeout:   defaultQMPConnectTimeout,
 		qmpQuitTimeout:      defaultQMPQuitTimeout,
 		qmpMigrationTimeout: defaultQMPMigrationTimeout,
+		guestCommandTimeout: defaultGuestCommandTimeout,
 	}
 }
 
@@ -698,6 +701,13 @@ func (m *manager) effectiveQMPMigrationTimeout() time.Duration {
 
 func (m *manager) effectiveQMPCommandTimeout() time.Duration {
 	return m.effectiveQMPConnectTimeout()
+}
+
+func (m *manager) effectiveGuestCommandTimeout() time.Duration {
+	if m.guestCommandTimeout > 0 {
+		return m.guestCommandTimeout
+	}
+	return defaultGuestCommandTimeout
 }
 
 type launchSuspendHandler struct {

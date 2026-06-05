@@ -44,8 +44,15 @@ func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
 	if got, want := guest.ensureDirs, []string{"/mnt/cache"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("guest ensure dirs: got %#v want %#v", got, want)
 	}
-	if got, want := guest.commands, [][]string{{"/run/current-system/sw/bin/mount", "-t", "virtiofs", "cache", "/mnt/cache"}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("guest commands: got %#v want %#v", got, want)
+	if len(guest.commands) != 1 {
+		t.Fatalf("guest commands: got %#v", guest.commands)
+	}
+	got := guest.commands[0]
+	if len(got) != 6 || got[0] != "/run/current-system/sw/bin/sh" || got[1] != "-c" || got[3] != "virtie-hotplug-mount" || got[4] != "/mnt/cache" || got[5] != "cache" {
+		t.Fatalf("unexpected guest mount command: %#v", got)
+	}
+	if !strings.Contains(got[2], "mount -t virtiofs") || !strings.Contains(got[2], "dmesg") {
+		t.Fatalf("expected guest mount script to retry and print dmesg, got %q", got[2])
 	}
 	state, err := ReadState(filepath.Join(tmpDir, "state", "hotplug", "cache.json"))
 	if err != nil {

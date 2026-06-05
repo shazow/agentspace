@@ -456,7 +456,30 @@ func (r Runtime) attachGuest(ctx context.Context, device Device) error {
 		return err
 	}
 	r.logger().Info("mounting hotplug virtiofs in guest", "id", device.ID, "target", device.VirtioFS.Target)
-	return r.Guest.Run(ctx, []string{"/run/current-system/sw/bin/mount", "-t", "virtiofs", device.ID, device.VirtioFS.Target})
+	return r.Guest.Run(ctx, []string{
+		"/run/current-system/sw/bin/sh",
+		"-c",
+		`
+target=$1
+tag=$2
+i=0
+mount_err=/tmp/virtie-hotplug-mount.err
+while [ "$i" -lt 50 ]; do
+	echo 1 > /sys/bus/pci/rescan 2>/dev/null || true
+	if /run/current-system/sw/bin/mount -t virtiofs "$tag" "$target" 2>"$mount_err"; then
+		exit 0
+	fi
+	i=$((i + 1))
+	/run/current-system/sw/bin/sleep 0.1
+done
+/run/current-system/sw/bin/cat "$mount_err" >&2 || true
+/run/current-system/sw/bin/dmesg | /run/current-system/sw/bin/tail -n 80 >&2 || true
+exec /run/current-system/sw/bin/mount -t virtiofs "$tag" "$target"
+`,
+		"virtie-hotplug-mount",
+		device.VirtioFS.Target,
+		device.ID,
+	})
 }
 
 func (r Runtime) detachGuest(ctx context.Context, device Device) error {

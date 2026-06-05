@@ -53,7 +53,7 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	args = append(args, "-smp", fmt.Sprintf("%d", qemuCPUCount(qemu.SMP.CPUs)))
 
 	for i := 0; i < qemu.Hotplug.PCIEPorts; i++ {
-		args = append(args, "-device", fmt.Sprintf("pcie-root-port,id=pcie.hotplug.%d,bus=pcie.0,chassis=%d,slot=%d", i, i+1, i+1))
+		args = append(args, "-device", fmt.Sprintf("pcie-root-port,id=pcie.hotplug.%d,bus=pcie.0,chassis=%d,slot=%d,io-reserve=4k,mem-reserve=1M,pref64-reserve=1M", i, i+1, i+1))
 	}
 
 	if qemu.Knobs.NoDefaults {

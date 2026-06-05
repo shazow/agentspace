@@ -3412,8 +3412,8 @@ func TestBuildQEMUCommandAddsPCIEHotplugPorts(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"pcie-root-port,id=pcie.hotplug.0,bus=pcie.0,chassis=1,slot=1",
-		"pcie-root-port,id=pcie.hotplug.1,bus=pcie.0,chassis=2,slot=2",
+		"pcie-root-port,id=pcie.hotplug.0,bus=pcie.0,chassis=1,slot=1,io-reserve=4k,mem-reserve=1M,pref64-reserve=1M",
+		"pcie-root-port,id=pcie.hotplug.1,bus=pcie.0,chassis=2,slot=2,io-reserve=4k,mem-reserve=1M,pref64-reserve=1M",
 	} {
 		portIndex := indexStringContaining(commandArgs(spec), want)
 		if portIndex == -1 {

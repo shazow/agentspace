@@ -662,7 +662,7 @@ func (m *manager) runGuestFileCommandStatus(ctx context.Context, client guestAge
 }
 
 func (m *manager) runGuestCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, subject string) (guestExecStatus, error) {
-	timeout := m.effectiveQMPCommandTimeout()
+	timeout := m.effectiveGuestCommandTimeout()
 	pid, err := client.Exec(timeout, path, args, true)
 	if err != nil {
 		return guestExecStatus{}, fmt.Errorf("%s %q: %w", name, subject, err)
