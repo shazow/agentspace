@@ -16,7 +16,8 @@ import (
 )
 
 type ResolveOptions struct {
-	Logger *slog.Logger
+	Logger         *slog.Logger
+	SkipLaunchRuns bool
 }
 
 type Manifest struct {
@@ -78,6 +79,7 @@ type VSockCIDRange struct {
 
 type VSock struct {
 	CIDRange VSockCIDRange `json:"cidRange"`
+	Disabled bool          `json:"disabled,omitempty"`
 }
 
 type Workspace struct {

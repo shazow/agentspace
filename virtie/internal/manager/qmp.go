@@ -11,6 +11,7 @@ import (
 
 	doQMP "github.com/digitalocean/go-qemu/qmp"
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 const (
@@ -254,6 +255,102 @@ func (c *socketMonitorClient) Disconnect() error {
 		return nil
 	}
 	return c.monitor.Disconnect()
+}
+
+type reconnectingQMPClient struct {
+	manager    *manager
+	socketPath string
+}
+
+func (c reconnectingQMPClient) withClient(timeout time.Duration, fn func(qmpClient) error) error {
+	if c.manager == nil {
+		return fmt.Errorf("qmp reconnect manager is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.manager.effectiveQMPConnectTimeout())
+	defer cancel()
+
+	client, err := c.manager.connectQMP(ctx, c.socketPath, executor.Group{})
+	if err != nil {
+		return err
+	}
+	opErr := fn(client)
+	disconnectErr := client.Disconnect()
+	if opErr != nil {
+		return errors.Join(opErr, disconnectErr)
+	}
+	return disconnectErr
+}
+
+func (c reconnectingQMPClient) WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error {
+	return c.withClient(timeout, func(client qmpClient) error {
+		return client.WithRaw(timeout, fn)
+	})
+}
+
+func (c reconnectingQMPClient) RunRaw(timeout time.Duration, command string) error {
+	return c.withClient(timeout, func(client qmpClient) error {
+		return client.RunRaw(timeout, command)
+	})
+}
+
+func (c reconnectingQMPClient) DeviceDelAndWait(timeout time.Duration, id string) error {
+	return c.withClient(timeout, func(client qmpClient) error {
+		return client.DeviceDelAndWait(timeout, id)
+	})
+}
+
+func (c reconnectingQMPClient) Stop(timeout time.Duration) error {
+	return c.withClient(timeout, func(client qmpClient) error {
+		return client.Stop(timeout)
+	})
+}
+
+func (c reconnectingQMPClient) Cont(timeout time.Duration) error {
+	return c.withClient(timeout, func(client qmpClient) error {
+		return client.Cont(timeout)
+	})
+}
+
+func (c reconnectingQMPClient) QueryStatus(timeout time.Duration) (string, error) {
+	var status string
+	err := c.withClient(timeout, func(client qmpClient) error {
+		var err error
+		status, err = client.QueryStatus(timeout)
+		return err
+	})
+	return status, err
+}
+
+func (c reconnectingQMPClient) MigrateToFile(timeout time.Duration, path string) error {
+	return c.withClient(timeout, func(client qmpClient) error {
+		return client.MigrateToFile(timeout, path)
+	})
+}
+
+func (c reconnectingQMPClient) MigrateIncoming(timeout time.Duration, path string) error {
+	return c.withClient(timeout, func(client qmpClient) error {
+		return client.MigrateIncoming(timeout, path)
+	})
+}
+
+func (c reconnectingQMPClient) QueryMigrate(timeout time.Duration) (string, error) {
+	var status string
+	err := c.withClient(timeout, func(client qmpClient) error {
+		var err error
+		status, err = client.QueryMigrate(timeout)
+		return err
+	})
+	return status, err
+}
+
+func (c reconnectingQMPClient) Quit(timeout time.Duration) error {
+	return c.withClient(timeout, func(client qmpClient) error {
+		return client.Quit(timeout)
+	})
+}
+
+func (c reconnectingQMPClient) Disconnect() error {
+	return nil
 }
 
 func (c *socketMonitorClient) withTimeout(timeout time.Duration, fn func() error) error {

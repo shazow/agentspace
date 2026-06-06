@@ -53,7 +53,9 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 	args = append(args, "-smp", fmt.Sprintf("%d", qemuCPUCount(qemu.SMP.CPUs)))
 
 	for i := 0; i < qemu.Hotplug.PCIEPorts; i++ {
-		args = append(args, "-device", fmt.Sprintf("pcie-root-port,id=pcie.hotplug.%d,bus=pcie.0,chassis=%d,slot=%d", i, i+1, i+1))
+		// Reserve bridge windows so later device_add calls have PCI resources
+		// available under Q35 instead of depending on firmware defaults.
+		args = append(args, "-device", fmt.Sprintf("pcie-root-port,id=pcie.hotplug.%d,bus=pcie.0,chassis=%d,slot=%d,io-reserve=4k,mem-reserve=1M,pref64-reserve=1M", i, i+1, i+1))
 	}
 
 	if qemu.Knobs.NoDefaults {
@@ -214,15 +216,17 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 		args = append(args, "-device", strings.Join(deviceParams, ","))
 	}
 
-	vsockTransport, err := resolveQEMUTransport(qemu.Devices.VSOCK.Transport)
-	if err != nil {
-		return nil, err
+	if !qemu.Devices.VSOCK.Disabled {
+		vsockTransport, err := resolveQEMUTransport(qemu.Devices.VSOCK.Transport)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, govmmQemu.VSOCKDevice{
+			ID:        qemu.Devices.VSOCK.ID,
+			ContextID: uint64(cid),
+			Transport: vsockTransport,
+		}.QemuParams(config)...)
 	}
-	args = append(args, govmmQemu.VSOCKDevice{
-		ID:        qemu.Devices.VSOCK.ID,
-		ContextID: uint64(cid),
-		Transport: vsockTransport,
-	}.QemuParams(config)...)
 
 	if incoming {
 		args = append(args, "-incoming", "defer")

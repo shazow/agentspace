@@ -169,6 +169,7 @@ type QEMUNetDevice struct {
 type QEMUVSOCKDevice struct {
 	ID        string `json:"id"`
 	Transport string `json:"transport"`
+	Disabled  bool   `json:"disabled,omitempty"`
 }
 
 func (q QEMU) NoGraphicEnabled() bool {

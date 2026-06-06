@@ -874,6 +874,117 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchWithoutSSHSuspendsWithReconnectedQMP(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	startupQMP := &fakeQMPClient{}
+	suspendQMP := &fakeQMPClient{}
+	signalCh := make(chan os.Signal, 1)
+	runner := &launchRunner{}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{clients: []qmpClient{startupQMP, suspendQMP}},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		signals:           signalCh,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	go func() {
+		for {
+			startupQMP.mu.Lock()
+			disconnected := startupQMP.disconnectCalls > 0
+			startupQMP.mu.Unlock()
+			if disconnected {
+				signalCh <- syscall.SIGTSTP
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo}); err != nil {
+		t.Fatalf("launch without ssh suspend: %v", err)
+	}
+	if startupQMP.queryStatusCalls != 0 || startupQMP.migrateCalls != 0 {
+		t.Fatalf("startup qmp client was reused after disconnect: query=%d migrate=%d", startupQMP.queryStatusCalls, startupQMP.migrateCalls)
+	}
+	if suspendQMP.queryStatusCalls == 0 || suspendQMP.stopCalls == 0 || suspendQMP.migrateCalls == 0 || suspendQMP.queryMigrateCalls == 0 {
+		t.Fatalf("expected suspend to use reconnected qmp client, got query=%d stop=%d migrate=%d queryMigrate=%d", suspendQMP.queryStatusCalls, suspendQMP.stopCalls, suspendQMP.migrateCalls, suspendQMP.queryMigrateCalls)
+	}
+	if startupQMP.disconnectCalls == 0 {
+		t.Fatal("expected startup qmp client to be released before foreground wait")
+	}
+}
+
+func TestManagerLaunchWithoutSSHBalloonUsesReconnectedQMP(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifestWithBalloon(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+	cfg.QEMU.Devices.Balloon.Controller = &balloonpkg.ControllerConfig{
+		MinActual:             256,
+		MaxActual:             512,
+		GrowBelowAvailable:    128,
+		ReclaimAboveAvailable: 256,
+		Step:                  128,
+		PollIntervalSeconds:   1,
+	}
+
+	startupQMP := &fakeQMPClient{}
+	balloonEnabled := make(chan struct{})
+	var closeBalloonEnabled sync.Once
+	balloonQMP := (&fakeQMPClient{
+		onEnableBalloonStats: func() {
+			closeBalloonEnabled.Do(func() { close(balloonEnabled) })
+		},
+	}).withDefaultBalloonPath("/machine/peripheral/balloon0")
+	runner := &launchRunner{}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{clients: []qmpClient{startupQMP, balloonQMP}},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	go func() {
+		<-balloonEnabled
+		runner.exitQEMU(nil)
+	}()
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo}); err != nil {
+		t.Fatalf("launch without ssh balloon: %v", err)
+	}
+	if startupQMP.disconnectCalls == 0 {
+		t.Fatal("expected startup qmp client to be released before foreground wait")
+	}
+	if balloonQMP.disconnectCalls == 0 {
+		t.Fatal("expected balloon controller to use and release a reconnected qmp client")
+	}
+	if balloonQMP.queryStatusCalls != 0 {
+		t.Fatalf("unexpected suspend use of balloon qmp client: query=%d", balloonQMP.queryStatusCalls)
+	}
+}
+
 func TestManagerLaunchWithSSHAndEmptyExecSkipsAutoconnect(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -3412,8 +3523,8 @@ func TestBuildQEMUCommandAddsPCIEHotplugPorts(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"pcie-root-port,id=pcie.hotplug.0,bus=pcie.0,chassis=1,slot=1",
-		"pcie-root-port,id=pcie.hotplug.1,bus=pcie.0,chassis=2,slot=2",
+		"pcie-root-port,id=pcie.hotplug.0,bus=pcie.0,chassis=1,slot=1,io-reserve=4k,mem-reserve=1M,pref64-reserve=1M",
+		"pcie-root-port,id=pcie.hotplug.1,bus=pcie.0,chassis=2,slot=2,io-reserve=4k,mem-reserve=1M,pref64-reserve=1M",
 	} {
 		portIndex := indexStringContaining(commandArgs(spec), want)
 		if portIndex == -1 {
@@ -3451,18 +3562,30 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	}
 
 	qmpClient := &fakeQMPClient{}
-	guestClient := &fakeGuestAgentClient{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	guestClient := &fakeGuestAgentClient{
+		record: func(event string) {
+			if event == "guest-mount:/mnt/cache" {
+				cancel()
+			}
+		},
+	}
 	runner := &launchRunner{}
+	signaler := &fakePIDSignaler{}
+	var logOutput bytes.Buffer
 	manager := &manager{
 		runner:            runner,
 		qmpDialer:         &fakeQMPDialer{client: qmpClient},
 		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
 		socketWaiter:      &fakeSocketWaiter{},
+		pidSignaler:       signaler,
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
 		qmpConnectTimeout: time.Second,
 		qmpRetryDelay:     time.Millisecond,
 	}
 
-	if err := manager.hotplug(context.Background(), cfg, "cache", HotplugOptions{}); err != nil {
+	if err := manager.hotplug(ctx, cfg, "cache", HotplugOptions{}); err != nil {
 		t.Fatalf("attach hotplug: %v", err)
 	}
 
@@ -3478,15 +3601,183 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	if got := strings.Join(qmpClient.rawCommands, "\n"); !strings.Contains(got, `"execute":"chardev-add"`) || !strings.Contains(got, `"execute":"device_add"`) {
 		t.Fatalf("unexpected qmp commands: got %#v", qmpClient.rawCommands)
 	}
-	if len(guestClient.execs) != 1 || guestClient.execs[0].path != "/run/current-system/sw/bin/mount" || !reflect.DeepEqual(guestClient.execs[0].args, []string{"-t", "virtiofs", "cache", "/mnt/cache"}) {
+	wantGuestExecs := []guestExecCall{
+		{path: guestInstallPath, args: []string{"-d", "/mnt/cache"}, captureOutput: true},
+		{
+			path: "/run/current-system/sw/bin/sh",
+			args: []string{
+				"-c",
+				`
+target=$1
+tag=$2
+i=0
+mount_err=/tmp/virtie-hotplug-mount.err
+while [ "$i" -lt 50 ]; do
+	echo 1 > /sys/bus/pci/rescan 2>/dev/null || true
+	if /run/current-system/sw/bin/mount -t virtiofs "$tag" "$target" 2>"$mount_err"; then
+		exit 0
+	fi
+	i=$((i + 1))
+	/run/current-system/sw/bin/sleep 0.1
+done
+/run/current-system/sw/bin/cat "$mount_err" >&2 || true
+/run/current-system/sw/bin/dmesg | /run/current-system/sw/bin/tail -n 80 >&2 || true
+exec /run/current-system/sw/bin/mount -t virtiofs "$tag" "$target"
+`,
+				"virtie-hotplug-mount",
+				"/mnt/cache",
+				"cache",
+			},
+			captureOutput: true,
+		},
+		{path: "/run/current-system/sw/bin/umount", args: []string{"/mnt/cache"}, captureOutput: true},
+	}
+	if !reflect.DeepEqual(guestClient.execs, wantGuestExecs) {
 		t.Fatalf("unexpected guest execs: %#v", guestClient.execs)
 	}
-	state, err := readHotplugState(filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json"))
-	if err != nil {
-		t.Fatalf("read hotplug state: %v", err)
+	if got, want := qmpClient.deviceDelWaits, []string{"dev-cache"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup qmp commands: got %#v want %#v", got, want)
 	}
-	if state.ID != "cache" || state.Kind != hotplug.KindVirtioFS || state.Bus != "pcie.hotplug.0" || state.PID != 1 {
-		t.Fatalf("unexpected hotplug state: %#v", state)
+	if got, want := signaler.signals, []pidSignal{{pid: -1, sig: syscall.SIGTERM}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup signals: got %#v want %#v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected hotplug state cleanup, got err=%v", err)
+	}
+	assertLogContains(t, logOutput.String(), []string{
+		"hotplug command starting",
+		"waiting for hotplug qmp readiness",
+		"hotplug qmp ready",
+		"hotplug attached; waiting for shutdown signal",
+		"hotplug shutdown signal received",
+		"hotplug cleanup detach starting",
+		"hotplug command complete",
+	})
+}
+
+func TestManagerHotplugAttachStartsOnlyRequestedHotplugDaemon(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.QEMU.Hotplug.PCIEPorts = 2
+	cfg.Run = []manifest.Run{
+		{Exec: []string{"/bin/virtiofsd-workspace"}},
+		{Exec: []string{"/bin/launch-daemon"}},
+	}
+	cfg.Hotplug = []hotplug.Device{
+		{
+			Kind: hotplug.KindVirtioFS,
+			ID:   "cache",
+			VirtioFS: hotplug.VirtioFS{
+				Source:     filepath.Join(tmpDir, "cache"),
+				Target:     "/mnt/cache",
+				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
+				Bin:        "/bin/virtiofsd-cache",
+				Args:       []string{"--socket=" + filepath.Join(tmpDir, ".virtie", "cache.sock")},
+			},
+		},
+		{
+			Kind: hotplug.KindVirtioFS,
+			ID:   "scratch",
+			VirtioFS: hotplug.VirtioFS{
+				Source:     filepath.Join(tmpDir, "scratch"),
+				Target:     "/mnt/scratch",
+				SocketPath: filepath.Join(tmpDir, ".virtie", "scratch.sock"),
+				Bin:        "/bin/virtiofsd-scratch",
+				Args:       []string{"--socket=" + filepath.Join(tmpDir, ".virtie", "scratch.sock")},
+			},
+		},
+	}
+
+	qmpClient := &fakeQMPClient{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	guestClient := &fakeGuestAgentClient{
+		record: func(event string) {
+			if event == "guest-mount:/mnt/scratch" {
+				cancel()
+			}
+		},
+	}
+	runner := &launchRunner{}
+	signaler := &fakePIDSignaler{}
+	manager := &manager{
+		runner:            runner,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
+		socketWaiter:      &fakeSocketWaiter{},
+		pidSignaler:       signaler,
+		qmpConnectTimeout: time.Second,
+		qmpRetryDelay:     time.Millisecond,
+	}
+
+	if err := manager.hotplug(ctx, cfg, "scratch", HotplugOptions{}); err != nil {
+		t.Fatalf("attach hotplug: %v", err)
+	}
+
+	if got, want := runner.startedNames(), []string{"virtiofsd-scratch"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected starts: got %#v want %#v", got, want)
+	}
+	if got, want := signaler.signals, []pidSignal{{pid: -1, sig: syscall.SIGTERM}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected cleanup signals: got %#v want %#v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".virtie", "hotplug", "scratch.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected hotplug state cleanup, got err=%v", err)
+	}
+}
+
+func TestManagerHotplugAttachFailsWhenTargetDirectoryCannotBeCreated(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.QEMU.Hotplug.PCIEPorts = 1
+	cfg.Hotplug = []hotplug.Device{
+		{
+			Kind: hotplug.KindVirtioFS,
+			ID:   "cache",
+			VirtioFS: hotplug.VirtioFS{
+				Source:     filepath.Join(tmpDir, "cache"),
+				Target:     "/mnt/cache",
+				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
+				Bin:        "/bin/virtiofsd",
+				Args:       []string{"--socket=" + filepath.Join(tmpDir, ".virtie", "cache.sock")},
+			},
+		},
+	}
+
+	qmpClient := &fakeQMPClient{}
+	guestClient := &fakeGuestAgentClient{
+		execStatuses: []guestExecStatus{{Exited: true, ExitCode: 1, ErrData: "aW5zdGFsbCBmYWlsZWQ="}},
+	}
+	manager := &manager{
+		runner:            &launchRunner{},
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
+		socketWaiter:      &fakeSocketWaiter{},
+		pidSignaler:       &fakePIDSignaler{},
+		qmpConnectTimeout: time.Second,
+		qmpRetryDelay:     time.Millisecond,
+	}
+
+	err := manager.hotplug(context.Background(), cfg, "cache", HotplugOptions{})
+	if err == nil || !strings.Contains(err.Error(), "hotplug guest") || !strings.Contains(err.Error(), "install failed") {
+		t.Fatalf("expected hotplug guest install failure, got %v", err)
+	}
+	wantGuestExecs := []guestExecCall{
+		{path: guestInstallPath, args: []string{"-d", "/mnt/cache"}, captureOutput: true},
+	}
+	if !reflect.DeepEqual(guestClient.execs, wantGuestExecs) {
+		t.Fatalf("unexpected guest execs: got %#v want %#v", guestClient.execs, wantGuestExecs)
+	}
+	if got, want := qmpClient.deviceDelWaits, []string{"dev-cache"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected qmp rollback: got %#v want %#v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no hotplug state, got err=%v", err)
 	}
 }
 
@@ -3817,6 +4108,20 @@ func TestBuildQEMUCommandAllowsInitrdApplianceWithoutStorageDevices(t *testing.T
 	}
 }
 
+func TestBuildQEMUCommandOmitsDisabledVSOCKDevice(t *testing.T) {
+	cfg := validManifest("/tmp/work")
+	cfg.QEMU.Devices.VSOCK.Disabled = true
+
+	spec, err := buildQEMUCommand(cfg, 42, false)
+	if err != nil {
+		t.Fatalf("build qemu command: %v", err)
+	}
+
+	if containsString(commandArgs(spec), "guest-cid=42") || containsString(commandArgs(spec), "vhost-vsock") {
+		t.Fatalf("expected qemu args to omit vsock device: %v", commandArgs(spec))
+	}
+}
+
 func TestBuildQEMUCommandUsesRuntimeDirForRelativeQMP(t *testing.T) {
 	runtimeDir := t.TempDir()
 	setXDGTestRuntimeDir(t, runtimeDir)
@@ -3885,6 +4190,16 @@ func assertLaunchStatsLog(t *testing.T, logs string, want []string, unwanted []s
 	for _, field := range unwanted {
 		if strings.Contains(logs, field) {
 			t.Fatalf("unexpected launch stats field %q in logs %q", field, logs)
+		}
+	}
+}
+
+func assertLogContains(t *testing.T, logs string, want []string) {
+	t.Helper()
+
+	for _, entry := range want {
+		if !strings.Contains(logs, entry) {
+			t.Fatalf("expected logs to contain %q, got %q", entry, logs)
 		}
 	}
 }
@@ -4287,12 +4602,28 @@ func startFakeSSHReadySocket(_ context.Context, path string) error {
 
 type fakeQMPDialer struct {
 	client   qmpClient
+	clients  []qmpClient
 	attempts int
 }
 
 func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpClient, error) {
 	d.attempts++
-	return d.client, nil
+	var client qmpClient
+	if len(d.clients) > 0 {
+		index := d.attempts - 1
+		if index >= len(d.clients) {
+			index = len(d.clients) - 1
+		}
+		client = d.clients[index]
+	} else {
+		client = d.client
+	}
+	if fake, ok := client.(*fakeQMPClient); ok {
+		fake.mu.Lock()
+		fake.disconnected = false
+		fake.mu.Unlock()
+	}
+	return client, nil
 }
 
 type fakeGuestAgentDialer struct {
@@ -4488,6 +4819,15 @@ func (c *fakeGuestAgentClient) Exec(timeout time.Duration, path string, args []s
 	if c.record != nil && path == guestInstallPath && len(args) > 0 {
 		c.record("guest-install-dir:" + args[len(args)-1])
 	}
+	if c.record != nil && path == guestMountPath && len(args) > 0 {
+		c.record("guest-mount:" + args[len(args)-1])
+	}
+	if c.record != nil && path == "/run/current-system/sw/bin/sh" && len(args) >= 5 && args[2] == "virtie-hotplug-mount" {
+		c.record("guest-mount:" + args[3])
+	}
+	if c.record != nil && path == "/run/current-system/sw/bin/umount" && len(args) > 0 {
+		c.record("guest-umount:" + args[len(args)-1])
+	}
 	if c.record != nil && path == guestTestPath && len(args) > 0 {
 		c.record("guest-test-dir:" + args[len(args)-1])
 	}
@@ -4618,11 +4958,15 @@ type fakeQMPClient struct {
 	readBalloonStatsUpdated  time.Time
 	setBalloonLogicalSizes   []int64
 	setBalloonErr            error
+	disconnected             bool
 }
 
 func (c *fakeQMPClient) RunRaw(timeout time.Duration, command string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return err
+	}
 	c.rawCommands = append(c.rawCommands, command)
 	return nil
 }
@@ -4630,6 +4974,9 @@ func (c *fakeQMPClient) RunRaw(timeout time.Duration, command string) error {
 func (c *fakeQMPClient) DeviceDelAndWait(timeout time.Duration, id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return err
+	}
 	c.rawCommands = append(c.rawCommands, `{"execute":"device_del","arguments":{"id":"`+id+`"}}`)
 	c.deviceDelWaits = append(c.deviceDelWaits, id)
 	return nil
@@ -4637,6 +4984,10 @@ func (c *fakeQMPClient) DeviceDelAndWait(timeout time.Duration, id string) error
 
 func (c *fakeQMPClient) Quit(timeout time.Duration) error {
 	c.mu.Lock()
+	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
 	c.quitCalls++
 	onQuit := c.onQuit
 	c.mu.Unlock()
@@ -4649,6 +5000,10 @@ func (c *fakeQMPClient) Quit(timeout time.Duration) error {
 
 func (c *fakeQMPClient) Stop(timeout time.Duration) error {
 	c.mu.Lock()
+	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
 	c.stopCalls++
 	c.status = "paused"
 	onStop := c.onStop
@@ -4661,6 +5016,10 @@ func (c *fakeQMPClient) Stop(timeout time.Duration) error {
 
 func (c *fakeQMPClient) Cont(timeout time.Duration) error {
 	c.mu.Lock()
+	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
 	c.contCalls++
 	c.status = "running"
 	onCont := c.onCont
@@ -4674,6 +5033,9 @@ func (c *fakeQMPClient) Cont(timeout time.Duration) error {
 func (c *fakeQMPClient) QueryStatus(timeout time.Duration) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return "", err
+	}
 
 	c.queryStatusCalls++
 	if c.status == "" {
@@ -4685,6 +5047,9 @@ func (c *fakeQMPClient) QueryStatus(timeout time.Duration) (string, error) {
 func (c *fakeQMPClient) MigrateToFile(timeout time.Duration, path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return err
+	}
 	c.migrateCalls++
 	c.migratePath = path
 	c.migrationStatus = "completed"
@@ -4694,6 +5059,9 @@ func (c *fakeQMPClient) MigrateToFile(timeout time.Duration, path string) error 
 func (c *fakeQMPClient) MigrateIncoming(timeout time.Duration, path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return err
+	}
 	c.migrateIncomingCalls++
 	c.migrateIncomingPath = path
 	c.migrationStatus = "completed"
@@ -4703,6 +5071,9 @@ func (c *fakeQMPClient) MigrateIncoming(timeout time.Duration, path string) erro
 func (c *fakeQMPClient) QueryMigrate(timeout time.Duration) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return "", err
+	}
 	c.queryMigrateCalls++
 	if c.migrationStatus == "" {
 		c.migrationStatus = "completed"
@@ -4726,6 +5097,14 @@ func (c *fakeQMPClient) Disconnect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.disconnectCalls++
+	c.disconnected = true
+	return nil
+}
+
+func (c *fakeQMPClient) checkConnectedLocked() error {
+	if c.disconnected {
+		return errors.New("qmp client is disconnected")
+	}
 	return nil
 }
 
@@ -4740,6 +5119,12 @@ func (c *fakeQMPClient) withDefaultBalloonPath(path string) *fakeQMPClient {
 }
 
 func (c *fakeQMPClient) WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error {
+	c.mu.Lock()
+	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	c.mu.Unlock()
 	return fn(rawQMP.NewMonitor(&fakeMonitor{handler: c.handleQMP}))
 }
 

@@ -119,6 +119,19 @@ in
         description = "Whether the generated launch wrapper should attach an SSH session automatically.";
       };
 
+      readySocket = lib.mkOption {
+        type = lib.types.str;
+        default = "ready.sock";
+        description = "Runtime socket used for the guest SSH readiness signal. Set to an empty string to disable SSH readiness waiting.";
+      };
+    };
+
+    vsock = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Whether virtie should attach a host vsock device to the guest.";
+      };
     };
 
     persistence = {
@@ -213,6 +226,167 @@ in
       type = options.microvm.forwardPorts.type;
       default = [ ];
       description = "Additional user-network port forwards for the sandbox, using the microvm.forwardPorts schema.";
+    };
+
+    mounts = lib.mkOption {
+      type = lib.types.listOf (
+        lib.types.submodule (
+          { ... }:
+          {
+            options = {
+              type = lib.mkOption {
+                type = lib.types.enum [
+                  "virtiofs"
+                  "9p"
+                  "image"
+                ];
+                default = "virtiofs";
+                description = "Launch-time mount backend.";
+              };
+
+              tag = lib.mkOption {
+                type = lib.types.nullOr lib.types.nonEmptyStr;
+                default = null;
+                description = "Share tag for virtiofs and 9p mounts.";
+              };
+
+              source = lib.mkOption {
+                type = lib.types.nonEmptyStr;
+                description = "Host directory or image path.";
+              };
+
+              mountPoint = lib.mkOption {
+                type = lib.types.nullOr lib.types.path;
+                default = null;
+                description = "Guest mount path. Required for virtiofs and 9p mounts.";
+              };
+
+              readOnly = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Whether the mount is read-only.";
+              };
+
+              socket = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Optional virtiofsd socket path for virtiofs mounts.";
+              };
+
+              securityModel = lib.mkOption {
+                type = lib.types.enum [
+                  "passthrough"
+                  "none"
+                  "mapped"
+                  "mapped-file"
+                ];
+                default = "mapped";
+                description = "9p security model.";
+              };
+
+              cache = lib.mkOption {
+                type = lib.types.enum [
+                  "auto"
+                  "always"
+                  "metadata"
+                  "never"
+                ];
+                default = "auto";
+                description = "Virtiofs cache policy.";
+              };
+
+              image = {
+                size = lib.mkOption {
+                  type = lib.types.nullOr lib.types.ints.positive;
+                  default = null;
+                  description = "Image size in MiB. Required for image mounts.";
+                };
+
+                fs = lib.mkOption {
+                  type = lib.types.str;
+                  default = "ext4";
+                  description = "Filesystem for image creation and guest mounting.";
+                };
+
+                create = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to create the image automatically.";
+                };
+
+                direct = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether to set O_DIRECT on the image.";
+                };
+
+                label = lib.mkOption {
+                  type = lib.types.nullOr lib.types.str;
+                  default = null;
+                  description = "Optional filesystem label for automatic image creation.";
+                };
+
+                serial = lib.mkOption {
+                  type = lib.types.nullOr lib.types.str;
+                  default = null;
+                  description = "Optional disk serial number.";
+                };
+              };
+            };
+          }
+        )
+      );
+      default = [ ];
+      description = "Launch-time mounts. Legacy shares and volumes are appended after these entries.";
+    };
+
+    hotplug = {
+      mounts = lib.mkOption {
+        type = lib.types.listOf (
+          lib.types.submodule (
+            { ... }:
+            {
+              options = {
+                type = lib.mkOption {
+                  type = lib.types.enum [ "virtiofs" ];
+                  default = "virtiofs";
+                  description = "Hotplug mount backend. Only virtiofs is supported by the Nix API for now.";
+                };
+
+                tag = lib.mkOption {
+                  type = lib.types.nonEmptyStr;
+                  description = "Virtiofs mount tag and virtie hotplug device id.";
+                };
+
+                source = lib.mkOption {
+                  type = lib.types.nonEmptyStr;
+                  description = "Host path to share with the guest.";
+                };
+
+                target = lib.mkOption {
+                  type = lib.types.nullOr lib.types.str;
+                  default = null;
+                  description = "Optional guest path mounted by virtie after attaching the device.";
+                };
+
+                readOnly = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether the hotplugged share is read-only.";
+                };
+
+                socket = lib.mkOption {
+                  type = lib.types.nullOr lib.types.str;
+                  default = null;
+                  description = "Optional virtiofsd socket path. When unset, virtie defaults to <tag>.sock.";
+                };
+              };
+            }
+          )
+        );
+        default = [ ];
+        description = "Virtiofs mounts declared for runtime hotplug instead of launch-time attachment.";
+      };
     };
 
     run = lib.mkOption {
@@ -435,6 +609,36 @@ in
       inherit (pkgs.stdenv.hostPlatform) system;
       arch = builtins.head (builtins.split "-" system);
       canSandbox = builtins.elem "--enable-seccomp" (config.microvm.qemu.package.configureFlags or [ ]);
+      launchShareMounts = builtins.filter (mount: mount.type != "image") cfg.mounts;
+      launchImageMounts = builtins.filter (mount: mount.type == "image") cfg.mounts;
+
+      mkMicroVMShareMount =
+        mount:
+        {
+          proto = mount.type;
+          inherit (mount)
+            source
+            readOnly
+            securityModel
+            cache
+            ;
+          tag = mount.tag;
+          mountPoint = mount.mountPoint;
+        }
+        // lib.optionalAttrs (mount.socket != null) {
+          inherit (mount) socket;
+        };
+
+      mkMicroVMImageMount = mount: {
+        image = mount.source;
+        inherit (mount) mountPoint readOnly;
+        size = mount.image.size;
+        fsType = mount.image.fs;
+        autoCreate = mount.image.create;
+        direct = mount.image.direct;
+        label = mount.image.label;
+        serial = mount.image.serial;
+      };
 
       mkVirtioFSDaemonCommand = mkVirtioFSD {
         inherit (cfg) hostName;
@@ -532,6 +736,36 @@ in
           Config = runConfigVars;
         };
       }) cfg.run;
+
+      mkHotplugVirtioFSMount =
+        mount:
+        let
+          socket = if mount.socket != null then mount.socket else "${mount.tag}.sock";
+          virtiofsdShare = {
+            inherit (mount) tag source readOnly;
+            inherit socket;
+            cache = "auto";
+          };
+        in
+        {
+          type = "virtiofs";
+          inherit (mount) tag source;
+          read_only = mount.readOnly;
+          virtiofs = {
+            bin = mkVirtioFSDaemonCommand virtiofsdShare;
+            args = [ ];
+          }
+          // lib.optionalAttrs (mount.socket != null) {
+            inherit socket;
+          };
+        }
+        // lib.optionalAttrs (mount.target != null) {
+          inherit (mount) target;
+        };
+
+      manifestHotplug = lib.optionalAttrs (cfg.hotplug.mounts != [ ]) {
+        mounts = builtins.map mkHotplugVirtioFSMount cfg.hotplug.mounts;
+      };
 
       manifestMounts =
         builtins.map (
@@ -631,8 +865,11 @@ in
         ssh = {
           exec = sshExec;
           user = cfg.user;
-          ready_socket = "ready.sock";
+          ready_socket = cfg.ssh.readySocket;
           autoprovision = sshAutoprovision;
+        };
+        vsock = lib.optionalAttrs (!cfg.vsock.enable) {
+          disabled = true;
         };
         balloon =
           if config.microvm.balloon then
@@ -656,6 +893,9 @@ in
         notifications = notificationManifest;
         write_files = manifestWriteFiles;
         run = manifestRun;
+      }
+      // lib.optionalAttrs (manifestHotplug != { }) {
+        hotplug = manifestHotplug;
       };
 
       tomlFormat = pkgs.formats.toml { };
@@ -679,6 +919,18 @@ in
               cfg.nixStoreShareSocket == null
               || (cfg.nixStoreShareSocket != "" && lib.hasPrefix "/" cfg.nixStoreShareSocket);
             message = "agentspace.sandbox.nixStoreShareSocket must be an absolute socket path when set.";
+          }
+          {
+            assertion = builtins.all (mount: mount.type == "image" || mount.tag != null) cfg.mounts;
+            message = "agentspace.sandbox.mounts entries with type virtiofs or 9p must set tag.";
+          }
+          {
+            assertion = builtins.all (mount: mount.type == "image" || mount.mountPoint != null) cfg.mounts;
+            message = "agentspace.sandbox.mounts entries with type virtiofs or 9p must set mountPoint.";
+          }
+          {
+            assertion = builtins.all (mount: mount.type != "image" || mount.image.size != null) cfg.mounts;
+            message = "agentspace.sandbox.mounts entries with type image must set image.size.";
           }
         ];
 
@@ -843,6 +1095,7 @@ in
               }
             ]
             ++ workspaceShares
+            ++ builtins.map mkMicroVMShareMount launchShareMounts
             ++ cfg.shares;
 
           writableStoreOverlay = "/nix/.rw-store";
@@ -863,6 +1116,7 @@ in
               autoCreate = true;
             }
           ]
+          ++ builtins.map mkMicroVMImageMount launchImageMounts
           ++ cfg.volumes;
 
           forwardPorts = cfg.forwardPorts;

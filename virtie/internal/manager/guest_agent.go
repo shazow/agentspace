@@ -539,6 +539,10 @@ func (m *manager) mountWorkspaceCWD(ctx context.Context, client guestAgentClient
 	return nil
 }
 
+func (m *manager) ensureGuestDirectory(ctx context.Context, client guestAgentClient, guestDir string) error {
+	return m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, []string{"-d", guestDir}, guestDir)
+}
+
 // installGuestFileDirectory ensures that the parent directory for guestPath exists.
 // It walks upward until it finds an existing ancestor, then creates only the
 // missing directories from top to bottom. owner and mode are passed to install(1)
@@ -658,7 +662,7 @@ func (m *manager) runGuestFileCommandStatus(ctx context.Context, client guestAge
 }
 
 func (m *manager) runGuestCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, subject string) (guestExecStatus, error) {
-	timeout := m.effectiveQMPCommandTimeout()
+	timeout := m.effectiveGuestCommandTimeout()
 	pid, err := client.Exec(timeout, path, args, true)
 	if err != nil {
 		return guestExecStatus{}, fmt.Errorf("%s %q: %w", name, subject, err)

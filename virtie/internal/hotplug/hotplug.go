@@ -96,6 +96,7 @@ type QMPClient interface {
 }
 
 type GuestRunner interface {
+	EnsureDirectory(ctx context.Context, path string) error
 	Run(ctx context.Context, command []string) error
 }
 
@@ -140,12 +141,13 @@ func (r Runtime) hotplugRegistry(ctx context.Context) (hotplugRegistry, error) {
 }
 
 func (r Runtime) hotplug(ctx context.Context, device Device, index int) (Hotplug, error) {
+	bus := fmt.Sprintf("pcie.hotplug.%d", index)
 	base := hotplugBase{
 		ctx:     ctx,
 		runtime: &r,
 		id:      device.ID,
 		kind:    device.Kind,
-		bus:     fmt.Sprintf("pcie.hotplug.%d", index),
+		bus:     bus,
 	}
 	switch device.Kind {
 	case KindVirtioFS:
@@ -392,7 +394,33 @@ func (r Runtime) attachGuest(ctx context.Context, device Device) error {
 	if device.Kind != KindVirtioFS || device.VirtioFS.Target == "" {
 		return nil
 	}
-	return r.Guest.Run(ctx, []string{"/run/current-system/sw/bin/mount", "-t", "virtiofs", device.ID, device.VirtioFS.Target})
+	if err := r.Guest.EnsureDirectory(ctx, device.VirtioFS.Target); err != nil {
+		return err
+	}
+	return r.Guest.Run(ctx, []string{
+		"/run/current-system/sw/bin/sh",
+		"-c",
+		`
+target=$1
+tag=$2
+i=0
+mount_err=/tmp/virtie-hotplug-mount.err
+while [ "$i" -lt 50 ]; do
+	echo 1 > /sys/bus/pci/rescan 2>/dev/null || true
+	if /run/current-system/sw/bin/mount -t virtiofs "$tag" "$target" 2>"$mount_err"; then
+		exit 0
+	fi
+	i=$((i + 1))
+	/run/current-system/sw/bin/sleep 0.1
+done
+/run/current-system/sw/bin/cat "$mount_err" >&2 || true
+/run/current-system/sw/bin/dmesg | /run/current-system/sw/bin/tail -n 80 >&2 || true
+exec /run/current-system/sw/bin/mount -t virtiofs "$tag" "$target"
+`,
+		"virtie-hotplug-mount",
+		device.VirtioFS.Target,
+		device.ID,
+	})
 }
 
 func (r Runtime) detachGuest(ctx context.Context, device Device) error {

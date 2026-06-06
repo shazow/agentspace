@@ -29,6 +29,11 @@ let
     persistence.homeImage = null;
   };
 
+  vmVSockDisabled = mkSandbox {
+    persistence.homeImage = null;
+    vsock.enable = false;
+  };
+
   vmVirtieFeatureRich = mkSandbox {
     ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
     ssh.exec = mkExecSSH {
@@ -158,6 +163,77 @@ let
         source = ".agentspace-test/tools";
         mountPoint = "/mnt/tools";
         readOnly = true;
+      }
+    ];
+  };
+
+  vmVirtieHotplugMounts = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+    ssh.exec = mkExecSSH {
+      identityFile = sshKeys.virtie.identityFile;
+    };
+    persistence.homeImage = null;
+    hotplug.mounts = [
+      {
+        tag = "cache";
+        source = ".agentspace-test/cache";
+        target = "/mnt/cache";
+        readOnly = true;
+      }
+      {
+        tag = "tools";
+        source = ".agentspace-test/tools";
+      }
+    ];
+  };
+
+  vmVirtieMounts = mkSandbox {
+    persistence.homeImage = null;
+    workspace.enable = false;
+    mounts = [
+      {
+        type = "virtiofs";
+        tag = "cache";
+        source = ".agentspace-test/cache";
+        mountPoint = "/mnt/cache";
+        readOnly = true;
+      }
+      {
+        type = "9p";
+        tag = "scratch";
+        source = ".agentspace-test/scratch";
+        mountPoint = "/mnt/scratch";
+        securityModel = "mapped";
+      }
+      {
+        type = "image";
+        source = ".agentspace-test/data.img";
+        mountPoint = "/mnt/data";
+        readOnly = true;
+        image = {
+          size = 512;
+          fs = "ext4";
+          create = true;
+          direct = true;
+          serial = "new-data";
+        };
+      }
+    ];
+    shares = [
+      {
+        proto = "virtiofs";
+        tag = "legacy-share";
+        source = ".agentspace-test/legacy-share";
+        mountPoint = "/mnt/legacy-share";
+      }
+    ];
+    volumes = [
+      {
+        image = ".agentspace-test/legacy.img";
+        mountPoint = "/mnt/legacy";
+        size = 256;
+        fsType = "ext4";
+        autoCreate = true;
       }
     ];
   };
@@ -318,12 +394,15 @@ let
   featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
   disabledBalloonManifest =
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
+  vsockDisabledManifest = vmVSockDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
   customSSHExecManifest = vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
   configFileManifest = vmVirtieConfigFile.config.agentspace.sandbox.launch.virtieManifestData;
   homeSSHPathsManifest = vmVirtieHomeSSHPaths.config.agentspace.sandbox.launch.virtieManifestData;
   extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
+  hotplugMountsManifest = vmVirtieHotplugMounts.config.agentspace.sandbox.launch.virtieManifestData;
+  mountsManifest = vmVirtieMounts.config.agentspace.sandbox.launch.virtieManifestData;
   extraImagesAndPortsManifest =
     vmVirtieExtraImagesAndPorts.config.agentspace.sandbox.launch.virtieManifestData;
   workspaceManifest = vmVirtieWorkspaces.config.agentspace.sandbox.launch.virtieManifestData;
@@ -401,13 +480,16 @@ let
     ) virtiofsDaemonMounts;
     assert !(pkgs.lib.hasInfix "--sandbox=none" virtiofsDaemonScript);
     assert !(pkgs.lib.hasInfix "--sandbox=namespace" virtiofsDaemonScript);
+    assert !(pkgs.lib.hasInfix "--posix-acl" virtiofsDaemonScript);
+    assert !(pkgs.lib.hasInfix "--xattr" virtiofsDaemonScript);
     assert pkgs.lib.hasInfix "ulimit -Hn" virtiofsDaemonScript;
     assert pkgs.lib.hasInfix "--inode-file-handles=never" virtiofsDaemonScript;
     assert pkgs.lib.hasInfix "--inode-file-handles=prefer" inodeFileHandlesPreferVirtiofsDaemonScript;
     assert pkgs.lib.hasInfix "--inode-file-handles=prefer"
       nativeInodeFileHandlesPreferVirtiofsDaemonScript;
     assert builtins.any (mount: mount.tag == "workspace_cwd") virtiofsDaemonMounts;
-    assert !(manifest ? vsock);
+    assert manifest.vsock == { };
+    assert vsockDisabledManifest.vsock.disabled == true;
     assert !(manifest.ssh ? destination);
     assert !(manifest ? qemuConfig);
     assert !(manifest ? microvmRun);
@@ -541,6 +623,85 @@ let
       mount: mount.tag == "tools" && mount.virtiofs.socket != "" && mount.virtiofs ? bin
     ) (mountsOfType "virtiofs" extraSharesManifest);
     assert !(builtins.any (mount: mount.tag == "cache") (mountsOfType "virtiofs" extraSharesManifest));
+    true;
+
+  _hotplugMounts =
+    assert builtins.length hotplugMountsManifest.hotplug.mounts == 2;
+    assert builtins.any (
+      mount:
+      mount.type == "virtiofs"
+      && mount.tag == "cache"
+      && mount.source == ".agentspace-test/cache"
+      && mount.target == "/mnt/cache"
+      && mount.read_only == true
+      && mount.virtiofs ? bin
+      && mount.virtiofs.args == [ ]
+      && !(mount.virtiofs ? socket)
+    ) hotplugMountsManifest.hotplug.mounts;
+    assert builtins.any (
+      mount:
+      mount.type == "virtiofs"
+      && mount.tag == "tools"
+      && mount.source == ".agentspace-test/tools"
+      && mount.read_only == false
+      && mount.virtiofs ? bin
+      && mount.virtiofs.args == [ ]
+      && !(mount ? target)
+    ) hotplugMountsManifest.hotplug.mounts;
+    assert
+      !(builtins.any (mount: mount.tag == "cache") (mountsOfType "virtiofs" hotplugMountsManifest));
+    assert
+      !(builtins.any (mount: mount.tag == "tools") (mountsOfType "virtiofs" hotplugMountsManifest));
+    true;
+
+  _mounts =
+    assert
+      builtins.map (mount: mount.tag) (mountsOfType "virtiofs" mountsManifest) == [
+        "ro-store"
+        "cache"
+        "legacy-share"
+      ];
+    assert builtins.any (
+      mount:
+      mount.tag == "cache"
+      && mount.source == ".agentspace-test/cache"
+      && mount.read_only == true
+      && mount.virtiofs.socket == "agent-sandbox-virtiofs-cache.sock"
+      && mount.virtiofs ? bin
+    ) (mountsOfType "virtiofs" mountsManifest);
+    assert builtins.any (
+      mount:
+      mount.tag == "scratch"
+      && mount.source == ".agentspace-test/scratch"
+      && mount.read_only == false
+      && mount."9p".security_model == "mapped"
+    ) (mountsOfType "9p" mountsManifest);
+    assert
+      builtins.map (mount: mount.source) (mountsOfType "image" mountsManifest) == [
+        ".agentspace/nix-store-overlay.img"
+        ".agentspace-test/data.img"
+        ".agentspace-test/legacy.img"
+      ];
+    assert builtins.any (
+      mount:
+      mount.source == ".agentspace-test/data.img"
+      && mount.read_only == true
+      && mount.image.size == 512
+      && mount.image.fs == "ext4"
+      && mount.image.create == true
+      && mount.image.direct == true
+      && mount.image.serial == "new-data"
+    ) (mountsOfType "image" mountsManifest);
+    assert builtins.any (
+      share:
+      share.tag == "cache" && share.source == ".agentspace-test/cache" && share.mountPoint == "/mnt/cache"
+    ) vmVirtieMounts.config.microvm.shares;
+    assert builtins.any (
+      volume:
+      volume.image == ".agentspace-test/data.img"
+      && volume.mountPoint == "/mnt/data"
+      && volume.size == 512
+    ) vmVirtieMounts.config.microvm.volumes;
     true;
 
   _extraImagesAndPorts =
@@ -764,6 +925,14 @@ in
   virtie-manifest-extra-shares-contract =
     assert _extraShares;
     pkgs.runCommand "virtie-manifest-extra-shares-contract" { } "touch $out";
+
+  virtie-manifest-hotplug-mounts-contract =
+    assert _hotplugMounts;
+    pkgs.runCommand "virtie-manifest-hotplug-mounts-contract" { } "touch $out";
+
+  virtie-manifest-mounts-contract =
+    assert _mounts;
+    pkgs.runCommand "virtie-manifest-mounts-contract" { } "touch $out";
 
   virtie-manifest-extra-images-and-ports-contract =
     assert _extraImagesAndPorts;

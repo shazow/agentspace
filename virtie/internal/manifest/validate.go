@@ -78,7 +78,7 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest.vsock.cidRange.end must be greater than or equal to start")
 	case !validQEMUTransport(m.QEMU.Devices.RNG.Transport):
 		return fmt.Errorf("manifest.qemu.devices.rng.transport must be one of pci, mmio, or ccw")
-	case !validQEMUTransport(m.QEMU.Devices.VSOCK.Transport):
+	case !m.QEMU.Devices.VSOCK.Disabled && !validQEMUTransport(m.QEMU.Devices.VSOCK.Transport):
 		return fmt.Errorf("manifest.qemu.devices.vsock.transport must be one of pci, mmio, or ccw")
 	}
 
