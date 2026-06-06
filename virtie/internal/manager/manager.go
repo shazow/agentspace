@@ -424,11 +424,6 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return nil
 	}
 
-	featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
-		qmpTimeout: m.effectiveQMPCommandTimeout(),
-		notifier:   notifier,
-	}, manifest, qmpClient)
-
 	if resumeState != nil {
 		if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
@@ -438,12 +433,14 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		}
 	}
 
+	foregroundQMPClient := qmpClient
 	if qmpClient != nil {
 		m.logger.Info("releasing qmp client for foreground launch")
 		if err := qmpClient.Disconnect(); err != nil {
 			return &stageError{Stage: "vm startup", Err: err}
 		}
 		qmpClient = nil
+		foregroundQMPClient = reconnectingQMPClient{manager: m, socketPath: qmpSocketPath}
 		qemu.SetShutdown(func() error {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), m.effectiveQMPConnectTimeout()+m.effectiveQMPQuitTimeout())
 			defer cancel()
@@ -455,6 +452,13 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return client.Quit(m.effectiveQMPQuitTimeout())
 		})
 	}
+	suspendHandler = newLaunchSuspendHandler(m, manifest, qmpSocketPath, foregroundQMPClient, cid, notifier, func() bool {
+		return writeBackOnExit
+	})
+	featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
+		qmpTimeout: m.effectiveQMPCommandTimeout(),
+		notifier:   notifier,
+	}, manifest, foregroundQMPClient)
 
 	hint, err := buildSSHCommandHint(manifest, cid)
 	if err != nil {

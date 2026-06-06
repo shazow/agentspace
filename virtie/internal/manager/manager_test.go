@@ -874,6 +874,117 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchWithoutSSHSuspendsWithReconnectedQMP(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	startupQMP := &fakeQMPClient{}
+	suspendQMP := &fakeQMPClient{}
+	signalCh := make(chan os.Signal, 1)
+	runner := &launchRunner{}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{clients: []qmpClient{startupQMP, suspendQMP}},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		signals:           signalCh,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	go func() {
+		for {
+			startupQMP.mu.Lock()
+			disconnected := startupQMP.disconnectCalls > 0
+			startupQMP.mu.Unlock()
+			if disconnected {
+				signalCh <- syscall.SIGTSTP
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo}); err != nil {
+		t.Fatalf("launch without ssh suspend: %v", err)
+	}
+	if startupQMP.queryStatusCalls != 0 || startupQMP.migrateCalls != 0 {
+		t.Fatalf("startup qmp client was reused after disconnect: query=%d migrate=%d", startupQMP.queryStatusCalls, startupQMP.migrateCalls)
+	}
+	if suspendQMP.queryStatusCalls == 0 || suspendQMP.stopCalls == 0 || suspendQMP.migrateCalls == 0 || suspendQMP.queryMigrateCalls == 0 {
+		t.Fatalf("expected suspend to use reconnected qmp client, got query=%d stop=%d migrate=%d queryMigrate=%d", suspendQMP.queryStatusCalls, suspendQMP.stopCalls, suspendQMP.migrateCalls, suspendQMP.queryMigrateCalls)
+	}
+	if startupQMP.disconnectCalls == 0 {
+		t.Fatal("expected startup qmp client to be released before foreground wait")
+	}
+}
+
+func TestManagerLaunchWithoutSSHBalloonUsesReconnectedQMP(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifestWithBalloon(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+	cfg.QEMU.Devices.Balloon.Controller = &balloonpkg.ControllerConfig{
+		MinActual:             256,
+		MaxActual:             512,
+		GrowBelowAvailable:    128,
+		ReclaimAboveAvailable: 256,
+		Step:                  128,
+		PollIntervalSeconds:   1,
+	}
+
+	startupQMP := &fakeQMPClient{}
+	balloonEnabled := make(chan struct{})
+	var closeBalloonEnabled sync.Once
+	balloonQMP := (&fakeQMPClient{
+		onEnableBalloonStats: func() {
+			closeBalloonEnabled.Do(func() { close(balloonEnabled) })
+		},
+	}).withDefaultBalloonPath("/machine/peripheral/balloon0")
+	runner := &launchRunner{}
+	var logOutput bytes.Buffer
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:         &fakeQMPDialer{clients: []qmpClient{startupQMP, balloonQMP}},
+		logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		logWriter:         &logOutput,
+		shutdownDelay:     10 * time.Millisecond,
+		qmpRetryDelay:     0,
+		qmpConnectTimeout: time.Millisecond,
+		qmpQuitTimeout:    time.Millisecond,
+	}
+
+	go func() {
+		<-balloonEnabled
+		runner.exitQEMU(nil)
+	}()
+
+	if err := manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo}); err != nil {
+		t.Fatalf("launch without ssh balloon: %v", err)
+	}
+	if startupQMP.disconnectCalls == 0 {
+		t.Fatal("expected startup qmp client to be released before foreground wait")
+	}
+	if balloonQMP.disconnectCalls == 0 {
+		t.Fatal("expected balloon controller to use and release a reconnected qmp client")
+	}
+	if balloonQMP.queryStatusCalls != 0 {
+		t.Fatalf("unexpected suspend use of balloon qmp client: query=%d", balloonQMP.queryStatusCalls)
+	}
+}
+
 func TestManagerLaunchWithSSHAndEmptyExecSkipsAutoconnect(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -4491,12 +4602,28 @@ func startFakeSSHReadySocket(_ context.Context, path string) error {
 
 type fakeQMPDialer struct {
 	client   qmpClient
+	clients  []qmpClient
 	attempts int
 }
 
 func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpClient, error) {
 	d.attempts++
-	return d.client, nil
+	var client qmpClient
+	if len(d.clients) > 0 {
+		index := d.attempts - 1
+		if index >= len(d.clients) {
+			index = len(d.clients) - 1
+		}
+		client = d.clients[index]
+	} else {
+		client = d.client
+	}
+	if fake, ok := client.(*fakeQMPClient); ok {
+		fake.mu.Lock()
+		fake.disconnected = false
+		fake.mu.Unlock()
+	}
+	return client, nil
 }
 
 type fakeGuestAgentDialer struct {
@@ -4831,11 +4958,15 @@ type fakeQMPClient struct {
 	readBalloonStatsUpdated  time.Time
 	setBalloonLogicalSizes   []int64
 	setBalloonErr            error
+	disconnected             bool
 }
 
 func (c *fakeQMPClient) RunRaw(timeout time.Duration, command string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return err
+	}
 	c.rawCommands = append(c.rawCommands, command)
 	return nil
 }
@@ -4843,6 +4974,9 @@ func (c *fakeQMPClient) RunRaw(timeout time.Duration, command string) error {
 func (c *fakeQMPClient) DeviceDelAndWait(timeout time.Duration, id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return err
+	}
 	c.rawCommands = append(c.rawCommands, `{"execute":"device_del","arguments":{"id":"`+id+`"}}`)
 	c.deviceDelWaits = append(c.deviceDelWaits, id)
 	return nil
@@ -4850,6 +4984,10 @@ func (c *fakeQMPClient) DeviceDelAndWait(timeout time.Duration, id string) error
 
 func (c *fakeQMPClient) Quit(timeout time.Duration) error {
 	c.mu.Lock()
+	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
 	c.quitCalls++
 	onQuit := c.onQuit
 	c.mu.Unlock()
@@ -4862,6 +5000,10 @@ func (c *fakeQMPClient) Quit(timeout time.Duration) error {
 
 func (c *fakeQMPClient) Stop(timeout time.Duration) error {
 	c.mu.Lock()
+	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
 	c.stopCalls++
 	c.status = "paused"
 	onStop := c.onStop
@@ -4874,6 +5016,10 @@ func (c *fakeQMPClient) Stop(timeout time.Duration) error {
 
 func (c *fakeQMPClient) Cont(timeout time.Duration) error {
 	c.mu.Lock()
+	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
 	c.contCalls++
 	c.status = "running"
 	onCont := c.onCont
@@ -4887,6 +5033,9 @@ func (c *fakeQMPClient) Cont(timeout time.Duration) error {
 func (c *fakeQMPClient) QueryStatus(timeout time.Duration) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return "", err
+	}
 
 	c.queryStatusCalls++
 	if c.status == "" {
@@ -4898,6 +5047,9 @@ func (c *fakeQMPClient) QueryStatus(timeout time.Duration) (string, error) {
 func (c *fakeQMPClient) MigrateToFile(timeout time.Duration, path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return err
+	}
 	c.migrateCalls++
 	c.migratePath = path
 	c.migrationStatus = "completed"
@@ -4907,6 +5059,9 @@ func (c *fakeQMPClient) MigrateToFile(timeout time.Duration, path string) error 
 func (c *fakeQMPClient) MigrateIncoming(timeout time.Duration, path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return err
+	}
 	c.migrateIncomingCalls++
 	c.migrateIncomingPath = path
 	c.migrationStatus = "completed"
@@ -4916,6 +5071,9 @@ func (c *fakeQMPClient) MigrateIncoming(timeout time.Duration, path string) erro
 func (c *fakeQMPClient) QueryMigrate(timeout time.Duration) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkConnectedLocked(); err != nil {
+		return "", err
+	}
 	c.queryMigrateCalls++
 	if c.migrationStatus == "" {
 		c.migrationStatus = "completed"
@@ -4939,6 +5097,14 @@ func (c *fakeQMPClient) Disconnect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.disconnectCalls++
+	c.disconnected = true
+	return nil
+}
+
+func (c *fakeQMPClient) checkConnectedLocked() error {
+	if c.disconnected {
+		return errors.New("qmp client is disconnected")
+	}
 	return nil
 }
 
@@ -4953,6 +5119,12 @@ func (c *fakeQMPClient) withDefaultBalloonPath(path string) *fakeQMPClient {
 }
 
 func (c *fakeQMPClient) WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error {
+	c.mu.Lock()
+	if err := c.checkConnectedLocked(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	c.mu.Unlock()
 	return fn(rawQMP.NewMonitor(&fakeMonitor{handler: c.handleQMP}))
 }
 
