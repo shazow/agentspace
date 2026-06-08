@@ -13,7 +13,6 @@ import (
 	"syscall"
 
 	"github.com/jessevdk/go-flags"
-	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/manager"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -42,13 +41,13 @@ func (c *launchCommand) Execute(args []string) error {
 	discardLogger := slog.New(slog.DiscardHandler)
 	manifestLogger := discardLogger
 	manager.SetLogger(discardLogger)
-	balloon.SetLogger(discardLogger)
+	manager.SetBalloonLogger(discardLogger)
 	if len(c.options.Verbose) > 0 {
 		manifestLogger = baseLogger.With("package", "manifest")
 		manager.SetLogger(baseLogger.With("package", "manager"))
 	}
 	if len(c.options.Verbose) > 1 {
-		balloon.SetLogger(baseLogger.With("package", "balloon"))
+		manager.SetBalloonLogger(baseLogger.With("package", "balloon"))
 	}
 
 	manifest, err := loadLaunchManifest(c.options.Manifest, manifestLogger)

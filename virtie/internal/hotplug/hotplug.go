@@ -1,3 +1,5 @@
+//go:build !virtie_no_hotplug
+
 package hotplug
 
 import (
@@ -7,55 +9,29 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
 )
 
-type Kind string
+type Kind = hotplugtypes.Kind
 
 const (
-	KindVirtioFS Kind = "virtiofs"
-	KindNet      Kind = "net"
-	KindBlock    Kind = "block"
+	KindVirtioFS = hotplugtypes.KindVirtioFS
+	KindNet      = hotplugtypes.KindNet
+	KindBlock    = hotplugtypes.KindBlock
 )
 
-type Device struct {
-	Kind     Kind     `json:"kind"`
-	ID       string   `json:"id"`
-	VirtioFS VirtioFS `json:"virtiofs,omitempty"`
-	Net      Net      `json:"net,omitempty"`
-	Block    Block    `json:"block,omitempty"`
-}
+type Device = hotplugtypes.Device
 
-type VirtioFS struct {
-	Source     string   `json:"source"`
-	Target     string   `json:"target,omitempty"`
-	SocketPath string   `json:"socketPath"`
-	Bin        string   `json:"bin"`
-	Args       []string `json:"args,omitempty"`
-}
+type VirtioFS = hotplugtypes.VirtioFS
 
-type Net struct {
-	Backend string    `json:"backend"`
-	MAC     string    `json:"mac"`
-	Forward []Forward `json:"forward,omitempty"`
-}
+type Net = hotplugtypes.Net
 
-type Forward struct {
-	Proto string `json:"proto"`
-	Host  string `json:"host"`
-	Guest string `json:"guest"`
-}
+type Forward = hotplugtypes.Forward
 
-type Block struct {
-	ImagePath string `json:"imagePath"`
-	Format    string `json:"format"`
-	ReadOnly  bool   `json:"readOnly,omitempty"`
-	Serial    string `json:"serial,omitempty"`
-}
+type Block = hotplugtypes.Block
 
 type Hotplug interface {
 	Attach() error
@@ -63,12 +39,7 @@ type Hotplug interface {
 	ID() string
 }
 
-type State struct {
-	ID   string `json:"id"`
-	Kind Kind   `json:"kind"`
-	Bus  string `json:"bus"`
-	PID  int    `json:"pid,omitempty"`
-}
+type State = hotplugtypes.State
 
 type Runtime struct {
 	StateDir string
@@ -416,43 +387,15 @@ func (r Runtime) terminatePID(pid int) error {
 }
 
 func StatePath(stateDir string, id string) (string, error) {
-	if strings.ContainsAny(id, `/\`) {
-		return "", fmt.Errorf("hotplug id %q must not contain path separators", id)
-	}
-	return filepath.Join(stateDir, "hotplug", id+".json"), nil
+	return hotplugtypes.StatePath(stateDir, id)
 }
 
 func WriteState(path string, state State) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create hotplug state directory: %w", err)
-	}
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode hotplug state: %w", err)
-	}
-	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write hotplug state %q: %w", path, err)
-	}
-	return nil
+	return hotplugtypes.WriteState(path, state)
 }
 
 func ReadState(path string) (State, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return State{}, fmt.Errorf("hotplug state %q does not exist; is this device attached?", path)
-		}
-		return State{}, fmt.Errorf("read hotplug state %q: %w", path, err)
-	}
-	var state State
-	if err := json.Unmarshal(data, &state); err != nil {
-		return State{}, fmt.Errorf("decode hotplug state %q: %w", path, err)
-	}
-	if state.ID == "" || state.Bus == "" || state.Kind == "" {
-		return State{}, fmt.Errorf("invalid hotplug state %q", path)
-	}
-	return state, nil
+	return hotplugtypes.ReadState(path)
 }
 
 func attachCommands(device Device, bus string) []string {
@@ -584,9 +527,5 @@ func qmpCommand(execute string, arguments map[string]any) string {
 }
 
 func DefaultVirtioFSArgs(socketPath string, source string, id string) []string {
-	return []string{
-		"--socket-path=" + socketPath,
-		"--shared-dir=" + source,
-		"--tag=" + id,
-	}
+	return hotplugtypes.DefaultVirtioFSArgs(socketPath, source, id)
 }

@@ -1,3 +1,5 @@
+//go:build !virtie_no_hotplug
+
 package manager
 
 import (
@@ -18,6 +20,8 @@ import (
 type HotplugOptions struct {
 	Detach bool
 }
+
+const hotplugBuiltIn = true
 
 func Hotplug(ctx context.Context, manifest *manifest.Manifest, id string, options HotplugOptions) error {
 	return newManager().hotplug(ctx, manifest, id, options)
