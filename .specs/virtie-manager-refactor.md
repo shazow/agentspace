@@ -36,16 +36,16 @@ Acceptance criteria:
 
 - [ ] `launchWithOptions` is reduced to composing `Plan`, `Launcher`,
   `Runtime`, and foreground wait/teardown calls.
-- [ ] The launch process starts a `virtie.sock` server after QMP readiness and
+- [x] The launch process starts a `virtie.sock` server after QMP readiness and
   stops it during teardown.
-- [ ] `virtie suspend` and `virtie hotplug` prefer typed client calls through
+- [x] `virtie suspend` and `virtie hotplug` prefer typed client calls through
   `virtie.sock` when available. Balloon is exposed through the typed client and
   server capability model; adding a CLI command is optional follow-up work.
-- [ ] QMP-affecting runtime operations are serialized through the launch-owned
+- [x] QMP-affecting runtime operations are serialized through the launch-owned
   runtime.
-- [ ] Existing `virtie/internal/manager` tests continue passing after each
+- [x] Existing `virtie/internal/manager` tests continue passing after each
   migration phase.
-- [ ] New tests cover typed RPC transport, socket permissions, status,
+- [x] New tests cover typed RPC transport, socket permissions, status,
   suspend, hotplug, balloon, and info calls.
 
 ## Progress
@@ -58,11 +58,11 @@ Acceptance criteria:
   strings to callers.
 - [ ] Extract planning, runtime ownership, and process grouping from the
   current launch path.
-- [ ] Move status and info behavior onto the core runtime interface, and move
+- [x] Move status and info behavior onto the core runtime interface, and move
   suspend, hotplug, and balloon behavior onto optional runtime capability
   interfaces.
-- [ ] Add the typed control socket server and client.
-- [ ] Route CLI control commands through `virtie.sock` with compatibility
+- [x] Add the typed control socket server and client.
+- [x] Route CLI control commands through `virtie.sock` with compatibility
   fallbacks.
 
 ## Appendix

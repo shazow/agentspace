@@ -190,6 +190,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	controlSocketPath, err := manifest.ResolvedControlSocketPath()
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
 	volumes := manifest.ResolvedVolumes()
 
 	lock, err := m.locker.Acquire(manifest.ResolvedLockPath())
@@ -246,6 +250,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
+	if controlSocketPath != "" {
+		if err := ensureParentDirectories([]string{controlSocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
+	}
 	if err := ensureExistingSocketPaths(externalVirtioFSSocketPaths); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -272,6 +281,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
+	if controlSocketPath != "" {
+		if err := removeSocketPaths([]string{controlSocketPath}); err != nil {
+			return &stageError{Stage: "preflight", Err: err}
+		}
+	}
 	if err := ensureVolumeImages(volumes, m.logger); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -279,6 +293,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	started := executor.NewGroup()
 	var qmpClient qmpClient
 	var featureTasks managedTaskGroup
+	var runtime *Runtime
 	writeBackOnExit := false
 	defer func() {
 		savedSuspend := errors.Is(err, errSavedSuspendExit)
@@ -293,6 +308,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 				err = errors.Join(err, writeBackErr)
 			}
 		}
+		var runtimeErr error
+		if runtime != nil {
+			runtimeErr = runtime.Close()
+		}
 		featureErr := featureTasks.Stop()
 		stopErr := started.StopAll(m.shutdownDelay)
 		var disconnectErr error
@@ -306,12 +325,15 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if sshReadySocketPath != "" {
 			socketCleanupFiles = append(socketCleanupFiles, sshReadySocketPath)
 		}
+		if controlSocketPath != "" {
+			socketCleanupFiles = append(socketCleanupFiles, controlSocketPath)
+		}
 		socketCleanupFiles = append(socketCleanupFiles, cleanupFiles...)
 		cleanupErr := removeSocketPaths(socketCleanupFiles)
 		if err == nil {
-			err = errors.Join(featureErr, stopErr, disconnectErr, cleanupErr)
-		} else if featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {
-			err = errors.Join(err, featureErr, stopErr, disconnectErr, cleanupErr)
+			err = errors.Join(runtimeErr, featureErr, stopErr, disconnectErr, cleanupErr)
+		} else if runtimeErr != nil || featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {
+			err = errors.Join(err, runtimeErr, featureErr, stopErr, disconnectErr, cleanupErr)
 		}
 		stats.MarkCompleted(time.Now())
 		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
@@ -351,6 +373,15 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	if err != nil {
 		return err
 	}
+	runtime = newRuntime(m, manifest, RuntimePaths{
+		StateDir:         manifest.ResolvedPersistenceStateDir(),
+		ControlSocket:    controlSocketPath,
+		QMPSocket:        qmpSocketPath,
+		GuestAgentSocket: guestAgentSocketPath,
+		SSHReadySocket:   sshReadySocketPath,
+		Cleanup:          append([]string(nil), cleanupFiles...),
+	}, cid, stats, qmpClient, suspendRequests)
+	qmpClient = runtime.QMP()
 	stats.MarkQMPReady(time.Now())
 	qemu.SetShutdown(func() error {
 		return qmpClient.Quit(m.effectiveQMPQuitTimeout())
@@ -376,6 +407,11 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid, notifier, func() bool {
 		return writeBackOnExit
 	})
+	runtime.SetSuspendHandler(suspendHandler)
+	runtime.SetReady()
+	if err := runtime.StartControl(launchCtx); err != nil {
+		return &stageError{Stage: "control startup", Err: err}
+	}
 	// Honor a suspend signal queued during startup before guest-file install or
 	// SSH startup proceeds.
 	select {
@@ -442,6 +478,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	vmWatchers := started.Snapshot()
 	vmWatchers.Remove(qemu)
+	runtime.SetWatchers(vmWatchers)
 	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, vmWatchers); err != nil {
 		return err
 	}
