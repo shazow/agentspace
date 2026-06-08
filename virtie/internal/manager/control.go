@@ -18,6 +18,26 @@ func Suspend(ctx context.Context, manifest *manifest.Manifest) error {
 }
 
 func (m *manager) suspend(ctx context.Context, manifest *manifest.Manifest) error {
+	controlSocketPath, err := manifest.ResolvedControlSocketPath()
+	if err == nil && controlSocketPath != "" {
+		resp, err := Dial(controlSocketPath).Suspend(ctx, SuspendRequest{})
+		if err == nil {
+			if resp.Saved {
+				timeout := m.effectiveSuspendSignalTimeout(manifest)
+				waitCtx, cancel := context.WithTimeout(ctx, timeout)
+				defer cancel()
+				if err := waitForLaunchExited(waitCtx, manifest, timeout); err != nil {
+					return &stageError{Stage: "launch signal", Err: err}
+				}
+				return nil
+			}
+			return &stageError{Stage: "qmp suspend", Err: fmt.Errorf("launch process did not save VM state")}
+		}
+		if !isControlSocketUnavailable(err) {
+			return &stageError{Stage: "control suspend", Err: err}
+		}
+	}
+
 	pid, err := m.launchPID(manifest)
 	if err != nil {
 		if saved, stateErr := hasSavedSuspendState(manifest); stateErr != nil {

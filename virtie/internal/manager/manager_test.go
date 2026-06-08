@@ -33,7 +33,10 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
-const testMiB int64 = 1024 * 1024
+const (
+	testMiB             int64 = 1024 * 1024
+	testNoReturnTimeout       = 50 * time.Millisecond
+)
 
 func manifestWriteText(text string) manifest.WriteFile {
 	return manifest.WriteFile{
@@ -2810,6 +2813,84 @@ func TestLaunchSuspendHandlerSaveAndExitIsIdempotent(t *testing.T) {
 	}
 }
 
+type testSuspendControlHandler struct {
+	fakeControlCore
+	onSuspend func() error
+}
+
+func (h *testSuspendControlHandler) Suspend(context.Context, SuspendRequest) (SuspendResponse, error) {
+	if h.onSuspend != nil {
+		if err := h.onSuspend(); err != nil {
+			return SuspendResponse{}, err
+		}
+	}
+	return SuspendResponse{Saved: true, VMStatePath: "/tmp/vm-state"}, nil
+}
+
+func TestManagerSuspendControlSocketWaitsForLaunchExit(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	if err := writeLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
+	if err != nil {
+		t.Fatalf("resolve control socket: %v", err)
+	}
+
+	allowRemove := make(chan struct{})
+	removeDone := make(chan error, 1)
+	suspendCalled := make(chan struct{})
+	startTestControlServerAt(t, controlSocketPath, &testSuspendControlHandler{
+		onSuspend: func() error {
+			close(suspendCalled)
+			go func() {
+				<-allowRemove
+				removeDone <- removeLaunchPID(cfg, 12345)
+			}()
+			return nil
+		},
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- (&manager{}).suspend(context.Background(), cfg)
+	}()
+
+	select {
+	case <-suspendCalled:
+	case err := <-done:
+		t.Fatalf("suspend returned before control handler ran: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("control suspend was not called")
+	}
+
+	select {
+	case err := <-done:
+		t.Fatalf("suspend returned before launch pid removal: %v", err)
+	case <-time.After(testNoReturnTimeout):
+	}
+
+	close(allowRemove)
+	select {
+	case err := <-removeDone:
+		if err != nil {
+			t.Fatalf("remove launch pid: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("launch pid was not removed")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("suspend: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("suspend did not return after launch pid removal")
+	}
+}
+
 func TestManagerSuspendSignalsLaunchAndWaitsForSavedStateAndExit(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -3490,6 +3571,62 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	}
 	if state.ID != "cache" || state.Kind != hotplug.KindVirtioFS || state.Bus != "pcie.hotplug.0" || state.PID != 1 {
 		t.Fatalf("unexpected hotplug state: %#v", state)
+	}
+}
+
+func TestManagerHotplugFallsBackWhenControlSocketUnsupported(t *testing.T) {
+	if !hotplugBuiltIn {
+		t.Skip("hotplug implementation is not built")
+	}
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.QEMU.Hotplug.PCIEPorts = 1
+	cfg.Hotplug = []hotplug.Device{
+		{
+			Kind: hotplug.KindVirtioFS,
+			ID:   "cache",
+			VirtioFS: hotplug.VirtioFS{
+				Source:     filepath.Join(tmpDir, "cache"),
+				Target:     "/mnt/cache",
+				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
+				Bin:        "/bin/virtiofsd",
+				Args:       []string{"--socket=" + filepath.Join(tmpDir, ".virtie", "cache.sock")},
+			},
+		},
+	}
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
+	if err != nil {
+		t.Fatalf("resolve control socket: %v", err)
+	}
+	startTestControlServerAt(t, controlSocketPath, &fakeControlCore{})
+
+	qmpClient := &fakeQMPClient{}
+	guestClient := &fakeGuestAgentClient{}
+	runner := &launchRunner{}
+	manager := &manager{
+		runner:            runner,
+		qmpDialer:         &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
+		socketWaiter:      &fakeSocketWaiter{},
+		qmpConnectTimeout: time.Second,
+		qmpRetryDelay:     time.Millisecond,
+	}
+
+	if err := manager.hotplug(context.Background(), cfg, "cache", HotplugOptions{}); err != nil {
+		t.Fatalf("attach hotplug with unsupported control socket: %v", err)
+	}
+
+	if got, want := runner.startedNames(), []string{"virtiofsd"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected starts: got %#v want %#v", got, want)
+	}
+	if got := strings.Join(qmpClient.rawCommands, "\n"); !strings.Contains(got, `"execute":"chardev-add"`) || !strings.Contains(got, `"execute":"device_add"`) {
+		t.Fatalf("unexpected qmp commands: got %#v", qmpClient.rawCommands)
+	}
+	if len(guestClient.execs) != 1 || guestClient.execs[0].path != "/run/current-system/sw/bin/mount" {
+		t.Fatalf("unexpected guest execs: %#v", guestClient.execs)
 	}
 }
 

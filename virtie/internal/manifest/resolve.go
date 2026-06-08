@@ -123,6 +123,10 @@ func (m *Manifest) ResolvedSSHReadySocketPath() (string, error) {
 	return m.resolveSocketPath(m.QEMU.SSHReady.SocketPath)
 }
 
+func (m *Manifest) ResolvedControlSocketPath() (string, error) {
+	return m.resolveSocketPath("virtie.sock")
+}
+
 func (m *Manifest) ResolvedQEMU() (QEMU, error) {
 	resolved := m.QEMU
 	resolved.Kernel.Path = m.resolvePath(resolved.Kernel.Path)

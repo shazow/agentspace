@@ -31,6 +31,16 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 	if err := launchManifest.Validate(); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
+	controlSocketPath, err := launchManifest.ResolvedControlSocketPath()
+	if err == nil && controlSocketPath != "" {
+		_, err := Dial(controlSocketPath).Hotplug(ctx, HotplugRequest{ID: id, Detach: options.Detach})
+		if err == nil {
+			return nil
+		}
+		if !isControlSocketUnavailable(err) && !isControlUnsupported(err) {
+			return &stageError{Stage: "control hotplug", Err: err}
+		}
+	}
 	runtime, err := m.hotplugRuntime(ctx, launchManifest)
 	if err != nil {
 		return &stageError{Stage: "hotplug", Err: err}

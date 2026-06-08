@@ -1,0 +1,312 @@
+package manager
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"sync"
+	"syscall"
+	"time"
+
+	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
+	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/manifest"
+)
+
+type RuntimePaths struct {
+	StateDir         string
+	RuntimeDir       string
+	ControlSocket    string
+	QMPSocket        string
+	GuestAgentSocket string
+	SSHReadySocket   string
+	Cleanup          []string
+}
+
+type Runtime struct {
+	manager         *manager
+	manifest        *manifest.Manifest
+	paths           RuntimePaths
+	cid             int
+	stats           *launchStats
+	qmp             qmpClient
+	suspendHandler  *launchSuspendHandler
+	suspendRequests chan<- struct{}
+	watchers        executor.Group
+	server          *Server
+
+	stateMu   sync.Mutex
+	state     RuntimeState
+	closeOnce sync.Once
+}
+
+func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests chan<- struct{}) *Runtime {
+	return &Runtime{
+		manager:         manager,
+		manifest:        manifest,
+		paths:           paths,
+		cid:             cid,
+		stats:           stats,
+		qmp:             newSerializedQMPClient(qmp),
+		suspendRequests: suspendRequests,
+		state:           RuntimeStarting,
+	}
+}
+
+func (r *Runtime) SetReady() {
+	r.setState(RuntimeReady)
+}
+
+func (r *Runtime) SetSuspendHandler(handler *launchSuspendHandler) {
+	r.suspendHandler = handler
+}
+
+func (r *Runtime) SetWatchers(watchers executor.Group) {
+	r.watchers = watchers
+}
+
+func (r *Runtime) QMP() qmpClient {
+	return r.qmp
+}
+
+func (r *Runtime) StartControl(ctx context.Context) error {
+	if r.paths.ControlSocket == "" {
+		return nil
+	}
+	listener, err := Listen(r.paths.ControlSocket)
+	if err != nil {
+		return err
+	}
+	router, err := NewRuntimeRouter(r)
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	server := &Server{Handler: router, Logger: r.manager.logger}
+	r.server = server
+	go func() {
+		if err := server.Serve(listener); err != nil && ctx.Err() == nil && r.manager.logger != nil {
+			r.manager.logger.Info("control socket stopped", "err", err)
+		}
+	}()
+	return nil
+}
+
+func (r *Runtime) Close() error {
+	var err error
+	r.closeOnce.Do(func() {
+		r.setState(RuntimeStopping)
+		if r.server != nil {
+			err = r.server.Close()
+		}
+		r.setState(RuntimeStopped)
+	})
+	return err
+}
+
+func (r *Runtime) Status(ctx context.Context, req StatusRequest) (StatusResponse, error) {
+	_ = ctx
+	return StatusResponse{
+		State: r.currentState(),
+		CID:   r.cid,
+		Paths: StatusPaths{
+			ControlSocket:    r.paths.ControlSocket,
+			QMPSocket:        r.paths.QMPSocket,
+			GuestAgentSocket: r.paths.GuestAgentSocket,
+			SSHReadySocket:   r.paths.SSHReadySocket,
+		},
+		Stats: runtimeStatsFromLaunchStats(r.stats),
+	}, nil
+}
+
+func (r *Runtime) Info(ctx context.Context, req InfoRequest) (InfoResponse, error) {
+	info, err := r.manager.collectGuestInfo(ctx, r.paths.GuestAgentSocket, r.watchers)
+	if err != nil {
+		return InfoResponse{}, failedPrecondition(err)
+	}
+	return InfoResponse{ProcessList: info.ProcessList}, nil
+}
+
+func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendResponse, error) {
+	if r.suspendHandler == nil {
+		return SuspendResponse{}, failedPrecondition(fmt.Errorf("suspend handler is not ready"))
+	}
+	r.setState(RuntimeSuspending)
+	err := r.suspendHandler.saveAndExit(ctx)
+	if err != nil && !errors.Is(err, errSavedSuspendExit) {
+		return SuspendResponse{}, err
+	}
+	r.setState(RuntimeSuspended)
+	if r.suspendRequests != nil {
+		select {
+		case r.suspendRequests <- struct{}{}:
+		default:
+		}
+	}
+	return SuspendResponse{Saved: true, VMStatePath: vmStatePath(r.manifest)}, nil
+}
+
+func (r *Runtime) Balloon(ctx context.Context, req BalloonRequest) (BalloonResponse, error) {
+	_ = ctx
+	if r.manifest.QEMU.Devices.Balloon == nil {
+		return BalloonResponse{}, failedPrecondition(fmt.Errorf("balloon device is not configured"))
+	}
+	timeout := r.manager.effectiveQMPCommandTimeout()
+	var actual int64
+	if err := r.qmp.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {
+		info, err := monitor.QueryBalloon()
+		if err != nil {
+			return fmt.Errorf("qmp query-balloon: %w", err)
+		}
+		actual = info.Actual
+		if req.TargetBytes > 0 {
+			if err := monitor.Balloon(req.TargetBytes); err != nil {
+				return fmt.Errorf("qmp balloon: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return BalloonResponse{}, err
+	}
+	return BalloonResponse{ActualBytes: actual, TargetBytes: req.TargetBytes}, nil
+}
+
+func failedPrecondition(err error) error {
+	return &RPCError{Code: ErrFailedPrecondition, Message: err.Error()}
+}
+
+func (r *Runtime) setState(state RuntimeState) {
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	r.state = state
+}
+
+func (r *Runtime) currentState() RuntimeState {
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	return r.state
+}
+
+func runtimeStatsFromLaunchStats(stats *launchStats) RuntimeStats {
+	if stats == nil {
+		return RuntimeStats{}
+	}
+	resp := RuntimeStats{
+		StartedAt:     stats.started,
+		BootStartedAt: stats.bootStarted,
+		QMPReadyAt:    stats.qmpReady,
+		FilesReadyAt:  stats.filesReady,
+		SSHReadyAt:    stats.sshReady,
+		SSHStartedAt:  stats.sshStarted,
+		CompletedAt:   stats.completed,
+		SSHAttempts:   stats.sshAttempts,
+	}
+	if !stats.started.IsZero() && !stats.bootStarted.IsZero() {
+		resp.StartedToBoot = stats.bootStarted.Sub(stats.started).String()
+	}
+	if !stats.bootStarted.IsZero() && !stats.qmpReady.IsZero() {
+		resp.BootToQMP = stats.qmpReady.Sub(stats.bootStarted).String()
+	}
+	sshReady := stats.sshReady
+	if sshReady.IsZero() {
+		sshReady = stats.sshStarted
+	}
+	if !stats.filesReady.IsZero() && !sshReady.IsZero() {
+		resp.FilesToSSH = sshReady.Sub(stats.filesReady).String()
+	}
+	if !stats.bootStarted.IsZero() && !stats.completed.IsZero() {
+		resp.BootToCompleted = stats.completed.Sub(stats.bootStarted).String()
+	}
+	if !stats.started.IsZero() && !stats.completed.IsZero() {
+		resp.Total = stats.completed.Sub(stats.started).String()
+	}
+	return resp
+}
+
+type serializedQMPClient struct {
+	client qmpClient
+	mu     sync.Mutex
+}
+
+func newSerializedQMPClient(client qmpClient) qmpClient {
+	return &serializedQMPClient{client: client}
+}
+
+func (c *serializedQMPClient) WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.WithRaw(timeout, fn)
+}
+
+func (c *serializedQMPClient) RunRaw(timeout time.Duration, command string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.RunRaw(timeout, command)
+}
+
+func (c *serializedQMPClient) DeviceDelAndWait(timeout time.Duration, id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.DeviceDelAndWait(timeout, id)
+}
+
+func (c *serializedQMPClient) Stop(timeout time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.Stop(timeout)
+}
+
+func (c *serializedQMPClient) Cont(timeout time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.Cont(timeout)
+}
+
+func (c *serializedQMPClient) QueryStatus(timeout time.Duration) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.QueryStatus(timeout)
+}
+
+func (c *serializedQMPClient) MigrateToFile(timeout time.Duration, path string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.MigrateToFile(timeout, path)
+}
+
+func (c *serializedQMPClient) MigrateIncoming(timeout time.Duration, path string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.MigrateIncoming(timeout, path)
+}
+
+func (c *serializedQMPClient) QueryMigrate(timeout time.Duration) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.QueryMigrate(timeout)
+}
+
+func (c *serializedQMPClient) Quit(timeout time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.Quit(timeout)
+}
+
+func (c *serializedQMPClient) Disconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client.Disconnect()
+}
+
+func isControlSocketUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
+}
+
+func isControlUnsupported(err error) bool {
+	var rpcErr *RPCError
+	return errors.As(err, &rpcErr) && rpcErr.Code == ErrUnsupported
+}
