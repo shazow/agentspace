@@ -1,3 +1,5 @@
+//go:build !virtie_no_balloon
+
 package manager
 
 import (

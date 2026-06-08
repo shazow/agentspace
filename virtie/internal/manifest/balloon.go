@@ -3,15 +3,15 @@ package manifest
 import (
 	"fmt"
 
-	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/balloontypes"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
-func applyBalloonDefaults(memory units.MiB, device *balloon.Device) {
-	balloon.ApplyDefaults(memory, device)
+func applyBalloonDefaults(memory units.MiB, device *balloontypes.Device) {
+	balloontypes.ApplyDefaults(memory, device)
 }
 
-func validateBalloonDevice(memory units.MiB, device *balloon.Device) error {
+func validateBalloonDevice(memory units.MiB, device *balloontypes.Device) error {
 	if device == nil {
 		return nil
 	}
@@ -21,13 +21,13 @@ func validateBalloonDevice(memory units.MiB, device *balloon.Device) error {
 		return fmt.Errorf("manifest.qemu.devices.balloon.transport must be one of pci, mmio, or ccw")
 	}
 
-	if err := balloon.ValidateController(memory, device.Controller); err != nil {
+	if err := balloontypes.ValidateController(memory, device.Controller); err != nil {
 		return fmt.Errorf("manifest.qemu.devices.balloon.controller.%s", err)
 	}
 
 	return nil
 }
 
-func cloneBalloonDevice(device *balloon.Device) *balloon.Device {
-	return balloon.CloneDevice(device)
+func cloneBalloonDevice(device *balloontypes.Device) *balloontypes.Device {
+	return balloontypes.CloneDevice(device)
 }

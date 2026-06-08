@@ -1,7 +1,7 @@
 package manifest
 
 import (
-	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/balloontypes"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
@@ -105,15 +105,15 @@ type QEMUHotplug struct {
 }
 
 type QEMUDevices struct {
-	RNG      QEMURNGDevice       `json:"rng"`
-	I8042    bool                `json:"i8042,omitempty"`
-	Balloon  *balloon.Device     `json:"balloon,omitempty"`
-	VirtioFS []QEMUVirtioFSShare `json:"virtiofs,omitempty"`
-	NineP    []QEMUNinePShare    `json:"9p,omitempty"`
-	Block    []QEMUBlockDevice   `json:"block,omitempty"`
-	Mounts   []QEMUMountDevice   `json:"mounts,omitempty"`
-	Network  []QEMUNetDevice     `json:"network,omitempty"`
-	VSOCK    QEMUVSOCKDevice     `json:"vsock"`
+	RNG      QEMURNGDevice        `json:"rng"`
+	I8042    bool                 `json:"i8042,omitempty"`
+	Balloon  *balloontypes.Device `json:"balloon,omitempty"`
+	VirtioFS []QEMUVirtioFSShare  `json:"virtiofs,omitempty"`
+	NineP    []QEMUNinePShare     `json:"9p,omitempty"`
+	Block    []QEMUBlockDevice    `json:"block,omitempty"`
+	Mounts   []QEMUMountDevice    `json:"mounts,omitempty"`
+	Network  []QEMUNetDevice      `json:"network,omitempty"`
+	VSOCK    QEMUVSOCKDevice      `json:"vsock"`
 }
 
 type QEMURNGDevice struct {

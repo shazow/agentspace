@@ -3,7 +3,7 @@ package manifest
 import (
 	"testing"
 
-	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/balloontypes"
 )
 
 func TestValidateAppliesBalloonDefaults(t *testing.T) {
@@ -40,7 +40,7 @@ func TestValidateAppliesBalloonDefaults(t *testing.T) {
 
 func TestValidateRejectsInvalidBalloonControllerConfig(t *testing.T) {
 	invalidBounds := validManifestWithBalloon()
-	invalidBounds.QEMU.Devices.Balloon.Controller = &balloon.ControllerConfig{
+	invalidBounds.QEMU.Devices.Balloon.Controller = &balloontypes.ControllerConfig{
 		MinActual: invalidBounds.QEMU.Memory.Size + 1,
 	}
 	if err := invalidBounds.Validate(); err == nil {
@@ -48,7 +48,7 @@ func TestValidateRejectsInvalidBalloonControllerConfig(t *testing.T) {
 	}
 
 	invalidThresholds := validManifestWithBalloon()
-	invalidThresholds.QEMU.Devices.Balloon.Controller = &balloon.ControllerConfig{
+	invalidThresholds.QEMU.Devices.Balloon.Controller = &balloontypes.ControllerConfig{
 		GrowBelowAvailable:    512,
 		ReclaimAboveAvailable: 512,
 	}
@@ -59,7 +59,7 @@ func TestValidateRejectsInvalidBalloonControllerConfig(t *testing.T) {
 
 func validManifestWithBalloon() *Manifest {
 	manifest := validManifest()
-	manifest.QEMU.Devices.Balloon = &balloon.Device{
+	manifest.QEMU.Devices.Balloon = &balloontypes.Device{
 		ID:        "balloon0",
 		Transport: "pci",
 	}

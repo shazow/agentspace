@@ -25,10 +25,10 @@ import (
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 	diskfs "github.com/diskfs/go-diskfs"
 	"github.com/diskfs/go-diskfs/filesystem"
-	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
+	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloontypes"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
-	"github.com/shazow/agentspace/virtie/internal/hotplug"
+	hotplug "github.com/shazow/agentspace/virtie/internal/hotplugtypes"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
@@ -3430,6 +3430,9 @@ func TestBuildQEMUCommandAddsPCIEHotplugPorts(t *testing.T) {
 }
 
 func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
+	if !hotplugBuiltIn {
+		t.Skip("hotplug implementation is not built")
+	}
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Persistence.StateDir = ".virtie"
@@ -3491,6 +3494,9 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 }
 
 func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
+	if !hotplugBuiltIn {
+		t.Skip("hotplug implementation is not built")
+	}
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Persistence.StateDir = ".virtie"
