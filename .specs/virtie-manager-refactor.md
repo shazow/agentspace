@@ -119,6 +119,8 @@ Acceptance criteria:
 - [x] Move runtime control-server start/close wiring into
   `virtie/internal/manager/runtime`, with the concrete manager `Runtime`
   passing itself as the typed control handler.
+- [x] Move runtime state tracking into `virtie/internal/manager/runtime`,
+  leaving manager responsible for deciding when lifecycle transitions happen.
 
 ## Landed Control Flow
 
@@ -471,9 +473,10 @@ implementation packages should avoid importing the facade package.
   dependencies, stage wrapping, notifier selection, and startup sequencing
   still live in `manager`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
-  `ProcessSet`, close hook wiring, runtime stats, and control-server lifecycle
-  wiring have landed. The launch-owned runtime, state machine, idempotent
-  `Close`, and lifecycle adapters still live in `manager`.
+  `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
+  wiring, and runtime state tracking have landed. The launch-owned runtime,
+  transition decisions, idempotent `Close`, and lifecycle adapters still live
+  in `manager`.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, and optional
   handler registration.
@@ -887,8 +890,9 @@ readiness, and managed virtiofs sockets:
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
-   `manager/runtime`; control-server lifecycle wiring has moved there too. The
-   concrete `Runtime` type still lives behind the `manager` facade.
+   `manager/runtime`; control-server lifecycle wiring and runtime state
+   tracking have moved there too. The concrete `Runtime` type still lives
+   behind the `manager` facade.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
    manager call sites to use the same interfaces through the facade. QMP has
    landed under `internal/qmpclient`; QGA has landed under `internal/qga` with
