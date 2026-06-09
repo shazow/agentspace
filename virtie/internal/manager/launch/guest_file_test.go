@@ -181,6 +181,82 @@ func TestWriteGuestFilesWritesAndAppliesMetadataInOrder(t *testing.T) {
 	}
 }
 
+func TestMountWorkspaceCWDInstallsAndMountsTarget(t *testing.T) {
+	var events []string
+	err := MountWorkspaceCWD(context.Background(), &manifest.Manifest{
+		Paths: manifest.Paths{
+			WorkingDir: "/home/agent/workspace/project",
+		},
+		Workspace: manifest.Workspace{
+			GuestDir: "/workspace",
+		},
+	}, WorkspaceCWDMounter{
+		InstallDir: func(_ context.Context, target string, args []string) error {
+			events = append(events, "install:"+target+":"+strings.Join(args, ","))
+			return nil
+		},
+		MountBind: func(_ context.Context, source string, target string, args []string) error {
+			events = append(events, "mount:"+source+":"+target+":"+strings.Join(args, ","))
+			return nil
+		},
+		Mounted: func(source string, target string) {
+			events = append(events, "mounted:"+source+":"+target)
+		},
+	})
+	if err != nil {
+		t.Fatalf("mount workspace cwd: %v", err)
+	}
+	want := []string{
+		"install:/workspace/project:-d,/workspace,/workspace/project",
+		"mount:/mnt/cwd:/workspace/project:--bind,/mnt/cwd,/workspace/project",
+		"mounted:/mnt/cwd:/workspace/project",
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events: got %#v want %#v", events, want)
+	}
+}
+
+func TestMountWorkspaceCWDValidatesInputs(t *testing.T) {
+	tests := []struct {
+		name           string
+		manifest       manifest.Manifest
+		expectedSubstr string
+	}{
+		{
+			name: "missing guest dir",
+			manifest: manifest.Manifest{
+				Paths: manifest.Paths{WorkingDir: "/home/agent/project"},
+			},
+			expectedSubstr: "workspace.guest_dir is required",
+		},
+		{
+			name: "root working dir",
+			manifest: manifest.Manifest{
+				Paths:     manifest.Paths{WorkingDir: "/"},
+				Workspace: manifest.Workspace{GuestDir: "/workspace"},
+			},
+			expectedSubstr: "derive workspace cwd name",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := MountWorkspaceCWD(context.Background(), &tt.manifest, WorkspaceCWDMounter{
+				InstallDir: func(context.Context, string, []string) error {
+					t.Fatalf("install should not run for invalid input")
+					return nil
+				},
+				MountBind: func(context.Context, string, string, []string) error {
+					t.Fatalf("mount should not run for invalid input")
+					return nil
+				},
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.expectedSubstr) {
+				t.Fatalf("expected %q error, got %v", tt.expectedSubstr, err)
+			}
+		})
+	}
+}
+
 func TestGuestWriteBackFilesFiltersEnabledFiles(t *testing.T) {
 	files := []manifest.ResolvedWriteFile{
 		{GuestPath: "/guest/a", WriteBack: true},

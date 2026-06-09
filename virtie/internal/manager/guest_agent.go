@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path"
-	"path/filepath"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
@@ -125,23 +123,17 @@ const (
 )
 
 func (m *manager) mountWorkspaceCWD(ctx context.Context, client guestAgentClient, launchManifest *manifest.Manifest) error {
-	baseDir := launchManifest.Workspace.GuestDir
-	if baseDir == "" {
-		return fmt.Errorf("workspace.guest_dir is required when workspace.mount_cwd is true")
-	}
-	name := filepath.Base(launchManifest.Paths.WorkingDir)
-	if name == "." || name == string(filepath.Separator) || name == "" {
-		return fmt.Errorf("derive workspace cwd name from working directory %q", launchManifest.Paths.WorkingDir)
-	}
-	target := path.Join(baseDir, name)
-	if err := m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, []string{"-d", baseDir, target}, target); err != nil {
-		return err
-	}
-	if err := m.runGuestFileCommand(ctx, client, "mount --bind", guestMountPath, []string{"--bind", "/mnt/cwd", target}, target); err != nil {
-		return err
-	}
-	m.logger.Info("mounted workspace cwd", "source", "/mnt/cwd", "target", target)
-	return nil
+	return launch.MountWorkspaceCWD(ctx, launchManifest, launch.WorkspaceCWDMounter{
+		InstallDir: func(ctx context.Context, target string, args []string) error {
+			return m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, args, target)
+		},
+		MountBind: func(ctx context.Context, source string, target string, args []string) error {
+			return m.runGuestFileCommand(ctx, client, "mount --bind", guestMountPath, args, target)
+		},
+		Mounted: func(source string, target string) {
+			m.logger.Info("mounted workspace cwd", "source", source, "target", target)
+		},
+	})
 }
 
 // installGuestFileDirectory ensures that the parent directory for guestPath exists.

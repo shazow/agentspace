@@ -217,6 +217,9 @@ Acceptance criteria:
 - [x] Move guest-file write-back filtering and host-write orchestration into
   `virtie/internal/manager/launch`, with manager supplying QGA reads, host
   write implementation, logging callbacks, and stage wrapping.
+- [x] Move workspace CWD guest-mount target derivation and command sequencing
+  into `virtie/internal/manager/launch`, with manager supplying QGA command
+  execution, logging callbacks, and stage wrapping.
 
 ## Landed Control Flow
 
