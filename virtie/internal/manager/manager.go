@@ -509,11 +509,7 @@ func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers ex
 		ConnectTimeout: m.effectiveQMPConnectTimeout(),
 		RetryDelay:     retryDelay,
 		PollDelay:      defaultSocketPollInterval,
-		Check: func(stage string) error {
-			return firstUnexpectedExit(stage, watchers)
-		},
-		Result: launch.WrapStage,
-		Cancel: launch.WrapStage,
+		Watchers:       watchers,
 	})
 }
 
@@ -523,11 +519,7 @@ func (m *manager) waitForLaunchSockets(ctx context.Context, stage string, socket
 		SocketPaths:  socketPaths,
 		SocketWaiter: m.socketWaiter,
 		PollDelay:    defaultSocketPollInterval,
-		Check: func(stage string) error {
-			return firstUnexpectedExit(stage, watchers)
-		},
-		Result: launch.WrapStage,
-		Cancel: launch.WrapStage,
+		Watchers:     watchers,
 	})
 }
 
@@ -711,10 +703,6 @@ func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manif
 	})
 }
 
-func firstUnexpectedExit(stage string, watchers executor.Group) error {
-	return launch.FirstUnexpectedExit(stage, watchers)
-}
-
 func joinDeferredError(target *error, fn func() error) {
 	next := fn()
 	if next == nil {
@@ -725,8 +713,4 @@ func joinDeferredError(target *error, fn func() error) {
 		return
 	}
 	*target = errors.Join(*target, next)
-}
-
-func wrapCommandError(stage string, command string, err error) error {
-	return launch.WrapCommandError(stage, command, err)
 }

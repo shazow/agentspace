@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/readiness"
 )
 
@@ -18,6 +19,7 @@ type SSHReadyWait struct {
 	PollDelay    time.Duration
 	SocketWaiter SocketWaiter
 	Dialer       SSHReadyDialer
+	Watchers     executor.Group
 
 	Check func(stage string) error
 	Wrap  func(stage string, err error) error
@@ -36,6 +38,12 @@ func WaitForSSHReady(ctx context.Context, wait SSHReadyWait) error {
 	if wrap == nil {
 		wrap = WrapStage
 	}
+	check := wait.Check
+	if check == nil {
+		check = func(stage string) error {
+			return FirstUnexpectedExit(stage, wait.Watchers)
+		}
+	}
 
 	readyCtx, cancel := context.WithTimeout(ctx, wait.Timeout)
 	defer cancel()
@@ -45,7 +53,7 @@ func WaitForSSHReady(ctx context.Context, wait SSHReadyWait) error {
 		SocketPaths:  []string{wait.SocketPath},
 		SocketWaiter: wait.SocketWaiter,
 		PollDelay:    wait.PollDelay,
-		Check:        wait.Check,
+		Check:        check,
 		Result:       wrap,
 		Cancel:       wrap,
 	}); err != nil {
@@ -87,10 +95,8 @@ func WaitForSSHReady(ctx context.Context, wait SSHReadyWait) error {
 			}
 			return nil
 		case <-ticker.C:
-			if wait.Check != nil {
-				if err := wait.Check(stage); err != nil {
-					return err
-				}
+			if err := check(stage); err != nil {
+				return err
 			}
 		case <-readyCtx.Done():
 			return wrapSSHReadyWait(stage, readyCtx.Err(), wrap)

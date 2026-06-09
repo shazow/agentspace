@@ -221,10 +221,6 @@ func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watc
 		CommandTimeout: m.effectiveQMPCommandTimeout(),
 		RetryDelay:     retryDelay,
 		PollDelay:      defaultSocketPollInterval,
-		Check: func(stage string) error {
-			return firstUnexpectedExit(stage, watchers)
-		},
-		Result: launch.WrapStage,
-		Cancel: launch.WrapStage,
+		Watchers:       watchers,
 	})
 }
