@@ -1,6 +1,6 @@
 { pkgs }:
 
-{
+rec {
   consumer = {
     publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGUQ2FsZrmb4kVgX9X6N1Llqfu6N7o8gBC4M0coYv0Ab agentspace-consumer-test";
     identityFile = "./id_ed25519";
@@ -17,6 +17,11 @@
       -----END OPENSSH PRIVATE KEY-----
     '';
     publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOzklKQd2GKu/giUkvvjzMMNnwAtTH6krnZ3SwPWzad5 agentspace-graphical-test";
+    identityFile = "./id_ed25519";
+  };
+
+  realVM = graphical // {
+    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOzklKQd2GKu/giUkvvjzMMNnwAtTH6krnZ3SwPWzad5 agentspace-real-vm-test";
     identityFile = "./id_ed25519";
   };
 
