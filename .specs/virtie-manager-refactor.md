@@ -185,6 +185,9 @@ Acceptance criteria:
 - [x] Move runtime write-back-on-exit state into
   `virtie/internal/manager/runtime`, so restore/provisioning, suspend-save,
   and close-hook callbacks share an explicit runtime-owned state holder.
+- [x] Move close-hook write-back gating into
+  `virtie/internal/manager/runtime`, leaving manager responsible for supplying
+  concrete write-back, cleanup, and stats callbacks.
 - [x] Move runtime ready/status/suspend transition policy into
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
   responsible for wiring paths, manifest state, and launch suspend adapters.
