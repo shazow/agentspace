@@ -56,15 +56,67 @@ func TestWaitForMigrationReturnsContextCancellation(t *testing.T) {
 	}
 }
 
+func TestRestoreFromFileMigratesWaitsAndContinues(t *testing.T) {
+	client := &migrationClient{statuses: []string{"active", "completed"}}
+	if err := RestoreFromFile(context.Background(), client, "/tmp/vmstate", RestoreWait{
+		MigrationTimeout: 20 * time.Millisecond,
+		CommandTimeout:   10 * time.Millisecond,
+		PollDelay:        time.Millisecond,
+	}); err != nil {
+		t.Fatalf("restore from file: %v", err)
+	}
+	wantCalls := []string{"migrate-incoming:/tmp/vmstate", "query-migrate", "query-migrate", "cont"}
+	if len(client.calls) != len(wantCalls) {
+		t.Fatalf("calls: got %#v want %#v", client.calls, wantCalls)
+	}
+	for i := range wantCalls {
+		if client.calls[i] != wantCalls[i] {
+			t.Fatalf("calls: got %#v want %#v", client.calls, wantCalls)
+		}
+	}
+	if got, want := client.migrationTimeouts, []time.Duration{20 * time.Millisecond}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("migration timeouts: got %#v want %#v", got, want)
+	}
+	if got, want := client.contTimeouts, []time.Duration{10 * time.Millisecond}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("cont timeouts: got %#v want %#v", got, want)
+	}
+}
+
+func TestRestoreFromFileReturnsMigrateIncomingError(t *testing.T) {
+	wantErr := errors.New("restore failed")
+	client := &migrationClient{migrateIncomingErr: wantErr}
+	err := RestoreFromFile(context.Background(), client, "/tmp/vmstate", RestoreWait{MigrationTimeout: time.Second, PollDelay: time.Millisecond})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("restore error: got %v want %v", err, wantErr)
+	}
+}
+
 type migrationClient struct {
 	Client
-	statuses        []string
-	err             error
-	commandTimeouts []time.Duration
-	afterQuery      func()
+	statuses           []string
+	err                error
+	migrateIncomingErr error
+	commandTimeouts    []time.Duration
+	migrationTimeouts  []time.Duration
+	contTimeouts       []time.Duration
+	calls              []string
+	afterQuery         func()
+}
+
+func (c *migrationClient) MigrateIncoming(timeout time.Duration, path string) error {
+	c.calls = append(c.calls, "migrate-incoming:"+path)
+	c.migrationTimeouts = append(c.migrationTimeouts, timeout)
+	return c.migrateIncomingErr
+}
+
+func (c *migrationClient) Cont(timeout time.Duration) error {
+	c.calls = append(c.calls, "cont")
+	c.contTimeouts = append(c.contTimeouts, timeout)
+	return nil
 }
 
 func (c *migrationClient) QueryMigrate(timeout time.Duration) (string, error) {
+	c.calls = append(c.calls, "query-migrate")
 	c.commandTimeouts = append(c.commandTimeouts, timeout)
 	if c.err != nil {
 		return "", c.err

@@ -414,13 +414,11 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *lau
 
 func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client qmpClient) error {
 	m.logger.Info("restoring vm state", "path", plan.ResumeState.VMStatePath)
-	if err := client.MigrateIncoming(m.effectiveQMPMigrationTimeout(), plan.ResumeState.VMStatePath); err != nil {
-		return &stageError{Stage: "restore", Err: err}
-	}
-	if err := m.waitForMigration(ctx, client); err != nil {
-		return &stageError{Stage: "restore", Err: err}
-	}
-	if err := client.Cont(m.effectiveQMPCommandTimeout()); err != nil {
+	if err := qmpclient.RestoreFromFile(ctx, client, plan.ResumeState.VMStatePath, qmpclient.RestoreWait{
+		MigrationTimeout: m.effectiveQMPMigrationTimeout(),
+		CommandTimeout:   m.effectiveQMPCommandTimeout(),
+		PollDelay:        defaultMigrationPollDelay,
+	}); err != nil {
 		return &stageError{Stage: "restore", Err: err}
 	}
 	plan.Notifier.Notify(ctx, notifyStateRuntimeResume, "Restored saved VM state", map[string]string{
