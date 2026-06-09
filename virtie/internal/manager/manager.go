@@ -381,16 +381,20 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *lau
 }
 
 func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client qmpClient) error {
-	m.logger.Info("restoring vm state", "path", plan.ResumeState.VMStatePath)
-	if err := qmpclient.RestoreFromFile(ctx, client, plan.ResumeState.VMStatePath, qmpclient.RestoreWait{
-		MigrationTimeout: m.effectiveQMPMigrationTimeout(),
-		CommandTimeout:   m.effectiveQMPCommandTimeout(),
-		PollDelay:        defaultMigrationPollDelay,
-	}); err != nil {
-		return &stageError{Stage: "restore", Err: err}
-	}
-	launch.NotifyRuntimeResume(ctx, plan)
-	return nil
+	return launch.RestoreRuntime(ctx, launch.RuntimeRestore{
+		Plan:   plan,
+		Logger: m.logger,
+		Restore: func(ctx context.Context, vmStatePath string) error {
+			return qmpclient.RestoreFromFile(ctx, client, vmStatePath, qmpclient.RestoreWait{
+				MigrationTimeout: m.effectiveQMPMigrationTimeout(),
+				CommandTimeout:   m.effectiveQMPCommandTimeout(),
+				PollDelay:        defaultMigrationPollDelay,
+			})
+		},
+		Wrap: func(err error) error {
+			return &stageError{Stage: "restore", Err: err}
+		},
+	})
 }
 
 func removeRestoredSuspendState(plan *Plan) error {
