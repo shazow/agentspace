@@ -1732,7 +1732,7 @@ func TestManagerLaunchAutoprovisionsSSHKeyAfterAuthFailure(t *testing.T) {
 	if got := guestAgent.writes["/run/virtie-autoprovision-authorized-key.pub"]; got == "" {
 		t.Fatalf("expected temporary public key write, got writes %#v", guestAgent.writes)
 	}
-	if !containsGuestExec(guestAgent.execs, guestShellPath, "/home/agent/.ssh/authorized_keys") {
+	if !containsGuestExec(guestAgent.execs, launch.GuestShellPath, "/home/agent/.ssh/authorized_keys") {
 		t.Fatalf("expected authorized_keys append command, got %#v", guestAgent.execs)
 	}
 }
