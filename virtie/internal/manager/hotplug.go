@@ -14,6 +14,7 @@ import (
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
 )
@@ -49,12 +50,12 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 	defer runtime.QMP.(managerHotplugQMP).client.Disconnect()
 	if options.Detach {
 		if err := runtime.Detach(ctx, id); err != nil {
-			return wrapHotplugError(err)
+			return launch.WrapHotplugError(err)
 		}
 		return nil
 	}
 	if err := runtime.Attach(ctx, id); err != nil {
-		return wrapHotplugError(err)
+		return launch.WrapHotplugError(err)
 	}
 	return nil
 }
@@ -83,23 +84,6 @@ func configureRuntimeHotplugDependencies(deps *runtimeDependencies, m *manager, 
 	deps.HotplugStart = managerHotplugStarter{m: m}
 	deps.HotplugSockets = managerHotplugSocketWaiter{m: m}
 	deps.HotplugGuest = managerHotplugGuest{m: m, manifest: launchManifest}
-}
-
-func wrapHotplugError(err error) error {
-	if err == nil {
-		return nil
-	}
-	message := err.Error()
-	switch {
-	case strings.Contains(message, "guest command"):
-		return &stageError{Stage: "hotplug guest", Err: err}
-	case strings.Contains(message, "qmp"), strings.Contains(message, "device_del"), strings.Contains(message, "chardev"), strings.Contains(message, "netdev"), strings.Contains(message, "blockdev"):
-		return &stageError{Stage: "hotplug qmp", Err: err}
-	case strings.Contains(message, "state"):
-		return &stageError{Stage: "hotplug state", Err: err}
-	default:
-		return &stageError{Stage: "hotplug", Err: err}
-	}
 }
 
 type managerHotplugStarter struct {

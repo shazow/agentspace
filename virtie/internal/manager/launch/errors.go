@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
 )
@@ -69,6 +70,23 @@ func WrapCommandError(stage string, command string, err error) error {
 		Command:  command,
 		ExitCode: -1,
 		Err:      err,
+	}
+}
+
+func WrapHotplugError(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "guest command"):
+		return WrapStage("hotplug guest", err)
+	case strings.Contains(message, "qmp"), strings.Contains(message, "device_del"), strings.Contains(message, "chardev"), strings.Contains(message, "netdev"), strings.Contains(message, "blockdev"):
+		return WrapStage("hotplug qmp", err)
+	case strings.Contains(message, "state"):
+		return WrapStage("hotplug state", err)
+	default:
+		return WrapStage("hotplug", err)
 	}
 }
 

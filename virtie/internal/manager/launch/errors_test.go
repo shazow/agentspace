@@ -62,6 +62,38 @@ func TestWrapCommandErrorNoopsWithoutError(t *testing.T) {
 	}
 }
 
+func TestWrapHotplugErrorClassifiesStages(t *testing.T) {
+	tests := []struct {
+		name  string
+		err   error
+		stage string
+	}{
+		{name: "guest", err: errors.New("guest command failed"), stage: "hotplug guest"},
+		{name: "qmp", err: errors.New("qmp command failed"), stage: "hotplug qmp"},
+		{name: "device del", err: errors.New("device_del failed"), stage: "hotplug qmp"},
+		{name: "state", err: errors.New("read state failed"), stage: "hotplug state"},
+		{name: "default", err: errors.New("missing id"), stage: "hotplug"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := WrapHotplugError(tt.err)
+			if !errors.Is(err, tt.err) {
+				t.Fatalf("cause: got %v want %v", err, tt.err)
+			}
+			var stageErr *StageError
+			if !errors.As(err, &stageErr) || stageErr.Stage != tt.stage {
+				t.Fatalf("stage err: got %v want stage %q", err, tt.stage)
+			}
+		})
+	}
+}
+
+func TestWrapHotplugErrorNoopsWithoutError(t *testing.T) {
+	if err := WrapHotplugError(nil); err != nil {
+		t.Fatalf("error: got %v want nil", err)
+	}
+}
+
 func TestFirstUnexpectedExitNoopsWithoutExitedProcess(t *testing.T) {
 	group := executor.NewGroup((&executortest.Process{OverrideName: "qemu"}).Process())
 	if err := FirstUnexpectedExit("vm startup", group); err != nil {

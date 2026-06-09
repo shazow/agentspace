@@ -226,8 +226,10 @@ Acceptance criteria:
   failed-precondition adaptation.
 - [x] Move runtime hotplug attach/detach dispatch into
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
-  responsible for constructing the hotplug engine adapters and applying
-  stage-specific error wrapping.
+  responsible for constructing the hotplug engine adapters.
+- [x] Move hotplug attach/detach stage classification into
+  `virtie/internal/manager/launch`, leaving manager hotplug call sites to
+  invoke the shared wrapper.
 - [x] Move runtime hotplug unsupported-response construction into
   `virtie/internal/manager/runtime`, leaving build-tagged manager files as
   thin capability adapters.
@@ -1160,10 +1162,11 @@ readiness, and managed virtiofs sockets:
    sequencing, SSH-readiness token wait sequencing, default startup wait
    wrapping/check policy, foreground lifecycle suspend/info adapter wiring,
    default foreground SSH session wrapping, SSH autoprovision guest install
-   sequencing, default guest-file stage wrapping, notifier selection policy,
-   generic stage-error/command-error construction, and unexpected-process-exit
-   wrapping have moved there as well. Manager still owns default concrete
-   dependencies and some stage-specific wrapping.
+   sequencing, default guest-file stage wrapping, hotplug attach/detach stage
+   classification, notifier selection policy, generic stage-error/command-error
+   construction, and unexpected-process-exit wrapping have moved there as well.
+   Manager still owns default concrete dependencies and some stage-specific
+   wrapping.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
