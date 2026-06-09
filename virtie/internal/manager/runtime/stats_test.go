@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
@@ -54,5 +55,19 @@ func TestControlStats(t *testing.T) {
 	}
 	if got.SSHAttempts != 1 {
 		t.Fatalf("unexpected ssh attempts: got %d want 1", got.SSHAttempts)
+	}
+}
+
+func TestStatsFinalizerMarksCompletedAndWritesOutput(t *testing.T) {
+	stats := NewStats(time.Now().Add(-time.Second))
+	stats.MarkBootStarted(time.Now().Add(-500 * time.Millisecond))
+	var output bytes.Buffer
+	StatsFinalizer(stats, &output)()
+	got := output.String()
+	if !strings.HasPrefix(got, "stats: ") || !strings.Contains(got, "total=") {
+		t.Fatalf("unexpected stats output: %q", got)
+	}
+	if ControlStats(stats).CompletedAt.IsZero() {
+		t.Fatal("stats finalizer did not mark completion")
 	}
 }
