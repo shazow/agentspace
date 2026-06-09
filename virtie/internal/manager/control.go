@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -65,31 +66,12 @@ func (m *manager) suspend(ctx context.Context, manifest *manifest.Manifest) erro
 }
 
 func (m *manager) launchPID(manifest *manifest.Manifest) (int, error) {
-	if err := manifest.Validate(); err != nil {
-		return 0, err
-	}
-
-	pid, err := readLaunchPID(manifest)
-	if err != nil {
-		return 0, &stageError{Stage: "launch pid", Err: err}
-	}
-
-	signaler := m.effectivePIDSignaler()
-	if err := signaler.Exists(pid); err != nil {
-		if errorsIsNoProcess(err) {
-			return 0, &stageError{Stage: "launch pid", Err: fmt.Errorf("stale launch pid %d from %q: process does not exist", pid, launchPIDPath(manifest))}
-		}
-		return 0, &stageError{Stage: "launch pid", Err: fmt.Errorf("check launch pid %d from %q: %w", pid, launchPIDPath(manifest), err)}
-	}
-	if err := validateLaunchLock(manifest, pid); err != nil {
-		return 0, &stageError{Stage: "launch pid", Err: err}
-	}
-	return pid, nil
+	return launch.ResolveLaunchPID(manifest, m.effectivePIDSignaler())
 }
 
 func (m *manager) signalLaunchPID(pid int, sig os.Signal) error {
 	if err := m.effectivePIDSignaler().Signal(pid, sig); err != nil {
-		if errorsIsNoProcess(err) {
+		if launch.IsNoProcess(err) {
 			return fmt.Errorf("stale launch pid %d: process does not exist", pid)
 		}
 		return fmt.Errorf("signal launch pid %d with %s: %w", pid, sig, err)

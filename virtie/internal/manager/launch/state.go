@@ -176,3 +176,31 @@ func ValidateLaunchLock(manifest *manifest.Manifest, pid int) error {
 
 	return nil
 }
+
+func ResolveLaunchPID(manifest *manifest.Manifest, signaler PIDSignaler) (int, error) {
+	if err := manifest.Validate(); err != nil {
+		return 0, err
+	}
+
+	pid, err := ReadLaunchPID(manifest)
+	if err != nil {
+		return 0, WrapStage("launch pid", err)
+	}
+
+	if signaler != nil {
+		if err := signaler.Exists(pid); err != nil {
+			if IsNoProcess(err) {
+				return 0, WrapStage("launch pid", fmt.Errorf("stale launch pid %d from %q: process does not exist", pid, LaunchPIDPath(manifest)))
+			}
+			return 0, WrapStage("launch pid", fmt.Errorf("check launch pid %d from %q: %w", pid, LaunchPIDPath(manifest), err))
+		}
+	}
+	if err := ValidateLaunchLock(manifest, pid); err != nil {
+		return 0, WrapStage("launch pid", err)
+	}
+	return pid, nil
+}
+
+func IsNoProcess(err error) bool {
+	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
+}

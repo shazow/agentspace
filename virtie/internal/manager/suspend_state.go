@@ -17,9 +17,7 @@ var readSuspendState = launch.ReadSuspendState
 var hasSavedSuspendState = launch.HasSavedSuspendState
 var removeSuspendState = launch.RemoveSuspendState
 var writeLaunchPID = launch.WriteLaunchPID
-var readLaunchPID = launch.ReadLaunchPID
 var removeLaunchPID = launch.RemoveLaunchPID
-var validateLaunchLock = launch.ValidateLaunchLock
 
 type pidSignaler = launch.PIDSignaler
 
@@ -41,8 +39,4 @@ func (syscallPIDSignaler) Signal(pid int, sig os.Signal) error {
 		return fmt.Errorf("unsupported signal %v", sig)
 	}
 	return syscall.Kill(pid, number)
-}
-
-func errorsIsNoProcess(err error) bool {
-	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
 }
