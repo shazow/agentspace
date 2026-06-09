@@ -2,6 +2,7 @@ package sshtools
 
 import (
 	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -89,6 +90,30 @@ func TestClassifyFailureAndPhase(t *testing.T) {
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }
+
+func TestRetryLoggerLogsPhasesOnceAndWarnsAfterRepeatedFailures(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	retryLog := NewRetryLogger(logger)
+
+	retryLog.Log(nil, "Connection refused")
+	retryLog.Log(nil, "Connection timed out")
+	retryLog.Log(nil, "Connection closed by remote host")
+	retryLog.Log(nil, "Connection reset by peer")
+	retryLog.Log(nil, "Connection refused")
+	retryLog.Log(nil, "permission denied")
+
+	logs := output.String()
+	if got := strings.Count(logs, "msg=\"waiting for ssh connection\""); got != 1 {
+		t.Fatalf("expected waiting phase once, got %d logs:\n%s", got, logs)
+	}
+	if got := strings.Count(logs, "msg=\"connecting ssh\""); got != 1 {
+		t.Fatalf("expected connecting phase once, got %d logs:\n%s", got, logs)
+	}
+	if got := strings.Count(logs, "msg=\"ssh exec failed 5 times; ensure the guest is reachable and credentials are configured\""); got != 1 {
+		t.Fatalf("expected repeated failure warning once, got %d logs:\n%s", got, logs)
+	}
+}
 
 func TestRetryOutput(t *testing.T) {
 	var output bytes.Buffer

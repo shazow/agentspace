@@ -167,6 +167,9 @@ Acceptance criteria:
   `virtie/internal/manager/runtime`, so write-back, control shutdown, process
   teardown, QMP disconnect, cleanup, and stats finalization run through one
   package-owned sequence.
+- [x] Move SSH retry logging into `virtie/internal/sshtools`, so manager
+  foreground-session retry behavior depends on reusable SSH classification
+  helpers instead of package-local logging state.
 
 ## Landed Control Flow
 
@@ -536,6 +539,11 @@ implementation packages should avoid importing the facade package.
   capabilities and add-on packages.
 - `virtie/internal/qga` (landed): guest agent dial/client implementation and low-level
   QGA protocol helpers.
+- `virtie/internal/sshtools` (partial): SSH command construction, failure
+  classification, retry-output buffering, autoprovisioned key storage, and
+  retry logging have landed. Manager still owns the foreground SSH session
+  loop because it coordinates lifecycle events, autoprovisioning, process
+  ownership, stats, and stage-specific wrapping.
 
 The existing add-on engines should remain independent of `manager` internals:
 `virtie/internal/hotplug` remains the hotplug implementation engine, and
