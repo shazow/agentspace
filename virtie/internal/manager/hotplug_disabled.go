@@ -37,6 +37,9 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 	return &stageError{Stage: "hotplug", Err: fmt.Errorf("hotplug support is not built into this virtie binary")}
 }
 
+func configureRuntimeHotplugDependencies(deps *runtimeDependencies, m *manager, launchManifest *manifest.Manifest) {
+}
+
 func hotplugStatePath(launchManifest *manifest.Manifest, id string) (string, error) {
 	return hotplugtypes.StatePath(launchManifest.ResolvedPersistenceStateDir(), id)
 }

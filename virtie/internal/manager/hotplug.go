@@ -79,6 +79,12 @@ func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.M
 	}, nil
 }
 
+func configureRuntimeHotplugDependencies(deps *runtimeDependencies, m *manager, launchManifest *manifest.Manifest) {
+	deps.HotplugStart = managerHotplugStarter{m: m}
+	deps.HotplugSockets = managerHotplugSocketWaiter{m: m}
+	deps.HotplugGuest = managerHotplugGuest{m: m, manifest: launchManifest}
+}
+
 func wrapHotplugError(err error) error {
 	if err == nil {
 		return nil

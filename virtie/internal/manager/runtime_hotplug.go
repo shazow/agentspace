@@ -14,10 +14,10 @@ func (r *Runtime) Hotplug(ctx context.Context, req HotplugRequest) (HotplugRespo
 		StateDir: r.manifest.ResolvedPersistenceStateDir(),
 		WorkDir:  r.manifest.Paths.WorkingDir,
 		Devices:  r.manifest.Hotplug,
-		Start:    managerHotplugStarter{m: r.manager},
-		Sockets:  managerHotplugSocketWaiter{m: r.manager},
+		Start:    r.hotplugStart,
+		Sockets:  r.hotplugSockets,
 		QMP:      managerHotplugQMP{client: r.qmp, timeout: r.qmpTimeout},
-		Guest:    managerHotplugGuest{m: r.manager, manifest: r.manifest},
+		Guest:    r.hotplugGuest,
 	}
 	resp, err := runtimepkg.Hotplug(ctx, runtime, req)
 	if err != nil {
