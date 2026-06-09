@@ -3,12 +3,26 @@ package launch
 import (
 	"context"
 	"fmt"
+
+	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
 const (
 	NotifyStateRuntimeSuspend = "runtime:suspend"
 	NotifyStateRuntimeResume  = "runtime:resume"
 )
+
+type NotifierFactory func(*manifest.Manifest) NotificationSink
+
+func SelectNotifier(manifest *manifest.Manifest, configured NotificationSink, factory NotifierFactory) NotificationSink {
+	if configured != nil {
+		return configured
+	}
+	if factory == nil {
+		return nil
+	}
+	return factory(manifest)
+}
 
 func NotifyRuntimeResume(ctx context.Context, plan *Plan) {
 	if plan == nil || plan.Notifier == nil || plan.ResumeState == nil {
