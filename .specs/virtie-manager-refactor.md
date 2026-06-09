@@ -173,6 +173,9 @@ Acceptance criteria:
 - [x] Move combined QMP readiness and retry-dial sequencing into
   `virtie/internal/manager/launch`, with manager supplying concrete socket
   waiting, QMP dialer, startup-exit checks, and stage wrapping.
+- [x] Move manifest-backed SSH command and hint construction into
+  `virtie/internal/manager/launch`, leaving manager foreground wait code to
+  start and supervise the resulting process.
 
 ## Landed Control Flow
 
@@ -526,7 +529,8 @@ implementation packages should avoid importing the facade package.
   preflight, VSock CID selection, locked plan finalization, pre-runtime launch
   lock/PID setup, restored-state cleanup, and QEMU process startup have moved
   there too. Combined QMP readiness and retry-dial sequencing also now lives
-  there. `Launcher`, default concrete dependencies, stage wrapping, notifier
+  there, along with manifest-backed SSH command and hint construction.
+  `Launcher`, default concrete dependencies, stage wrapping, notifier
   selection, and the remaining startup sequencing still live in `manager`;
   async readiness wait mechanics now live in `launch`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
