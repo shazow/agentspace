@@ -661,7 +661,7 @@ func (m *manager) runSSHSession(
 	if sessionLogger == nil {
 		sessionLogger = slog.New(slog.DiscardHandler)
 	}
-	retryLog := newSSHRetryLogger(sessionLogger)
+	retryLog := sshtools.NewRetryLogger(sessionLogger)
 	provisioned := false
 
 	for {
@@ -728,45 +728,6 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 	}
 
 	return m.waitForLifecycleEvent(ctx, "active session", nil, delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
-}
-
-type sshRetryLogger struct {
-	logger            *slog.Logger
-	seen              map[sshtools.RetryPhase]bool
-	transientFailures int
-	warned            bool
-}
-
-func newSSHRetryLogger(logger *slog.Logger) *sshRetryLogger {
-	return &sshRetryLogger{
-		logger: logger,
-		seen:   make(map[sshtools.RetryPhase]bool),
-	}
-}
-
-func (l *sshRetryLogger) Log(err error, stderr string) {
-	phase := sshtools.RetryPhaseForFailure(err, stderr)
-	if phase == sshtools.RetryPhaseNone {
-		return
-	}
-	l.transientFailures++
-	if l.transientFailures == 5 && !l.warned {
-		l.warned = true
-		l.logger.Warn(
-			"ssh exec failed 5 times; ensure the guest is reachable and credentials are configured",
-			"ssh_failures",
-			l.transientFailures,
-		)
-	}
-	if !l.seen[phase] {
-		l.seen[phase] = true
-		switch phase {
-		case sshtools.RetryPhaseWaiting:
-			l.logger.Info("waiting for ssh connection")
-		case sshtools.RetryPhaseConnecting:
-			l.logger.Info("connecting ssh")
-		}
-	}
 }
 
 func (m *manager) waitForSession(ctx context.Context, session *executor.Process, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
@@ -852,14 +813,6 @@ func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manif
 		"cid":             fmt.Sprintf("%d", cid),
 	})
 	return nil
-}
-
-func (m *manager) waitForMigration(ctx context.Context, client qmpClient) error {
-	return qmpclient.WaitForMigration(ctx, client, qmpclient.MigrationWait{
-		Timeout:        m.effectiveQMPMigrationTimeout(),
-		CommandTimeout: m.effectiveQMPCommandTimeout(),
-		PollDelay:      defaultMigrationPollDelay,
-	})
 }
 
 func firstUnexpectedExit(stage string, watchers executor.Group) error {
