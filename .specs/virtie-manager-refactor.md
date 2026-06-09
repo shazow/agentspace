@@ -121,6 +121,9 @@ Acceptance criteria:
   passing itself as the typed control handler.
 - [x] Move runtime state tracking into `virtie/internal/manager/runtime`,
   leaving manager responsible for deciding when lifecycle transitions happen.
+- [x] Move runtime idempotent close coordination into
+  `virtie/internal/manager/runtime`, leaving manager responsible for concrete
+  cleanup actions.
 
 ## Landed Control Flow
 
@@ -474,9 +477,9 @@ implementation packages should avoid importing the facade package.
   still live in `manager`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
-  wiring, and runtime state tracking have landed. The launch-owned runtime,
-  transition decisions, idempotent `Close`, and lifecycle adapters still live
-  in `manager`.
+  wiring, runtime state tracking, and idempotent close coordination have
+  landed. The launch-owned runtime, transition decisions, concrete cleanup
+  actions, and lifecycle adapters still live in `manager`.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, and optional
   handler registration.
@@ -891,8 +894,8 @@ readiness, and managed virtiofs sockets:
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
    `manager/runtime`; control-server lifecycle wiring and runtime state
-   tracking have moved there too. The concrete `Runtime` type still lives
-   behind the `manager` facade.
+   tracking have moved there too, along with idempotent close coordination. The
+   concrete `Runtime` type still lives behind the `manager` facade.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
    manager call sites to use the same interfaces through the facade. QMP has
    landed under `internal/qmpclient`; QGA has landed under `internal/qga` with

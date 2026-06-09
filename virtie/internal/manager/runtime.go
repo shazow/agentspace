@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 	"syscall"
 	"time"
 
@@ -33,12 +32,13 @@ type Runtime struct {
 	savedSuspend    bool
 	watchers        executor.Group
 
-	closeOnce sync.Once
-	state     *runtimepkg.State
-	control   *runtimepkg.ControlServer
+	state   *runtimepkg.State
+	closer  *runtimepkg.Closer
+	control *runtimepkg.ControlServer
 }
 
 func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator) *Runtime {
+	state := runtimepkg.NewState(RuntimeStarting)
 	return &Runtime{
 		manager:         manager,
 		manifest:        manifest,
@@ -47,7 +47,8 @@ func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePath
 		stats:           stats,
 		qmp:             qmpclient.Serialized(qmp),
 		suspendRequests: suspendRequests,
-		state:           runtimepkg.NewState(RuntimeStarting),
+		state:           state,
+		closer:          runtimepkg.NewCloser(state),
 	}
 }
 
@@ -85,9 +86,8 @@ func (r *Runtime) StartControl(ctx context.Context) error {
 }
 
 func (r *Runtime) Close() error {
-	var err error
-	r.closeOnce.Do(func() {
-		r.setState(RuntimeStopping)
+	return r.closer.Close(func() error {
+		var err error
 		if r.closeHooks.WriteBack != nil && !r.savedSuspend {
 			writeBackCtx, cancelWriteBack := context.WithTimeout(context.Background(), r.manager.effectiveQMPCommandTimeout())
 			err = errors.Join(err, r.closeHooks.WriteBack(writeBackCtx))
@@ -106,9 +106,8 @@ func (r *Runtime) Close() error {
 		if r.closeHooks.Stats != nil {
 			r.closeHooks.Stats()
 		}
-		r.setState(RuntimeStopped)
+		return err
 	})
-	return err
 }
 
 func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
