@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+type StartedRuntime interface {
+	Close() error
+	MarkSavedSuspend()
+}
+
 type StartupFailureActions struct {
 	Processes     *ProcessSet
 	ShutdownDelay time.Duration
@@ -34,6 +39,19 @@ func ConfiguredStartupFailureActions(config StartupFailureConfig) StartupFailure
 		SocketCleanup: JoinedCleanup(config.SocketCleanup...),
 		Stats:         StatsFinalizer(config.Stats, config.StatsOutput),
 	}
+}
+
+func CleanupStartError(cause error, started StartedRuntime, startup StartupFailureActions, savedSuspendExit func(error) bool) error {
+	if cause == nil {
+		return nil
+	}
+	if started != nil {
+		if savedSuspendExit != nil && savedSuspendExit(cause) {
+			started.MarkSavedSuspend()
+		}
+		return errors.Join(cause, started.Close())
+	}
+	return errors.Join(cause, startup.Run())
 }
 
 func (a StartupFailureActions) Run() error {

@@ -90,6 +90,10 @@ func (r *Runtime) SetReady() {
 	runtimepkg.MarkReady(r.state)
 }
 
+func (r *Runtime) MarkSavedSuspend() {
+	r.savedSuspend.MarkSaved()
+}
+
 func (r *Runtime) SetWatchers(watchers executor.Group) {
 	r.watchers = watchers
 }

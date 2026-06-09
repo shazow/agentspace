@@ -88,3 +88,71 @@ func TestConfiguredStartupFailureActionsJoinsSocketCleanupAndFinalizesStats(t *t
 		t.Fatalf("stats output missing runtime: %q", output.String())
 	}
 }
+
+func TestCleanupStartErrorClosesStartedRuntimeAndMarksSavedSuspend(t *testing.T) {
+	cause := errors.New("saved suspend")
+	closeErr := errors.New("close failed")
+	started := &fakeStartedRuntime{closeErr: closeErr}
+
+	err := CleanupStartError(cause, started, StartupFailureActions{
+		LockCleanup: func() error {
+			t.Fatal("startup failure actions should not run for started runtime")
+			return nil
+		},
+	}, func(err error) bool {
+		return errors.Is(err, cause)
+	})
+	if !errors.Is(err, cause) || !errors.Is(err, closeErr) {
+		t.Fatalf("cleanup error: got %v want cause and close errors", err)
+	}
+	if !started.markedSaved {
+		t.Fatal("started runtime was not marked as saved suspend")
+	}
+	if started.closeCalls != 1 {
+		t.Fatalf("close calls: got %d want 1", started.closeCalls)
+	}
+}
+
+func TestCleanupStartErrorRunsStartupFailureWithoutStartedRuntime(t *testing.T) {
+	cause := errors.New("startup failed")
+	cleanupErr := errors.New("cleanup failed")
+	var cleanupCalls int
+
+	err := CleanupStartError(cause, nil, StartupFailureActions{
+		LockCleanup: func() error {
+			cleanupCalls++
+			return cleanupErr
+		},
+	}, nil)
+	if !errors.Is(err, cause) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("cleanup error: got %v want cause and cleanup errors", err)
+	}
+	if cleanupCalls != 1 {
+		t.Fatalf("cleanup calls: got %d want 1", cleanupCalls)
+	}
+}
+
+func TestCleanupStartErrorNoopsWithoutCause(t *testing.T) {
+	started := &fakeStartedRuntime{}
+	if err := CleanupStartError(nil, started, StartupFailureActions{}, func(error) bool { return true }); err != nil {
+		t.Fatalf("cleanup nil cause: %v", err)
+	}
+	if started.closeCalls != 0 || started.markedSaved {
+		t.Fatalf("unexpected started runtime cleanup: close=%d saved=%v", started.closeCalls, started.markedSaved)
+	}
+}
+
+type fakeStartedRuntime struct {
+	closeErr    error
+	closeCalls  int
+	markedSaved bool
+}
+
+func (r *fakeStartedRuntime) Close() error {
+	r.closeCalls++
+	return r.closeErr
+}
+
+func (r *fakeStartedRuntime) MarkSavedSuspend() {
+	r.markedSaved = true
+}
