@@ -33,6 +33,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
@@ -4477,11 +4478,11 @@ func startFakeSSHReadySocket(_ context.Context, path string) error {
 }
 
 type fakeQMPDialer struct {
-	client   qmpClient
+	client   qmpclient.Client
 	attempts int
 }
 
-func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpClient, error) {
+func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpclient.Client, error) {
 	d.attempts++
 	return d.client, nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
 type balloonFeature struct{}
@@ -30,7 +31,7 @@ func (balloonFeature) StartTask(
 	ctx context.Context,
 	runtime optionalFeatureRuntime,
 	manifest *manifest.Manifest,
-	qmpClient qmpClient,
+	qmpClient qmpclient.Client,
 ) *runtimepkg.Task {
 	if manifest == nil || qmpClient == nil {
 		return nil
