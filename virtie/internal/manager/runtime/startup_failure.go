@@ -54,6 +54,10 @@ func CleanupStartError(cause error, started StartedRuntime, startup StartupFailu
 	return errors.Join(cause, startup.Run())
 }
 
+func CleanupConfiguredStartError(cause error, started StartedRuntime, config StartupFailureConfig, savedSuspendExit func(error) bool) error {
+	return CleanupStartError(cause, started, ConfiguredStartupFailureActions(config), savedSuspendExit)
+}
+
 func (a StartupFailureActions) Run() error {
 	var err error
 	if a.Processes != nil {
