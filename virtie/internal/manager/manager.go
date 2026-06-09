@@ -249,45 +249,20 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	launchCtx, cancelLaunch := context.WithCancel(ctx)
 	lifecycle := m.startLaunchLifecycle(cancelLaunch)
 
-	lock, err := m.locker.Acquire(manifest.ResolvedLockPath())
+	runtimeLock, err := launch.AcquireRuntimeLock(launch.RuntimeLockSpec{
+		Manifest:    manifest,
+		ResumeState: plan.ResumeState,
+		Locker:      m.locker,
+		Lifecycle:   lifecycle,
+		Cancel:      cancelLaunch,
+		PID:         os.Getpid(),
+	})
 	if err != nil {
-		lifecycle.Stop()
-		cancelLaunch()
-		return nil, &stageError{Stage: "preflight", Err: err}
-	}
-
-	if plan.ResumeState == nil {
-		if err := removeSuspendState(manifest); err != nil {
-			_ = lock.Release()
-			lifecycle.Stop()
-			cancelLaunch()
-			return nil, &stageError{Stage: "preflight", Err: err}
-		}
-	}
-	if plan.ResumeState != nil {
-		// Recheck after acquiring the launch lock so restore does not race a
-		// concurrent launch/suspend cleanup.
-		if _, err := os.Stat(plan.ResumeState.VMStatePath); err != nil {
-			_ = lock.Release()
-			lifecycle.Stop()
-			cancelLaunch()
-			return nil, &stageError{Stage: "preflight", Err: fmt.Errorf("saved vm state %q is not available: %w", plan.ResumeState.VMStatePath, err)}
-		}
-	}
-	if err := writeLaunchPID(manifest, os.Getpid()); err != nil {
-		_ = lock.Release()
-		lifecycle.Stop()
-		cancelLaunch()
 		return nil, &stageError{Stage: "preflight", Err: err}
 	}
 
 	cleanupRuntime := func() error {
-		var cleanupErr error
-		cleanupErr = errors.Join(cleanupErr, removeLaunchPID(manifest, os.Getpid()))
-		cleanupErr = errors.Join(cleanupErr, lock.Release())
-		lifecycle.Stop()
-		cancelLaunch()
-		return cleanupErr
+		return runtimeLock.Cleanup()
 	}
 
 	if err := m.finalizeLockedLaunchPlan(plan); err != nil {
