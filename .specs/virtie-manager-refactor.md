@@ -95,6 +95,11 @@ Acceptance criteria:
 - [x] Remove manager-local managed-task aliases from optional feature call
   sites, so optional feature startup uses `virtie/internal/manager/runtime`
   task types directly.
+- [x] Remove manager-local runtime constructor aliases, so manager startup and
+  runtime tests construct process sets and launch stats through
+  `virtie/internal/manager/runtime` directly.
+- [x] Remove the manager-local launch-stats alias, so runtime-facing manager
+  signatures use `virtie/internal/manager/runtime.Stats` directly.
 - [x] Move `ProcessSet` into `virtie/internal/manager/runtime`, leaving
   optional feature discovery in `manager` and passing the resulting task group
   into the runtime process set.

@@ -229,7 +229,7 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
 }
 
 func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runtime, err error) {
-	stats := newLaunchStats(time.Now())
+	stats := runtimepkg.NewStats(time.Now())
 	manifest := plan.Manifest
 
 	launchCtx, cancelLaunch := context.WithCancel(ctx)
@@ -261,7 +261,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 		return nil, &launch.StageError{Stage: "preflight", Err: err}
 	}
 
-	processes := newProcessSet()
+	processes := runtimepkg.NewProcessSet()
 	var qmpClient qmpClient
 	writeBackOnExit := runtimepkg.NewWriteBackState()
 	defer func() {
@@ -350,7 +350,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	return runtime, nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *launchStats, lifecycle *launch.Lifecycle, processes *ProcessSet) (*Runtime, qmpClient, error) {
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *runtimepkg.Stats, lifecycle *launch.Lifecycle, processes *ProcessSet) (*Runtime, qmpClient, error) {
 	started, err := launch.StartRuntimeProcesses(ctx, launch.RuntimeStartup{
 		Plan:           plan,
 		Processes:      processes,
@@ -414,7 +414,7 @@ func removeRestoredSuspendState(plan *Plan) error {
 func (m *manager) waitForLaunchForeground(
 	ctx context.Context,
 	plan *Plan,
-	stats *launchStats,
+	stats *runtimepkg.Stats,
 	runtime *Runtime,
 	qmpClient qmpClient,
 	lifecycle *launch.Lifecycle,
@@ -570,7 +570,7 @@ func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 func (m *manager) runSSHSession(
 	ctx context.Context,
 	plan *Plan,
-	stats *launchStats,
+	stats *runtimepkg.Stats,
 	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
 	processes *ProcessSet,
