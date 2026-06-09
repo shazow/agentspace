@@ -282,6 +282,9 @@ Acceptance criteria:
   `manager/control` types directly instead of manager facade aliases,
   reducing blockers for eventually moving the concrete runtime under
   `virtie/internal/manager/runtime`.
+- [x] Make private manager launch orchestration signatures use
+  `manager/launch` types directly, leaving launch type aliases only at the
+  exported facade boundary.
 - [x] Inject saved-suspend exit classification into the concrete `Runtime`,
   so runtime wait/suspend behavior no longer references the manager-local
   saved-suspend sentinel directly.

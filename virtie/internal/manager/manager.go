@@ -137,7 +137,7 @@ func newManager() *manager {
 	return newManagerFromConfig(DefaultConfig())
 }
 
-func newManagerFromConfig(config Config) *manager {
+func newManagerFromConfig(config launch.Config) *manager {
 	config = launch.MergeConfig(DefaultConfig(), config)
 	return &manager{
 		locker:              config.Locker,
@@ -173,11 +173,11 @@ func LaunchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteC
 }
 
 func (l *Launcher) launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) (err error) {
-	return l.launchWithOptions(ctx, manifest, remoteCommand, LaunchOptions{Resume: ResumeModeNo, SSH: true})
+	return l.launchWithOptions(ctx, manifest, remoteCommand, launch.Options{Resume: launch.ResumeModeNo, SSH: true})
 }
 
-func (l *Launcher) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) error {
-	plan, err := l.Plan(ctx, LaunchSpec{Manifest: manifest, RemoteCommand: remoteCommand, Options: options})
+func (l *Launcher) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options launch.Options) error {
+	plan, err := l.Plan(ctx, launch.Spec{Manifest: manifest, RemoteCommand: remoteCommand, Options: options})
 	if err != nil {
 		return err
 	}
@@ -185,18 +185,18 @@ func (l *Launcher) launchWithOptions(ctx context.Context, manifest *manifest.Man
 }
 
 func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) error {
-	return m.launchWithOptions(ctx, manifest, remoteCommand, LaunchOptions{Resume: ResumeModeNo, SSH: true})
+	return m.launchWithOptions(ctx, manifest, remoteCommand, launch.Options{Resume: launch.ResumeModeNo, SSH: true})
 }
 
-func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) error {
-	plan, err := m.planLaunch(LaunchSpec{Manifest: manifest, RemoteCommand: remoteCommand, Options: options})
+func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options launch.Options) error {
+	plan, err := m.planLaunch(launch.Spec{Manifest: manifest, RemoteCommand: remoteCommand, Options: options})
 	if err != nil {
 		return err
 	}
 	return m.launchWithPlan(ctx, plan)
 }
 
-func (m *manager) planLaunch(spec LaunchSpec) (*Plan, error) {
+func (m *manager) planLaunch(spec launch.Spec) (*launch.Plan, error) {
 	cfg := spec.Manifest
 	options := spec.Options
 	resumeMode, err := launch.NormalizeResumeMode(options.Resume)
@@ -217,7 +217,7 @@ func (m *manager) planLaunch(spec LaunchSpec) (*Plan, error) {
 	return plan, nil
 }
 
-func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
+func (m *manager) launchWithPlan(ctx context.Context, plan *launch.Plan) (err error) {
 	runtime, err := m.startWithPlan(ctx, plan)
 	if err != nil {
 		if errors.Is(err, errSavedSuspendExit) {
@@ -233,7 +233,7 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
 	return err
 }
 
-func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runtime, err error) {
+func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime *Runtime, err error) {
 	stats := runtimepkg.NewStats(time.Now())
 	manifest := plan.Manifest
 
@@ -355,7 +355,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	return runtime, nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *runtimepkg.Stats, lifecycle *launch.Lifecycle, processes *runtimepkg.ProcessSet) (*Runtime, qmpclient.Client, error) {
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, stats *runtimepkg.Stats, lifecycle *launch.Lifecycle, processes *runtimepkg.ProcessSet) (*Runtime, qmpclient.Client, error) {
 	started, err := launch.StartRuntimeProcesses(ctx, launch.RuntimeStartup{
 		Plan:           plan,
 		Processes:      processes,
@@ -395,7 +395,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *run
 	return runtime, client, nil
 }
 
-func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client qmpclient.Client) error {
+func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *launch.Plan, client qmpclient.Client) error {
 	return launch.RestoreRuntime(ctx, launch.RuntimeRestore{
 		Plan:   plan,
 		Logger: m.logger,
@@ -410,7 +410,7 @@ func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client q
 	})
 }
 
-func removeRestoredSuspendState(plan *Plan) error {
+func removeRestoredSuspendState(plan *launch.Plan) error {
 	if err := launch.RemoveRestoredSuspendState(plan); err != nil {
 		return &launch.StageError{Stage: "restore", Err: err}
 	}
@@ -419,7 +419,7 @@ func removeRestoredSuspendState(plan *Plan) error {
 
 func (m *manager) waitForLaunchForeground(
 	ctx context.Context,
-	plan *Plan,
+	plan *launch.Plan,
 	stats *runtimepkg.Stats,
 	runtime *Runtime,
 	qmpClient qmpclient.Client,
@@ -575,7 +575,7 @@ func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 
 func (m *manager) runSSHSession(
 	ctx context.Context,
-	plan *Plan,
+	plan *launch.Plan,
 	stats *runtimepkg.Stats,
 	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
