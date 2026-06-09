@@ -306,6 +306,8 @@ Acceptance criteria:
 - [x] Move guest-agent socket wait and retry-dial sequencing into
   `virtie/internal/manager/launch`, with manager supplying concrete QGA
   dialer and timeout policy.
+- [x] Allow manager call sites to supply operation-specific guest-agent wait
+  stages while keeping wait wrapping in `virtie/internal/manager/launch`.
 - [x] Move default startup wait stage wrapping and process-exit checks into
   `virtie/internal/manager/launch` for socket, QMP, QGA, and SSH-readiness
   waits.
@@ -1159,14 +1161,14 @@ readiness, and managed virtiofs sockets:
    pre-runtime launch lock/PID setup have moved there too. Runtime process/QMP
    startup sequencing, runtime activation sequencing, and restored-state
    cleanup have moved there too. Guest-agent socket wait/retry-dial
-   sequencing, SSH-readiness token wait sequencing, default startup wait
-   wrapping/check policy, foreground lifecycle suspend/info adapter wiring,
-   default foreground SSH session wrapping, SSH autoprovision guest install
-   sequencing, default guest-file stage wrapping, hotplug attach/detach stage
-   classification, notifier selection policy, generic stage-error/command-error
-   construction, and unexpected-process-exit wrapping have moved there as well.
-   Manager still owns default concrete dependencies and some stage-specific
-   wrapping.
+   sequencing, operation-specific guest-agent wait stages, SSH-readiness token
+   wait sequencing, default startup wait wrapping/check policy, foreground
+   lifecycle suspend/info adapter wiring, default foreground SSH session
+   wrapping, SSH autoprovision guest install sequencing, default guest-file
+   stage wrapping, hotplug attach/detach stage classification, notifier
+   selection policy, generic stage-error/command-error construction, and
+   unexpected-process-exit wrapping have moved there as well. Manager still owns
+   default concrete dependencies and some stage-specific wrapping.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
