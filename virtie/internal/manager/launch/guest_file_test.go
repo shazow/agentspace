@@ -181,6 +181,31 @@ func TestWriteGuestFilesWritesAndAppliesMetadataInOrder(t *testing.T) {
 	}
 }
 
+func TestWriteGuestFilesWrapsStage(t *testing.T) {
+	writeErr := errors.New("write failed")
+	err := WriteGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
+		{
+			GuestPath: "/etc/virtie/config",
+			Overwrite: true,
+			Content: manifest.WriteFileContent{
+				Kind: manifest.WriteFileContentText,
+				Text: "hello",
+			},
+		},
+	}, GuestFileWriter{
+		InstallDirectory: func(context.Context, manifest.ResolvedWriteFile) error {
+			return nil
+		},
+		WriteFile: func(context.Context, string, string) error {
+			return writeErr
+		},
+	})
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "guest file write" || !errors.Is(err, writeErr) {
+		t.Fatalf("stage err: got %v", err)
+	}
+}
+
 func TestMountWorkspaceCWDInstallsAndMountsTarget(t *testing.T) {
 	var events []string
 	err := MountWorkspaceCWD(context.Background(), &manifest.Manifest{
@@ -213,6 +238,16 @@ func TestMountWorkspaceCWDInstallsAndMountsTarget(t *testing.T) {
 	}
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("events: got %#v want %#v", events, want)
+	}
+}
+
+func TestMountWorkspaceCWDWrapsStage(t *testing.T) {
+	err := MountWorkspaceCWD(context.Background(), &manifest.Manifest{
+		Paths: manifest.Paths{WorkingDir: "/home/agent/project"},
+	}, WorkspaceCWDMounter{})
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "workspace cwd mount" {
+		t.Fatalf("stage err: got %v", err)
 	}
 }
 
@@ -351,6 +386,27 @@ func TestWriteBackGuestFilesWrapsHostWriteError(t *testing.T) {
 	})
 	if !errors.Is(err, writeErr) || !strings.Contains(err.Error(), "write host file") {
 		t.Fatalf("expected wrapped host write error, got %v", err)
+	}
+}
+
+func TestWriteBackGuestFilesWrapsStage(t *testing.T) {
+	readErr := errors.New("read failed")
+	err := WriteBackGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
+		{
+			GuestPath: "/var/lib/virtie/host",
+			Content: manifest.WriteFileContent{
+				Kind: manifest.WriteFileContentPath,
+				Path: "/tmp/virtie-host",
+			},
+		},
+	}, GuestFileWriteBacker{
+		ReadFile: func(context.Context, string) ([]byte, error) {
+			return nil, readErr
+		},
+	})
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "guest file write-back" || !errors.Is(err, readErr) {
+		t.Fatalf("stage err: got %v", err)
 	}
 }
 

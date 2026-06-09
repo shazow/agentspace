@@ -319,16 +319,18 @@ Acceptance criteria:
   the resulting guest command.
 - [x] Move guest-file parent-directory creation flow into
   `virtie/internal/manager/launch`, keeping manager responsible only for QGA
-  existence checks, command execution, and stage wrapping.
+  existence checks and command execution.
 - [x] Move manifest-backed guest-file write orchestration into
   `virtie/internal/manager/launch`, with manager supplying QGA-backed file
-  operations, logging callbacks, and stage wrapping.
+  operations and logging callbacks.
 - [x] Move guest-file write-back filtering and host-write orchestration into
   `virtie/internal/manager/launch`, with manager supplying QGA reads, host
-  write implementation, logging callbacks, and stage wrapping.
+  write implementation, and logging callbacks.
 - [x] Move workspace CWD guest-mount target derivation and command sequencing
   into `virtie/internal/manager/launch`, with manager supplying QGA command
-  execution, logging callbacks, and stage wrapping.
+  execution and logging callbacks.
+- [x] Move default guest-file write, write-back, and workspace CWD mount stage
+  wrapping into `virtie/internal/manager/launch`.
 - [x] Move notifier selection policy into
   `virtie/internal/manager/launch`, leaving manager responsible for
   constructing the concrete manifest-backed command notifier.
@@ -704,7 +706,8 @@ implementation packages should avoid importing the facade package.
   session wrapping also live there. Runtime activation sequencing lives there
   as well.
   Host-side guest-file payload and write-back path helpers now live there.
-  Guest-file directory install argument policy has moved there too.
+  Guest-file directory install argument policy and default guest-file stage
+  wrapping have moved there too.
   Runtime restore and suspend-save orchestration, plus runtime resume/suspend
   notification payloads, also live there now.
   `Launcher`, default concrete dependencies, and some stage-specific wrapping
@@ -1151,10 +1154,10 @@ readiness, and managed virtiofs sockets:
    cleanup have moved there too. Guest-agent socket wait/retry-dial
    sequencing, SSH-readiness token wait sequencing, default startup wait
    wrapping/check policy, foreground lifecycle suspend/info adapter wiring,
-   default foreground SSH session wrapping, notifier selection policy, generic
-   stage-error/command-error construction, and unexpected-process-exit wrapping
-   have moved there as well. Manager still owns default concrete dependencies
-   and some stage-specific wrapping.
+   default foreground SSH session wrapping, default guest-file stage wrapping,
+   notifier selection policy, generic stage-error/command-error construction,
+   and unexpected-process-exit wrapping have moved there as well. Manager still
+   owns default concrete dependencies and some stage-specific wrapping.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
