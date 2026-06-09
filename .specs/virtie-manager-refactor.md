@@ -178,6 +178,10 @@ Acceptance criteria:
   `virtie/internal/manager/runtime`, so write-back, control shutdown, process
   teardown, QMP disconnect, cleanup, and stats finalization run through one
   package-owned sequence.
+- [x] Move pre-runtime startup failure cleanup ordering into
+  `virtie/internal/manager/runtime`, so process teardown, launch-lock cleanup,
+  QMP disconnect, socket cleanup, and stats finalization share package-owned
+  cleanup sequencing.
 - [x] Move runtime ready/status/suspend transition policy into
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
   responsible for wiring paths, manifest state, and launch suspend adapters.
