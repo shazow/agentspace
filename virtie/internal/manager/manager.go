@@ -58,7 +58,6 @@ const (
 type LaunchSpec = launch.Spec
 type Plan = launch.Plan
 type RuntimePaths = launch.RuntimePaths
-type suspendState = launch.SuspendState
 type notificationSink = launch.NotificationSink
 type launchLifecycle = launch.Lifecycle
 type launchSuspendCoordinator = launch.SuspendCoordinator
@@ -206,9 +205,9 @@ func (m *manager) planLaunch(spec LaunchSpec) (*Plan, error) {
 	if err != nil {
 		return nil, &stageError{Stage: "preflight", Err: err}
 	}
-	resumeState, err := resolveLaunchResumeState(cfg, resumeMode)
+	resumeState, err := launch.ResolveResumeState(cfg, resumeMode)
 	if err != nil {
-		return nil, err
+		return nil, &stageError{Stage: "restore", Err: err}
 	}
 	notifier := launch.SelectNotifier(cfg, m.notifier, func(cfg *manifest.Manifest) notificationSink {
 		return newCommandNotifier(cfg, m.logger)
@@ -449,14 +448,6 @@ func (m *manager) waitForLaunchForeground(
 		},
 		RemoveRestored: removeRestoredSuspendState,
 	})
-}
-
-func resolveLaunchResumeState(manifest *manifest.Manifest, mode ResumeMode) (*suspendState, error) {
-	state, err := launch.ResolveResumeState(manifest, mode)
-	if err != nil {
-		return nil, &stageError{Stage: "restore", Err: err}
-	}
-	return state, nil
 }
 
 func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {

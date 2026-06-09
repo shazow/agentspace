@@ -9,16 +9,6 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 )
 
-var suspendStatePath = launch.SuspendStatePath
-var vmStatePath = launch.VMStatePath
-var launchPIDPath = launch.LaunchPIDPath
-var writeSuspendStateData = launch.WriteSuspendStateData
-var readSuspendState = launch.ReadSuspendState
-var hasSavedSuspendState = launch.HasSavedSuspendState
-var removeSuspendState = launch.RemoveSuspendState
-var writeLaunchPID = launch.WriteLaunchPID
-var removeLaunchPID = launch.RemoveLaunchPID
-
 type pidSignaler = launch.PIDSignaler
 
 var _ launch.PIDSignaler = syscallPIDSignaler{}

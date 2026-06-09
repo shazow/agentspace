@@ -177,7 +177,7 @@ func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendRespo
 	return runtimepkg.ControlSuspend(ctx, runtimepkg.SuspendOperation{
 		State:       r.state,
 		Requester:   r.suspendRequests,
-		VMStatePath: vmStatePath(r.manifest),
+		VMStatePath: launch.VMStatePath(r.manifest),
 		SavedSuspendExit: func(err error) bool {
 			return errors.Is(err, errSavedSuspendExit)
 		},
