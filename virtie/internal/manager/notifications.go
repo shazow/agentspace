@@ -10,12 +10,13 @@ import (
 	"sort"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
 const (
-	notifyStateRuntimeSuspend = "runtime:suspend"
-	notifyStateRuntimeResume  = "runtime:resume"
+	notifyStateRuntimeSuspend = launch.NotifyStateRuntimeSuspend
+	notifyStateRuntimeResume  = launch.NotifyStateRuntimeResume
 )
 
 type noopNotifier struct{}

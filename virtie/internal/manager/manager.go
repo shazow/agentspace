@@ -396,11 +396,7 @@ func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client q
 	}); err != nil {
 		return &stageError{Stage: "restore", Err: err}
 	}
-	plan.Notifier.Notify(ctx, notifyStateRuntimeResume, "Restored saved VM state", map[string]string{
-		"host_name":     plan.Manifest.Identity.HostName,
-		"vm_state_path": plan.ResumeState.VMStatePath,
-		"cid":           fmt.Sprintf("%d", plan.CID),
-	})
+	launch.NotifyRuntimeResume(ctx, plan)
 	return nil
 }
 
