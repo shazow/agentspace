@@ -24,6 +24,7 @@ import (
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
+	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
@@ -290,13 +291,19 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 				}
 				runtimeErr = runtime.Close()
 			} else {
-				runtimeErr = errors.Join(processes.Close(m.shutdownDelay), cleanupRuntime())
-				if qmpClient != nil {
-					runtimeErr = errors.Join(runtimeErr, qmpClient.Disconnect())
-				}
-				runtimeErr = errors.Join(runtimeErr, launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()))
-				stats.MarkCompleted(time.Now())
-				fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
+				runtimeErr = (runtimepkg.StartupFailureActions{
+					Processes:     processes,
+					ShutdownDelay: m.shutdownDelay,
+					LockCleanup:   cleanupRuntime,
+					QMP:           qmpClient,
+					SocketCleanup: func() error {
+						return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
+					},
+					Stats: func() {
+						stats.MarkCompleted(time.Now())
+						fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
+					},
+				}).Run()
 			}
 			err = errors.Join(err, runtimeErr)
 		}
