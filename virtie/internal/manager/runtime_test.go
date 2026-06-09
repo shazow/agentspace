@@ -11,7 +11,6 @@ import (
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloontypes"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
-	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 )
 
@@ -127,17 +126,15 @@ func TestRuntimeStartControlServesStatus(t *testing.T) {
 func TestRuntimeWaitUsesConfiguredForegroundCallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	lifecycle := launch.NewLifecycle(nil, nil, nil)
-	defer lifecycle.Stop()
 	processes := newProcessSet()
 	runtime := newRuntime(cfg, RuntimePaths{
 		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
 		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 11, newLaunchStats(time.Now()), &fakeQMPClient{}, lifecycle.Suspend(), runtimeDependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)})
+	}, 11, newLaunchStats(time.Now()), &fakeQMPClient{}, nil, runtimeDependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)})
 	runtime.SetProcesses(processes, time.Millisecond)
 
 	var called bool
-	runtime.SetLaunchLifecycle(&Plan{Manifest: cfg, Options: LaunchOptions{SSH: false}}, lifecycle, &launchSuspendHandler{}, func(ctx context.Context, plan *Plan) error {
+	runtime.SetForegroundWait(&Plan{Manifest: cfg, Options: LaunchOptions{SSH: false}}, func(ctx context.Context, plan *Plan) error {
 		called = true
 		if !plan.Options.SSH {
 			t.Fatalf("wait mode override did not enable ssh: %#v", plan.Options)

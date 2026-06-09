@@ -24,8 +24,6 @@ type Runtime struct {
 	stats           *launchStats
 	qmp             qmpClient
 	suspendRequests *launchSuspendCoordinator
-	lifecycle       *launchLifecycle
-	suspendHandler  *launchSuspendHandler
 	waitForeground  func(context.Context, *Plan) error
 	collectInfo     func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
 	processes       *ProcessSet
@@ -101,10 +99,8 @@ func (r *Runtime) SetProcesses(processes *ProcessSet, shutdownDelay time.Duratio
 	r.shutdownDelay = shutdownDelay
 }
 
-func (r *Runtime) SetLaunchLifecycle(plan *Plan, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, waitForeground func(context.Context, *Plan) error) {
+func (r *Runtime) SetForegroundWait(plan *Plan, waitForeground func(context.Context, *Plan) error) {
 	r.plan = plan
-	r.lifecycle = lifecycle
-	r.suspendHandler = suspendHandler
 	r.waitForeground = waitForeground
 }
 
@@ -137,7 +133,7 @@ func (r *Runtime) Close() error {
 }
 
 func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
-	if r.plan == nil || r.lifecycle == nil || r.suspendHandler == nil || r.processes == nil || r.waitForeground == nil {
+	if r.plan == nil || r.processes == nil || r.waitForeground == nil {
 		return failedPrecondition(fmt.Errorf("runtime foreground wait is not configured"))
 	}
 	plan := launch.PlanForWaitMode(r.plan, mode)

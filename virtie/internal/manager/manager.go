@@ -311,7 +311,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 		Lifecycle: lifecycle,
 		MarkReady: runtime.SetReady,
 		Configure: func() {
-			runtime.SetLaunchLifecycle(plan, lifecycle, suspendHandler, func(ctx context.Context, waitPlan *Plan) error {
+			runtime.SetForegroundWait(plan, func(ctx context.Context, waitPlan *Plan) error {
 				return m.waitForLaunchForeground(ctx, waitPlan, stats, runtime, qmpClient, lifecycle, suspendHandler, processes)
 			})
 			runtime.SetCloseHooks(runtimepkg.NewCloseHooks(runtimepkg.CloseHookActions{
