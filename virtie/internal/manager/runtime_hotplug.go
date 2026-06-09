@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
+	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 )
 
 func (r *Runtime) Hotplug(ctx context.Context, req HotplugRequest) (HotplugResponse, error) {
@@ -18,14 +19,9 @@ func (r *Runtime) Hotplug(ctx context.Context, req HotplugRequest) (HotplugRespo
 		QMP:      managerHotplugQMP{client: r.qmp, timeout: r.manager.effectiveQMPCommandTimeout()},
 		Guest:    managerHotplugGuest{m: r.manager, manifest: r.manifest},
 	}
-	if req.Detach {
-		if err := runtime.Detach(ctx, req.ID); err != nil {
-			return HotplugResponse{}, wrapHotplugError(err)
-		}
-		return HotplugResponse{ID: req.ID, Detach: true}, nil
-	}
-	if err := runtime.Attach(ctx, req.ID); err != nil {
+	resp, err := runtimepkg.Hotplug(ctx, runtime, req)
+	if err != nil {
 		return HotplugResponse{}, wrapHotplugError(err)
 	}
-	return HotplugResponse{ID: req.ID}, nil
+	return resp, nil
 }

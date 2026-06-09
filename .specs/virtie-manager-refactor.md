@@ -185,6 +185,10 @@ Acceptance criteria:
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
   responsible for supplying the owned QMP client, timeout, and
   failed-precondition adaptation.
+- [x] Move runtime hotplug attach/detach dispatch into
+  `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
+  responsible for constructing the hotplug engine adapters and applying
+  stage-specific error wrapping.
 - [x] Move control-plane failed-precondition and compatibility error helpers
   into `virtie/internal/manager/control`, with manager facade aliases
   preserving migration call sites.
