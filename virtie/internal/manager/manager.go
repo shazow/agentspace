@@ -56,7 +56,6 @@ const (
 type LaunchSpec = launch.Spec
 type Plan = launch.Plan
 type RuntimePaths = launch.RuntimePaths
-type notificationSink = launch.NotificationSink
 type Config = launch.Config
 
 type Launcher struct {
@@ -125,8 +124,8 @@ type manager struct {
 	qmpQuitTimeout      time.Duration
 	qmpMigrationTimeout time.Duration
 	signals             <-chan os.Signal
-	pidSignaler         pidSignaler
-	notifier            notificationSink
+	pidSignaler         launch.PIDSignaler
+	notifier            launch.NotificationSink
 }
 
 func newManager() *manager {
@@ -203,7 +202,7 @@ func (m *manager) planLaunch(spec LaunchSpec) (*Plan, error) {
 	if err != nil {
 		return nil, &stageError{Stage: "restore", Err: err}
 	}
-	notifier := launch.SelectNotifier(cfg, m.notifier, func(cfg *manifest.Manifest) notificationSink {
+	notifier := launch.SelectNotifier(cfg, m.notifier, func(cfg *manifest.Manifest) launch.NotificationSink {
 		return newCommandNotifier(cfg, m.logger)
 	})
 	plan, err := launch.BuildPlan(spec, resumeState, notifier)
@@ -526,13 +525,13 @@ type launchSuspendHandler struct {
 	qmpSocketPath string
 	client        qmpClient
 	cid           int
-	notifier      notificationSink
+	notifier      launch.NotificationSink
 	writeBack     func() bool
 	once          sync.Once
 	err           error
 }
 
-func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink, writeBack func() bool) *launchSuspendHandler {
+func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier launch.NotificationSink, writeBack func() bool) *launchSuspendHandler {
 	return &launchSuspendHandler{
 		manager:       manager,
 		manifest:      manifest,
@@ -636,7 +635,7 @@ func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, delay
 	return m.waitForProcess(ctx, stage, nil, delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
-func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink) error {
+func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier launch.NotificationSink) error {
 	return launch.SaveRuntimeSuspend(ctx, launch.RuntimeSuspendSave{
 		Manifest:      manifest,
 		QMPSocketPath: qmpSocketPath,

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -12,7 +13,7 @@ type qemuTransportResolver func(string) (govmmQemu.VirtioTransport, error)
 
 type optionalFeatureRuntime struct {
 	qmpTimeout time.Duration
-	notifier   notificationSink
+	notifier   launch.NotificationSink
 }
 
 type optionalFeature interface {
