@@ -78,6 +78,9 @@ Acceptance criteria:
 - [x] Added `Launcher.Start`, `Runtime.Wait`, and `WaitMode`, with
   `LaunchWithOptions` now following the planned `Plan -> Start -> Wait ->
   Close` structure.
+- [x] Split the typed control socket transport into
+  `virtie/internal/manager/control`, with `manager` package aliases preserving
+  the existing facade during the migration.
 
 ## Landed Control Flow
 
@@ -427,7 +430,7 @@ implementation packages should avoid importing the facade package.
 - `virtie/internal/manager/runtime`: the launch-owned runtime, state machine,
   paths, stats, process set, managed tasks, idempotent `Close`, and serialized
   QMP executor.
-- `virtie/internal/manager/control`: `virtie.sock` request/response types,
+- `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, and optional
   handler registration.
 - `virtie/internal/qmpclient`: QMP dial/client implementation and role
@@ -840,7 +843,8 @@ readiness, and managed virtiofs sockets:
    hotplug, and balloon onto optional capability implementations, and keep old
    package-level entrypoints as adapters.
 5. Add `Client`, `Server`, typed request/response structs, router, and
-   Unix-socket transport tests under `manager/control`.
+   Unix-socket transport tests under `manager/control`. This has landed with
+   temporary aliases in `manager` for migration compatibility.
 6. Start `virtie.sock` from the launch runtime after QMP readiness. Register
    core handlers unconditionally and capability handlers only when implemented.
    Stop the server before process teardown and socket cleanup.

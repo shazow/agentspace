@@ -127,7 +127,9 @@ func TestControlInvalidJSONAndUnknownMethod(t *testing.T) {
 	if _, err := conn.Write([]byte("{not json}\n")); err != nil {
 		t.Fatalf("write invalid json: %v", err)
 	}
-	var invalid responseEnvelope
+	var invalid struct {
+		Error *RPCError `json:"error,omitempty"`
+	}
 	if err := json.NewDecoder(conn).Decode(&invalid); err != nil {
 		t.Fatalf("decode invalid response: %v", err)
 	}
@@ -140,10 +142,16 @@ func TestControlInvalidJSONAndUnknownMethod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	if err := json.NewEncoder(conn).Encode(requestEnvelope{ID: 1, Method: "missing", Params: json.RawMessage("{}")}); err != nil {
+	if err := json.NewEncoder(conn).Encode(struct {
+		ID     int             `json:"id"`
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}{ID: 1, Method: "missing", Params: json.RawMessage("{}")}); err != nil {
 		t.Fatalf("write unknown method: %v", err)
 	}
-	var unknown responseEnvelope
+	var unknown struct {
+		Error *RPCError `json:"error,omitempty"`
+	}
 	if err := json.NewDecoder(conn).Decode(&unknown); err != nil {
 		t.Fatalf("decode unknown response: %v", err)
 	}
