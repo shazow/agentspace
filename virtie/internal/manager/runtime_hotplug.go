@@ -6,11 +6,12 @@ import (
 	"context"
 
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
+	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 )
 
-func (r *Runtime) Hotplug(ctx context.Context, req HotplugRequest) (HotplugResponse, error) {
+func (r *Runtime) Hotplug(ctx context.Context, req controlpkg.HotplugRequest) (controlpkg.HotplugResponse, error) {
 	runtime := hotplug.Runtime{
 		StateDir: r.manifest.ResolvedPersistenceStateDir(),
 		WorkDir:  r.manifest.Paths.WorkingDir,
@@ -22,7 +23,7 @@ func (r *Runtime) Hotplug(ctx context.Context, req HotplugRequest) (HotplugRespo
 	}
 	resp, err := runtimepkg.Hotplug(ctx, runtime, req)
 	if err != nil {
-		return HotplugResponse{}, launch.WrapHotplugError(err)
+		return controlpkg.HotplugResponse{}, launch.WrapHotplugError(err)
 	}
 	return resp, nil
 }

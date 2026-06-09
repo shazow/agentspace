@@ -274,6 +274,10 @@ Acceptance criteria:
 - [x] Move concrete runtime hotplug adapter dependencies onto the concrete
   `Runtime`, reducing manager back-references from runtime hotplug control
   while manager still supplies concrete host/guest adapters.
+- [x] Make the concrete manager `Runtime` use `manager/launch` and
+  `manager/control` types directly instead of manager facade aliases,
+  reducing blockers for eventually moving the concrete runtime under
+  `virtie/internal/manager/runtime`.
 - [x] Remove the concrete `Runtime` back-reference to `manager`, leaving
   manager-owned behavior supplied through explicit runtime dependencies and
   callbacks.
