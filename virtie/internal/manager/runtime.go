@@ -32,11 +32,11 @@ type Runtime struct {
 	closeHooks      runtimeCloseHooks
 	savedSuspend    bool
 	watchers        executor.Group
-	server          *Server
 
 	stateMu   sync.Mutex
 	state     RuntimeState
 	closeOnce sync.Once
+	control   *runtimepkg.ControlServer
 }
 
 func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator) *Runtime {
@@ -80,26 +80,9 @@ func (r *Runtime) QMP() qmpClient {
 }
 
 func (r *Runtime) StartControl(ctx context.Context) error {
-	if r.paths.ControlSocket == "" {
-		return nil
-	}
-	listener, err := Listen(r.paths.ControlSocket)
-	if err != nil {
-		return err
-	}
-	router, err := NewRuntimeRouter(r)
-	if err != nil {
-		_ = listener.Close()
-		return err
-	}
-	server := &Server{Handler: router, Logger: r.manager.logger}
-	r.server = server
-	go func() {
-		if err := server.Serve(listener); err != nil && ctx.Err() == nil && r.manager.logger != nil {
-			r.manager.logger.Info("control socket stopped", "err", err)
-		}
-	}()
-	return nil
+	controlServer, err := runtimepkg.StartControl(ctx, r.paths.ControlSocket, r, r.manager.logger)
+	r.control = controlServer
+	return err
 }
 
 func (r *Runtime) Close() error {
@@ -111,9 +94,7 @@ func (r *Runtime) Close() error {
 			err = errors.Join(err, r.closeHooks.WriteBack(writeBackCtx))
 			cancelWriteBack()
 		}
-		if r.server != nil {
-			err = errors.Join(err, r.server.Close())
-		}
+		err = errors.Join(err, r.control.Close())
 		if r.processes != nil {
 			err = errors.Join(err, r.processes.Close(r.shutdownDelay))
 		}
