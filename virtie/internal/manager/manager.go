@@ -745,24 +745,5 @@ func joinDeferredError(target *error, fn func() error) {
 }
 
 func wrapCommandError(stage string, command string, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return &commandError{
-			Stage:    stage,
-			Command:  command,
-			ExitCode: exitErr.ExitCode(),
-			Err:      err,
-		}
-	}
-
-	return &commandError{
-		Stage:    stage,
-		Command:  command,
-		ExitCode: -1,
-		Err:      err,
-	}
+	return launch.WrapCommandError(stage, command, err)
 }
