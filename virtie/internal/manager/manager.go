@@ -282,15 +282,18 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 				}
 				runtimeErr = runtime.Close()
 			} else {
-				runtimeErr = (runtimepkg.StartupFailureActions{
+				runtimeErr = runtimepkg.ConfiguredStartupFailureActions(runtimepkg.StartupFailureConfig{
 					Processes:     processes,
 					ShutdownDelay: m.shutdownDelay,
 					LockCleanup:   cleanupRuntime,
 					QMP:           qmpClient,
-					SocketCleanup: func() error {
-						return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
+					SocketCleanup: []func() error{
+						func() error {
+							return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
+						},
 					},
-					Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
+					Stats:       stats,
+					StatsOutput: m.outputWriter(),
 				}).Run()
 			}
 			err = errors.Join(err, runtimeErr)
