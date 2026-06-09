@@ -2,9 +2,11 @@
 
 package manager
 
+import "github.com/shazow/agentspace/virtie/internal/manager/launch"
+
 type hostVSockCIDChecker struct{}
 
-func newHostVSockCIDChecker() vsockCIDChecker {
+func newHostVSockCIDChecker() launch.VSockCIDChecker {
 	return &hostVSockCIDChecker{}
 }
 
