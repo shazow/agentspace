@@ -674,24 +674,18 @@ func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, lifecyc
 }
 
 func (m *manager) waitForProcess(ctx context.Context, stage string, process *executor.Process, delay time.Duration, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
-	return launch.WaitForProcess(ctx, launch.ProcessWait{
+	return launch.WaitForLifecycleProcess(ctx, launch.LifecycleProcessWait{
 		Stage:     stage,
 		Process:   process,
 		Delay:     delay,
 		Lifecycle: lifecycle,
+		Watchers:  watchers,
 		PollDelay: defaultSocketPollInterval,
 		Suspend: func(ctx context.Context) error {
 			return handleSuspendRequest(ctx, lifecycle.Suspend(), suspendHandler)
 		},
 		Info: func(ctx context.Context) {
 			m.printGuestInfo(ctx, guestAgentSocketPath, watchers)
-		},
-		Check: func(stage string) error {
-			return firstUnexpectedExit(stage, watchers)
-		},
-		Cancel: launch.WrapStage,
-		ProcessError: func(stage string, name string, err error) error {
-			return wrapCommandError(stage, name, err)
 		},
 	})
 }

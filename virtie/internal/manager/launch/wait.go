@@ -3,6 +3,8 @@ package launch
 import (
 	"context"
 	"time"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 type EventWait struct {
@@ -36,6 +38,35 @@ type ProcessWait struct {
 	Check        func(stage string) error
 	Cancel       func(stage string, err error) error
 	ProcessError func(stage string, name string, err error) error
+}
+
+type LifecycleProcessWait struct {
+	Stage     string
+	Process   WaitProcess
+	Delay     time.Duration
+	Lifecycle *Lifecycle
+	Watchers  executor.Group
+	PollDelay time.Duration
+
+	Suspend func(context.Context) error
+	Info    func(context.Context)
+}
+
+func WaitForLifecycleProcess(ctx context.Context, wait LifecycleProcessWait) error {
+	return WaitForProcess(ctx, ProcessWait{
+		Stage:     wait.Stage,
+		Process:   wait.Process,
+		Delay:     wait.Delay,
+		Lifecycle: wait.Lifecycle,
+		PollDelay: wait.PollDelay,
+		Suspend:   wait.Suspend,
+		Info:      wait.Info,
+		Check: func(stage string) error {
+			return FirstUnexpectedExit(stage, wait.Watchers)
+		},
+		Cancel:       WrapStage,
+		ProcessError: WrapCommandError,
+	})
 }
 
 func WaitForProcess(ctx context.Context, wait ProcessWait) error {
