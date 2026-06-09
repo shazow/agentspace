@@ -73,6 +73,8 @@ Acceptance criteria:
 - [x] Moved launch process and QMP teardown ownership into idempotent
   `Runtime.Close`, with pre-runtime startup failures still cleaned up by the
   launch path.
+- [x] Extracted foreground waiting into a named launch helper covering both
+  interactive SSH sessions and headless VM waits.
 
 ## Landed Control Flow
 
@@ -95,7 +97,7 @@ flowchart TD
 		Router[typed Router]
 		Server[virtie.sock Server]
 		SuspendQueue[launchSuspendCoordinator]
-		Loop[launch foreground loop]
+		Loop[waitForLaunchForeground]
 		SuspendSave[launchSuspendHandler.saveAndExit]
 		Teardown[deferred runtime close and socket cleanup]
 	end
