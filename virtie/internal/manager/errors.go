@@ -3,29 +3,11 @@ package manager
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 )
 
-type commandError struct {
-	Stage    string
-	Command  string
-	ExitCode int
-	Err      error
-}
-
-func (e *commandError) Error() string {
-	if e.ExitCode >= 0 {
-		return fmt.Sprintf("%s: %s exited with code %d: %v", e.Stage, e.Command, e.ExitCode, e.Err)
-	}
-	return fmt.Sprintf("%s: %s failed: %v", e.Stage, e.Command, e.Err)
-}
-
-func (e *commandError) Unwrap() error {
-	return e.Err
-}
-
+type commandError = launch.CommandError
 type stageError = launch.StageError
 
 // ExitCode maps launcher failures onto process exit codes.
