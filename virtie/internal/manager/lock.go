@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 )
 
 type fileLocker struct{}
 
-func (l *fileLocker) Acquire(path string) (lock, error) {
+func (l *fileLocker) Acquire(path string) (launch.Lock, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create lock directory for %q: %w", path, err)
 	}

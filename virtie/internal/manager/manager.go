@@ -108,13 +108,13 @@ func (l *Launcher) Start(ctx context.Context, plan *Plan) (*Runtime, error) {
 }
 
 type manager struct {
-	locker              locker
-	vsockCIDChecker     vsockCIDChecker
-	runner              runner
-	socketWaiter        socketWaiter
+	locker              launch.Locker
+	vsockCIDChecker     launch.VSockCIDChecker
+	runner              launch.Runner
+	socketWaiter        launch.SocketWaiter
 	qmpDialer           qmpDialer
 	guestAgentDialer    guestAgentDialer
-	sshReadyDialer      sshReadyDialer
+	sshReadyDialer      launch.SSHReadyDialer
 	logger              *slog.Logger
 	logWriter           io.Writer
 	sshRetryDelay       time.Duration
