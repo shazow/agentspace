@@ -361,6 +361,8 @@ Acceptance criteria:
 - [x] Move generic launch stage-error and command-error construction into
   `virtie/internal/manager/launch`, leaving manager responsible for
   CLI exit-code adaptation and remaining stage-specific wrapping.
+- [x] Remove manager-local stage-error and command-error aliases, so manager
+  call sites use launch package error types directly.
 - [x] Move launch unexpected-process-exit detection and wrapping into
   `virtie/internal/manager/launch`, leaving manager call sites to supply
   concrete process groups.
@@ -741,10 +743,11 @@ implementation packages should avoid importing the facade package.
   Runtime restore and suspend-save orchestration, plus runtime resume/suspend
   notification payloads, also live there now.
   `Launcher`, default concrete dependencies, and some stage-specific wrapping
-  still live in `manager`; generic stage-error and command-error construction,
-  unexpected-process-exit wrapping, notifier selection, async readiness,
-  socket wait mechanics, and the major startup sequencing phases now live in
-  `launch`.
+  still live in `manager`; generic stage-error and command-error construction
+  now lives in `launch` and manager call sites use those launch error types
+  directly. Unexpected-process-exit wrapping, notifier selection, async
+  readiness, socket wait mechanics, and the major startup sequencing phases
+  now live in `launch`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, close action

@@ -25,7 +25,7 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 
 	socketPath, err := launchManifest.ResolvedGuestAgentSocketPath()
 	if err != nil {
-		return &stageError{Stage: "guest agent", Err: err}
+		return &launch.StageError{Stage: "guest agent", Err: err}
 	}
 
 	m.logger.Info("waiting for guest agent readiness")
@@ -77,7 +77,7 @@ func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manif
 
 	socketPath, err := launchManifest.ResolvedGuestAgentSocketPath()
 	if err != nil {
-		return &stageError{Stage: "guest file write-back", Err: err}
+		return &launch.StageError{Stage: "guest file write-back", Err: err}
 	}
 
 	m.logger.Info("waiting for guest agent readiness for write-back")
