@@ -9,6 +9,7 @@ import (
 	"time"
 
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloontypes"
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 )
 
 func TestRuntimeStatusAndBalloonUseOwnedQMP(t *testing.T) {
@@ -117,5 +118,32 @@ func TestRuntimeStartControlServesStatus(t *testing.T) {
 	}
 	if status.State != RuntimeReady || status.CID != 11 {
 		t.Fatalf("unexpected status: %#v", status)
+	}
+}
+
+func TestRuntimeCloseStopsProcessesAndDisconnectsQMPOnce(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	qmp := &fakeQMPClient{}
+	process := (&executortest.Process{OverrideName: "qemu-system-x86_64"}).Process()
+	processes := newProcessSet()
+	processes.SetQEMU(process)
+	runtime := newRuntime(&manager{logger: slog.New(slog.DiscardHandler)}, cfg, RuntimePaths{
+		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
+		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
+	}, 11, newLaunchStats(time.Now()), qmp, nil)
+	runtime.SetProcesses(processes, time.Millisecond)
+
+	if err := runtime.Close(); err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatalf("second close: %v", err)
+	}
+	if got, want := qmp.disconnectCalls, 1; got != want {
+		t.Fatalf("unexpected qmp disconnect calls: got %d want %d", got, want)
+	}
+	if exited, err := process.PollExit(); err != nil || !exited {
+		t.Fatalf("expected process to exit after close, exited=%v err=%v", exited, err)
 	}
 }

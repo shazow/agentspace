@@ -498,17 +498,17 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
 		var runtimeErr error
 		if runtime != nil {
 			runtimeErr = runtime.Close()
-		}
-		processErr := processes.Close(m.shutdownDelay)
-		var disconnectErr error
-		if qmpClient != nil {
-			disconnectErr = qmpClient.Disconnect()
+		} else {
+			runtimeErr = processes.Close(m.shutdownDelay)
+			if qmpClient != nil {
+				runtimeErr = errors.Join(runtimeErr, qmpClient.Disconnect())
+			}
 		}
 		cleanupErr := removeSocketPaths(plan.RuntimeSocketCleanupFiles())
 		if err == nil {
-			err = errors.Join(runtimeErr, processErr, disconnectErr, cleanupErr)
-		} else if runtimeErr != nil || processErr != nil || disconnectErr != nil || cleanupErr != nil {
-			err = errors.Join(err, runtimeErr, processErr, disconnectErr, cleanupErr)
+			err = errors.Join(runtimeErr, cleanupErr)
+		} else if runtimeErr != nil || cleanupErr != nil {
+			err = errors.Join(err, runtimeErr, cleanupErr)
 		}
 		stats.MarkCompleted(time.Now())
 		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
@@ -651,6 +651,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *lau
 		return nil, nil, err
 	}
 	runtime := newRuntime(m, plan.Manifest, plan.Paths, plan.CID, stats, client, lifecycle.Suspend())
+	runtime.SetProcesses(processes, m.shutdownDelay)
 	client = runtime.QMP()
 	stats.MarkQMPReady(time.Now())
 	qemu.SetShutdown(func() error {

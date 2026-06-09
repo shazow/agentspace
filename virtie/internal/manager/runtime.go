@@ -32,6 +32,8 @@ type Runtime struct {
 	stats           *launchStats
 	qmp             qmpClient
 	suspendRequests *launchSuspendCoordinator
+	processes       *ProcessSet
+	shutdownDelay   time.Duration
 	watchers        executor.Group
 	server          *Server
 
@@ -59,6 +61,11 @@ func (r *Runtime) SetReady() {
 
 func (r *Runtime) SetWatchers(watchers executor.Group) {
 	r.watchers = watchers
+}
+
+func (r *Runtime) SetProcesses(processes *ProcessSet, shutdownDelay time.Duration) {
+	r.processes = processes
+	r.shutdownDelay = shutdownDelay
 }
 
 func (r *Runtime) QMP() qmpClient {
@@ -94,6 +101,12 @@ func (r *Runtime) Close() error {
 		r.setState(RuntimeStopping)
 		if r.server != nil {
 			err = r.server.Close()
+		}
+		if r.processes != nil {
+			err = errors.Join(err, r.processes.Close(r.shutdownDelay))
+		}
+		if r.qmp != nil {
+			err = errors.Join(err, r.qmp.Disconnect())
 		}
 		r.setState(RuntimeStopped)
 	})
