@@ -1,6 +1,8 @@
 package launch
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -87,6 +89,103 @@ func TestGuestInstallDirectoryArgs(t *testing.T) {
 				t.Fatalf("unexpected install args: got %#v want %#v", got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestInstallGuestFileDirectoryNoopsForRootOrCurrentDirectory(t *testing.T) {
+	called := false
+	installer := GuestDirectoryInstaller{
+		Exists: func(context.Context, string) (bool, error) {
+			called = true
+			return false, nil
+		},
+		Install: func(context.Context, string, []string) error {
+			called = true
+			return nil
+		},
+	}
+
+	for _, guestPath := range []string{"file", "/file"} {
+		t.Run(guestPath, func(t *testing.T) {
+			called = false
+			if err := InstallGuestFileDirectory(context.Background(), installer, guestPath, "", ""); err != nil {
+				t.Fatalf("install guest directory: %v", err)
+			}
+			if called {
+				t.Fatalf("expected no installer callbacks for %q", guestPath)
+			}
+		})
+	}
+}
+
+func TestInstallGuestFileDirectoryCreatesMissingAncestorsTopDown(t *testing.T) {
+	existing := map[string]bool{
+		"/var": true,
+	}
+	var checked []string
+	var installed []struct {
+		dir  string
+		args []string
+	}
+	installer := GuestDirectoryInstaller{
+		Exists: func(_ context.Context, guestDir string) (bool, error) {
+			checked = append(checked, guestDir)
+			return existing[guestDir], nil
+		},
+		Install: func(_ context.Context, guestDir string, args []string) error {
+			installed = append(installed, struct {
+				dir  string
+				args []string
+			}{dir: guestDir, args: args})
+			return nil
+		},
+	}
+
+	err := InstallGuestFileDirectory(context.Background(), installer, "/var/lib/virtie/config.json", "agent:users", "0640")
+	if err != nil {
+		t.Fatalf("install guest directory: %v", err)
+	}
+	if want := []string{"/var/lib/virtie", "/var/lib", "/var"}; !reflect.DeepEqual(checked, want) {
+		t.Fatalf("checked dirs: got %#v want %#v", checked, want)
+	}
+	expectedInstalled := []struct {
+		dir  string
+		args []string
+	}{
+		{dir: "/var/lib", args: []string{"-d", "-o", "agent", "-g", "users", "-m", "0750", "/var/lib"}},
+		{dir: "/var/lib/virtie", args: []string{"-d", "-o", "agent", "-g", "users", "-m", "0750", "/var/lib/virtie"}},
+	}
+	if !reflect.DeepEqual(installed, expectedInstalled) {
+		t.Fatalf("installed dirs: got %#v want %#v", installed, expectedInstalled)
+	}
+}
+
+func TestInstallGuestFileDirectoryPropagatesCallbackErrors(t *testing.T) {
+	existsErr := errors.New("exists failed")
+	err := InstallGuestFileDirectory(context.Background(), GuestDirectoryInstaller{
+		Exists: func(context.Context, string) (bool, error) {
+			return false, existsErr
+		},
+		Install: func(context.Context, string, []string) error {
+			t.Fatalf("install should not be called after exists failure")
+			return nil
+		},
+	}, "/etc/virtie/config.json", "", "")
+	if !errors.Is(err, existsErr) {
+		t.Fatalf("exists error: got %v want %v", err, existsErr)
+	}
+
+	installErr := errors.New("install failed")
+	err = InstallGuestFileDirectory(context.Background(), GuestDirectoryInstaller{
+		Exists: func(_ context.Context, guestDir string) (bool, error) {
+			return guestDir == "/etc", nil
+		},
+		Install: func(context.Context, string, []string) error {
+			return installErr
+		},
+	}, "/etc/virtie/config.json", "", "")
+	if !errors.Is(err, installErr) {
+		t.Fatalf("install error: got %v want %v", err, installErr)
 	}
 }
 

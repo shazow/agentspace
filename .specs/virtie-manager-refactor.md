@@ -208,6 +208,9 @@ Acceptance criteria:
 - [x] Move guest-file directory install argument policy into
   `virtie/internal/manager/launch`, keeping manager responsible for running
   the resulting guest command.
+- [x] Move guest-file parent-directory creation flow into
+  `virtie/internal/manager/launch`, keeping manager responsible only for QGA
+  existence checks, command execution, and stage wrapping.
 
 ## Landed Control Flow
 
