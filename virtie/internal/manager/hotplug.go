@@ -82,7 +82,7 @@ func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.M
 	}, client, nil
 }
 
-func configureRuntimeHotplugDependencies(deps *runtimeDependencies, m *manager, launchManifest *manifest.Manifest) {
+func configureRuntimeHotplugDependencies(deps *runtimepkg.Dependencies, m *manager, launchManifest *manifest.Manifest) {
 	deps.HotplugStart = managerHotplugStarter{m: m}
 	deps.HotplugSockets = managerHotplugSocketWaiter{m: m}
 	deps.HotplugGuest = managerHotplugGuest{m: m, manifest: launchManifest}

@@ -41,17 +41,7 @@ type Runtime struct {
 	control *runtimepkg.ControlServer
 }
 
-type runtimeDependencies struct {
-	QMPTimeout       time.Duration
-	Logger           *slog.Logger
-	SavedSuspendExit func(error) bool
-	CollectInfo      func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
-	HotplugStart     runtimepkg.HotplugStarter
-	HotplugSockets   runtimepkg.HotplugSocketWaiter
-	HotplugGuest     runtimepkg.HotplugGuest
-}
-
-func newRuntime(manifest *manifest.Manifest, paths launch.RuntimePaths, cid int, stats *runtimepkg.Stats, qmp qmpclient.Client, suspendRequests *launch.SuspendCoordinator, deps runtimeDependencies) *Runtime {
+func newRuntime(manifest *manifest.Manifest, paths launch.RuntimePaths, cid int, stats *runtimepkg.Stats, qmp qmpclient.Client, suspendRequests *launch.SuspendCoordinator, deps runtimepkg.Dependencies) *Runtime {
 	state := runtimepkg.NewState(RuntimeStarting)
 	return &Runtime{
 		manifest:         manifest,

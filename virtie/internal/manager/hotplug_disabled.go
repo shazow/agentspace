@@ -9,6 +9,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
 	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
+	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -39,7 +40,7 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 	return &launch.StageError{Stage: "hotplug", Err: fmt.Errorf("hotplug support is not built into this virtie binary")}
 }
 
-func configureRuntimeHotplugDependencies(deps *runtimeDependencies, m *manager, launchManifest *manifest.Manifest) {
+func configureRuntimeHotplugDependencies(deps *runtimepkg.Dependencies, m *manager, launchManifest *manifest.Manifest) {
 }
 
 func hotplugStatePath(launchManifest *manifest.Manifest, id string) (string, error) {
