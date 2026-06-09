@@ -2,7 +2,9 @@ package launch
 
 import (
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/shazow/agentspace/virtie/internal/manifest"
@@ -76,5 +78,87 @@ func TestFinalizeLockedPlanReturnsQEMUBuilderError(t *testing.T) {
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("qemu error: got %v want %v", err, wantErr)
+	}
+}
+
+func TestSetupLockedPlanFinalizesAndPreparesFilesystem(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := cidManifest(3, 5)
+	cfg.Persistence.BaseDir = filepath.Join(tmpDir, "state")
+	cfg.Persistence.StateDir = filepath.Join(tmpDir, "state")
+	cfg.Paths.RuntimeDir.Path = filepath.Join(tmpDir, "run")
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "lock")
+	plan := &Plan{Manifest: cfg}
+	cleanupCalled := false
+
+	err := SetupLockedPlan(LockedPlanSetup{
+		Plan:    plan,
+		Checker: cidCheckerFunc(func(cid int) (bool, error) { return cid == 3, nil }),
+		BuildQEMU: func(*manifest.Manifest, int, bool) (*exec.Cmd, error) {
+			return exec.Command("/bin/qemu"), nil
+		},
+		Cleanup: func() error {
+			cleanupCalled = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("setup locked plan: %v", err)
+	}
+	if plan.CID != 3 || plan.QEMUCommand == nil {
+		t.Fatalf("plan not finalized: cid=%d qemu=%#v", plan.CID, plan.QEMUCommand)
+	}
+	if cleanupCalled {
+		t.Fatal("cleanup should not run on successful setup")
+	}
+}
+
+func TestSetupLockedPlanCleansUpAfterFinalizeError(t *testing.T) {
+	wantErr := errors.New("finalize failed")
+	cleanupCalled := false
+	err := SetupLockedPlan(LockedPlanSetup{
+		Plan:    &Plan{Manifest: cidManifest(3, 5)},
+		Checker: cidCheckerFunc(func(int) (bool, error) { return false, wantErr }),
+		BuildQEMU: func(*manifest.Manifest, int, bool) (*exec.Cmd, error) {
+			t.Fatal("qemu builder should not run after cid error")
+			return nil, nil
+		},
+		Cleanup: func() error {
+			cleanupCalled = true
+			return nil
+		},
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error: got %v want %v", err, wantErr)
+	}
+	if !cleanupCalled {
+		t.Fatal("cleanup did not run after finalize error")
+	}
+}
+
+func TestSetupLockedPlanCleansUpAfterFilesystemError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := cidManifest(3, 5)
+	cfg.Persistence.Directories = []string{filepath.Join(tmpDir, "state-file")}
+	if err := os.WriteFile(cfg.Persistence.Directories[0], []byte("not a dir"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	plan := &Plan{Manifest: cfg}
+	cleanupCalled := false
+	err := SetupLockedPlan(LockedPlanSetup{
+		Plan: plan,
+		BuildQEMU: func(*manifest.Manifest, int, bool) (*exec.Cmd, error) {
+			return exec.Command("/bin/qemu"), nil
+		},
+		Cleanup: func() error {
+			cleanupCalled = true
+			return nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected filesystem setup error")
+	}
+	if !cleanupCalled {
+		t.Fatal("cleanup did not run after filesystem error")
 	}
 }

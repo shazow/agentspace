@@ -144,6 +144,10 @@ Acceptance criteria:
 - [x] Move locked launch plan finalization into
   `virtie/internal/manager/launch`, with manager supplying the configured host
   CID checker, QEMU command builder, and stage wrapping.
+- [x] Move post-lock plan setup sequencing into
+  `virtie/internal/manager/launch`, so CID/QEMU finalization, CID logging,
+  filesystem preparation, and launch-lock cleanup-on-failure run as one
+  package-owned phase.
 - [x] Move pre-runtime launch lock/PID setup and cleanup into
   `virtie/internal/manager/launch`, with manager supplying the configured
   locker and retaining stage wrapping.

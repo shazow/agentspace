@@ -121,7 +121,7 @@ func TestManagerPlanLaunchResolvesRuntimeInputs(t *testing.T) {
 		t.Fatalf("unexpected state dir: got %q want %q", got, want)
 	}
 
-	if err := manager.finalizeLockedLaunchPlan(plan); err != nil {
+	if err := launch.FinalizeLockedPlan(plan, manager.vsockCIDChecker, buildQEMUCommand); err != nil {
 		t.Fatalf("finalize locked launch plan: %v", err)
 	}
 	if plan.CID != cfg.VSock.CIDRange.Start {
