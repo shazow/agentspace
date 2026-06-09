@@ -256,6 +256,9 @@ Acceptance criteria:
   failed-precondition adaptation into `virtie/internal/manager/runtime`,
   leaving the concrete manager `Runtime` responsible for supplying concrete
   wait callbacks, collectors, requesters, and devices.
+- [x] Move concrete runtime close-hook assembly into
+  `virtie/internal/manager/runtime`, leaving manager responsible for supplying
+  concrete write-back, cleanup, stats, and output dependencies.
 - [x] Move control-plane failed-precondition and compatibility error helpers
   into `virtie/internal/manager/control`, with manager facade aliases
   preserving migration call sites.
@@ -680,15 +683,16 @@ implementation packages should avoid importing the facade package.
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, close action
   ordering, ready/status/suspend transition policy, suspend response
-  construction, foreground wait/Info/Suspend/Balloon failed-precondition adaptation,
-  balloon/hotplug control dispatch, and unsupported hotplug response
-  construction have landed. Pre-runtime startup failure cleanup,
-  write-back-on-exit state, and close-hook write-back gating also live there
-  now. Concrete runtime logger/QMP timeout, foreground wait, info collection,
-  and hotplug adapter dependencies are stored directly on `Runtime`; the
-  concrete runtime no longer stores a manager back-reference or stale lifecycle
-  adapter fields. The concrete launch-owned runtime and concrete cleanup/stat
-  callbacks still live in `manager`.
+  construction, foreground wait/Info/Suspend/Balloon failed-precondition
+  adaptation, balloon/hotplug control dispatch, and unsupported hotplug
+  response construction have landed. Pre-runtime startup failure cleanup,
+  write-back-on-exit state, close-hook write-back gating, cleanup joining, and
+  stats finalizer construction also live there now. Concrete runtime
+  logger/QMP timeout, foreground wait, info collection, and hotplug adapter
+  dependencies are stored directly on `Runtime`; the concrete runtime no
+  longer stores a manager back-reference or stale lifecycle adapter fields.
+  The concrete launch-owned runtime and concrete close callbacks still live in
+  `manager`.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, compatibility
   error helpers, and optional handler registration.
@@ -1120,11 +1124,12 @@ readiness, and managed virtiofs sockets:
    close action ordering, startup failure cleanup ordering, runtime
    write-back state, close-hook write-back gating, suspend response
    construction, foreground wait/Info/Suspend/Balloon failed-precondition adaptation,
-   unsupported hotplug response construction, concrete runtime logger/QMP
-   timeout/foreground wait/info collection/hotplug adapter dependency wiring,
-   removal of the concrete runtime manager back-reference, foreground wait
-   dependency narrowing, and control-capability dispatch. The concrete
-   `Runtime` type still lives behind the `manager` facade.
+   unsupported hotplug response construction, concrete close-hook assembly,
+   concrete runtime logger/QMP timeout/foreground wait/info collection/hotplug
+   adapter dependency wiring, removal of the concrete runtime manager
+   back-reference, foreground wait dependency narrowing, and
+   control-capability dispatch. The concrete `Runtime` type still lives behind
+   the `manager` facade.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
    manager call sites to use the same interfaces through the facade. QMP has
    landed under `internal/qmpclient`, including dial retry mechanics,
