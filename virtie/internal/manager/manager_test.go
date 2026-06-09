@@ -53,7 +53,7 @@ func manifestWritePath(path string) manifest.WriteFile {
 	}
 }
 
-func newTestLaunchLifecycle() *launchLifecycle {
+func newTestLaunchLifecycle() *launch.Lifecycle {
 	return launch.NewLifecycle(nil, func() {}, func() {})
 }
 

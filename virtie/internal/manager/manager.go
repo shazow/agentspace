@@ -57,11 +57,7 @@ type LaunchSpec = launch.Spec
 type Plan = launch.Plan
 type RuntimePaths = launch.RuntimePaths
 type notificationSink = launch.NotificationSink
-type launchLifecycle = launch.Lifecycle
-type launchSuspendCoordinator = launch.SuspendCoordinator
 type Config = launch.Config
-
-var newLaunchSuspendCoordinator = launch.NewSuspendCoordinator
 
 type Launcher struct {
 	manager *manager
@@ -333,7 +329,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 		},
 		StartControl: runtime.StartControl,
 		WrapControl:  launch.WrapFixedStage("control startup"),
-		HandleSuspend: func(ctx context.Context, coordinator *launchSuspendCoordinator) error {
+		HandleSuspend: func(ctx context.Context, coordinator *launch.SuspendCoordinator) error {
 			return handleSuspendRequest(ctx, coordinator, suspendHandler)
 		},
 		Provision: launch.GuestProvision{
@@ -355,7 +351,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	return runtime, nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *launchStats, lifecycle *launchLifecycle, processes *ProcessSet) (*Runtime, qmpClient, error) {
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *launchStats, lifecycle *launch.Lifecycle, processes *ProcessSet) (*Runtime, qmpClient, error) {
 	started, err := launch.StartRuntimeProcesses(ctx, launch.RuntimeStartup{
 		Plan:           plan,
 		Processes:      processes,
@@ -422,7 +418,7 @@ func (m *manager) waitForLaunchForeground(
 	stats *launchStats,
 	runtime *Runtime,
 	qmpClient qmpClient,
-	lifecycle *launchLifecycle,
+	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
 	processes *ProcessSet,
 ) error {
@@ -548,7 +544,7 @@ func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpS
 	}
 }
 
-func handleSuspendRequest(ctx context.Context, coordinator *launchSuspendCoordinator, handler *launchSuspendHandler) error {
+func handleSuspendRequest(ctx context.Context, coordinator *launch.SuspendCoordinator, handler *launchSuspendHandler) error {
 	coordinator.Begin()
 	err := handler.saveAndExit(ctx)
 	coordinator.Complete(err)
@@ -576,7 +572,7 @@ func (m *manager) runSSHSession(
 	ctx context.Context,
 	plan *Plan,
 	stats *launchStats,
-	lifecycle *launchLifecycle,
+	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
 	processes *ProcessSet,
 ) error {
@@ -599,7 +595,7 @@ func (m *manager) runSSHSession(
 	})
 }
 
-func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, lifecycle *launch.Lifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	delay := launchManifest.SSHRetryDelay(m.sshRetryDelay)
 	if delay <= 0 {
 		delay = m.sshRetryDelay
@@ -611,15 +607,15 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 	return m.waitForLifecycleEvent(ctx, "active session", delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
-func (m *manager) waitForSession(ctx context.Context, session *executor.Process, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForSession(ctx context.Context, session *executor.Process, lifecycle *launch.Lifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	return m.waitForProcess(ctx, "active session", session, 0, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
-func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, lifecycle *launch.Lifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	return m.waitForProcess(ctx, "vm session", qemu, 0, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
-func (m *manager) waitForProcess(ctx context.Context, stage string, process *executor.Process, delay time.Duration, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForProcess(ctx context.Context, stage string, process *executor.Process, delay time.Duration, lifecycle *launch.Lifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	return launch.WaitForLifecycleProcess(ctx, launch.LifecycleProcessWait{
 		Stage:     stage,
 		Process:   process,
@@ -636,7 +632,7 @@ func (m *manager) waitForProcess(ctx context.Context, stage string, process *exe
 	})
 }
 
-func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, delay time.Duration, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, delay time.Duration, lifecycle *launch.Lifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	return m.waitForProcess(ctx, stage, nil, delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 

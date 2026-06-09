@@ -23,7 +23,7 @@ type Runtime struct {
 	cid             int
 	stats           *launchStats
 	qmp             qmpClient
-	suspendRequests *launchSuspendCoordinator
+	suspendRequests *launch.SuspendCoordinator
 	waitForeground  func(context.Context, *Plan) error
 	collectInfo     func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
 	processes       *ProcessSet
@@ -65,7 +65,7 @@ type runtimeHotplugGuest interface {
 	Run(context.Context, []string) error
 }
 
-func newRuntime(manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator, deps runtimeDependencies) *Runtime {
+func newRuntime(manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launch.SuspendCoordinator, deps runtimeDependencies) *Runtime {
 	state := runtimepkg.NewState(RuntimeStarting)
 	return &Runtime{
 		manifest:        manifest,
