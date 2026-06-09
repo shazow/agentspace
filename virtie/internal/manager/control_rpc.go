@@ -132,31 +132,31 @@ type responseEnvelope struct {
 	Error  *RPCError       `json:"error,omitempty"`
 }
 
-type CoreHandler interface {
+type RuntimeCore interface {
 	Status(context.Context, StatusRequest) (StatusResponse, error)
 	Info(context.Context, InfoRequest) (InfoResponse, error)
 }
 
-type SuspendHandler interface {
+type RuntimeSuspend interface {
 	Suspend(context.Context, SuspendRequest) (SuspendResponse, error)
 }
 
-type HotplugHandler interface {
+type RuntimeHotplug interface {
 	Hotplug(context.Context, HotplugRequest) (HotplugResponse, error)
 }
 
-type BalloonHandler interface {
+type RuntimeBalloon interface {
 	Balloon(context.Context, BalloonRequest) (BalloonResponse, error)
 }
 
 type Router struct {
-	Core    CoreHandler
-	Suspend SuspendHandler
-	Hotplug HotplugHandler
-	Balloon BalloonHandler
+	Core    RuntimeCore
+	Suspend RuntimeSuspend
+	Hotplug RuntimeHotplug
+	Balloon RuntimeBalloon
 }
 
-func NewRouter(core CoreHandler) (*Router, error) {
+func NewRouter(core RuntimeCore) (*Router, error) {
 	if core == nil {
 		return nil, fmt.Errorf("core handler is required")
 	}
@@ -164,14 +164,14 @@ func NewRouter(core CoreHandler) (*Router, error) {
 }
 
 func NewRuntimeRouter(runtime any) (*Router, error) {
-	core, ok := runtime.(CoreHandler)
+	core, ok := runtime.(RuntimeCore)
 	if !ok {
 		return nil, fmt.Errorf("runtime core handler is required")
 	}
 	router := &Router{Core: core}
-	router.Suspend, _ = runtime.(SuspendHandler)
-	router.Hotplug, _ = runtime.(HotplugHandler)
-	router.Balloon, _ = runtime.(BalloonHandler)
+	router.Suspend, _ = runtime.(RuntimeSuspend)
+	router.Hotplug, _ = runtime.(RuntimeHotplug)
+	router.Balloon, _ = runtime.(RuntimeBalloon)
 	return router, nil
 }
 

@@ -501,20 +501,20 @@ and optionally register suspend, hotplug, and balloon handlers when the runtime
 also implements `RuntimeSuspend`, `RuntimeHotplug`, or `RuntimeBalloon`.
 
 ```go
-type CoreHandler interface {
+type RuntimeCore interface {
 	Status(context.Context, StatusRequest) (StatusResponse, error)
 	Info(context.Context, InfoRequest) (InfoResponse, error)
 }
 
-type SuspendHandler interface {
+type RuntimeSuspend interface {
 	Suspend(context.Context, SuspendRequest) (SuspendResponse, error)
 }
 
-type HotplugHandler interface {
+type RuntimeHotplug interface {
 	Hotplug(context.Context, HotplugRequest) (HotplugResponse, error)
 }
 
-type BalloonHandler interface {
+type RuntimeBalloon interface {
 	Balloon(context.Context, BalloonRequest) (BalloonResponse, error)
 }
 
@@ -526,16 +526,16 @@ type RuntimeHandler struct {
 }
 
 type Router struct {
-	Core    CoreHandler
-	Suspend SuspendHandler
-	Hotplug HotplugHandler
-	Balloon BalloonHandler
+	Core    RuntimeCore
+	Suspend RuntimeSuspend
+	Hotplug RuntimeHotplug
+	Balloon RuntimeBalloon
 }
 ```
 
 The control package should expose a concrete router that dispatches to these
-typed handlers. `CoreHandler` is required. `SuspendHandler`, `HotplugHandler`,
-and `BalloonHandler` are optional and may be nil or absent from the runtime
+typed handlers. `RuntimeCore` is required. `RuntimeSuspend`, `RuntimeHotplug`,
+and `RuntimeBalloon` are optional and may be nil or absent from the runtime
 handler. A router constructed without a core handler is invalid and should
 fail at construction time.
 
