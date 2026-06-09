@@ -18,10 +18,6 @@ const (
 	notifyStateRuntimeResume  = "runtime:resume"
 )
 
-type notificationSink interface {
-	Notify(ctx context.Context, state string, message string, values map[string]string)
-}
-
 type noopNotifier struct{}
 
 func (noopNotifier) Notify(context.Context, string, string, map[string]string) {}

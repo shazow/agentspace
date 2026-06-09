@@ -85,6 +85,9 @@ Acceptance criteria:
   `manager` package aliases preserving the current runtime interfaces.
 - [x] Split the QGA protocol client into `virtie/internal/qga`, leaving guest
   provisioning orchestration in `manager`.
+- [x] Split launch value types into `virtie/internal/manager/launch`,
+  including `Plan`, launch options, wait mode, runtime paths, suspend state,
+  notifier interface, and plan-owned socket cleanup.
 
 ## Landed Control Flow
 
@@ -428,9 +431,11 @@ Keep `virtie/internal/manager` as the public facade for CLI-facing package
 functions: `LaunchWithOptions`, `Suspend`, `Hotplug`, and future adapters. New
 implementation packages should avoid importing the facade package.
 
-- `virtie/internal/manager/launch`: `Launcher`, `Config`, `Plan`, preflight
+- `virtie/internal/manager/launch` (partial): launch value types including
+  `Plan`, options, wait mode, runtime paths, suspend state, notifier
+  interface, and plan-owned socket cleanup. `Launcher`, `Config`, preflight
   resolution, startup sequencing, and conversion from manifest facts into
-  runtime inputs.
+  runtime inputs still live in `manager`.
 - `virtie/internal/manager/runtime`: the launch-owned runtime, state machine,
   paths, stats, process set, managed tasks, idempotent `Close`, and serialized
   QMP executor.
@@ -837,7 +842,9 @@ readiness, and managed virtiofs sockets:
 ### Migration Plan
 
 1. Extract `Plan`, `RuntimePaths`, and preflight resolution from
-   `launchWithOptions`. Preserve existing behavior and tests.
+   `launchWithOptions`. `Plan` and `RuntimePaths` have landed under
+   `manager/launch` with facade aliases; preflight resolution still lives in
+   `manager`.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt

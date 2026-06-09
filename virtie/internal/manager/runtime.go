@@ -14,16 +14,6 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
-type RuntimePaths struct {
-	StateDir         string
-	RuntimeDir       string
-	ControlSocket    string
-	QMPSocket        string
-	GuestAgentSocket string
-	SSHReadySocket   string
-	Cleanup          []string
-}
-
 type Runtime struct {
 	manager         *manager
 	manifest        *manifest.Manifest

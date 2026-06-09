@@ -14,15 +14,6 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
-type suspendState struct {
-	HostName      string    `json:"hostName"`
-	QMPSocketPath string    `json:"qmpSocketPath"`
-	VMStatePath   string    `json:"vmStatePath,omitempty"`
-	CID           int       `json:"cid,omitempty"`
-	Timestamp     time.Time `json:"timestamp"`
-	Status        string    `json:"status"`
-}
-
 func suspendStatePath(manifest *manifest.Manifest) string {
 	return filepath.Join(manifest.ResolvedPersistenceStateDir(), manifest.Identity.HostName+".suspend.json")
 }
