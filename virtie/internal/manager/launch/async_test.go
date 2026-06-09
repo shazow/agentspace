@@ -18,6 +18,43 @@ func TestWaitForAsyncReturnsWhenWaitCompletes(t *testing.T) {
 	}
 }
 
+func TestWaitForSocketsUsesSocketWaiter(t *testing.T) {
+	waiter := &fakeAsyncSocketWaiter{}
+	if err := WaitForSockets(context.Background(), SocketWait{
+		Stage:        "virtiofs startup",
+		SocketPaths:  []string{"a.sock", "b.sock"},
+		SocketWaiter: waiter,
+		PollDelay:    time.Millisecond,
+	}); err != nil {
+		t.Fatalf("wait for sockets: %v", err)
+	}
+	if got, want := waiter.paths, []string{"a.sock", "b.sock"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("socket paths: got %v want %v", got, want)
+	}
+}
+
+func TestWaitForSocketsWrapsSocketError(t *testing.T) {
+	waitErr := errors.New("socket failed")
+	wrappedErr := errors.New("wrapped")
+	err := WaitForSockets(context.Background(), SocketWait{
+		Stage:        "guest agent",
+		SocketWaiter: &fakeAsyncSocketWaiter{err: waitErr},
+		PollDelay:    time.Millisecond,
+		Result: func(stage string, err error) error {
+			if stage != "guest agent" {
+				t.Fatalf("stage: got %q want guest agent", stage)
+			}
+			if !errors.Is(err, waitErr) {
+				t.Fatalf("wait err: got %v want %v", err, waitErr)
+			}
+			return wrappedErr
+		},
+	})
+	if !errors.Is(err, wrappedErr) {
+		t.Fatalf("wrapped err: got %v want %v", err, wrappedErr)
+	}
+}
+
 func TestWaitForAsyncWrapsWaitError(t *testing.T) {
 	waitErr := errors.New("socket failed")
 	wrappedErr := errors.New("wrapped")
@@ -40,6 +77,16 @@ func TestWaitForAsyncWrapsWaitError(t *testing.T) {
 	if !errors.Is(err, wrappedErr) {
 		t.Fatalf("wrapped err: got %v want %v", err, wrappedErr)
 	}
+}
+
+type fakeAsyncSocketWaiter struct {
+	paths []string
+	err   error
+}
+
+func (w *fakeAsyncSocketWaiter) Wait(ctx context.Context, socketPaths []string) error {
+	w.paths = append([]string(nil), socketPaths...)
+	return w.err
 }
 
 func TestWaitForAsyncChecksWhileWaiting(t *testing.T) {

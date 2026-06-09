@@ -135,6 +135,9 @@ Acceptance criteria:
 - [x] Move async startup/readiness waiting into
   `virtie/internal/manager/launch`, with manager supplying unexpected-exit and
   stage-wrapping callbacks.
+- [x] Move generic socket async-wait composition into
+  `virtie/internal/manager/launch`, removing the manager-owned generic async
+  stage helper.
 - [x] Move VSock CID selection and saved-CID validation into
   `virtie/internal/manager/launch`, with manager supplying the configured host
   CID checker.
@@ -554,7 +557,7 @@ implementation packages should avoid importing the facade package.
   Guest provisioning and SSH-readiness checkpoint sequencing also live there.
   `Launcher`, default concrete dependencies, stage wrapping, notifier
   selection, and the remaining startup sequencing still live in `manager`;
-  async readiness wait mechanics now live in `launch`.
+  async readiness and socket wait mechanics now live in `launch`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, and close

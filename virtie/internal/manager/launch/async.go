@@ -15,6 +15,33 @@ type AsyncWait struct {
 	Cancel func(stage string, err error) error
 }
 
+type SocketWait struct {
+	Stage        string
+	SocketPaths  []string
+	SocketWaiter SocketWaiter
+	PollDelay    time.Duration
+
+	Check  func(stage string) error
+	Result func(stage string, err error) error
+	Cancel func(stage string, err error) error
+}
+
+func WaitForSockets(ctx context.Context, wait SocketWait) error {
+	return WaitForAsync(ctx, AsyncWait{
+		Stage:     wait.Stage,
+		PollDelay: wait.PollDelay,
+		Wait: func(waitCtx context.Context) error {
+			if wait.SocketWaiter == nil {
+				return nil
+			}
+			return wait.SocketWaiter.Wait(waitCtx, wait.SocketPaths)
+		},
+		Check:  wait.Check,
+		Result: wait.Result,
+		Cancel: wait.Cancel,
+	})
+}
+
 func WaitForAsync(ctx context.Context, wait AsyncWait) error {
 	if wait.PollDelay <= 0 {
 		wait.PollDelay = time.Second

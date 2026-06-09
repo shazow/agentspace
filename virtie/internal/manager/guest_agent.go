@@ -498,9 +498,7 @@ func minDuration(a time.Duration, b time.Duration) time.Duration {
 }
 
 func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (guestAgentClient, error) {
-	if err := m.waitForAsyncStage(ctx, "guest agent", watchers, func(waitCtx context.Context) error {
-		return m.socketWaiter.Wait(waitCtx, []string{socketPath})
-	}); err != nil {
+	if err := m.waitForLaunchSockets(ctx, "guest agent", []string{socketPath}, watchers); err != nil {
 		return nil, err
 	}
 	return m.connectGuestAgent(ctx, socketPath, watchers)
