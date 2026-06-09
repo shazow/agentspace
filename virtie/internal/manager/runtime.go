@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
@@ -18,13 +19,13 @@ import (
 
 type Runtime struct {
 	manifest        *manifest.Manifest
-	plan            *Plan
-	paths           RuntimePaths
+	plan            *launch.Plan
+	paths           launch.RuntimePaths
 	cid             int
 	stats           *runtimepkg.Stats
 	qmp             qmpclient.Client
 	suspendRequests *launch.SuspendCoordinator
-	waitForeground  func(context.Context, *Plan) error
+	waitForeground  func(context.Context, *launch.Plan) error
 	collectInfo     func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
 	processes       *runtimepkg.ProcessSet
 	shutdownDelay   time.Duration
@@ -65,7 +66,7 @@ type runtimeHotplugGuest interface {
 	Run(context.Context, []string) error
 }
 
-func newRuntime(manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *runtimepkg.Stats, qmp qmpclient.Client, suspendRequests *launch.SuspendCoordinator, deps runtimeDependencies) *Runtime {
+func newRuntime(manifest *manifest.Manifest, paths launch.RuntimePaths, cid int, stats *runtimepkg.Stats, qmp qmpclient.Client, suspendRequests *launch.SuspendCoordinator, deps runtimeDependencies) *Runtime {
 	state := runtimepkg.NewState(RuntimeStarting)
 	return &Runtime{
 		manifest:        manifest,
@@ -103,7 +104,7 @@ func (r *Runtime) SetProcesses(processes *runtimepkg.ProcessSet, shutdownDelay t
 	r.shutdownDelay = shutdownDelay
 }
 
-func (r *Runtime) SetForegroundWait(plan *Plan, waitForeground func(context.Context, *Plan) error) {
+func (r *Runtime) SetForegroundWait(plan *launch.Plan, waitForeground func(context.Context, *launch.Plan) error) {
 	r.plan = plan
 	r.waitForeground = waitForeground
 }
@@ -136,7 +137,7 @@ func (r *Runtime) Close() error {
 	})
 }
 
-func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
+func (r *Runtime) Wait(ctx context.Context, mode launch.WaitMode) error {
 	if r.plan == nil || r.processes == nil || r.waitForeground == nil {
 		return runtimepkg.ControlWaitForeground(ctx, runtimepkg.ForegroundWaitOperation{})
 	}
@@ -152,9 +153,9 @@ func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
 	})
 }
 
-func (r *Runtime) Status(ctx context.Context, req StatusRequest) (StatusResponse, error) {
+func (r *Runtime) Status(ctx context.Context, req controlpkg.StatusRequest) (controlpkg.StatusResponse, error) {
 	_ = ctx
-	return runtimepkg.Status(r.state, r.cid, StatusPaths{
+	return runtimepkg.Status(r.state, r.cid, controlpkg.StatusPaths{
 		ControlSocket:    r.paths.ControlSocket,
 		QMPSocket:        r.paths.QMPSocket,
 		GuestAgentSocket: r.paths.GuestAgentSocket,
@@ -162,7 +163,7 @@ func (r *Runtime) Status(ctx context.Context, req StatusRequest) (StatusResponse
 	}, r.stats), nil
 }
 
-func (r *Runtime) Info(ctx context.Context, req InfoRequest) (InfoResponse, error) {
+func (r *Runtime) Info(ctx context.Context, req controlpkg.InfoRequest) (controlpkg.InfoResponse, error) {
 	return runtimepkg.ControlInfo(ctx, runtimeInfoCollector{runtime: r})
 }
 
@@ -177,7 +178,7 @@ func (c runtimeInfoCollector) CollectInfo(ctx context.Context) (runtimepkg.Guest
 	return c.runtime.collectInfo(ctx, c.runtime.paths.GuestAgentSocket, c.runtime.watchers)
 }
 
-func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendResponse, error) {
+func (r *Runtime) Suspend(ctx context.Context, req controlpkg.SuspendRequest) (controlpkg.SuspendResponse, error) {
 	return runtimepkg.ControlSuspend(ctx, runtimepkg.SuspendOperation{
 		State:       r.state,
 		Requester:   r.suspendRequests,
@@ -188,6 +189,6 @@ func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendRespo
 	})
 }
 
-func (r *Runtime) Balloon(ctx context.Context, req BalloonRequest) (BalloonResponse, error) {
+func (r *Runtime) Balloon(ctx context.Context, req controlpkg.BalloonRequest) (controlpkg.BalloonResponse, error) {
 	return runtimepkg.ControlBalloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
 }
