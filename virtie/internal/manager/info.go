@@ -32,7 +32,7 @@ func (m *manager) collectGuestInfo(ctx context.Context, socketPath string, watch
 	infoCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	client, err := m.connectGuestAgent(infoCtx, socketPath, watchers)
+	client, err := m.waitForGuestAgent(infoCtx, socketPath, watchers)
 	if err != nil {
 		return Info{}, err
 	}
