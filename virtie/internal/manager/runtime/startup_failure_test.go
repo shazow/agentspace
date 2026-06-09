@@ -132,6 +132,30 @@ func TestCleanupStartErrorRunsStartupFailureWithoutStartedRuntime(t *testing.T) 
 	}
 }
 
+func TestCleanupConfiguredStartErrorBuildsStartupFailureActions(t *testing.T) {
+	cause := errors.New("startup failed")
+	socketErr := errors.New("socket cleanup failed")
+	var output bytes.Buffer
+	stats := NewStats(time.Now().Add(-time.Second))
+
+	err := CleanupConfiguredStartError(cause, nil, StartupFailureConfig{
+		SocketCleanup: []func() error{
+			func() error { return socketErr },
+		},
+		Stats:       stats,
+		StatsOutput: &output,
+	}, nil)
+	if !errors.Is(err, cause) || !errors.Is(err, socketErr) {
+		t.Fatalf("cleanup error: got %v want cause and socket errors", err)
+	}
+	if ControlStats(stats).CompletedAt.IsZero() {
+		t.Fatal("stats were not finalized")
+	}
+	if !strings.Contains(output.String(), "total=") {
+		t.Fatalf("stats output missing runtime: %q", output.String())
+	}
+}
+
 func TestCleanupStartErrorNoopsWithoutCause(t *testing.T) {
 	started := &fakeStartedRuntime{}
 	if err := CleanupStartError(nil, started, StartupFailureActions{}, func(error) bool { return true }); err != nil {

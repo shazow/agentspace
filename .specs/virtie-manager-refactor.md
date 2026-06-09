@@ -308,6 +308,9 @@ Acceptance criteria:
   `virtie/internal/manager/runtime`, so manager supplies concrete cleanup
   actions while runtime policy decides between started-runtime close and
   pre-runtime startup-failure cleanup.
+- [x] Move configured startup-failure error handling into
+  `virtie/internal/manager/runtime`, so manager no longer combines cleanup
+  action assembly with saved-suspend classification inline.
 - [x] Move control-plane failed-precondition and compatibility error helpers
   into `virtie/internal/manager/control`, with manager facade aliases
   preserving migration call sites.

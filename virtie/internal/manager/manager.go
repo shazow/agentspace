@@ -275,10 +275,10 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 			if runtime != nil {
 				startedRuntime = runtime
 			}
-			err = runtimepkg.CleanupStartError(
+			err = runtimepkg.CleanupConfiguredStartError(
 				err,
 				startedRuntime,
-				runtimepkg.ConfiguredStartupFailureActions(runtimepkg.StartupFailureConfig{
+				runtimepkg.StartupFailureConfig{
 					Processes:     processes,
 					ShutdownDelay: m.shutdownDelay,
 					LockCleanup:   cleanupRuntime,
@@ -290,7 +290,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 					},
 					Stats:       stats,
 					StatsOutput: m.outputWriter(),
-				}),
+				},
 				isSavedSuspendExit,
 			)
 		}
