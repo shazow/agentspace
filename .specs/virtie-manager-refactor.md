@@ -202,6 +202,9 @@ Acceptance criteria:
 - [x] Move foreground SSH-vs-headless orchestration into
   `virtie/internal/manager/launch`, with manager still starting optional
   feature tasks and supplying concrete wait callbacks.
+- [x] Move explicit foreground wait-mode plan overrides into
+  `virtie/internal/manager/launch`, leaving manager runtime wait code to call
+  the launch helper before invoking concrete foreground callbacks.
 - [x] Move guest provisioning and SSH-readiness startup checkpoint sequencing
   into `virtie/internal/manager/launch`, with manager supplying concrete QGA
   writes and SSH-ready waits.

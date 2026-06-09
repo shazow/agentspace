@@ -8,6 +8,7 @@ import (
 
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
@@ -101,14 +102,7 @@ func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
 	if r.plan == nil || r.lifecycle == nil || r.suspendHandler == nil || r.processes == nil {
 		return failedPrecondition(fmt.Errorf("runtime foreground wait is not configured"))
 	}
-	plan := r.plan
-	if mode == WaitSSH || mode == WaitVM {
-		copyPlan := *r.plan
-		copyOptions := copyPlan.Options
-		copyOptions.SSH = mode == WaitSSH
-		copyPlan.Options = copyOptions
-		plan = &copyPlan
-	}
+	plan := launch.PlanForWaitMode(r.plan, mode)
 	err := r.manager.waitForLaunchForeground(ctx, plan, r.stats, r, r.qmp, r.lifecycle, r.suspendHandler, r.processes)
 	if errors.Is(err, errSavedSuspendExit) {
 		r.savedSuspend = true
