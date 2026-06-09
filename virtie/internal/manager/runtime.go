@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
@@ -26,6 +27,8 @@ type Runtime struct {
 	suspendHandler  *launchSuspendHandler
 	processes       *ProcessSet
 	shutdownDelay   time.Duration
+	qmpTimeout      time.Duration
+	logger          *slog.Logger
 	closeHooks      runtimeCloseHooks
 	savedSuspend    *runtimepkg.SavedSuspendState
 	watchers        executor.Group
@@ -35,7 +38,7 @@ type Runtime struct {
 	control *runtimepkg.ControlServer
 }
 
-func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator) *Runtime {
+func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator, qmpTimeout time.Duration, logger *slog.Logger) *Runtime {
 	state := runtimepkg.NewState(RuntimeStarting)
 	return &Runtime{
 		manager:         manager,
@@ -45,6 +48,8 @@ func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePath
 		stats:           stats,
 		qmp:             qmpclient.Serialized(qmp),
 		suspendRequests: suspendRequests,
+		qmpTimeout:      qmpTimeout,
+		logger:          logger,
 		savedSuspend:    runtimepkg.NewSavedSuspendState(),
 		state:           state,
 		closer:          runtimepkg.NewCloser(state),
@@ -79,7 +84,7 @@ func (r *Runtime) QMP() qmpClient {
 }
 
 func (r *Runtime) StartControl(ctx context.Context) error {
-	controlServer, err := runtimepkg.StartControl(ctx, r.paths.ControlSocket, r, r.manager.logger)
+	controlServer, err := runtimepkg.StartControl(ctx, r.paths.ControlSocket, r, r.logger)
 	r.control = controlServer
 	return err
 }
@@ -87,7 +92,7 @@ func (r *Runtime) StartControl(ctx context.Context) error {
 func (r *Runtime) Close() error {
 	return r.closer.Close(runtimepkg.CloseActions{
 		WriteBack:        r.closeHooks.WriteBack,
-		WriteBackTimeout: r.manager.effectiveQMPCommandTimeout(),
+		WriteBackTimeout: r.qmpTimeout,
 		SkipWriteBack:    r.savedSuspend.Saved(),
 		Control:          r.control,
 		Processes:        r.processes,
@@ -159,7 +164,7 @@ func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendRespo
 }
 
 func (r *Runtime) Balloon(ctx context.Context, req BalloonRequest) (BalloonResponse, error) {
-	resp, err := runtimepkg.Balloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.manager.effectiveQMPCommandTimeout(), req)
+	resp, err := runtimepkg.Balloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
 	if errors.Is(err, runtimepkg.ErrBalloonNotConfigured) {
 		return BalloonResponse{}, failedPrecondition(err)
 	}

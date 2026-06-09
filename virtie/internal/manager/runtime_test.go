@@ -23,7 +23,7 @@ func TestRuntimeStatusAndBalloonUseOwnedQMP(t *testing.T) {
 	runtime := newRuntime(&manager{logger: slog.New(slog.DiscardHandler), qmpConnectTimeout: time.Second}, cfg, RuntimePaths{
 		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
 		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 9, stats, qmp, nil)
+	}, 9, stats, qmp, nil, time.Second, slog.New(slog.DiscardHandler))
 	runtime.SetReady()
 
 	status, err := runtime.Status(context.Background(), StatusRequest{})
@@ -54,7 +54,7 @@ func TestRuntimeSuspendQueuesAndWaitsForLaunchLoop(t *testing.T) {
 	runtime := newRuntime(&manager{logger: slog.New(slog.DiscardHandler)}, cfg, RuntimePaths{
 		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
 		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 9, newLaunchStats(time.Now()), qmp, coordinator)
+	}, 9, newLaunchStats(time.Now()), qmp, coordinator, time.Second, slog.New(slog.DiscardHandler))
 	runtime.SetReady()
 
 	done := make(chan error, 1)
@@ -101,7 +101,7 @@ func TestRuntimeStartControlServesStatus(t *testing.T) {
 	runtime := newRuntime(&manager{logger: slog.New(slog.DiscardHandler)}, cfg, RuntimePaths{
 		ControlSocket: controlPath,
 		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 11, newLaunchStats(time.Now()), &fakeQMPClient{}, nil)
+	}, 11, newLaunchStats(time.Now()), &fakeQMPClient{}, nil, time.Second, slog.New(slog.DiscardHandler))
 	runtime.SetReady()
 	if err := runtime.StartControl(context.Background()); err != nil {
 		t.Fatalf("start control: %v", err)
@@ -131,7 +131,7 @@ func TestRuntimeCloseStopsProcessesAndDisconnectsQMPOnce(t *testing.T) {
 	runtime := newRuntime(&manager{logger: slog.New(slog.DiscardHandler)}, cfg, RuntimePaths{
 		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
 		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 11, newLaunchStats(time.Now()), qmp, nil)
+	}, 11, newLaunchStats(time.Now()), qmp, nil, time.Second, slog.New(slog.DiscardHandler))
 	runtime.SetProcesses(processes, time.Millisecond)
 
 	if err := runtime.Close(); err != nil {
