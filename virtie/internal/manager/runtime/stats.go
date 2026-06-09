@@ -1,12 +1,14 @@
-package manager
+package runtime
 
 import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
 
-type launchStats struct {
+type Stats struct {
 	started         time.Time
 	bootStarted     time.Time
 	qmpReady        time.Time
@@ -19,46 +21,46 @@ type launchStats struct {
 	sshAttempts     int
 }
 
-func newLaunchStats(started time.Time) *launchStats {
-	return &launchStats{started: started}
+func NewStats(started time.Time) *Stats {
+	return &Stats{started: started}
 }
 
-func (s *launchStats) MarkBootStarted(t time.Time) {
+func (s *Stats) MarkBootStarted(t time.Time) {
 	s.bootStarted = t
 }
 
-func (s *launchStats) MarkQMPReady(t time.Time) {
+func (s *Stats) MarkQMPReady(t time.Time) {
 	s.qmpReady = t
 }
 
-func (s *launchStats) MarkGuestAgentReady(t time.Time) {
+func (s *Stats) MarkGuestAgentReady(t time.Time) {
 	s.guestAgentReady = t
 }
 
-func (s *launchStats) MarkFilesReady(t time.Time) {
+func (s *Stats) MarkFilesReady(t time.Time) {
 	s.filesReady = t
 }
 
-func (s *launchStats) MarkSSHAttempt(t time.Time) {
+func (s *Stats) MarkSSHAttempt(t time.Time) {
 	s.sshAttempts++
 	if s.firstSSHAttempt.IsZero() {
 		s.firstSSHAttempt = t
 	}
 }
 
-func (s *launchStats) MarkSSHReady(t time.Time) {
+func (s *Stats) MarkSSHReady(t time.Time) {
 	s.sshReady = t
 }
 
-func (s *launchStats) MarkSSHStarted(t time.Time) {
+func (s *Stats) MarkSSHStarted(t time.Time) {
 	s.sshStarted = t
 }
 
-func (s *launchStats) MarkCompleted(t time.Time) {
+func (s *Stats) MarkCompleted(t time.Time) {
 	s.completed = t
 }
 
-func (s *launchStats) String() string {
+func (s *Stats) String() string {
 	var fields []string
 	if !s.started.IsZero() && !s.bootStarted.IsZero() {
 		fields = append(fields, formatStatDuration("started_to_boot", s.bootStarted.Sub(s.started)))
@@ -98,6 +100,42 @@ func (s *launchStats) String() string {
 		fields = append(fields, fmt.Sprintf("ssh_attempts=%d", s.sshAttempts))
 	}
 	return strings.Join(fields, " ")
+}
+
+func ControlStats(stats *Stats) control.RuntimeStats {
+	if stats == nil {
+		return control.RuntimeStats{}
+	}
+	resp := control.RuntimeStats{
+		StartedAt:     stats.started,
+		BootStartedAt: stats.bootStarted,
+		QMPReadyAt:    stats.qmpReady,
+		FilesReadyAt:  stats.filesReady,
+		SSHReadyAt:    stats.sshReady,
+		SSHStartedAt:  stats.sshStarted,
+		CompletedAt:   stats.completed,
+		SSHAttempts:   stats.sshAttempts,
+	}
+	if !stats.started.IsZero() && !stats.bootStarted.IsZero() {
+		resp.StartedToBoot = stats.bootStarted.Sub(stats.started).String()
+	}
+	if !stats.bootStarted.IsZero() && !stats.qmpReady.IsZero() {
+		resp.BootToQMP = stats.qmpReady.Sub(stats.bootStarted).String()
+	}
+	sshReady := stats.sshReady
+	if sshReady.IsZero() {
+		sshReady = stats.sshStarted
+	}
+	if !stats.filesReady.IsZero() && !sshReady.IsZero() {
+		resp.FilesToSSH = sshReady.Sub(stats.filesReady).String()
+	}
+	if !stats.bootStarted.IsZero() && !stats.completed.IsZero() {
+		resp.BootToCompleted = stats.completed.Sub(stats.bootStarted).String()
+	}
+	if !stats.started.IsZero() && !stats.completed.IsZero() {
+		resp.Total = stats.completed.Sub(stats.started).String()
+	}
+	return resp
 }
 
 func formatStatDuration(name string, duration time.Duration) string {
