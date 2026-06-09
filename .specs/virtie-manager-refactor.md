@@ -185,6 +185,9 @@ Acceptance criteria:
 - [x] Move foreground SSH-vs-headless orchestration into
   `virtie/internal/manager/launch`, with manager still starting optional
   feature tasks and supplying concrete wait callbacks.
+- [x] Move guest provisioning and SSH-readiness startup checkpoint sequencing
+  into `virtie/internal/manager/launch`, with manager supplying concrete QGA
+  writes and SSH-ready waits.
 
 ## Landed Control Flow
 
@@ -542,6 +545,7 @@ implementation packages should avoid importing the facade package.
   Foreground process lifecycle wait mechanics have moved there as well.
   Foreground SSH session retry/autoprovision orchestration now lives there.
   Foreground SSH-vs-headless orchestration has moved there too.
+  Guest provisioning and SSH-readiness checkpoint sequencing also live there.
   `Launcher`, default concrete dependencies, stage wrapping, notifier
   selection, and the remaining startup sequencing still live in `manager`;
   async readiness wait mechanics now live in `launch`.
