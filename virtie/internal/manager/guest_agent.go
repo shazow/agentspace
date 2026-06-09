@@ -47,38 +47,30 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		}
 	}
 
-	for _, file := range files {
-		if !file.Overwrite {
-			exists, err := m.guestPathExists(ctx, client, file.GuestPath)
-			if err != nil {
-				return &stageError{Stage: "guest file write", Err: err}
-			}
-			if exists {
-				m.logger.Info("skipped existing guest file because overwrite is false", "path", file.GuestPath)
-				continue
-			}
-		}
-		payloadBase64, err := launch.GuestFilePayloadBase64(file)
-		if err != nil {
-			return &stageError{Stage: "guest file write", Err: err}
-		}
-		if err := m.installGuestFileDirectory(ctx, client, file.GuestPath, file.Chown, file.Mode); err != nil {
-			return &stageError{Stage: "guest file write", Err: err}
-		}
-		if err := m.writeGuestFile(client, file.GuestPath, payloadBase64); err != nil {
-			return &stageError{Stage: "guest file write", Err: err}
-		}
-		if file.Chown != "" {
-			if err := m.chownGuestFile(ctx, client, file.GuestPath, file.Chown); err != nil {
-				return &stageError{Stage: "guest file write", Err: err}
-			}
-		}
-		if file.Mode != "" {
-			if err := m.chmodGuestFile(ctx, client, file.GuestPath, file.Mode); err != nil {
-				return &stageError{Stage: "guest file write", Err: err}
-			}
-		}
-		m.logger.Info("wrote guest file", "path", file.GuestPath)
+	if err := launch.WriteGuestFiles(ctx, files, launch.GuestFileWriter{
+		PathExists: func(ctx context.Context, guestPath string) (bool, error) {
+			return m.guestPathExists(ctx, client, guestPath)
+		},
+		InstallDirectory: func(ctx context.Context, file manifest.ResolvedWriteFile) error {
+			return m.installGuestFileDirectory(ctx, client, file.GuestPath, file.Chown, file.Mode)
+		},
+		WriteFile: func(_ context.Context, guestPath string, payloadBase64 string) error {
+			return m.writeGuestFile(client, guestPath, payloadBase64)
+		},
+		Chown: func(ctx context.Context, guestPath string, owner string) error {
+			return m.chownGuestFile(ctx, client, guestPath, owner)
+		},
+		Chmod: func(ctx context.Context, guestPath string, mode string) error {
+			return m.chmodGuestFile(ctx, client, guestPath, mode)
+		},
+		SkipExisting: func(guestPath string) {
+			m.logger.Info("skipped existing guest file because overwrite is false", "path", guestPath)
+		},
+		Wrote: func(guestPath string) {
+			m.logger.Info("wrote guest file", "path", guestPath)
+		},
+	}); err != nil {
+		return &stageError{Stage: "guest file write", Err: err}
 	}
 	return nil
 }

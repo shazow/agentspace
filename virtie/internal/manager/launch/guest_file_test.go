@@ -92,6 +92,95 @@ func TestGuestInstallDirectoryArgs(t *testing.T) {
 	}
 }
 
+func TestWriteGuestFilesSkipsExistingNoOverwriteFile(t *testing.T) {
+	var events []string
+	err := WriteGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
+		{
+			GuestPath: "/etc/virtie/existing",
+			Overwrite: false,
+			Content: manifest.WriteFileContent{
+				Kind: manifest.WriteFileContentText,
+				Text: "ignored",
+			},
+		},
+	}, GuestFileWriter{
+		PathExists: func(context.Context, string) (bool, error) {
+			events = append(events, "exists")
+			return true, nil
+		},
+		InstallDirectory: func(context.Context, manifest.ResolvedWriteFile) error {
+			t.Fatalf("install should not run for skipped file")
+			return nil
+		},
+		WriteFile: func(context.Context, string, string) error {
+			t.Fatalf("write should not run for skipped file")
+			return nil
+		},
+		SkipExisting: func(guestPath string) {
+			events = append(events, "skip:"+guestPath)
+		},
+	})
+	if err != nil {
+		t.Fatalf("write guest files: %v", err)
+	}
+	if want := []string{"exists", "skip:/etc/virtie/existing"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("events: got %#v want %#v", events, want)
+	}
+}
+
+func TestWriteGuestFilesWritesAndAppliesMetadataInOrder(t *testing.T) {
+	var events []string
+	err := WriteGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
+		{
+			GuestPath: "/etc/virtie/config",
+			Chown:     "agent:users",
+			Mode:      "0640",
+			Overwrite: true,
+			Content: manifest.WriteFileContent{
+				Kind: manifest.WriteFileContentText,
+				Text: "hello",
+			},
+		},
+	}, GuestFileWriter{
+		PathExists: func(context.Context, string) (bool, error) {
+			t.Fatalf("exists should not run for overwrite file")
+			return false, nil
+		},
+		InstallDirectory: func(_ context.Context, file manifest.ResolvedWriteFile) error {
+			events = append(events, "install:"+file.GuestPath+":"+file.Chown+":"+file.Mode)
+			return nil
+		},
+		WriteFile: func(_ context.Context, guestPath string, payloadBase64 string) error {
+			events = append(events, "write:"+guestPath+":"+payloadBase64)
+			return nil
+		},
+		Chown: func(_ context.Context, guestPath string, owner string) error {
+			events = append(events, "chown:"+guestPath+":"+owner)
+			return nil
+		},
+		Chmod: func(_ context.Context, guestPath string, mode string) error {
+			events = append(events, "chmod:"+guestPath+":"+mode)
+			return nil
+		},
+		Wrote: func(guestPath string) {
+			events = append(events, "wrote:"+guestPath)
+		},
+	})
+	if err != nil {
+		t.Fatalf("write guest files: %v", err)
+	}
+	want := []string{
+		"install:/etc/virtie/config:agent:users:0640",
+		"write:/etc/virtie/config:aGVsbG8=",
+		"chown:/etc/virtie/config:agent:users",
+		"chmod:/etc/virtie/config:0640",
+		"wrote:/etc/virtie/config",
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events: got %#v want %#v", events, want)
+	}
+}
+
 func TestInstallGuestFileDirectoryNoopsForRootOrCurrentDirectory(t *testing.T) {
 	called := false
 	installer := GuestDirectoryInstaller{

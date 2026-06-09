@@ -211,6 +211,9 @@ Acceptance criteria:
 - [x] Move guest-file parent-directory creation flow into
   `virtie/internal/manager/launch`, keeping manager responsible only for QGA
   existence checks, command execution, and stage wrapping.
+- [x] Move manifest-backed guest-file write orchestration into
+  `virtie/internal/manager/launch`, with manager supplying QGA-backed file
+  operations, logging callbacks, and stage wrapping.
 
 ## Landed Control Flow
 

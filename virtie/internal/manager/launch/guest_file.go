@@ -113,6 +113,57 @@ type GuestDirectoryInstaller struct {
 	Install func(ctx context.Context, guestDir string, args []string) error
 }
 
+type GuestFileWriter struct {
+	PathExists       func(ctx context.Context, guestPath string) (bool, error)
+	InstallDirectory func(ctx context.Context, file manifest.ResolvedWriteFile) error
+	WriteFile        func(ctx context.Context, guestPath string, payloadBase64 string) error
+	Chown            func(ctx context.Context, guestPath string, owner string) error
+	Chmod            func(ctx context.Context, guestPath string, mode string) error
+	SkipExisting     func(guestPath string)
+	Wrote            func(guestPath string)
+}
+
+func WriteGuestFiles(ctx context.Context, files []manifest.ResolvedWriteFile, writer GuestFileWriter) error {
+	for _, file := range files {
+		if !file.Overwrite {
+			exists, err := writer.PathExists(ctx, file.GuestPath)
+			if err != nil {
+				return err
+			}
+			if exists {
+				if writer.SkipExisting != nil {
+					writer.SkipExisting(file.GuestPath)
+				}
+				continue
+			}
+		}
+		payloadBase64, err := GuestFilePayloadBase64(file)
+		if err != nil {
+			return err
+		}
+		if err := writer.InstallDirectory(ctx, file); err != nil {
+			return err
+		}
+		if err := writer.WriteFile(ctx, file.GuestPath, payloadBase64); err != nil {
+			return err
+		}
+		if file.Chown != "" {
+			if err := writer.Chown(ctx, file.GuestPath, file.Chown); err != nil {
+				return err
+			}
+		}
+		if file.Mode != "" {
+			if err := writer.Chmod(ctx, file.GuestPath, file.Mode); err != nil {
+				return err
+			}
+		}
+		if writer.Wrote != nil {
+			writer.Wrote(file.GuestPath)
+		}
+	}
+	return nil
+}
+
 // InstallGuestFileDirectory ensures that the parent directory for guestPath exists.
 // It walks upward until it finds an existing ancestor, then creates only the
 // missing directories from top to bottom. owner and mode are applied to newly
