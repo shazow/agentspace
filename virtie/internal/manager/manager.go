@@ -307,45 +307,43 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	suspendHandler := newLaunchSuspendHandler(m, plan.Manifest, plan.Paths.QMPSocket, qmpClient, plan.CID, plan.Notifier, func() bool {
 		return writeBackOnExit.Enabled()
 	})
-	runtime.SetReady()
-	runtime.SetLaunchLifecycle(plan, lifecycle, suspendHandler)
-	runtime.SetCloseHooks(runtimepkg.NewCloseHooks(runtimepkg.CloseHookActions{
-		WriteBackState: writeBackOnExit,
-		WriteBack: func(ctx context.Context) error {
-			return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
+	if err := launch.ActivateRuntime(launchCtx, launch.RuntimeActivation{
+		Lifecycle: lifecycle,
+		MarkReady: runtime.SetReady,
+		Configure: func() {
+			runtime.SetLaunchLifecycle(plan, lifecycle, suspendHandler)
+			runtime.SetCloseHooks(runtimepkg.NewCloseHooks(runtimepkg.CloseHookActions{
+				WriteBackState: writeBackOnExit,
+				WriteBack: func(ctx context.Context) error {
+					return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
+				},
+				Cleanup: func() error {
+					return errors.Join(launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
+				},
+				Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
+			}))
 		},
-		Cleanup: func() error {
-			return errors.Join(launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
+		StartControl: runtime.StartControl,
+		WrapControl: func(err error) error {
+			return &stageError{Stage: "control startup", Err: err}
 		},
-		Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
-	}))
-	if err := runtime.StartControl(launchCtx); err != nil {
-		return nil, &stageError{Stage: "control startup", Err: err}
-	}
-	// Honor a suspend signal queued during startup before guest-file install or
-	// SSH startup proceeds.
-	if err := launch.HandleQueuedSuspend(launchCtx, lifecycle, func(ctx context.Context, coordinator *launchSuspendCoordinator) error {
-		return handleSuspendRequest(ctx, coordinator, suspendHandler)
+		HandleSuspend: func(ctx context.Context, coordinator *launchSuspendCoordinator) error {
+			return handleSuspendRequest(ctx, coordinator, suspendHandler)
+		},
+		Provision: launch.GuestProvision{
+			Plan:  plan,
+			Stats: stats,
+			WriteFiles: func(ctx context.Context) error {
+				return m.writeGuestFiles(ctx, plan.Manifest, stats, processes.Watchers())
+			},
+			WaitSSHReady: func(ctx context.Context, socketPath string) error {
+				m.logger.Info("waiting for ssh readiness")
+				return m.waitForSSHReady(ctx, socketPath, processes.Watchers())
+			},
+		},
+		EnableWriteBack: writeBackOnExit.Enable,
 	}); err != nil {
 		return nil, err
-	}
-
-	writeBack, err := launch.ProvisionGuest(launchCtx, launch.GuestProvision{
-		Plan:  plan,
-		Stats: stats,
-		WriteFiles: func(ctx context.Context) error {
-			return m.writeGuestFiles(ctx, plan.Manifest, stats, processes.Watchers())
-		},
-		WaitSSHReady: func(ctx context.Context, socketPath string) error {
-			m.logger.Info("waiting for ssh readiness")
-			return m.waitForSSHReady(ctx, socketPath, processes.Watchers())
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	if writeBack {
-		writeBackOnExit.Enable()
 	}
 
 	return runtime, nil
