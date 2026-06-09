@@ -178,6 +178,9 @@ Acceptance criteria:
   `virtie/internal/manager/runtime`, so write-back, control shutdown, process
   teardown, QMP disconnect, cleanup, and stats finalization run through one
   package-owned sequence.
+- [x] Move runtime ready/status/suspend transition policy into
+  `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
+  responsible for wiring paths, manifest state, and launch suspend adapters.
 - [x] Move control-plane failed-precondition and compatibility error helpers
   into `virtie/internal/manager/control`, with manager facade aliases
   preserving migration call sites.
