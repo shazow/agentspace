@@ -129,6 +129,9 @@ Acceptance criteria:
 - [x] Move async startup/readiness waiting into
   `virtie/internal/manager/launch`, with manager supplying unexpected-exit and
   stage-wrapping callbacks.
+- [x] Move VSock CID selection and saved-CID validation into
+  `virtie/internal/manager/launch`, with manager supplying the configured host
+  CID checker.
 - [x] Move QMP migration polling into `virtie/internal/qmpclient`, with
   manager supplying lifecycle-specific timeouts and stage wrapping.
 - [x] Move QMP dial retry mechanics into `virtie/internal/qmpclient`, with
@@ -494,10 +497,10 @@ implementation packages should avoid importing the facade package.
   Suspend-state, launch PID file helpers, resume-state resolution, and
   resolved `Plan` construction have also landed there, along with foreground
   wait-mode selection, launcher configuration, and foreground lifecycle event
-  waiting. Plan-owned filesystem preflight has moved there too. `Launcher`,
-  default concrete dependencies, stage wrapping, notifier selection, and the
-  remaining startup sequencing still live in `manager`; async readiness wait
-  mechanics now live in `launch`.
+  waiting. Plan-owned filesystem preflight and VSock CID selection have moved
+  there too. `Launcher`, default concrete dependencies, stage wrapping,
+  notifier selection, and the remaining startup sequencing still live in
+  `manager`; async readiness wait mechanics now live in `launch`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, and close
@@ -913,8 +916,9 @@ readiness, and managed virtiofs sockets:
    resume policy, resolved plan construction, wait-mode selection, and
    configuration merging have moved there too, as has foreground lifecycle
    event waiting, plan-owned filesystem preflight, and launch run-process
-   startup. Async startup/readiness waiting has moved there too. Manager still
-   owns default concrete dependencies, stage wrapping, and notifier selection.
+   startup. Async startup/readiness waiting and VSock CID selection have moved
+   there too. Manager still owns default concrete dependencies, stage wrapping,
+   and notifier selection.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under

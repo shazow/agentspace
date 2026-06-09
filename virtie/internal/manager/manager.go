@@ -524,13 +524,7 @@ func resolveLaunchResumeState(manifest *manifest.Manifest, mode ResumeMode) (*su
 }
 
 func (m *manager) acquireLaunchCID(manifest *manifest.Manifest, state *suspendState) (int, error) {
-	if state == nil {
-		return m.allocateCID(manifest)
-	}
-	if state.CID < manifest.VSock.CIDRange.Start || state.CID > manifest.VSock.CIDRange.End {
-		return 0, fmt.Errorf("saved vsock CID %d is outside manifest range %d-%d", state.CID, manifest.VSock.CIDRange.Start, manifest.VSock.CIDRange.End)
-	}
-	return state.CID, nil
+	return launch.AcquireCID(manifest, state, m.vsockCIDChecker)
 }
 
 func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
@@ -560,28 +554,6 @@ func (m *manager) startRuns(cid int, manifest *manifest.Manifest) (executor.Grou
 		return executor.Group{}, &stageError{Stage: "run startup", Err: err}
 	}
 	return runs, nil
-}
-
-func (m *manager) allocateCID(manifest *manifest.Manifest) (int, error) {
-	for cid := manifest.VSock.CIDRange.Start; cid <= manifest.VSock.CIDRange.End; cid++ {
-		if m.vsockCIDChecker == nil {
-			return cid, nil
-		}
-		available, err := m.vsockCIDChecker.Available(cid)
-		if err != nil {
-			return 0, err
-		}
-		if !available {
-			continue
-		}
-		return cid, nil
-	}
-
-	return 0, fmt.Errorf(
-		"no free vsock CID in range %d-%d",
-		manifest.VSock.CIDRange.Start,
-		manifest.VSock.CIDRange.End,
-	)
 }
 
 func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths []string, watchers executor.Group) error {
