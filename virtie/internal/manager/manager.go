@@ -343,20 +343,22 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 		return nil, err
 	}
 
-	if plan.ResumeState == nil {
-		if err := m.writeGuestFiles(launchCtx, plan.Manifest, stats, processes.Watchers()); err != nil {
-			return nil, err
-		}
-		writeBackOnExit = true
-		stats.MarkFilesReady(time.Now())
-
-		if plan.Paths.SSHReadySocket != "" {
+	writeBack, err := launch.ProvisionGuest(launchCtx, launch.GuestProvision{
+		Plan:  plan,
+		Stats: stats,
+		WriteFiles: func(ctx context.Context) error {
+			return m.writeGuestFiles(ctx, plan.Manifest, stats, processes.Watchers())
+		},
+		WaitSSHReady: func(ctx context.Context, socketPath string) error {
 			m.logger.Info("waiting for ssh readiness")
-			if err := m.waitForSSHReady(launchCtx, plan.Paths.SSHReadySocket, processes.Watchers()); err != nil {
-				return nil, err
-			}
-		}
-		stats.MarkSSHReady(time.Now())
+			return m.waitForSSHReady(ctx, socketPath, processes.Watchers())
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if writeBack {
+		writeBackOnExit = true
 	}
 
 	return runtime, nil
