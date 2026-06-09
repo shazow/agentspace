@@ -550,31 +550,15 @@ func (m *manager) startManagedProcess(cmd *exec.Cmd) (*executor.Process, error) 
 }
 
 func (m *manager) startRuns(cid int, manifest *manifest.Manifest) (executor.Group, error) {
-	runs, err := manifest.ResolvedRuns(cid)
+	runs, err := launch.StartRuns(launch.RunStarter{
+		Runner:        m.runner,
+		Logger:        m.logger,
+		ShutdownDelay: m.shutdownDelay,
+	}, cid, manifest)
 	if err != nil {
 		return executor.Group{}, &stageError{Stage: "run startup", Err: err}
 	}
-	if len(runs) == 0 {
-		return executor.NewGroup(), nil
-	}
-
-	started := executor.NewGroup()
-	for i, run := range runs {
-		m.logger.Info("starting run", "index", i)
-		cmd := executor.Command(run.Exec[0], run.Exec[1:], run.Env)
-		cmd.Dir = run.Dir
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Stdout = os.Stderr
-		cmd.Stderr = os.Stderr
-		process, err := m.startManagedProcess(cmd)
-		if err != nil {
-			_ = started.StopAll(m.shutdownDelay)
-			return executor.Group{}, &stageError{Stage: "run startup", Err: err}
-		}
-		started.Add(process)
-	}
-
-	return started, nil
+	return runs, nil
 }
 
 func (m *manager) allocateCID(manifest *manifest.Manifest) (int, error) {
