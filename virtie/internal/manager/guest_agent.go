@@ -13,7 +13,6 @@ import (
 )
 
 type guestAgentClient = qga.Client
-type guestExecStatus = qga.ExecStatus
 
 func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *runtimepkg.Stats, watchers executor.Group) error {
 	files := launchManifest.ResolvedWriteFiles()
@@ -180,11 +179,11 @@ func (m *manager) runGuestFileCommand(ctx context.Context, client guestAgentClie
 	return nil
 }
 
-func (m *manager) runGuestFileCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, guestPath string) (guestExecStatus, error) {
+func (m *manager) runGuestFileCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, guestPath string) (qga.ExecStatus, error) {
 	return m.runGuestCommandStatus(ctx, client, name, path, args, guestPath)
 }
 
-func (m *manager) runGuestCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, subject string) (guestExecStatus, error) {
+func (m *manager) runGuestCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, subject string) (qga.ExecStatus, error) {
 	return qga.RunCommandStatus(ctx, client, qga.ExecWait{
 		Timeout:       m.effectiveQMPCommandTimeout(),
 		PollDelay:     defaultMigrationPollDelay,

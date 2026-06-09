@@ -32,6 +32,7 @@ import (
 	control "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qga"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
@@ -1147,7 +1148,7 @@ func TestManagerLaunchPrintsGuestInfoOnSIGUSR1(t *testing.T) {
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{{
+		execStatuses: []qga.ExecStatus{{
 			Exited:  true,
 			OutData: "cm9vdCB6c2gKYWdlbnQgdmlydGllIGxhdW5jaCAtLXNzaApyb290IGluaXQK",
 		}},
@@ -1254,7 +1255,7 @@ func TestManagerMountsWorkspaceCWD(t *testing.T) {
 		MountCWD: true,
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{{Exited: true}, {Exited: true}},
+		execStatuses: []qga.ExecStatus{{Exited: true}, {Exited: true}},
 	}
 	manager := &manager{
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
@@ -1327,7 +1328,7 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	}
 	guestAgent := &fakeGuestAgentClient{
 		record: record,
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true, ExitCode: 1}, // test -d /etc/virtie
 			{Exited: true},              // test -d /etc
 			{Exited: true},              // install -d /etc/virtie
@@ -1481,7 +1482,7 @@ func TestManagerLaunchWritesBackGuestFilesOnShutdown(t *testing.T) {
 		readPayloads: map[string][]string{
 			"/var/lib/virtie/host": {"ZnJvbSBndWVzdA=="},
 		},
-		execStatuses: []guestExecStatus{{Exited: true}},
+		execStatuses: []qga.ExecStatus{{Exited: true}},
 	}
 	manager := &manager{
 		locker:            &fileLocker{},
@@ -1771,7 +1772,7 @@ func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true},
 			{Exited: true},
 		},
@@ -1834,7 +1835,7 @@ func TestManagerLaunchSkipsGuestFileWhenOverwriteFalseAndPathExists(t *testing.T
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true},
 		},
 	}
@@ -1897,7 +1898,7 @@ func TestManagerLaunchCreatesAllMissingGuestParentDirectoriesWithOwnerAndMode(t 
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true, ExitCode: 1}, // test -d /etc/virtie/nested
 			{Exited: true, ExitCode: 1}, // test -d /etc/virtie
 			{Exited: true},              // test -d /etc
@@ -1990,7 +1991,7 @@ func TestManagerLaunchWritesGuestFileWhenOverwriteFalseAndPathMissing(t *testing
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true, ExitCode: 1},
 			{Exited: true},
 			{Exited: true},
@@ -2056,7 +2057,7 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true},
 			{Exited: true, ExitCode: 1, ErrData: "Y2hvd24gZmFpbGVk"},
 		},
@@ -2125,7 +2126,7 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true, ExitCode: 1}, // test -d /etc/virtie
 			{Exited: true},              // test -d /etc
 			{Exited: true, ExitCode: 1, ErrData: "aW5zdGFsbCBmYWlsZWQ="}, // install -d /etc/virtie
@@ -2203,7 +2204,7 @@ func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{
 				Exited: true,
 			},
@@ -4545,7 +4546,7 @@ type fakeGuestAgentClient struct {
 	readIndexes     map[string]int
 	closes          []string
 	execs           []guestExecCall
-	execStatuses    []guestExecStatus
+	execStatuses    []qga.ExecStatus
 	execStatusCalls int
 	readErr         error
 	writeErr        error
@@ -4690,15 +4691,15 @@ func (c *fakeGuestAgentClient) Exec(timeout time.Duration, path string, args []s
 	return pid, nil
 }
 
-func (c *fakeGuestAgentClient) ExecStatus(timeout time.Duration, pid int) (guestExecStatus, error) {
+func (c *fakeGuestAgentClient) ExecStatus(timeout time.Duration, pid int) (qga.ExecStatus, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.execStatusCalls++
 	if c.execStatusErr != nil {
-		return guestExecStatus{}, c.execStatusErr
+		return qga.ExecStatus{}, c.execStatusErr
 	}
 	if len(c.execStatuses) == 0 {
-		return guestExecStatus{Exited: true}, nil
+		return qga.ExecStatus{Exited: true}, nil
 	}
 	index := c.execStatusCalls - 1
 	if index >= len(c.execStatuses) {
