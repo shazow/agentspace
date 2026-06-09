@@ -103,11 +103,11 @@ func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
 		return failedPrecondition(fmt.Errorf("runtime foreground wait is not configured"))
 	}
 	plan := launch.PlanForWaitMode(r.plan, mode)
-	err := r.manager.waitForLaunchForeground(ctx, plan, r.stats, r, r.qmp, r.lifecycle, r.suspendHandler, r.processes)
-	if errors.Is(err, errSavedSuspendExit) {
-		r.savedSuspend.MarkSaved()
-	}
-	return err
+	return runtimepkg.WaitForeground(ctx, r.savedSuspend, func(ctx context.Context) error {
+		return r.manager.waitForLaunchForeground(ctx, plan, r.stats, r, r.qmp, r.lifecycle, r.suspendHandler, r.processes)
+	}, func(err error) bool {
+		return errors.Is(err, errSavedSuspendExit)
+	})
 }
 
 func (r *Runtime) Status(ctx context.Context, req StatusRequest) (StatusResponse, error) {

@@ -188,6 +188,9 @@ Acceptance criteria:
 - [x] Move runtime saved-suspend close state into
   `virtie/internal/manager/runtime`, so foreground wait, startup failure
   cleanup, and close write-back skipping share package-owned state.
+- [x] Move foreground wait saved-suspend result handling into
+  `virtie/internal/manager/runtime`, leaving manager responsible for supplying
+  the concrete foreground wait callback.
 - [x] Move close-hook write-back gating into
   `virtie/internal/manager/runtime`, leaving manager responsible for supplying
   concrete write-back, cleanup, and stats callbacks.
