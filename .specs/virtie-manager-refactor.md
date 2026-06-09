@@ -176,6 +176,9 @@ Acceptance criteria:
 - [x] Move manifest-backed SSH command and hint construction into
   `virtie/internal/manager/launch`, leaving manager foreground wait code to
   start and supervise the resulting process.
+- [x] Move foreground process lifecycle wait mechanics into
+  `virtie/internal/manager/launch`, with manager retaining suspend/info
+  callbacks and command-error wrapping.
 
 ## Landed Control Flow
 
@@ -530,6 +533,7 @@ implementation packages should avoid importing the facade package.
   lock/PID setup, restored-state cleanup, and QEMU process startup have moved
   there too. Combined QMP readiness and retry-dial sequencing also now lives
   there, along with manifest-backed SSH command and hint construction.
+  Foreground process lifecycle wait mechanics have moved there as well.
   `Launcher`, default concrete dependencies, stage wrapping, notifier
   selection, and the remaining startup sequencing still live in `manager`;
   async readiness wait mechanics now live in `launch`.
