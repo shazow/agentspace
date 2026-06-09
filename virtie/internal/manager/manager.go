@@ -314,15 +314,19 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 			runtime.SetForegroundWait(plan, func(ctx context.Context, waitPlan *Plan) error {
 				return m.waitForLaunchForeground(ctx, waitPlan, stats, runtime, qmpClient, lifecycle, suspendHandler, processes)
 			})
-			runtime.SetCloseHooks(runtimepkg.NewCloseHooks(runtimepkg.CloseHookActions{
+			runtime.SetCloseHooks(runtimepkg.ConfiguredCloseHooks(runtimepkg.CloseHookConfig{
 				WriteBackState: writeBackOnExit,
 				WriteBack: func(ctx context.Context) error {
 					return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
 				},
-				Cleanup: func() error {
-					return errors.Join(launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
+				Cleanup: []func() error{
+					func() error {
+						return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
+					},
+					cleanupRuntime,
 				},
-				Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
+				Stats:       stats,
+				StatsOutput: m.outputWriter(),
 			}))
 		},
 		StartControl: runtime.StartControl,
