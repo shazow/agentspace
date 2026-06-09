@@ -64,6 +64,10 @@ type Plan = launch.Plan
 type RuntimePaths = launch.RuntimePaths
 type suspendState = launch.SuspendState
 type notificationSink = launch.NotificationSink
+type launchLifecycle = launch.Lifecycle
+type launchSuspendCoordinator = launch.SuspendCoordinator
+
+var newLaunchSuspendCoordinator = launch.NewSuspendCoordinator
 
 type Config struct {
 	Locker              locker
@@ -910,149 +914,9 @@ type launchSuspendHandler struct {
 	err           error
 }
 
-type launchSuspendCoordinator struct {
-	mu        sync.Mutex
-	notify    chan struct{}
-	waiters   []chan error
-	requested bool
-	inFlight  bool
-	completed bool
-	result    error
-}
-
-type launchLifecycle struct {
-	suspend    *launchSuspendCoordinator
-	info       chan struct{}
-	signalDone chan struct{}
-	stopSignal func()
-	stopOnce   sync.Once
-}
-
 func (m *manager) startLaunchLifecycle(cancel context.CancelFunc) *launchLifecycle {
 	signalCh, stopSignals := m.launchSignalChannel()
-	lifecycle := &launchLifecycle{
-		suspend:    newLaunchSuspendCoordinator(),
-		info:       make(chan struct{}, 1),
-		signalDone: make(chan struct{}),
-		stopSignal: stopSignals,
-	}
-	go lifecycle.watchSignals(signalCh, cancel)
-	return lifecycle
-}
-
-func (l *launchLifecycle) watchSignals(signalCh <-chan os.Signal, cancel context.CancelFunc) {
-	for {
-		select {
-		case <-l.signalDone:
-			return
-		case sig, ok := <-signalCh:
-			if !ok {
-				return
-			}
-			switch sig {
-			case os.Interrupt, syscall.SIGTERM:
-				cancel()
-			case syscall.SIGTSTP:
-				l.Suspend().Request()
-			case syscall.SIGUSR1:
-				l.RequestInfo()
-			}
-		}
-	}
-}
-
-func (l *launchLifecycle) Stop() {
-	l.stopOnce.Do(func() {
-		close(l.signalDone)
-		l.stopSignal()
-	})
-}
-
-func (l *launchLifecycle) Suspend() *launchSuspendCoordinator {
-	return l.suspend
-}
-
-func (l *launchLifecycle) Info() <-chan struct{} {
-	return l.info
-}
-
-func (l *launchLifecycle) RequestInfo() {
-	select {
-	case l.info <- struct{}{}:
-	default:
-	}
-}
-
-func newLaunchSuspendCoordinator() *launchSuspendCoordinator {
-	return &launchSuspendCoordinator{notify: make(chan struct{}, 1)}
-}
-
-func (c *launchSuspendCoordinator) Notify() <-chan struct{} {
-	return c.notify
-}
-
-func (c *launchSuspendCoordinator) Request() {
-	c.request(nil)
-}
-
-func (c *launchSuspendCoordinator) RequestAndWait(ctx context.Context) error {
-	done := make(chan error, 1)
-	c.request(done)
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (c *launchSuspendCoordinator) request(done chan error) {
-	c.mu.Lock()
-	if c.completed {
-		result := c.result
-		c.mu.Unlock()
-		if done != nil {
-			done <- result
-		}
-		return
-	}
-	if done != nil {
-		c.waiters = append(c.waiters, done)
-	}
-	notify := false
-	if !c.requested && !c.inFlight {
-		c.requested = true
-		notify = true
-	}
-	c.mu.Unlock()
-
-	if notify {
-		select {
-		case c.notify <- struct{}{}:
-		default:
-		}
-	}
-}
-
-func (c *launchSuspendCoordinator) Begin() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.requested = false
-	c.inFlight = true
-}
-
-func (c *launchSuspendCoordinator) Complete(err error) {
-	c.mu.Lock()
-	c.inFlight = false
-	c.completed = true
-	c.result = err
-	waiters := c.waiters
-	c.waiters = nil
-	c.mu.Unlock()
-
-	for _, waiter := range waiters {
-		waiter <- err
-	}
+	return launch.NewLifecycle(signalCh, stopSignals, cancel)
 }
 
 func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink, writeBack func() bool) *launchSuspendHandler {

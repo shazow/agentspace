@@ -29,6 +29,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	hotplug "github.com/shazow/agentspace/virtie/internal/hotplugtypes"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
@@ -53,12 +54,7 @@ func manifestWritePath(path string) manifest.WriteFile {
 }
 
 func newTestLaunchLifecycle() *launchLifecycle {
-	return &launchLifecycle{
-		suspend:    newLaunchSuspendCoordinator(),
-		info:       make(chan struct{}, 1),
-		signalDone: make(chan struct{}),
-		stopSignal: func() {},
-	}
+	return launch.NewLifecycle(nil, func() {}, func() {})
 }
 
 func TestManifestValidate(t *testing.T) {
