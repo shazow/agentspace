@@ -132,6 +132,9 @@ Acceptance criteria:
 - [x] Move QEMU process startup into `virtie/internal/manager/launch`, leaving
   manager responsible for boot stats, stage wrapping, and process-set
   ownership.
+- [x] Move runtime process/QMP startup sequencing into
+  `virtie/internal/manager/launch`, leaving manager responsible for concrete
+  runtime construction and callback adapters.
 - [x] Move async startup/readiness waiting into
   `virtie/internal/manager/launch`, with manager supplying unexpected-exit and
   stage-wrapping callbacks.
@@ -175,7 +178,7 @@ Acceptance criteria:
 - [x] Move QMP restore sequencing into `virtie/internal/qmpclient`, with
   manager retaining restore notifications and stage wrapping.
 - [x] Move QMP suspend save sequencing into `virtie/internal/qmpclient`, with
-  manager retaining suspend metadata, notifications, and stage wrapping.
+  manager retaining suspend metadata and stage wrapping.
 - [x] Move runtime control-server start/close wiring into
   `virtie/internal/manager/runtime`, with the concrete manager `Runtime`
   passing itself as the typed control handler.
@@ -620,7 +623,8 @@ implementation packages should avoid importing the facade package.
   preflight, VSock CID selection, locked plan finalization, pre-runtime launch
   lock/PID setup, restored-state cleanup, and QEMU process startup have moved
   there too. Combined QMP readiness and retry-dial sequencing also now lives
-  there, along with manifest-backed SSH command and hint construction.
+  there, along with the runtime process/QMP startup phase and
+  manifest-backed SSH command and hint construction.
   Foreground process lifecycle wait mechanics have moved there as well.
   Foreground SSH session retry/autoprovision orchestration now lives there.
   Foreground SSH-vs-headless orchestration has moved there too.
@@ -1058,8 +1062,9 @@ readiness, and managed virtiofs sockets:
    event waiting, plan-owned filesystem preflight, and launch run-process
    startup. QEMU process startup, async startup/readiness waiting, startup
    queued-suspend handling, VSock CID selection, locked plan finalization, and
-   pre-runtime launch lock/PID setup have moved there too. Restored-state
-   cleanup has moved there too. Manager still owns default concrete
+   pre-runtime launch lock/PID setup have moved there too. Runtime process/QMP
+   startup sequencing and restored-state cleanup have moved there too. Manager
+   still owns default concrete
    dependencies, stage wrapping, and notifier selection.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
