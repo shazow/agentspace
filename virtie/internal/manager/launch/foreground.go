@@ -25,6 +25,7 @@ type ForegroundWait struct {
 	Logger    *slog.Logger
 	Output    io.Writer
 
+	StartFeatures  func(context.Context)
 	RunSSH         func(context.Context) error
 	WaitVM         func(context.Context, *executor.Process, executor.Group) error
 	RemoveRestored func(*Plan) error
@@ -32,6 +33,9 @@ type ForegroundWait struct {
 
 func WaitForeground(ctx context.Context, wait ForegroundWait) error {
 	plan := wait.Plan
+	if wait.StartFeatures != nil {
+		wait.StartFeatures(ctx)
+	}
 	if plan.Options.SSH && len(plan.Manifest.SSH.Argv) > 0 {
 		if err := wait.RunSSH(ctx); err != nil {
 			return err

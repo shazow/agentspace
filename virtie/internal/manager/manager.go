@@ -412,17 +412,18 @@ func (m *manager) waitForLaunchForeground(
 	suspendHandler *launchSuspendHandler,
 	processes *ProcessSet,
 ) error {
-	processes.SetFeatures(startOptionalFeatureTasks(ctx, optionalFeatureRuntime{
-		qmpTimeout: m.effectiveQMPCommandTimeout(),
-		notifier:   plan.Notifier,
-	}, plan.Manifest, qmpClient))
-
 	return launch.WaitForeground(ctx, launch.ForegroundWait{
 		Plan:      plan,
 		Runtime:   runtime,
 		Processes: processes,
 		Logger:    m.logger,
 		Output:    m.outputWriter(),
+		StartFeatures: func(ctx context.Context) {
+			processes.SetFeatures(startOptionalFeatureTasks(ctx, optionalFeatureRuntime{
+				qmpTimeout: m.effectiveQMPCommandTimeout(),
+				notifier:   plan.Notifier,
+			}, plan.Manifest, qmpClient))
+		},
 		RunSSH: func(ctx context.Context) error {
 			return m.runSSHSession(ctx, plan, stats, lifecycle, suspendHandler, processes)
 		},
