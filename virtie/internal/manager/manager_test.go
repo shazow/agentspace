@@ -977,6 +977,69 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 }
 
+func TestLauncherStartAndRuntimeWaitWithoutSSH(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &launchRunner{}
+	qmpClient := &fakeQMPClient{}
+	var logOutput bytes.Buffer
+	launcher := NewLauncher(Config{
+		Locker:            &fileLocker{},
+		Runner:            runner,
+		SocketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		QMPDialer:         &fakeQMPDialer{client: qmpClient},
+		Logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		LogWriter:         &logOutput,
+		ShutdownDelay:     10 * time.Millisecond,
+		QMPRetryDelay:     0,
+		QMPConnectTimeout: time.Millisecond,
+		QMPQuitTimeout:    time.Millisecond,
+	})
+
+	plan, err := launcher.Plan(context.Background(), LaunchSpec{
+		Manifest: cfg,
+		Options:  LaunchOptions{Resume: ResumeModeNo, SSH: false},
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	runtime, err := launcher.Start(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer func() {
+		if err := runtime.Close(); err != nil {
+			t.Errorf("runtime close: %v", err)
+		}
+	}()
+
+	exitReadyQEMU := make(chan struct{})
+	go func() {
+		defer close(exitReadyQEMU)
+		time.Sleep(10 * time.Millisecond)
+		runner.exitQEMU(nil)
+	}()
+
+	if err := runtime.Wait(context.Background(), WaitVM); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	<-exitReadyQEMU
+
+	if got, want := runner.startedNames(), []string{"virtiofsd-workspace", "qemu-system-x86_64"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected start order: got %v want %v", got, want)
+	}
+	if got := len(runner.sshArgs()); got != 0 {
+		t.Fatalf("expected no ssh starts, got %d", got)
+	}
+	if !strings.Contains(logOutput.String(), "connect with: /bin/ssh agent@vsock/") {
+		t.Fatalf("expected out-of-band ssh hint, got %q", logOutput.String())
+	}
+}
+
 func TestManagerLaunchWithSSHAndEmptyExecSkipsAutoconnect(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)

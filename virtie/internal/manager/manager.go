@@ -54,6 +54,14 @@ type LaunchOptions struct {
 	Verbosity int
 }
 
+type WaitMode string
+
+const (
+	WaitAuto WaitMode = "auto"
+	WaitSSH  WaitMode = "ssh"
+	WaitVM   WaitMode = "vm"
+)
+
 type LaunchSpec struct {
 	Manifest      *manifest.Manifest
 	RemoteCommand []string
@@ -143,6 +151,13 @@ func (l *Launcher) Plan(ctx context.Context, spec LaunchSpec) (*Plan, error) {
 		l = NewLauncher()
 	}
 	return l.manager.planLaunch(spec)
+}
+
+func (l *Launcher) Start(ctx context.Context, plan *Plan) (*Runtime, error) {
+	if l == nil || l.manager == nil {
+		l = NewLauncher()
+	}
+	return l.manager.startWithPlan(ctx, plan)
 }
 
 func newProcessSet() *ProcessSet {
@@ -432,41 +447,72 @@ func (m *manager) finalizeLockedLaunchPlan(plan *Plan) error {
 }
 
 func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
+	runtime, err := m.startWithPlan(ctx, plan)
+	if err != nil {
+		if errors.Is(err, errSavedSuspendExit) {
+			return nil
+		}
+		return err
+	}
+	defer joinDeferredError(&err, runtime.Close)
+	err = runtime.Wait(ctx, waitModeFromOptions(plan.Options))
+	if errors.Is(err, errSavedSuspendExit) {
+		return nil
+	}
+	return err
+}
+
+func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runtime, err error) {
 	stats := newLaunchStats(time.Now())
 	manifest := plan.Manifest
 
 	launchCtx, cancelLaunch := context.WithCancel(ctx)
-	defer cancelLaunch()
 	lifecycle := m.startLaunchLifecycle(cancelLaunch)
-	defer lifecycle.Stop()
 
 	lock, err := m.locker.Acquire(manifest.ResolvedLockPath())
 	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+		lifecycle.Stop()
+		cancelLaunch()
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
-	defer joinDeferredError(&err, lock.Release)
 
 	if plan.ResumeState == nil {
 		if err := removeSuspendState(manifest); err != nil {
-			return &stageError{Stage: "preflight", Err: err}
+			_ = lock.Release()
+			lifecycle.Stop()
+			cancelLaunch()
+			return nil, &stageError{Stage: "preflight", Err: err}
 		}
 	}
 	if plan.ResumeState != nil {
 		// Recheck after acquiring the launch lock so restore does not race a
 		// concurrent launch/suspend cleanup.
 		if _, err := os.Stat(plan.ResumeState.VMStatePath); err != nil {
-			return &stageError{Stage: "preflight", Err: fmt.Errorf("saved vm state %q is not available: %w", plan.ResumeState.VMStatePath, err)}
+			_ = lock.Release()
+			lifecycle.Stop()
+			cancelLaunch()
+			return nil, &stageError{Stage: "preflight", Err: fmt.Errorf("saved vm state %q is not available: %w", plan.ResumeState.VMStatePath, err)}
 		}
 	}
 	if err := writeLaunchPID(manifest, os.Getpid()); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+		_ = lock.Release()
+		lifecycle.Stop()
+		cancelLaunch()
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
-	defer joinDeferredError(&err, func() error {
-		return removeLaunchPID(manifest, os.Getpid())
-	})
+
+	cleanupRuntime := func() error {
+		var cleanupErr error
+		cleanupErr = errors.Join(cleanupErr, removeLaunchPID(manifest, os.Getpid()))
+		cleanupErr = errors.Join(cleanupErr, lock.Release())
+		lifecycle.Stop()
+		cancelLaunch()
+		return cleanupErr
+	}
 
 	if err := m.finalizeLockedLaunchPlan(plan); err != nil {
-		return err
+		_ = cleanupRuntime()
+		return nil, err
 	}
 	if plan.ResumeState != nil {
 		m.logger.Info("restoring saved vsock cid", "cid", plan.CID)
@@ -475,52 +521,41 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
 	}
 
 	if err := m.prepareLaunchFilesystem(plan); err != nil {
-		return err
+		_ = cleanupRuntime()
+		return nil, err
 	}
 
 	processes := newProcessSet()
 	var qmpClient qmpClient
-	var runtime *Runtime
 	writeBackOnExit := false
 	defer func() {
-		savedSuspend := errors.Is(err, errSavedSuspendExit)
-		if savedSuspend {
-			err = nil
-		}
-		if writeBackOnExit && !savedSuspend {
-			writeBackCtx, cancelWriteBack := context.WithTimeout(context.Background(), m.effectiveQMPCommandTimeout())
-			writeBackErr := m.writeBackGuestFiles(writeBackCtx, plan.Manifest, executor.Group{})
-			cancelWriteBack()
-			if writeBackErr != nil {
-				err = errors.Join(err, writeBackErr)
+		if err != nil {
+			var runtimeErr error
+			if runtime != nil {
+				if errors.Is(err, errSavedSuspendExit) {
+					runtime.savedSuspend = true
+				}
+				runtimeErr = runtime.Close()
+			} else {
+				runtimeErr = errors.Join(processes.Close(m.shutdownDelay), cleanupRuntime())
+				if qmpClient != nil {
+					runtimeErr = errors.Join(runtimeErr, qmpClient.Disconnect())
+				}
+				runtimeErr = errors.Join(runtimeErr, removeSocketPaths(plan.RuntimeSocketCleanupFiles()))
+				stats.MarkCompleted(time.Now())
+				fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 			}
+			err = errors.Join(err, runtimeErr)
 		}
-		var runtimeErr error
-		if runtime != nil {
-			runtimeErr = runtime.Close()
-		} else {
-			runtimeErr = processes.Close(m.shutdownDelay)
-			if qmpClient != nil {
-				runtimeErr = errors.Join(runtimeErr, qmpClient.Disconnect())
-			}
-		}
-		cleanupErr := removeSocketPaths(plan.RuntimeSocketCleanupFiles())
-		if err == nil {
-			err = errors.Join(runtimeErr, cleanupErr)
-		} else if runtimeErr != nil || cleanupErr != nil {
-			err = errors.Join(err, runtimeErr, cleanupErr)
-		}
-		stats.MarkCompleted(time.Now())
-		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 	}()
 
 	runtime, qmpClient, err = m.startLaunchRuntime(launchCtx, plan, stats, lifecycle, processes)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if plan.ResumeState != nil {
 		if err := m.restoreLaunchRuntime(launchCtx, plan, qmpClient); err != nil {
-			return err
+			return nil, err
 		}
 		writeBackOnExit = true
 	}
@@ -528,20 +563,36 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
 		return writeBackOnExit
 	})
 	runtime.SetReady()
+	runtime.SetLaunchLifecycle(plan, lifecycle, suspendHandler)
+	runtime.SetCloseHooks(runtimeCloseHooks{
+		writeBack: func(ctx context.Context) error {
+			if !writeBackOnExit {
+				return nil
+			}
+			return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
+		},
+		cleanup: func() error {
+			return errors.Join(removeSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
+		},
+		stats: func() {
+			stats.MarkCompleted(time.Now())
+			fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
+		},
+	})
 	if err := runtime.StartControl(launchCtx); err != nil {
-		return &stageError{Stage: "control startup", Err: err}
+		return nil, &stageError{Stage: "control startup", Err: err}
 	}
 	// Honor a suspend signal queued during startup before guest-file install or
 	// SSH startup proceeds.
 	select {
 	case <-lifecycle.Suspend().Notify():
-		return handleSuspendRequest(launchCtx, lifecycle.Suspend(), suspendHandler)
+		return nil, handleSuspendRequest(launchCtx, lifecycle.Suspend(), suspendHandler)
 	default:
 	}
 
 	if plan.ResumeState == nil {
 		if err := m.writeGuestFiles(launchCtx, plan.Manifest, stats, processes.Watchers()); err != nil {
-			return err
+			return nil, err
 		}
 		writeBackOnExit = true
 		stats.MarkFilesReady(time.Now())
@@ -549,13 +600,20 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
 		if plan.Paths.SSHReadySocket != "" {
 			m.logger.Info("waiting for ssh readiness")
 			if err := m.waitForSSHReady(launchCtx, plan.Paths.SSHReadySocket, processes.Watchers()); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		stats.MarkSSHReady(time.Now())
 	}
 
-	return m.waitForLaunchForeground(launchCtx, plan, stats, runtime, qmpClient, lifecycle, suspendHandler, processes)
+	return runtime, nil
+}
+
+func waitModeFromOptions(options LaunchOptions) WaitMode {
+	if options.SSH {
+		return WaitSSH
+	}
+	return WaitVM
 }
 
 func (m *manager) prepareLaunchFilesystem(plan *Plan) error {
