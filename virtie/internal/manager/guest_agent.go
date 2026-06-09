@@ -40,11 +40,11 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 
 	if mountCWD {
 		if err := m.mountWorkspaceCWD(ctx, client, launchManifest); err != nil {
-			return &stageError{Stage: "workspace cwd mount", Err: err}
+			return err
 		}
 	}
 
-	if err := launch.WriteGuestFiles(ctx, files, launch.GuestFileWriter{
+	return launch.WriteGuestFiles(ctx, files, launch.GuestFileWriter{
 		PathExists: func(ctx context.Context, guestPath string) (bool, error) {
 			return m.guestPathExists(ctx, client, guestPath)
 		},
@@ -66,10 +66,7 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		Wrote: func(guestPath string) {
 			m.logger.Info("wrote guest file", "path", guestPath)
 		},
-	}); err != nil {
-		return &stageError{Stage: "guest file write", Err: err}
-	}
-	return nil
+	})
 }
 
 func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, watchers executor.Group) error {
@@ -90,7 +87,7 @@ func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manif
 	}
 	defer client.Disconnect()
 
-	if err := launch.WriteBackGuestFiles(ctx, writeBackFiles, launch.GuestFileWriteBacker{
+	return launch.WriteBackGuestFiles(ctx, writeBackFiles, launch.GuestFileWriteBacker{
 		ReadFile: func(_ context.Context, guestPath string) ([]byte, error) {
 			return m.readGuestFile(client, guestPath)
 		},
@@ -98,10 +95,7 @@ func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manif
 		Wrote: func(guestPath string, hostPath string) {
 			m.logger.Info("wrote guest file back to host", "guest_path", guestPath, "host_path", hostPath)
 		},
-	}); err != nil {
-		return &stageError{Stage: "guest file write-back", Err: err}
-	}
-	return nil
+	})
 }
 
 func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, payloadBase64 string) error {
