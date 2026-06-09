@@ -220,16 +220,9 @@ func (m *manager) planLaunch(spec LaunchSpec) (*Plan, error) {
 }
 
 func (m *manager) finalizeLockedLaunchPlan(plan *Plan) error {
-	cid, err := m.acquireLaunchCID(plan.Manifest, plan.ResumeState)
-	if err != nil {
+	if err := launch.FinalizeLockedPlan(plan, m.vsockCIDChecker, buildQEMUCommand); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	qemuCmd, err := buildQEMUCommand(plan.Manifest, cid, plan.ResumeState != nil)
-	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	plan.CID = cid
-	plan.QEMUCommand = qemuCmd
 	return nil
 }
 
@@ -521,10 +514,6 @@ func resolveLaunchResumeState(manifest *manifest.Manifest, mode ResumeMode) (*su
 		return nil, &stageError{Stage: "restore", Err: err}
 	}
 	return state, nil
-}
-
-func (m *manager) acquireLaunchCID(manifest *manifest.Manifest, state *suspendState) (int, error) {
-	return launch.AcquireCID(manifest, state, m.vsockCIDChecker)
 }
 
 func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
