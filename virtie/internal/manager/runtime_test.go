@@ -24,7 +24,7 @@ func TestRuntimeStatusAndBalloonUseOwnedQMP(t *testing.T) {
 	stats.MarkBootStarted(time.Now())
 	stats.MarkQMPReady(time.Now())
 	qmp := (&fakeQMPClient{queryBalloonActualBytes: 640 * testMiB}).withDefaultBalloonPath("/machine/peripheral/balloon0")
-	runtime := newRuntime(runtimepkg.RuntimeConfig{
+	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
 		Paths: RuntimePaths{
 			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
@@ -62,7 +62,7 @@ func TestRuntimeSuspendQueuesAndWaitsForLaunchLoop(t *testing.T) {
 	cfg := validManifest(tmpDir)
 	coordinator := launch.NewSuspendCoordinator()
 	qmp := &fakeQMPClient{status: "running"}
-	runtime := newRuntime(runtimepkg.RuntimeConfig{
+	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
 		Paths: RuntimePaths{
 			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
@@ -121,7 +121,7 @@ func TestRuntimeStartControlServesStatus(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	controlPath := filepath.Join(tmpDir, "virtie.sock")
-	runtime := newRuntime(runtimepkg.RuntimeConfig{
+	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
 		Paths: RuntimePaths{
 			ControlSocket: controlPath,
@@ -155,7 +155,7 @@ func TestRuntimeWaitUsesConfiguredForegroundCallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	processes := runtimepkg.NewProcessSet()
-	runtime := newRuntime(runtimepkg.RuntimeConfig{
+	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
 		Paths: RuntimePaths{
 			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
@@ -187,7 +187,7 @@ func TestRuntimeWaitUsesConfiguredForegroundCallback(t *testing.T) {
 func TestRuntimeInfoUsesConfiguredCollector(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	runtime := newRuntime(runtimepkg.RuntimeConfig{
+	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
 		Paths: RuntimePaths{
 			ControlSocket:    filepath.Join(tmpDir, "virtie.sock"),
@@ -232,7 +232,7 @@ func TestRuntimeCloseStopsProcessesAndDisconnectsQMPOnce(t *testing.T) {
 	process := (&executortest.Process{OverrideName: "qemu-system-x86_64"}).Process()
 	processes := runtimepkg.NewProcessSet()
 	processes.SetQEMU(process)
-	runtime := newRuntime(runtimepkg.RuntimeConfig{
+	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
 		Paths: RuntimePaths{
 			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),

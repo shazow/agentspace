@@ -62,6 +62,7 @@ type LaunchSpec = launch.Spec
 type Plan = launch.Plan
 type RuntimePaths = launch.RuntimePaths
 type Config = launch.Config
+type Runtime = runtimepkg.Runtime
 
 type Launcher struct {
 	manager *manager
@@ -383,7 +384,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, sta
 		},
 	}
 	configureRuntimeHotplugDependencies(&runtimeDeps, m, plan.Manifest)
-	runtime := newRuntime(runtimepkg.RuntimeConfig{
+	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest:        plan.Manifest,
 		Paths:           plan.Paths,
 		CID:             plan.CID,

@@ -1,4 +1,4 @@
-package manager
+package runtime
 
 import (
 	"context"
@@ -7,9 +7,8 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
-	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
+	"github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
-	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
@@ -19,31 +18,31 @@ type Runtime struct {
 	plan             *launch.Plan
 	paths            launch.RuntimePaths
 	cid              int
-	stats            *runtimepkg.Stats
+	stats            *Stats
 	qmp              qmpclient.Client
 	suspendRequests  *launch.SuspendCoordinator
 	waitForeground   func(context.Context, *launch.Plan) error
-	collectInfo      func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
-	processes        *runtimepkg.ProcessSet
+	collectInfo      func(context.Context, string, executor.Group) (GuestInfo, error)
+	processes        *ProcessSet
 	shutdownDelay    time.Duration
 	qmpTimeout       time.Duration
 	logger           *slog.Logger
 	savedSuspendExit func(error) bool
-	closeHooks       runtimepkg.CloseHooks
-	savedSuspend     *runtimepkg.SavedSuspendState
+	closeHooks       CloseHooks
+	savedSuspend     *SavedSuspendState
 	watchers         executor.Group
-	hotplugStart     runtimepkg.HotplugStarter
-	hotplugSockets   runtimepkg.HotplugSocketWaiter
-	hotplugGuest     runtimepkg.HotplugGuest
+	hotplugStart     HotplugStarter
+	hotplugSockets   HotplugSocketWaiter
+	hotplugGuest     HotplugGuest
 
-	state   *runtimepkg.State
-	closer  *runtimepkg.Closer
-	control *runtimepkg.ControlServer
+	state   *State
+	closer  *Closer
+	control *ControlServer
 }
 
-func newRuntime(config runtimepkg.RuntimeConfig) *Runtime {
+func New(config RuntimeConfig) *Runtime {
 	deps := config.Dependencies
-	state := runtimepkg.NewState(RuntimeStarting)
+	state := NewState(control.RuntimeStarting)
 	return &Runtime{
 		manifest:         config.Manifest,
 		paths:            config.Paths,
@@ -58,14 +57,14 @@ func newRuntime(config runtimepkg.RuntimeConfig) *Runtime {
 		hotplugStart:     deps.HotplugStart,
 		hotplugSockets:   deps.HotplugSockets,
 		hotplugGuest:     deps.HotplugGuest,
-		savedSuspend:     runtimepkg.NewSavedSuspendState(),
+		savedSuspend:     NewSavedSuspendState(),
 		state:            state,
-		closer:           runtimepkg.NewCloser(state),
+		closer:           NewCloser(state),
 	}
 }
 
 func (r *Runtime) SetReady() {
-	runtimepkg.MarkReady(r.state)
+	MarkReady(r.state)
 }
 
 func (r *Runtime) MarkSavedSuspend() {
@@ -76,7 +75,7 @@ func (r *Runtime) SetWatchers(watchers executor.Group) {
 	r.watchers = watchers
 }
 
-func (r *Runtime) SetProcesses(processes *runtimepkg.ProcessSet, shutdownDelay time.Duration) {
+func (r *Runtime) SetProcesses(processes *ProcessSet, shutdownDelay time.Duration) {
 	r.processes = processes
 	r.shutdownDelay = shutdownDelay
 }
@@ -86,7 +85,7 @@ func (r *Runtime) SetForegroundWait(plan *launch.Plan, waitForeground func(conte
 	r.waitForeground = waitForeground
 }
 
-func (r *Runtime) SetCloseHooks(hooks runtimepkg.CloseHooks) {
+func (r *Runtime) SetCloseHooks(hooks CloseHooks) {
 	r.closeHooks = hooks
 }
 
@@ -95,13 +94,13 @@ func (r *Runtime) QMP() qmpclient.Client {
 }
 
 func (r *Runtime) StartControl(ctx context.Context) error {
-	controlServer, err := runtimepkg.StartControl(ctx, r.paths.ControlSocket, r, r.logger)
+	controlServer, err := StartControl(ctx, r.paths.ControlSocket, r, r.logger)
 	r.control = controlServer
 	return err
 }
 
 func (r *Runtime) Close() error {
-	return r.closer.Close(runtimepkg.CloseActions{
+	return r.closer.Close(CloseActions{
 		WriteBack:        r.closeHooks.WriteBack,
 		WriteBackTimeout: r.qmpTimeout,
 		SkipWriteBack:    r.savedSuspend.Saved(),
@@ -116,10 +115,10 @@ func (r *Runtime) Close() error {
 
 func (r *Runtime) Wait(ctx context.Context, mode launch.WaitMode) error {
 	if r.plan == nil || r.processes == nil || r.waitForeground == nil {
-		return runtimepkg.ControlWaitForeground(ctx, runtimepkg.ForegroundWaitOperation{})
+		return ControlWaitForeground(ctx, ForegroundWaitOperation{})
 	}
 	plan := launch.PlanForWaitMode(r.plan, mode)
-	return runtimepkg.ControlWaitForeground(ctx, runtimepkg.ForegroundWaitOperation{
+	return ControlWaitForeground(ctx, ForegroundWaitOperation{
 		SavedSuspend: r.savedSuspend,
 		Wait: func(ctx context.Context) error {
 			return r.waitForeground(ctx, plan)
@@ -130,9 +129,9 @@ func (r *Runtime) Wait(ctx context.Context, mode launch.WaitMode) error {
 	})
 }
 
-func (r *Runtime) Status(ctx context.Context, req controlpkg.StatusRequest) (controlpkg.StatusResponse, error) {
+func (r *Runtime) Status(ctx context.Context, req control.StatusRequest) (control.StatusResponse, error) {
 	_ = ctx
-	return runtimepkg.Status(r.state, r.cid, controlpkg.StatusPaths{
+	return Status(r.state, r.cid, control.StatusPaths{
 		ControlSocket:    r.paths.ControlSocket,
 		QMPSocket:        r.paths.QMPSocket,
 		GuestAgentSocket: r.paths.GuestAgentSocket,
@@ -140,23 +139,23 @@ func (r *Runtime) Status(ctx context.Context, req controlpkg.StatusRequest) (con
 	}, r.stats), nil
 }
 
-func (r *Runtime) Info(ctx context.Context, req controlpkg.InfoRequest) (controlpkg.InfoResponse, error) {
-	return runtimepkg.ControlInfo(ctx, runtimeInfoCollector{runtime: r})
+func (r *Runtime) Info(ctx context.Context, req control.InfoRequest) (control.InfoResponse, error) {
+	return ControlInfo(ctx, runtimeInfoCollector{runtime: r})
 }
 
 type runtimeInfoCollector struct {
 	runtime *Runtime
 }
 
-func (c runtimeInfoCollector) CollectInfo(ctx context.Context) (runtimepkg.GuestInfo, error) {
+func (c runtimeInfoCollector) CollectInfo(ctx context.Context) (GuestInfo, error) {
 	if c.runtime.collectInfo == nil {
-		return runtimepkg.GuestInfo{}, fmt.Errorf("runtime info collector is not configured")
+		return GuestInfo{}, fmt.Errorf("runtime info collector is not configured")
 	}
 	return c.runtime.collectInfo(ctx, c.runtime.paths.GuestAgentSocket, c.runtime.watchers)
 }
 
-func (r *Runtime) Suspend(ctx context.Context, req controlpkg.SuspendRequest) (controlpkg.SuspendResponse, error) {
-	return runtimepkg.ControlSuspend(ctx, runtimepkg.SuspendOperation{
+func (r *Runtime) Suspend(ctx context.Context, req control.SuspendRequest) (control.SuspendResponse, error) {
+	return ControlSuspend(ctx, SuspendOperation{
 		State:       r.state,
 		Requester:   r.suspendRequests,
 		VMStatePath: launch.VMStatePath(r.manifest),
@@ -166,8 +165,8 @@ func (r *Runtime) Suspend(ctx context.Context, req controlpkg.SuspendRequest) (c
 	})
 }
 
-func (r *Runtime) Balloon(ctx context.Context, req controlpkg.BalloonRequest) (controlpkg.BalloonResponse, error) {
-	return runtimepkg.ControlBalloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
+func (r *Runtime) Balloon(ctx context.Context, req control.BalloonRequest) (control.BalloonResponse, error) {
+	return ControlBalloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
 }
 
 func (r *Runtime) isSavedSuspendExit(err error) bool {
