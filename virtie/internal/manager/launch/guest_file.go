@@ -129,6 +129,14 @@ type GuestFileWriteBacker struct {
 	Wrote         func(guestPath string, hostPath string)
 }
 
+type WorkspaceCWDMounter struct {
+	InstallDir func(ctx context.Context, target string, args []string) error
+	MountBind  func(ctx context.Context, source string, target string, args []string) error
+	Mounted    func(source string, target string)
+}
+
+const WorkspaceCWDSource = "/mnt/cwd"
+
 func WriteGuestFiles(ctx context.Context, files []manifest.ResolvedWriteFile, writer GuestFileWriter) error {
 	for _, file := range files {
 		if !file.Overwrite {
@@ -166,6 +174,28 @@ func WriteGuestFiles(ctx context.Context, files []manifest.ResolvedWriteFile, wr
 		if writer.Wrote != nil {
 			writer.Wrote(file.GuestPath)
 		}
+	}
+	return nil
+}
+
+func MountWorkspaceCWD(ctx context.Context, launchManifest *manifest.Manifest, mounter WorkspaceCWDMounter) error {
+	baseDir := launchManifest.Workspace.GuestDir
+	if baseDir == "" {
+		return fmt.Errorf("workspace.guest_dir is required when workspace.mount_cwd is true")
+	}
+	name := filepath.Base(launchManifest.Paths.WorkingDir)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return fmt.Errorf("derive workspace cwd name from working directory %q", launchManifest.Paths.WorkingDir)
+	}
+	target := path.Join(baseDir, name)
+	if err := mounter.InstallDir(ctx, target, []string{"-d", baseDir, target}); err != nil {
+		return err
+	}
+	if err := mounter.MountBind(ctx, WorkspaceCWDSource, target, []string{"--bind", WorkspaceCWDSource, target}); err != nil {
+		return err
+	}
+	if mounter.Mounted != nil {
+		mounter.Mounted(WorkspaceCWDSource, target)
 	}
 	return nil
 }
