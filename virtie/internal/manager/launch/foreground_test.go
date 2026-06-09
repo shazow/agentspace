@@ -3,6 +3,7 @@ package launch
 import (
 	"bytes"
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
@@ -38,6 +39,31 @@ func TestWaitForegroundRunsSSHAndRemovesRestoredState(t *testing.T) {
 	}
 	if !ranSSH || !removed {
 		t.Fatalf("expected ssh and remove callbacks: ranSSH=%v removed=%v", ranSSH, removed)
+	}
+}
+
+func TestWaitForegroundStartsFeaturesBeforeSSH(t *testing.T) {
+	plan := testForegroundPlan()
+	plan.Options.SSH = true
+	var events []string
+
+	err := WaitForeground(context.Background(), ForegroundWait{
+		Plan:      plan,
+		Runtime:   &fakeForegroundRuntime{},
+		Processes: &fakeForegroundProcesses{},
+		StartFeatures: func(context.Context) {
+			events = append(events, "features")
+		},
+		RunSSH: func(context.Context) error {
+			events = append(events, "ssh")
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("wait foreground: %v", err)
+	}
+	if got, want := events, []string{"features", "ssh"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: got %v want %v", got, want)
 	}
 }
 

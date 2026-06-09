@@ -250,8 +250,11 @@ Acceptance criteria:
   `virtie/internal/manager/launch`, with manager supplying process runner,
   lifecycle waits, stats, and guest-key install hooks.
 - [x] Move foreground SSH-vs-headless orchestration into
-  `virtie/internal/manager/launch`, with manager still starting optional
-  feature tasks and supplying concrete wait callbacks.
+  `virtie/internal/manager/launch`, with manager supplying optional-feature
+  startup and concrete wait callbacks.
+- [x] Move foreground optional-feature startup sequencing into
+  `virtie/internal/manager/launch`, leaving manager responsible for starting
+  concrete optional feature tasks.
 - [x] Move explicit foreground wait-mode plan overrides into
   `virtie/internal/manager/launch`, leaving manager runtime wait code to call
   the launch helper before invoking concrete foreground callbacks.
@@ -637,7 +640,8 @@ implementation packages should avoid importing the facade package.
   manifest-backed SSH command and hint construction.
   Foreground process lifecycle wait mechanics have moved there as well.
   Foreground SSH session retry/autoprovision orchestration now lives there.
-  Foreground SSH-vs-headless orchestration has moved there too.
+  Foreground SSH-vs-headless orchestration and optional-feature startup
+  sequencing have moved there too.
   Guest provisioning and SSH-readiness checkpoint sequencing also live there.
   Runtime activation sequencing lives there as well.
   Host-side guest-file payload and write-back path helpers now live there.
