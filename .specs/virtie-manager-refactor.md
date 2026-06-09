@@ -170,6 +170,9 @@ Acceptance criteria:
   `virtie/internal/manager/runtime`, so write-back, control shutdown, process
   teardown, QMP disconnect, cleanup, and stats finalization run through one
   package-owned sequence.
+- [x] Move control-plane failed-precondition and compatibility error helpers
+  into `virtie/internal/manager/control`, with manager facade aliases
+  preserving migration call sites.
 - [x] Move SSH retry logging into `virtie/internal/sshtools`, so manager
   foreground-session retry behavior depends on reusable SSH classification
   helpers instead of package-local logging state.
@@ -558,8 +561,8 @@ implementation packages should avoid importing the facade package.
   action ordering have landed. The launch-owned runtime, transition decisions,
   concrete cleanup hooks, and lifecycle adapters still live in `manager`.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
-  typed client, server, router, wire envelopes, error codes, and optional
-  handler registration.
+  typed client, server, router, wire envelopes, error codes, compatibility
+  error helpers, and optional handler registration.
 - `virtie/internal/qmpclient` (landed): QMP dial/client implementation,
   dial retry mechanics, migration polling, restore sequencing, serialization
   adapter, suspend save sequencing, and role interfaces used by runtime
