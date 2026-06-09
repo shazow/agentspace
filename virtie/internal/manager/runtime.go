@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -18,25 +17,26 @@ import (
 )
 
 type Runtime struct {
-	manifest        *manifest.Manifest
-	plan            *launch.Plan
-	paths           launch.RuntimePaths
-	cid             int
-	stats           *runtimepkg.Stats
-	qmp             qmpclient.Client
-	suspendRequests *launch.SuspendCoordinator
-	waitForeground  func(context.Context, *launch.Plan) error
-	collectInfo     func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
-	processes       *runtimepkg.ProcessSet
-	shutdownDelay   time.Duration
-	qmpTimeout      time.Duration
-	logger          *slog.Logger
-	closeHooks      runtimepkg.CloseHooks
-	savedSuspend    *runtimepkg.SavedSuspendState
-	watchers        executor.Group
-	hotplugStart    runtimeHotplugStarter
-	hotplugSockets  runtimeHotplugSocketWaiter
-	hotplugGuest    runtimeHotplugGuest
+	manifest         *manifest.Manifest
+	plan             *launch.Plan
+	paths            launch.RuntimePaths
+	cid              int
+	stats            *runtimepkg.Stats
+	qmp              qmpclient.Client
+	suspendRequests  *launch.SuspendCoordinator
+	waitForeground   func(context.Context, *launch.Plan) error
+	collectInfo      func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
+	processes        *runtimepkg.ProcessSet
+	shutdownDelay    time.Duration
+	qmpTimeout       time.Duration
+	logger           *slog.Logger
+	savedSuspendExit func(error) bool
+	closeHooks       runtimepkg.CloseHooks
+	savedSuspend     *runtimepkg.SavedSuspendState
+	watchers         executor.Group
+	hotplugStart     runtimeHotplugStarter
+	hotplugSockets   runtimeHotplugSocketWaiter
+	hotplugGuest     runtimeHotplugGuest
 
 	state   *runtimepkg.State
 	closer  *runtimepkg.Closer
@@ -44,12 +44,13 @@ type Runtime struct {
 }
 
 type runtimeDependencies struct {
-	QMPTimeout     time.Duration
-	Logger         *slog.Logger
-	CollectInfo    func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
-	HotplugStart   runtimeHotplugStarter
-	HotplugSockets runtimeHotplugSocketWaiter
-	HotplugGuest   runtimeHotplugGuest
+	QMPTimeout       time.Duration
+	Logger           *slog.Logger
+	SavedSuspendExit func(error) bool
+	CollectInfo      func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
+	HotplugStart     runtimeHotplugStarter
+	HotplugSockets   runtimeHotplugSocketWaiter
+	HotplugGuest     runtimeHotplugGuest
 }
 
 type runtimeHotplugStarter interface {
@@ -69,21 +70,22 @@ type runtimeHotplugGuest interface {
 func newRuntime(manifest *manifest.Manifest, paths launch.RuntimePaths, cid int, stats *runtimepkg.Stats, qmp qmpclient.Client, suspendRequests *launch.SuspendCoordinator, deps runtimeDependencies) *Runtime {
 	state := runtimepkg.NewState(RuntimeStarting)
 	return &Runtime{
-		manifest:        manifest,
-		paths:           paths,
-		cid:             cid,
-		stats:           stats,
-		qmp:             qmpclient.Serialized(qmp),
-		suspendRequests: suspendRequests,
-		qmpTimeout:      deps.QMPTimeout,
-		logger:          deps.Logger,
-		collectInfo:     deps.CollectInfo,
-		hotplugStart:    deps.HotplugStart,
-		hotplugSockets:  deps.HotplugSockets,
-		hotplugGuest:    deps.HotplugGuest,
-		savedSuspend:    runtimepkg.NewSavedSuspendState(),
-		state:           state,
-		closer:          runtimepkg.NewCloser(state),
+		manifest:         manifest,
+		paths:            paths,
+		cid:              cid,
+		stats:            stats,
+		qmp:              qmpclient.Serialized(qmp),
+		suspendRequests:  suspendRequests,
+		qmpTimeout:       deps.QMPTimeout,
+		logger:           deps.Logger,
+		savedSuspendExit: deps.SavedSuspendExit,
+		collectInfo:      deps.CollectInfo,
+		hotplugStart:     deps.HotplugStart,
+		hotplugSockets:   deps.HotplugSockets,
+		hotplugGuest:     deps.HotplugGuest,
+		savedSuspend:     runtimepkg.NewSavedSuspendState(),
+		state:            state,
+		closer:           runtimepkg.NewCloser(state),
 	}
 }
 
@@ -148,7 +150,7 @@ func (r *Runtime) Wait(ctx context.Context, mode launch.WaitMode) error {
 			return r.waitForeground(ctx, plan)
 		},
 		SavedSuspendExit: func(err error) bool {
-			return errors.Is(err, errSavedSuspendExit)
+			return r.isSavedSuspendExit(err)
 		},
 	})
 }
@@ -184,11 +186,15 @@ func (r *Runtime) Suspend(ctx context.Context, req controlpkg.SuspendRequest) (c
 		Requester:   r.suspendRequests,
 		VMStatePath: launch.VMStatePath(r.manifest),
 		SavedSuspendExit: func(err error) bool {
-			return errors.Is(err, errSavedSuspendExit)
+			return r.isSavedSuspendExit(err)
 		},
 	})
 }
 
 func (r *Runtime) Balloon(ctx context.Context, req controlpkg.BalloonRequest) (controlpkg.BalloonResponse, error) {
 	return runtimepkg.ControlBalloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
+}
+
+func (r *Runtime) isSavedSuspendExit(err error) bool {
+	return r.savedSuspendExit != nil && r.savedSuspendExit(err)
 }

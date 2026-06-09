@@ -278,6 +278,9 @@ Acceptance criteria:
   `manager/control` types directly instead of manager facade aliases,
   reducing blockers for eventually moving the concrete runtime under
   `virtie/internal/manager/runtime`.
+- [x] Inject saved-suspend exit classification into the concrete `Runtime`,
+  so runtime wait/suspend behavior no longer references the manager-local
+  saved-suspend sentinel directly.
 - [x] Remove the concrete `Runtime` back-reference to `manager`, leaving
   manager-owned behavior supplied through explicit runtime dependencies and
   callbacks.
