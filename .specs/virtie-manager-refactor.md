@@ -138,6 +138,9 @@ Acceptance criteria:
 - [x] Move pre-runtime launch lock/PID setup and cleanup into
   `virtie/internal/manager/launch`, with manager supplying the configured
   locker and retaining stage wrapping.
+- [x] Move restored suspend-state cleanup into
+  `virtie/internal/manager/launch`, leaving manager responsible for restore
+  stage wrapping.
 - [x] Move QMP migration polling into `virtie/internal/qmpclient`, with
   manager supplying lifecycle-specific timeouts and stage wrapping.
 - [x] Move QMP dial retry mechanics into `virtie/internal/qmpclient`, with
@@ -506,10 +509,10 @@ implementation packages should avoid importing the facade package.
   resolved `Plan` construction have also landed there, along with foreground
   wait-mode selection, launcher configuration, and foreground lifecycle event
   waiting. Plan-owned filesystem preflight, VSock CID selection, locked plan
-  finalization, and pre-runtime launch lock/PID setup have moved there too.
-  `Launcher`, default concrete dependencies, stage wrapping, notifier
-  selection, and the remaining startup sequencing still live in `manager`;
-  async readiness wait mechanics now live in `launch`.
+  finalization, pre-runtime launch lock/PID setup, and restored-state cleanup
+  have moved there too. `Launcher`, default concrete dependencies, stage
+  wrapping, notifier selection, and the remaining startup sequencing still
+  live in `manager`; async readiness wait mechanics now live in `launch`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, and close
@@ -928,8 +931,8 @@ readiness, and managed virtiofs sockets:
    event waiting, plan-owned filesystem preflight, and launch run-process
    startup. Async startup/readiness waiting, VSock CID selection, locked plan
    finalization, and pre-runtime launch lock/PID setup have moved there too.
-   Manager still owns default concrete dependencies, stage wrapping, and
-   notifier selection.
+   Restored-state cleanup has moved there too. Manager still owns default
+   concrete dependencies, stage wrapping, and notifier selection.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under

@@ -430,10 +430,7 @@ func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client q
 }
 
 func removeRestoredSuspendState(plan *Plan) error {
-	if err := os.Remove(plan.ResumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", plan.ResumeState.VMStatePath, err)}
-	}
-	if err := removeSuspendState(plan.Manifest); err != nil {
+	if err := launch.RemoveRestoredSuspendState(plan); err != nil {
 		return &stageError{Stage: "restore", Err: err}
 	}
 	return nil
