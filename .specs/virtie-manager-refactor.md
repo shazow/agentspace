@@ -67,9 +67,10 @@ Acceptance criteria:
 - [x] Started the post-mortem corrective phase by extracting a resolved
   launch plan and lifecycle coordinator inside `manager` before any subpackage
   split.
-- [x] Introduced `Launcher`, `DefaultConfig`, `LaunchSpec`, `Plan`, and
-  `ProcessSet` as real manager package types while preserving the existing
-  package-level launch entrypoints.
+- [x] Introduced `Launcher`, `DefaultConfig`, `LaunchSpec`, and `Plan` as real
+  manager package types while preserving the existing package-level launch
+  entrypoints; `ProcessSet` has since moved fully under
+  `virtie/internal/manager/runtime`.
 - [x] Moved launch process and QMP teardown ownership into idempotent
   `Runtime.Close`, with pre-runtime startup failures still cleaned up by the
   launch path.
@@ -103,6 +104,8 @@ Acceptance criteria:
 - [x] Move `ProcessSet` into `virtie/internal/manager/runtime`, leaving
   optional feature discovery in `manager` and passing the resulting task group
   into the runtime process set.
+- [x] Remove the manager-local `ProcessSet` alias, so concrete runtime setup
+  uses `virtie/internal/manager/runtime.ProcessSet` directly.
 - [x] Split the launch lifecycle coordinator into
   `virtie/internal/manager/launch`, so local signals and RPC suspend requests
   share one package-owned event path.

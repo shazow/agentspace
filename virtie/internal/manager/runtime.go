@@ -26,7 +26,7 @@ type Runtime struct {
 	suspendRequests *launch.SuspendCoordinator
 	waitForeground  func(context.Context, *Plan) error
 	collectInfo     func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
-	processes       *ProcessSet
+	processes       *runtimepkg.ProcessSet
 	shutdownDelay   time.Duration
 	qmpTimeout      time.Duration
 	logger          *slog.Logger
@@ -94,7 +94,7 @@ func (r *Runtime) SetWatchers(watchers executor.Group) {
 	r.watchers = watchers
 }
 
-func (r *Runtime) SetProcesses(processes *ProcessSet, shutdownDelay time.Duration) {
+func (r *Runtime) SetProcesses(processes *runtimepkg.ProcessSet, shutdownDelay time.Duration) {
 	r.processes = processes
 	r.shutdownDelay = shutdownDelay
 }
