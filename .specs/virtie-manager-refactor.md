@@ -216,7 +216,8 @@ Acceptance criteria:
 - [x] Move close-hook write-back gating into
   `virtie/internal/manager/runtime`, leaving manager responsible for supplying
   concrete write-back, cleanup, and stats callbacks.
-- [x] Move runtime ready/status/suspend transition policy into
+- [x] Move runtime ready/status/suspend transition policy and suspend response
+  construction into
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
   responsible for wiring paths, manifest state, and launch suspend adapters.
 - [x] Move runtime balloon control sequencing into
@@ -654,8 +655,9 @@ implementation packages should avoid importing the facade package.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, close action
-  ordering, ready/status/suspend transition policy, and balloon/hotplug
-  control dispatch have landed. Pre-runtime startup failure cleanup,
+  ordering, ready/status/suspend transition policy, suspend response
+  construction, and balloon/hotplug control dispatch have landed.
+  Pre-runtime startup failure cleanup,
   write-back-on-exit state, and close-hook write-back gating also live there
   now. The concrete launch-owned runtime, concrete cleanup/stat callbacks, and
   lifecycle adapters still live in `manager`.
@@ -1088,8 +1090,9 @@ readiness, and managed virtiofs sockets:
    `manager/runtime`; control-server lifecycle wiring and runtime state
    tracking have moved there too, along with idempotent close coordination and
    close action ordering, startup failure cleanup ordering, runtime
-   write-back state, close-hook write-back gating, and control-capability
-   dispatch. The concrete `Runtime` type still lives behind the `manager`
+   write-back state, close-hook write-back gating, suspend response
+   construction, and control-capability dispatch. The concrete `Runtime` type
+   still lives behind the `manager`
    facade.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
    manager call sites to use the same interfaces through the facade. QMP has
