@@ -10,6 +10,7 @@ import (
 	"time"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
+	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -108,13 +109,13 @@ func (f *fakeOptionalFeature) AppendQEMUArgs(
 	return append(args, "-device", f.appendMarker), nil
 }
 
-func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, qmpClient qmpClient) *managedTask {
+func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, qmpClient qmpClient) *runtimepkg.Task {
 	if f.runner != nil {
 		f.runner.mu.Lock()
 		f.startedAfterSSHSession = f.runner.interactiveStarts
 		f.runner.mu.Unlock()
 	}
-	return startManagedTask(ctx, func(taskCtx context.Context) error {
+	return runtimepkg.StartTask(ctx, func(taskCtx context.Context) error {
 		<-taskCtx.Done()
 		f.stoppedAt = time.Now()
 		return nil

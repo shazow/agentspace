@@ -91,8 +91,10 @@ Acceptance criteria:
 - [x] Move the serialized QMP wrapper into `virtie/internal/qmpclient`, so the
   launch-owned runtime depends on a serialized client rather than owning the
   synchronization adapter itself.
-- [x] Split managed task cancellation into `virtie/internal/manager/runtime`,
-  with `manager` aliases preserving optional feature call sites.
+- [x] Split managed task cancellation into `virtie/internal/manager/runtime`.
+- [x] Remove manager-local managed-task aliases from optional feature call
+  sites, so optional feature startup uses `virtie/internal/manager/runtime`
+  task types directly.
 - [x] Move `ProcessSet` into `virtie/internal/manager/runtime`, leaving
   optional feature discovery in `manager` and passing the resulting task group
   into the runtime process set.

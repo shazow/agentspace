@@ -6,6 +6,7 @@ import (
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
+	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -28,7 +29,7 @@ type optionalFeature interface {
 		runtime optionalFeatureRuntime,
 		manifest *manifest.Manifest,
 		qmpClient qmpClient,
-	) *managedTask
+	) *runtimepkg.Task
 }
 
 var optionalFeatures []optionalFeature
@@ -49,8 +50,8 @@ func startOptionalFeatureTasks(
 	runtime optionalFeatureRuntime,
 	manifest *manifest.Manifest,
 	qmpClient qmpClient,
-) managedTaskGroup {
-	var tasks managedTaskGroup
+) runtimepkg.TaskGroup {
+	var tasks runtimepkg.TaskGroup
 	for _, feature := range optionalFeatures {
 		tasks.Add(feature.StartTask(ctx, runtime, manifest, qmpClient))
 	}
