@@ -205,6 +205,9 @@ Acceptance criteria:
 - [x] Move host-side guest-file payload and write-back path helpers into
   `virtie/internal/manager/launch`, leaving manager responsible for QGA
   guest-write orchestration and stage wrapping.
+- [x] Move guest-file directory install argument policy into
+  `virtie/internal/manager/launch`, keeping manager responsible for running
+  the resulting guest command.
 
 ## Landed Control Flow
 
@@ -564,6 +567,7 @@ implementation packages should avoid importing the facade package.
   Foreground SSH-vs-headless orchestration has moved there too.
   Guest provisioning and SSH-readiness checkpoint sequencing also live there.
   Host-side guest-file payload and write-back path helpers now live there.
+  Guest-file directory install argument policy has moved there too.
   `Launcher`, default concrete dependencies, stage wrapping, notifier
   selection, and the remaining startup sequencing still live in `manager`;
   async readiness and socket wait mechanics now live in `launch`.

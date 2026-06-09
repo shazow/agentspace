@@ -185,53 +185,6 @@ func TestLaunchLifecycleRoutesSignalsToEvents(t *testing.T) {
 	}
 }
 
-func TestGuestInstallDirectoryArgs(t *testing.T) {
-	tests := []struct {
-		name     string
-		chown    string
-		mode     string
-		expected []string
-	}{
-		{
-			name:     "nil chown",
-			expected: []string{"-d", "/etc/virtie"},
-		},
-		{
-			name:     "empty chown",
-			chown:    "",
-			expected: []string{"-d", "/etc/virtie"},
-		},
-		{
-			name:     "user and group",
-			chown:    "agent:users",
-			expected: []string{"-d", "-o", "agent", "-g", "users", "/etc/virtie"},
-		},
-		{
-			name:     "user only",
-			chown:    "agent",
-			expected: []string{"-d", "-o", "agent", "/etc/virtie"},
-		},
-		{
-			name:     "group only",
-			chown:    ":users",
-			expected: []string{"-d", "-g", "users", "/etc/virtie"},
-		},
-		{
-			name:     "mode",
-			mode:     "0640",
-			expected: []string{"-d", "-m", "0750", "/etc/virtie"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := guestInstallDirectoryArgs("/etc/virtie", tt.chown, tt.mode); !reflect.DeepEqual(got, tt.expected) {
-				t.Fatalf("unexpected install args: got %#v want %#v", got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
