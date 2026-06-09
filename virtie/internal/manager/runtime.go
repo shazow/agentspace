@@ -33,9 +33,8 @@ type Runtime struct {
 	savedSuspend    bool
 	watchers        executor.Group
 
-	stateMu   sync.Mutex
-	state     RuntimeState
 	closeOnce sync.Once
+	state     *runtimepkg.State
 	control   *runtimepkg.ControlServer
 }
 
@@ -48,7 +47,7 @@ func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePath
 		stats:           stats,
 		qmp:             qmpclient.Serialized(qmp),
 		suspendRequests: suspendRequests,
-		state:           RuntimeStarting,
+		state:           runtimepkg.NewState(RuntimeStarting),
 	}
 }
 
@@ -197,15 +196,11 @@ func failedPrecondition(err error) error {
 }
 
 func (r *Runtime) setState(state RuntimeState) {
-	r.stateMu.Lock()
-	defer r.stateMu.Unlock()
-	r.state = state
+	r.state.Set(state)
 }
 
 func (r *Runtime) currentState() RuntimeState {
-	r.stateMu.Lock()
-	defer r.stateMu.Unlock()
-	return r.state
+	return r.state.Current()
 }
 
 func runtimeStatsFromLaunchStats(stats *launchStats) RuntimeStats {
