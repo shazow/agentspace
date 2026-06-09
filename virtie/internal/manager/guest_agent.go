@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -205,13 +204,6 @@ func (m *manager) runGuestCommandStatus(ctx context.Context, client guestAgentCl
 }
 
 func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (guestAgentClient, error) {
-	if err := m.waitForLaunchSockets(ctx, "guest agent", []string{socketPath}, watchers); err != nil {
-		return nil, err
-	}
-	return m.connectGuestAgent(ctx, socketPath, watchers)
-}
-
-func (m *manager) connectGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (guestAgentClient, error) {
 	dialer := m.guestAgentDialer
 	if dialer == nil {
 		dialer = &socketGuestAgentDialer{}
@@ -220,20 +212,19 @@ func (m *manager) connectGuestAgent(ctx context.Context, socketPath string, watc
 	if retryDelay <= 0 {
 		retryDelay = defaultQMPRetryDelay
 	}
-	client, err := qga.DialWithRetry(ctx, dialer, qga.DialRetry{
+	return launch.WaitForGuestAgent(ctx, launch.GuestAgentWait{
+		Stage:          "guest agent",
 		SocketPath:     socketPath,
+		SocketWaiter:   m.socketWaiter,
+		Dialer:         dialer,
 		ConnectTimeout: m.effectiveQMPConnectTimeout(),
 		CommandTimeout: m.effectiveQMPCommandTimeout(),
 		RetryDelay:     retryDelay,
-		Check: func() error {
-			return firstUnexpectedExit("guest agent", watchers)
+		PollDelay:      defaultSocketPollInterval,
+		Check: func(stage string) error {
+			return firstUnexpectedExit(stage, watchers)
 		},
+		Result: launch.WrapStage,
+		Cancel: launch.WrapStage,
 	})
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, &stageError{Stage: "guest agent", Err: ctx.Err()}
-		}
-		return nil, err
-	}
-	return client, nil
 }
