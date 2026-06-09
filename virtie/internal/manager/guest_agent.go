@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
@@ -197,7 +196,7 @@ func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAge
 
 	for i := len(missingDirs) - 1; i >= 0; i-- {
 		dir := missingDirs[i]
-		args := guestInstallDirectoryArgs(dir, owner, mode)
+		args := launch.GuestInstallDirectoryArgs(dir, owner, mode)
 		if err := m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, args, dir); err != nil {
 			return err
 		}
@@ -219,45 +218,6 @@ func (m *manager) guestPathExists(ctx context.Context, client guestAgentClient, 
 		return false, err
 	}
 	return status.ExitCode == 0, nil
-}
-
-func guestInstallDirectoryArgs(guestDir string, owner string, mode string) []string {
-	args := []string{"-d"}
-	if owner != "" {
-		user, group, _ := strings.Cut(owner, ":")
-		if user != "" {
-			args = append(args, "-o", user)
-		}
-		if group != "" {
-			args = append(args, "-g", group)
-		}
-	}
-	if mode != "" {
-		args = append(args, "-m", guestDirectoryMode(mode))
-	}
-	return append(args, guestDir)
-}
-
-func guestDirectoryMode(mode string) string {
-	prefix := ""
-	digits := mode
-	if strings.HasPrefix(mode, "0") {
-		prefix = "0"
-		digits = mode[1:]
-	}
-	if len(digits) != 3 {
-		return mode
-	}
-
-	out := make([]byte, 3)
-	for i := 0; i < 3; i++ {
-		d := digits[i] - '0'
-		if d&0b100 != 0 {
-			d |= 0b001
-		}
-		out[i] = '0' + d
-	}
-	return prefix + string(out)
 }
 
 func (m *manager) chownGuestFile(ctx context.Context, client guestAgentClient, guestPath string, owner string) error {

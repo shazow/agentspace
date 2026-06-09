@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -103,4 +104,43 @@ func WriteHostFileAtomic(hostPath string, data []byte) error {
 	}
 	cleanup = false
 	return nil
+}
+
+func GuestInstallDirectoryArgs(guestDir string, owner string, mode string) []string {
+	args := []string{"-d"}
+	if owner != "" {
+		user, group, _ := strings.Cut(owner, ":")
+		if user != "" {
+			args = append(args, "-o", user)
+		}
+		if group != "" {
+			args = append(args, "-g", group)
+		}
+	}
+	if mode != "" {
+		args = append(args, "-m", GuestDirectoryMode(mode))
+	}
+	return append(args, guestDir)
+}
+
+func GuestDirectoryMode(mode string) string {
+	prefix := ""
+	digits := mode
+	if strings.HasPrefix(mode, "0") {
+		prefix = "0"
+		digits = mode[1:]
+	}
+	if len(digits) != 3 {
+		return mode
+	}
+
+	out := make([]byte, 3)
+	for i := 0; i < 3; i++ {
+		d := digits[i] - '0'
+		if d&0b100 != 0 {
+			d |= 0b001
+		}
+		out[i] = '0' + d
+	}
+	return prefix + string(out)
 }
