@@ -697,33 +697,22 @@ func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, delay
 }
 
 func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink) error {
-	statePath := vmStatePath(manifest)
-	if err := launch.EnsureParentDirectories([]string{statePath}); err != nil {
-		return &stageError{Stage: "qmp suspend", Err: err}
-	}
-	if err := os.Remove(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return &stageError{Stage: "qmp suspend", Err: fmt.Errorf("remove stale vm state %q: %w", statePath, err)}
-	}
-	if err := qmpclient.SaveToFile(ctx, client, statePath, qmpclient.SaveWait{
-		MigrationTimeout: m.effectiveQMPMigrationTimeout(),
-		CommandTimeout:   m.effectiveQMPCommandTimeout(),
-		PollDelay:        defaultMigrationPollDelay,
-	}); err != nil {
-		return &stageError{Stage: "qmp suspend", Err: err}
-	}
-
-	state := suspendState{
-		HostName:      manifest.Identity.HostName,
+	return launch.SaveRuntimeSuspend(ctx, launch.RuntimeSuspendSave{
+		Manifest:      manifest,
 		QMPSocketPath: qmpSocketPath,
-		VMStatePath:   statePath,
 		CID:           cid,
-		Status:        "saved",
-	}
-	if err := writeSuspendStateData(manifest, state); err != nil {
-		return &stageError{Stage: "qmp suspend", Err: err}
-	}
-	launch.NotifyRuntimeSuspend(ctx, notifier, state)
-	return nil
+		Notifier:      notifier,
+		Save: func(ctx context.Context, vmStatePath string) error {
+			return qmpclient.SaveToFile(ctx, client, vmStatePath, qmpclient.SaveWait{
+				MigrationTimeout: m.effectiveQMPMigrationTimeout(),
+				CommandTimeout:   m.effectiveQMPCommandTimeout(),
+				PollDelay:        defaultMigrationPollDelay,
+			})
+		},
+		Wrap: func(err error) error {
+			return &stageError{Stage: "qmp suspend", Err: err}
+		},
+	})
 }
 
 func firstUnexpectedExit(stage string, watchers executor.Group) error {

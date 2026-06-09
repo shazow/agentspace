@@ -181,7 +181,10 @@ Acceptance criteria:
   `virtie/internal/manager/launch`, leaving manager responsible for QMP
   timeout policy and stage wrapping.
 - [x] Move QMP suspend save sequencing into `virtie/internal/qmpclient`, with
-  manager retaining suspend metadata and stage wrapping.
+  manager retaining stage wrapping.
+- [x] Move runtime suspend save orchestration into
+  `virtie/internal/manager/launch`, leaving manager responsible for QMP
+  timeout policy and stage wrapping.
 - [x] Move runtime control-server start/close wiring into
   `virtie/internal/manager/runtime`, with the concrete manager `Runtime`
   passing itself as the typed control handler.
@@ -634,8 +637,8 @@ implementation packages should avoid importing the facade package.
   Guest provisioning and SSH-readiness checkpoint sequencing also live there.
   Host-side guest-file payload and write-back path helpers now live there.
   Guest-file directory install argument policy has moved there too.
-  Runtime restore orchestration and runtime resume/suspend notification
-  payloads also live there now.
+  Runtime restore and suspend-save orchestration, plus runtime resume/suspend
+  notification payloads, also live there now.
   `Launcher`, default concrete dependencies, stage wrapping, notifier
   selection, and the remaining startup sequencing still live in `manager`;
   async readiness and socket wait mechanics now live in `launch`.
