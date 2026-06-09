@@ -116,6 +116,9 @@ Acceptance criteria:
 - [x] Move launcher `Config` and dependency interfaces into
   `virtie/internal/manager/launch`, leaving manager responsible for default
   concrete implementations.
+- [x] Move foreground lifecycle event waiting into
+  `virtie/internal/manager/launch`, with manager supplying suspend, info,
+  unexpected-exit, and cancellation callbacks.
 - [x] Move runtime control-server start/close wiring into
   `virtie/internal/manager/runtime`, with the concrete manager `Runtime`
   passing itself as the typed control handler.
@@ -476,9 +479,9 @@ implementation packages should avoid importing the facade package.
   interface, plan-owned socket cleanup, and lifecycle event coordination.
   Suspend-state, launch PID file helpers, resume-state resolution, and
   resolved `Plan` construction have also landed there, along with foreground
-  wait-mode selection and launcher configuration. `Launcher`, default concrete
-  dependencies, stage wrapping, notifier selection, and startup sequencing
-  still live in `manager`.
+  wait-mode selection, launcher configuration, and foreground lifecycle event
+  waiting. `Launcher`, default concrete dependencies, stage wrapping, notifier
+  selection, and startup sequencing still live in `manager`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, and close
@@ -892,8 +895,9 @@ readiness, and managed virtiofs sockets:
    `manager/launch` with facade aliases. Lifecycle coordination has also
    moved there, along with suspend-state and launch PID helpers. Preflight
    resume policy, resolved plan construction, wait-mode selection, and
-   configuration merging have moved there too. Manager still owns default
-   concrete dependencies, stage wrapping, and notifier selection.
+   configuration merging have moved there too, as has foreground lifecycle
+   event waiting. Manager still owns default concrete dependencies, stage
+   wrapping, and notifier selection.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
