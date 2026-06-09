@@ -278,6 +278,9 @@ Acceptance criteria:
   `virtie/internal/manager/runtime`, and make direct hotplug fallback retain
   its connected QMP client explicitly for cleanup instead of type-asserting a
   manager-local adapter.
+- [x] Move runtime hotplug dependency interfaces into
+  `virtie/internal/manager/runtime`, leaving manager to provide concrete
+  process, socket, and guest command adapters.
 - [x] Make the concrete manager `Runtime` use `manager/launch` and
   `manager/control` types directly instead of manager facade aliases,
   reducing blockers for eventually moving the concrete runtime under
