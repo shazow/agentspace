@@ -23,6 +23,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qga"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
@@ -68,8 +69,8 @@ func DefaultConfig() Config {
 		VSockCIDChecker:     newHostVSockCIDChecker(),
 		Runner:              &executor.Runner{},
 		SocketWaiter:        &pollingSocketWaiter{},
-		QMPDialer:           &socketMonitorDialer{},
-		GuestAgentDialer:    &socketGuestAgentDialer{},
+		QMPDialer:           &qmpclient.SocketMonitorDialer{},
+		GuestAgentDialer:    &qga.SocketDialer{},
 		SSHReadyDialer:      &unixSSHReadyDialer{},
 		Logger:              logger,
 		LogWriter:           os.Stderr,
@@ -466,7 +467,7 @@ func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths 
 func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpClient, error) {
 	dialer := m.qmpDialer
 	if dialer == nil {
-		dialer = &socketMonitorDialer{}
+		dialer = &qmpclient.SocketMonitorDialer{}
 	}
 	retryDelay := m.qmpRetryDelay
 	if retryDelay <= 0 {
