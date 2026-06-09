@@ -840,8 +840,9 @@ func (p *ProcessSet) StopAll(delay time.Duration) error
 ```
 
 Split broad device interfaces only when a caller benefits from the narrower
-contract. `qmpClient` can be migrated toward role interfaces without forcing a
-large rewrite up front.
+contract. Manager call sites now use `qmpclient.Client` directly instead of a
+manager-local `qmpClient` alias; future cleanup can narrow individual QMP
+roles at the call sites that need it without forcing a large rewrite up front.
 
 ```go
 type PowerController interface {
