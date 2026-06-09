@@ -648,9 +648,9 @@ implementation packages should avoid importing the facade package.
   Guest-file directory install argument policy has moved there too.
   Runtime restore and suspend-save orchestration, plus runtime resume/suspend
   notification payloads, also live there now.
-  `Launcher`, default concrete dependencies, stage wrapping, notifier
-  selection, and the remaining startup sequencing still live in `manager`;
-  async readiness and socket wait mechanics now live in `launch`.
+  `Launcher`, default concrete dependencies, stage wrapping, and notifier
+  selection still live in `manager`; async readiness, socket wait mechanics,
+  and the major startup sequencing phases now live in `launch`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, close action
@@ -1095,8 +1095,8 @@ readiness, and managed virtiofs sockets:
    manager call sites to use the same interfaces through the facade. QMP has
    landed under `internal/qmpclient`, including dial retry mechanics,
    migration polling, restore sequencing, and suspend save sequencing; QGA has
-   landed under `internal/qga` with guest provisioning orchestration still in
-   `manager`.
+   landed under `internal/qga`, while launch now owns guest provisioning
+   sequencing and manager supplies concrete QGA callbacks.
 4. Introduce `RuntimeCore`, `RuntimeSuspend`, `RuntimeHotplug`, and
    `RuntimeBalloon`. Move status and info onto the core runtime, move suspend,
    hotplug, and balloon onto optional capability implementations, and keep old
