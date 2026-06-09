@@ -2,13 +2,22 @@ package runtime
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
 
+var ErrSuspendNotReady = errors.New("suspend handler is not ready")
+
 type SuspendRequester interface {
 	RequestAndWait(context.Context) error
+}
+
+type SuspendOperation struct {
+	State            *State
+	Requester        SuspendRequester
+	VMStatePath      string
+	SavedSuspendExit func(error) bool
 }
 
 func MarkReady(state *State) {
@@ -26,13 +35,20 @@ func Status(state *State, cid int, paths control.StatusPaths, stats *Stats) cont
 
 func QueueSuspend(ctx context.Context, state *State, requester SuspendRequester, savedSuspendExit func(error) bool) error {
 	if requester == nil {
-		return fmt.Errorf("suspend handler is not ready")
+		return ErrSuspendNotReady
 	}
 	state.Set(control.RuntimeSuspending)
 	err := requester.RequestAndWait(ctx)
-	if err != nil && !savedSuspendExit(err) {
+	if err != nil && (savedSuspendExit == nil || !savedSuspendExit(err)) {
 		return err
 	}
 	state.Set(control.RuntimeSuspended)
 	return nil
+}
+
+func Suspend(ctx context.Context, op SuspendOperation) (control.SuspendResponse, error) {
+	if err := QueueSuspend(ctx, op.State, op.Requester, op.SavedSuspendExit); err != nil {
+		return control.SuspendResponse{}, err
+	}
+	return control.SuspendResponse{Saved: true, VMStatePath: op.VMStatePath}, nil
 }

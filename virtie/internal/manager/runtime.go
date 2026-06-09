@@ -141,15 +141,21 @@ func (c runtimeInfoCollector) CollectInfo(ctx context.Context) (runtimepkg.Guest
 }
 
 func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendResponse, error) {
-	if r.suspendRequests == nil {
-		return SuspendResponse{}, failedPrecondition(fmt.Errorf("suspend handler is not ready"))
+	resp, err := runtimepkg.Suspend(ctx, runtimepkg.SuspendOperation{
+		State:       r.state,
+		Requester:   r.suspendRequests,
+		VMStatePath: vmStatePath(r.manifest),
+		SavedSuspendExit: func(err error) bool {
+			return errors.Is(err, errSavedSuspendExit)
+		},
+	})
+	if errors.Is(err, runtimepkg.ErrSuspendNotReady) {
+		return SuspendResponse{}, failedPrecondition(err)
 	}
-	if err := runtimepkg.QueueSuspend(ctx, r.state, r.suspendRequests, func(err error) bool {
-		return errors.Is(err, errSavedSuspendExit)
-	}); err != nil {
+	if err != nil {
 		return SuspendResponse{}, err
 	}
-	return SuspendResponse{Saved: true, VMStatePath: vmStatePath(r.manifest)}, nil
+	return resp, nil
 }
 
 func (r *Runtime) Balloon(ctx context.Context, req BalloonRequest) (BalloonResponse, error) {
