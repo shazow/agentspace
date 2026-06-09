@@ -12,8 +12,6 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/qga"
 )
 
-type guestAgentClient = qga.Client
-
 func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *runtimepkg.Stats, watchers executor.Group) error {
 	files := launchManifest.ResolvedWriteFiles()
 	mountCWD := launchManifest.Workspace.MountCWD
@@ -96,11 +94,11 @@ func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manif
 	})
 }
 
-func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, payloadBase64 string) error {
+func (m *manager) writeGuestFile(client qga.Client, guestPath string, payloadBase64 string) error {
 	return qga.WriteFile(client, m.effectiveQMPCommandTimeout(), guestPath, payloadBase64)
 }
 
-func (m *manager) readGuestFile(client guestAgentClient, guestPath string) ([]byte, error) {
+func (m *manager) readGuestFile(client qga.Client, guestPath string) ([]byte, error) {
 	return qga.ReadFile(client, m.effectiveQMPCommandTimeout(), guestPath, qga.DefaultFileReadChunkSize)
 }
 
@@ -113,7 +111,7 @@ const (
 	guestTestPath    = "/run/current-system/sw/bin/test"
 )
 
-func (m *manager) mountWorkspaceCWD(ctx context.Context, client guestAgentClient, launchManifest *manifest.Manifest) error {
+func (m *manager) mountWorkspaceCWD(ctx context.Context, client qga.Client, launchManifest *manifest.Manifest) error {
 	return launch.MountWorkspaceCWD(ctx, launchManifest, launch.WorkspaceCWDMounter{
 		InstallDir: func(ctx context.Context, target string, args []string) error {
 			return m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, args, target)
@@ -133,7 +131,7 @@ func (m *manager) mountWorkspaceCWD(ctx context.Context, client guestAgentClient
 // for newly-created directories only; existing directories are left unchanged.
 // mode is expected to be a file mode and is converted to a directory mode by
 // adding execute bits wherever read bits are set.
-func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAgentClient, guestPath string, owner string, mode string) error {
+func (m *manager) installGuestFileDirectory(ctx context.Context, client qga.Client, guestPath string, owner string, mode string) error {
 	return launch.InstallGuestFileDirectory(ctx, launch.GuestDirectoryInstaller{
 		Exists: func(ctx context.Context, guestDir string) (bool, error) {
 			return m.guestDirectoryExists(ctx, client, guestDir)
@@ -144,7 +142,7 @@ func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAge
 	}, guestPath, owner, mode)
 }
 
-func (m *manager) guestDirectoryExists(ctx context.Context, client guestAgentClient, guestDir string) (bool, error) {
+func (m *manager) guestDirectoryExists(ctx context.Context, client qga.Client, guestDir string) (bool, error) {
 	status, err := m.runGuestFileCommandStatus(ctx, client, "test -d", guestTestPath, []string{"-d", guestDir}, guestDir)
 	if err != nil {
 		return false, err
@@ -152,7 +150,7 @@ func (m *manager) guestDirectoryExists(ctx context.Context, client guestAgentCli
 	return status.ExitCode == 0, nil
 }
 
-func (m *manager) guestPathExists(ctx context.Context, client guestAgentClient, guestPath string) (bool, error) {
+func (m *manager) guestPathExists(ctx context.Context, client qga.Client, guestPath string) (bool, error) {
 	status, err := m.runGuestFileCommandStatus(ctx, client, "test -e", guestTestPath, []string{"-e", guestPath}, guestPath)
 	if err != nil {
 		return false, err
@@ -160,15 +158,15 @@ func (m *manager) guestPathExists(ctx context.Context, client guestAgentClient, 
 	return status.ExitCode == 0, nil
 }
 
-func (m *manager) chownGuestFile(ctx context.Context, client guestAgentClient, guestPath string, owner string) error {
+func (m *manager) chownGuestFile(ctx context.Context, client qga.Client, guestPath string, owner string) error {
 	return m.runGuestFileCommand(ctx, client, "chown", guestChownPath, []string{owner, guestPath}, guestPath)
 }
 
-func (m *manager) chmodGuestFile(ctx context.Context, client guestAgentClient, guestPath string, mode string) error {
+func (m *manager) chmodGuestFile(ctx context.Context, client qga.Client, guestPath string, mode string) error {
 	return m.runGuestFileCommand(ctx, client, "chmod", guestChmodPath, []string{mode, guestPath}, guestPath)
 }
 
-func (m *manager) runGuestFileCommand(ctx context.Context, client guestAgentClient, name string, path string, args []string, guestPath string) error {
+func (m *manager) runGuestFileCommand(ctx context.Context, client qga.Client, name string, path string, args []string, guestPath string) error {
 	status, err := m.runGuestFileCommandStatus(ctx, client, name, path, args, guestPath)
 	if err != nil {
 		return err
@@ -179,11 +177,11 @@ func (m *manager) runGuestFileCommand(ctx context.Context, client guestAgentClie
 	return nil
 }
 
-func (m *manager) runGuestFileCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, guestPath string) (qga.ExecStatus, error) {
+func (m *manager) runGuestFileCommandStatus(ctx context.Context, client qga.Client, name string, path string, args []string, guestPath string) (qga.ExecStatus, error) {
 	return m.runGuestCommandStatus(ctx, client, name, path, args, guestPath)
 }
 
-func (m *manager) runGuestCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, subject string) (qga.ExecStatus, error) {
+func (m *manager) runGuestCommandStatus(ctx context.Context, client qga.Client, name string, path string, args []string, subject string) (qga.ExecStatus, error) {
 	return qga.RunCommandStatus(ctx, client, qga.ExecWait{
 		Timeout:       m.effectiveQMPCommandTimeout(),
 		PollDelay:     defaultMigrationPollDelay,
@@ -195,11 +193,11 @@ func (m *manager) runGuestCommandStatus(ctx context.Context, client guestAgentCl
 	})
 }
 
-func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (guestAgentClient, error) {
+func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (qga.Client, error) {
 	return m.waitForGuestAgentStage(ctx, "guest agent", socketPath, watchers)
 }
 
-func (m *manager) waitForGuestAgentStage(ctx context.Context, stage string, socketPath string, watchers executor.Group) (guestAgentClient, error) {
+func (m *manager) waitForGuestAgentStage(ctx context.Context, stage string, socketPath string, watchers executor.Group) (qga.Client, error) {
 	dialer := m.guestAgentDialer
 	if dialer == nil {
 		dialer = &qga.SocketDialer{}
