@@ -925,35 +925,25 @@ func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, proce
 	if process != nil {
 		processDone = process.Done()
 	}
-	var delayDone <-chan time.Time
-	var timer *time.Timer
-	if delay > 0 {
-		timer = time.NewTimer(delay)
-		delayDone = timer.C
-		defer timer.Stop()
-	}
-
-	ticker := time.NewTicker(defaultSocketPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-processDone:
-			return nil
-		case <-delayDone:
-			return nil
-		case <-lifecycle.Suspend().Notify():
+	return launch.WaitForEvent(ctx, launch.EventWait{
+		Stage:       stage,
+		ProcessDone: processDone,
+		Delay:       delay,
+		Lifecycle:   lifecycle,
+		PollDelay:   defaultSocketPollInterval,
+		Suspend: func(ctx context.Context) error {
 			return handleSuspendRequest(ctx, lifecycle.Suspend(), suspendHandler)
-		case <-lifecycle.Info():
+		},
+		Info: func(ctx context.Context) {
 			m.printGuestInfo(ctx, guestAgentSocketPath, watchers)
-		case <-ticker.C:
-			if err := firstUnexpectedExit(stage, watchers); err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			return &stageError{Stage: stage, Err: ctx.Err()}
-		}
-	}
+		},
+		Check: func(stage string) error {
+			return firstUnexpectedExit(stage, watchers)
+		},
+		Cancel: func(stage string, err error) error {
+			return &stageError{Stage: stage, Err: err}
+		},
+	})
 }
 
 func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink) error {
