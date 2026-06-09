@@ -56,7 +56,7 @@ Acceptance criteria:
   or first-version interactive stream transport.
 - [x] Chose typed Go client and handler methods instead of exposing raw method
   strings to callers.
-- [ ] Extract planning, runtime ownership, and process grouping from the
+- [x] Extract planning, runtime ownership, and process grouping from the
   current launch path.
 - [x] Move status and info behavior onto the core runtime interface, and move
   suspend, hotplug, and balloon behavior onto optional runtime capability
@@ -67,6 +67,9 @@ Acceptance criteria:
 - [x] Started the post-mortem corrective phase by extracting a resolved
   launch plan and lifecycle coordinator inside `manager` before any subpackage
   split.
+- [x] Introduced `Launcher`, `LaunchSpec`, `Plan`, and `ProcessSet` as real
+  manager package types while preserving the existing package-level launch
+  entrypoints.
 
 ## Landed Control Flow
 
@@ -78,7 +81,10 @@ QGA, process groups, suspend state, and runtime socket cleanup.
 ```mermaid
 flowchart TD
 	subgraph Launch["virtie launch process"]
-		L[launchWithOptions]
+		Launcher[Launcher]
+		Plan[Plan]
+		L[launchWithPlan]
+		Processes[ProcessSet]
 		QEMU[QEMU process]
 		QMP[serialized QMP client]
 		QGA[guest agent client]
@@ -97,7 +103,10 @@ flowchart TD
 		StatusInfo[status/info/balloon clients]
 	end
 
-	L --> QEMU
+	Launcher --> Plan
+	Plan --> L
+	L --> Processes
+	Processes --> QEMU
 	L --> QMP
 	L --> Runtime
 	Runtime --> QMP

@@ -54,7 +54,13 @@ type LaunchOptions struct {
 	Verbosity int
 }
 
-type launchPlan struct {
+type LaunchSpec struct {
+	Manifest      *manifest.Manifest
+	RemoteCommand []string
+	Options       LaunchOptions
+}
+
+type Plan struct {
 	Manifest                    *manifest.Manifest
 	RemoteCommand               []string
 	Options                     LaunchOptions
@@ -70,56 +76,72 @@ type launchPlan struct {
 	QEMUCommand                 *exec.Cmd
 }
 
-type launchProcesses struct {
+type ProcessSet struct {
 	group    executor.Group
 	qemu     *executor.Process
 	features managedTaskGroup
 }
 
-func newLaunchProcesses() *launchProcesses {
-	return &launchProcesses{group: executor.NewGroup()}
+type Launcher struct {
+	manager *manager
 }
 
-func (p *launchProcesses) Add(processes ...*executor.Process) {
+func NewLauncher() *Launcher {
+	return &Launcher{manager: newManager()}
+}
+
+func (l *Launcher) Plan(ctx context.Context, spec LaunchSpec) (*Plan, error) {
+	_ = ctx
+	if l == nil || l.manager == nil {
+		l = NewLauncher()
+	}
+	return l.manager.planLaunch(spec)
+}
+
+func newProcessSet() *ProcessSet {
+	return &ProcessSet{group: executor.NewGroup()}
+}
+
+func (p *ProcessSet) Add(processes ...*executor.Process) {
 	p.group.Add(processes...)
 }
 
-func (p *launchProcesses) AddGroup(group executor.Group) {
+func (p *ProcessSet) AddGroup(group executor.Group) {
 	p.group.Add(group.Processes()...)
 }
 
-func (p *launchProcesses) SetQEMU(process *executor.Process) {
+func (p *ProcessSet) SetQEMU(process *executor.Process) {
 	p.qemu = process
 	p.Add(process)
 }
 
-func (p *launchProcesses) QEMU() *executor.Process {
+func (p *ProcessSet) QEMU() *executor.Process {
 	return p.qemu
 }
 
-func (p *launchProcesses) Remove(process *executor.Process) bool {
+func (p *ProcessSet) Remove(process *executor.Process) bool {
 	return p.group.Remove(process)
 }
 
-func (p *launchProcesses) Watchers() executor.Group {
+func (p *ProcessSet) Watchers() executor.Group {
 	return p.group.Snapshot()
 }
 
-func (p *launchProcesses) VMWatchers() executor.Group {
+func (p *ProcessSet) VMWatchers() executor.Group {
 	watchers := p.Watchers()
 	watchers.Remove(p.qemu)
 	return watchers
 }
 
-func (p *launchProcesses) StartFeatures(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, client qmpClient) {
+func (p *ProcessSet) StartFeatures(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, client qmpClient) {
 	p.features = startOptionalFeatureTasks(ctx, runtime, manifest, client)
 }
 
-func (p *launchProcesses) Close(delay time.Duration) error {
+func (p *ProcessSet) Close(delay time.Duration) error {
 	return errors.Join(p.features.Stop(), p.group.StopAll(delay))
 }
 
-func (p *launchPlan) RuntimeSocketCleanupFiles() []string {
+func (p *Plan) RuntimeSocketCleanupFiles() []string {
 	paths := make([]string, 0, 4+len(p.CleanupFiles))
 	if p.Paths.QMPSocket != "" {
 		paths = append(paths, p.Paths.QMPSocket)
@@ -182,19 +204,42 @@ func newManager() *manager {
 
 // Launch runs the supported virtie sandbox session.
 func Launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) error {
-	return newManager().launch(ctx, manifest, remoteCommand)
+	return NewLauncher().launch(ctx, manifest, remoteCommand)
 }
 
 // LaunchWithOptions runs the supported virtie sandbox session with explicit launch options.
 func LaunchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) error {
-	return newManager().launchWithOptions(ctx, manifest, remoteCommand, options)
+	return NewLauncher().launchWithOptions(ctx, manifest, remoteCommand, options)
 }
 
-func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) (err error) {
+func (l *Launcher) launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) (err error) {
+	return l.launchWithOptions(ctx, manifest, remoteCommand, LaunchOptions{Resume: ResumeModeNo, SSH: true})
+}
+
+func (l *Launcher) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) error {
+	plan, err := l.Plan(ctx, LaunchSpec{Manifest: manifest, RemoteCommand: remoteCommand, Options: options})
+	if err != nil {
+		return err
+	}
+	return l.manager.launchWithPlan(ctx, plan)
+}
+
+func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) error {
 	return m.launchWithOptions(ctx, manifest, remoteCommand, LaunchOptions{Resume: ResumeModeNo, SSH: true})
 }
 
-func (m *manager) planLaunch(manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) (*launchPlan, error) {
+func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) error {
+	plan, err := m.planLaunch(LaunchSpec{Manifest: manifest, RemoteCommand: remoteCommand, Options: options})
+	if err != nil {
+		return err
+	}
+	return m.launchWithPlan(ctx, plan)
+}
+
+func (m *manager) planLaunch(spec LaunchSpec) (*Plan, error) {
+	manifest := spec.Manifest
+	remoteCommand := spec.RemoteCommand
+	options := spec.Options
 	if err := manifest.Validate(); err != nil {
 		return nil, err
 	}
@@ -242,7 +287,7 @@ func (m *manager) planLaunch(manifest *manifest.Manifest, remoteCommand []string
 	for _, volume := range volumes {
 		volumeImagePaths = append(volumeImagePaths, volume.ImagePath)
 	}
-	return &launchPlan{
+	return &Plan{
 		Manifest:                    manifest,
 		RemoteCommand:               append([]string(nil), remoteCommand...),
 		Options:                     options,
@@ -257,7 +302,7 @@ func (m *manager) planLaunch(manifest *manifest.Manifest, remoteCommand []string
 	}, nil
 }
 
-func (m *manager) finalizeLockedLaunchPlan(plan *launchPlan) error {
+func (m *manager) finalizeLockedLaunchPlan(plan *Plan) error {
 	cid, err := m.acquireLaunchCID(plan.Manifest, plan.ResumeState)
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -271,12 +316,9 @@ func (m *manager) finalizeLockedLaunchPlan(plan *launchPlan) error {
 	return nil
 }
 
-func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) (err error) {
+func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
 	stats := newLaunchStats(time.Now())
-	plan, err := m.planLaunch(manifest, remoteCommand, options)
-	if err != nil {
-		return err
-	}
+	manifest := plan.Manifest
 
 	launchCtx, cancelLaunch := context.WithCancel(ctx)
 	defer cancelLaunch()
@@ -321,7 +363,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return err
 	}
 
-	processes := newLaunchProcesses()
+	processes := newProcessSet()
 	var qmpClient qmpClient
 	var runtime *Runtime
 	writeBackOnExit := false
@@ -440,7 +482,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	return nil
 }
 
-func (m *manager) prepareLaunchFilesystem(plan *launchPlan) error {
+func (m *manager) prepareLaunchFilesystem(plan *Plan) error {
 	if err := ensureDirectories(plan.Manifest.ResolvedPersistenceDirectories()); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
@@ -462,7 +504,7 @@ func (m *manager) prepareLaunchFilesystem(plan *launchPlan) error {
 	return nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *launchPlan, stats *launchStats, lifecycle *launchLifecycle, processes *launchProcesses) (*Runtime, qmpClient, error) {
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *launchStats, lifecycle *launchLifecycle, processes *ProcessSet) (*Runtime, qmpClient, error) {
 	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
 	if err != nil {
 		return nil, nil, err
@@ -502,7 +544,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *launchPlan, stat
 	return runtime, client, nil
 }
 
-func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *launchPlan, client qmpClient) error {
+func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client qmpClient) error {
 	m.logger.Info("restoring vm state", "path", plan.ResumeState.VMStatePath)
 	if err := client.MigrateIncoming(m.effectiveQMPMigrationTimeout(), plan.ResumeState.VMStatePath); err != nil {
 		return &stageError{Stage: "restore", Err: err}
@@ -521,7 +563,7 @@ func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *launchPlan, cl
 	return nil
 }
 
-func removeRestoredSuspendState(plan *launchPlan) error {
+func removeRestoredSuspendState(plan *Plan) error {
 	if err := os.Remove(plan.ResumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", plan.ResumeState.VMStatePath, err)}
 	}
@@ -959,11 +1001,11 @@ func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 
 func (m *manager) runSSHSession(
 	ctx context.Context,
-	plan *launchPlan,
+	plan *Plan,
 	stats *launchStats,
 	lifecycle *launchLifecycle,
 	suspendHandler *launchSuspendHandler,
-	processes *launchProcesses,
+	processes *ProcessSet,
 ) error {
 	launchManifest := plan.Manifest
 	argv := append([]string(nil), launchManifest.SSH.Argv...)
