@@ -347,6 +347,8 @@ Acceptance criteria:
   dialers directly.
 - [x] Remove manager-local QMP/QGA dialer interface aliases, so manager
   configuration fields use `qmpclient.Dialer` and `qga.Dialer` directly.
+- [x] Remove the manager-local guest exec status alias, so QGA command helpers
+  and tests use `qga.ExecStatus` directly.
 - [x] Allow manager call sites to supply operation-specific guest-agent wait
   stages while keeping wait wrapping in `virtie/internal/manager/launch`.
 - [x] Move default startup wait stage wrapping and process-exit checks into
