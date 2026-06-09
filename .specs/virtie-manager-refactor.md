@@ -204,6 +204,9 @@ Acceptance criteria:
 - [x] Move QGA guest-exec polling and output formatting into
   `virtie/internal/qga`, leaving manager responsible for choosing guest
   commands and interpreting exit status policy.
+- [x] Move guest process-list parsing and formatting into
+  `virtie/internal/qga`, leaving manager info collection responsible for
+  dialing QGA and selecting the `ps` command.
 - [x] Move QMP restore sequencing into `virtie/internal/qmpclient`, with
   manager retaining stage wrapping.
 - [x] Move runtime restore orchestration into

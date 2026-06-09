@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -13,11 +12,6 @@ import (
 
 type Info struct {
 	ProcessList string
-}
-
-type guestProcess struct {
-	User    string
-	Command string
 }
 
 func (m *manager) collectGuestInfo(ctx context.Context, socketPath string, watchers executor.Group) (Info, error) {
@@ -46,7 +40,7 @@ func (m *manager) collectGuestInfo(ctx context.Context, socketPath string, watch
 		return Info{}, fmt.Errorf("ps %q exited with status %d%s", "process list", status.ExitCode, qga.ExecOutputSuffix(status))
 	}
 
-	return Info{ProcessList: formatGuestProcesses(parseGuestProcesses(qga.DecodeExecData(status.OutData)))}, nil
+	return Info{ProcessList: qga.FormatProcessListExecData(status.OutData)}, nil
 }
 
 func (m *manager) printGuestInfo(ctx context.Context, socketPath string, watchers executor.Group) {
@@ -61,42 +55,4 @@ func (m *manager) printGuestInfo(ctx context.Context, socketPath string, watcher
 	if processList != "" {
 		fmt.Fprintln(m.outputWriter(), processList)
 	}
-}
-
-func parseGuestProcesses(output string) []guestProcess {
-	var processes []guestProcess
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		processes = append(processes, guestProcess{
-			User:    fields[0],
-			Command: fields[1],
-		})
-	}
-	return processes
-}
-
-func formatGuestProcesses(processes []guestProcess) string {
-	if len(processes) == 0 {
-		return ""
-	}
-
-	sort.Slice(processes, func(i, j int) bool {
-		if processes[i].User != processes[j].User {
-			return processes[i].User < processes[j].User
-		}
-		return processes[i].Command < processes[j].Command
-	})
-
-	var builder strings.Builder
-	builder.WriteString("USER COMMAND\n")
-	for _, process := range processes {
-		builder.WriteString(process.User)
-		builder.WriteByte(' ')
-		builder.WriteString(process.Command)
-		builder.WriteByte('\n')
-	}
-	return strings.TrimRight(builder.String(), "\n")
 }
