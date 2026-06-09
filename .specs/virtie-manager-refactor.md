@@ -304,6 +304,9 @@ Acceptance criteria:
 - [x] Move default startup wait stage wrapping and process-exit checks into
   `virtie/internal/manager/launch` for socket, QMP, QGA, and SSH-readiness
   waits.
+- [x] Move default foreground SSH session stage wrapping into
+  `virtie/internal/manager/launch`, leaving manager to supply concrete SSH
+  callbacks.
 - [x] Move runtime activation sequencing into
   `virtie/internal/manager/launch`, so ready-state marking, concrete runtime
   configuration callbacks, control startup, queued suspend handling, guest
@@ -697,8 +700,9 @@ implementation packages should avoid importing the facade package.
   sequencing have moved there too.
   Guest provisioning, guest-agent socket wait/retry-dial sequencing,
   SSH-readiness checkpoint sequencing, SSH-readiness token wait sequencing, and
-  default startup wait wrapping/check policy also live there. Runtime activation
-  sequencing lives there as well.
+  default startup wait wrapping/check policy, and default foreground SSH
+  session wrapping also live there. Runtime activation sequencing lives there
+  as well.
   Host-side guest-file payload and write-back path helpers now live there.
   Guest-file directory install argument policy has moved there too.
   Runtime restore and suspend-save orchestration, plus runtime resume/suspend
@@ -1147,9 +1151,10 @@ readiness, and managed virtiofs sockets:
    cleanup have moved there too. Guest-agent socket wait/retry-dial
    sequencing, SSH-readiness token wait sequencing, default startup wait
    wrapping/check policy, foreground lifecycle suspend/info adapter wiring,
-   notifier selection policy, generic stage-error/command-error construction,
-   and unexpected-process-exit wrapping have moved there as well. Manager still
-   owns default concrete dependencies and some stage-specific wrapping.
+   default foreground SSH session wrapping, notifier selection policy, generic
+   stage-error/command-error construction, and unexpected-process-exit wrapping
+   have moved there as well. Manager still owns default concrete dependencies
+   and some stage-specific wrapping.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
