@@ -29,6 +29,17 @@ func (o Options) WaitMode() WaitMode {
 	return WaitVM
 }
 
+func PlanForWaitMode(plan *Plan, mode WaitMode) *Plan {
+	if plan == nil || (mode != WaitSSH && mode != WaitVM) {
+		return plan
+	}
+	copyPlan := *plan
+	copyOptions := copyPlan.Options
+	copyOptions.SSH = mode == WaitSSH
+	copyPlan.Options = copyOptions
+	return &copyPlan
+}
+
 type WaitMode string
 
 const (
