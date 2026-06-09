@@ -52,3 +52,11 @@ func Suspend(ctx context.Context, op SuspendOperation) (control.SuspendResponse,
 	}
 	return control.SuspendResponse{Saved: true, VMStatePath: op.VMStatePath}, nil
 }
+
+func ControlSuspend(ctx context.Context, op SuspendOperation) (control.SuspendResponse, error) {
+	resp, err := Suspend(ctx, op)
+	if errors.Is(err, ErrSuspendNotReady) {
+		return control.SuspendResponse{}, control.FailedPrecondition(err)
+	}
+	return resp, err
+}

@@ -90,3 +90,14 @@ func TestSuspendReturnsNotReadyError(t *testing.T) {
 		t.Fatalf("error: got %v want %v", err, ErrSuspendNotReady)
 	}
 }
+
+func TestControlSuspendMapsNotReadyToFailedPrecondition(t *testing.T) {
+	_, err := ControlSuspend(context.Background(), SuspendOperation{State: NewState(control.RuntimeReady)})
+	var rpcErr *control.RPCError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("error type: got %T", err)
+	}
+	if rpcErr.Code != control.ErrFailedPrecondition {
+		t.Fatalf("code: got %s want %s", rpcErr.Code, control.ErrFailedPrecondition)
+	}
+}

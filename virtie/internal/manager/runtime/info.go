@@ -21,3 +21,11 @@ func Info(ctx context.Context, collector InfoCollector) (control.InfoResponse, e
 	}
 	return control.InfoResponse{ProcessList: info.ProcessList}, nil
 }
+
+func ControlInfo(ctx context.Context, collector InfoCollector) (control.InfoResponse, error) {
+	resp, err := Info(ctx, collector)
+	if err != nil {
+		return control.InfoResponse{}, control.FailedPrecondition(err)
+	}
+	return resp, nil
+}
