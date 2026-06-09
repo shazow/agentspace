@@ -91,6 +91,8 @@ Acceptance criteria:
 - [x] Move the serialized QMP wrapper into `virtie/internal/qmpclient`, so the
   launch-owned runtime depends on a serialized client rather than owning the
   synchronization adapter itself.
+- [x] Split managed task cancellation into `virtie/internal/manager/runtime`,
+  with `manager` aliases preserving optional feature call sites.
 
 ## Landed Control Flow
 
@@ -439,9 +441,9 @@ implementation packages should avoid importing the facade package.
   interface, and plan-owned socket cleanup. `Launcher`, `Config`, preflight
   resolution, startup sequencing, and conversion from manifest facts into
   runtime inputs still live in `manager`.
-- `virtie/internal/manager/runtime`: the launch-owned runtime, state machine,
-  paths, stats, process set, managed tasks, idempotent `Close`, and serialized
-  QMP executor.
+- `virtie/internal/manager/runtime` (partial): managed task cancellation has
+  landed. The launch-owned runtime, state machine, stats, process set,
+  idempotent `Close`, and lifecycle adapters still live in `manager`.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, and optional
   handler registration.
@@ -851,6 +853,8 @@ readiness, and managed virtiofs sockets:
    `manager`.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
+   Managed task cancellation has landed under `manager/runtime`; the concrete
+   `Runtime` and `ProcessSet` types still live behind the `manager` facade.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
    manager call sites to use the same interfaces through the facade. QMP has
    landed under `internal/qmpclient`; QGA has landed under `internal/qga` with
