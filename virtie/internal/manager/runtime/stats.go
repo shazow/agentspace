@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -58,6 +59,18 @@ func (s *Stats) MarkSSHStarted(t time.Time) {
 
 func (s *Stats) MarkCompleted(t time.Time) {
 	s.completed = t
+}
+
+func StatsFinalizer(stats *Stats, output io.Writer) func() {
+	return func() {
+		if stats == nil {
+			return
+		}
+		stats.MarkCompleted(time.Now())
+		if output != nil {
+			fmt.Fprintf(output, "stats: %s\n", stats.String())
+		}
+	}
 }
 
 func (s *Stats) String() string {

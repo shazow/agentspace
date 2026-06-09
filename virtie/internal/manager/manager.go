@@ -299,10 +299,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 					SocketCleanup: func() error {
 						return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
 					},
-					Stats: func() {
-						stats.MarkCompleted(time.Now())
-						fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
-					},
+					Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
 				}).Run()
 			}
 			err = errors.Join(err, runtimeErr)
@@ -332,10 +329,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 		Cleanup: func() error {
 			return errors.Join(launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
 		},
-		Stats: func() {
-			stats.MarkCompleted(time.Now())
-			fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
-		},
+		Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
 	}))
 	if err := runtime.StartControl(launchCtx); err != nil {
 		return nil, &stageError{Stage: "control startup", Err: err}
