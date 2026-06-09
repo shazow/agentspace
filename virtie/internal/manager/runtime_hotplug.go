@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 )
 
@@ -21,7 +22,7 @@ func (r *Runtime) Hotplug(ctx context.Context, req HotplugRequest) (HotplugRespo
 	}
 	resp, err := runtimepkg.Hotplug(ctx, runtime, req)
 	if err != nil {
-		return HotplugResponse{}, wrapHotplugError(err)
+		return HotplugResponse{}, launch.WrapHotplugError(err)
 	}
 	return resp, nil
 }
