@@ -54,6 +54,39 @@ type LaunchOptions struct {
 	Verbosity int
 }
 
+type launchPlan struct {
+	Manifest                    *manifest.Manifest
+	RemoteCommand               []string
+	Options                     LaunchOptions
+	ResumeState                 *suspendState
+	Notifier                    notificationSink
+	Paths                       RuntimePaths
+	VirtioFSSocketPaths         []string
+	ExternalVirtioFSSocketPaths []string
+	CleanupFiles                []string
+	Volumes                     []manifest.Volume
+	VolumeImagePaths            []string
+	CID                         int
+	QEMUCommand                 *exec.Cmd
+}
+
+func (p *launchPlan) RuntimeSocketCleanupFiles() []string {
+	paths := make([]string, 0, 4+len(p.CleanupFiles))
+	if p.Paths.QMPSocket != "" {
+		paths = append(paths, p.Paths.QMPSocket)
+	}
+	if p.Paths.GuestAgentSocket != "" {
+		paths = append(paths, p.Paths.GuestAgentSocket)
+	}
+	if p.Paths.SSHReadySocket != "" {
+		paths = append(paths, p.Paths.SSHReadySocket)
+	}
+	if p.Paths.ControlSocket != "" {
+		paths = append(paths, p.Paths.ControlSocket)
+	}
+	return append(paths, p.CleanupFiles...)
+}
+
 type manager struct {
 	locker              locker
 	vsockCIDChecker     vsockCIDChecker
@@ -112,86 +145,94 @@ func (m *manager) launch(ctx context.Context, manifest *manifest.Manifest, remot
 	return m.launchWithOptions(ctx, manifest, remoteCommand, LaunchOptions{Resume: ResumeModeNo, SSH: true})
 }
 
-func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) (err error) {
-	stats := newLaunchStats(time.Now())
+func (m *manager) planLaunch(manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) (*launchPlan, error) {
 	if err := manifest.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	if options.SSH && len(remoteCommand) > 0 && len(manifest.SSH.Argv) == 0 {
-		return &stageError{Stage: "preflight", Err: fmt.Errorf("remote command arguments require manifest.ssh.exec")}
+		return nil, &stageError{Stage: "preflight", Err: fmt.Errorf("remote command arguments require manifest.ssh.exec")}
 	}
 	resumeMode, err := normalizeResumeMode(options.Resume)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resumeState, err := resolveLaunchResumeState(manifest, resumeMode)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	notifier := m.effectiveNotifier(manifest)
-
-	launchCtx, cancelLaunch := context.WithCancel(ctx)
-	defer cancelLaunch()
-
-	signalCh, stopSignals := m.launchSignalChannel()
-	suspendRequests := newLaunchSuspendCoordinator()
-	infoRequests := make(chan struct{}, 1)
-	signalDone := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-signalDone:
-				return
-			case sig, ok := <-signalCh:
-				if !ok {
-					return
-				}
-				switch sig {
-				case os.Interrupt, syscall.SIGTERM:
-					cancelLaunch()
-				case syscall.SIGTSTP:
-					suspendRequests.Request()
-				case syscall.SIGUSR1:
-					select {
-					case infoRequests <- struct{}{}:
-					default:
-					}
-				}
-			}
-		}
-	}()
-	defer close(signalDone)
-	defer stopSignals()
-
 	virtioFSSocketPaths, err := manifest.ResolvedVirtioFSSocketPaths()
 	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
 	externalVirtioFSSocketPaths, err := manifest.ResolvedExternalVirtioFSSocketPaths()
 	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
 	cleanupFiles, err := manifest.ResolvedCleanupFiles()
 	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
 	qmpSocketPath, err := manifest.ResolvedQMPSocketPath()
 	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
 	guestAgentSocketPath, err := manifest.ResolvedGuestAgentSocketPath()
 	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
 	sshReadySocketPath, err := manifest.ResolvedSSHReadySocketPath()
 	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
 	controlSocketPath, err := manifest.ResolvedControlSocketPath()
 	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
 	volumes := manifest.ResolvedVolumes()
+	volumeImagePaths := make([]string, 0, len(volumes))
+	for _, volume := range volumes {
+		volumeImagePaths = append(volumeImagePaths, volume.ImagePath)
+	}
+	return &launchPlan{
+		Manifest:                    manifest,
+		RemoteCommand:               append([]string(nil), remoteCommand...),
+		Options:                     options,
+		ResumeState:                 resumeState,
+		Notifier:                    m.effectiveNotifier(manifest),
+		Paths:                       RuntimePaths{StateDir: manifest.ResolvedPersistenceStateDir(), ControlSocket: controlSocketPath, QMPSocket: qmpSocketPath, GuestAgentSocket: guestAgentSocketPath, SSHReadySocket: sshReadySocketPath, Cleanup: append([]string(nil), cleanupFiles...)},
+		VirtioFSSocketPaths:         virtioFSSocketPaths,
+		ExternalVirtioFSSocketPaths: externalVirtioFSSocketPaths,
+		CleanupFiles:                cleanupFiles,
+		Volumes:                     volumes,
+		VolumeImagePaths:            volumeImagePaths,
+	}, nil
+}
+
+func (m *manager) completeLaunchPlan(plan *launchPlan) error {
+	cid, err := m.acquireLaunchCID(plan.Manifest, plan.ResumeState)
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	qemuCmd, err := buildQEMUCommand(plan.Manifest, cid, plan.ResumeState != nil)
+	if err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	plan.CID = cid
+	plan.QEMUCommand = qemuCmd
+	return nil
+}
+
+func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options LaunchOptions) (err error) {
+	stats := newLaunchStats(time.Now())
+	plan, err := m.planLaunch(manifest, remoteCommand, options)
+	if err != nil {
+		return err
+	}
+
+	launchCtx, cancelLaunch := context.WithCancel(ctx)
+	defer cancelLaunch()
+	lifecycle := m.startLaunchLifecycle(cancelLaunch)
+	defer lifecycle.Stop()
 
 	lock, err := m.locker.Acquire(manifest.ResolvedLockPath())
 	if err != nil {
@@ -199,16 +240,16 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 	defer joinDeferredError(&err, lock.Release)
 
-	if resumeState == nil {
+	if plan.ResumeState == nil {
 		if err := removeSuspendState(manifest); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if resumeState != nil {
+	if plan.ResumeState != nil {
 		// Recheck after acquiring the launch lock so restore does not race a
 		// concurrent launch/suspend cleanup.
-		if _, err := os.Stat(resumeState.VMStatePath); err != nil {
-			return &stageError{Stage: "preflight", Err: fmt.Errorf("saved vm state %q is not available: %w", resumeState.VMStatePath, err)}
+		if _, err := os.Stat(plan.ResumeState.VMStatePath); err != nil {
+			return &stageError{Stage: "preflight", Err: fmt.Errorf("saved vm state %q is not available: %w", plan.ResumeState.VMStatePath, err)}
 		}
 	}
 	if err := writeLaunchPID(manifest, os.Getpid()); err != nil {
@@ -218,72 +259,67 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return removeLaunchPID(manifest, os.Getpid())
 	})
 
-	cid, err := m.acquireLaunchCID(manifest, resumeState)
-	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+	if err := m.completeLaunchPlan(plan); err != nil {
+		return err
 	}
-	if resumeState != nil {
-		m.logger.Info("restoring saved vsock cid", "cid", cid)
+	if plan.ResumeState != nil {
+		m.logger.Info("restoring saved vsock cid", "cid", plan.CID)
 	} else {
-		m.logger.Info("allocated vsock cid", "cid", cid)
+		m.logger.Info("allocated vsock cid", "cid", plan.CID)
 	}
 
 	if err := ensureDirectories(manifest.ResolvedPersistenceDirectories()); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := ensureParentDirectories(cleanupFiles); err != nil {
+	if err := ensureParentDirectories(plan.CleanupFiles); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := ensureParentDirectories([]string{qmpSocketPath}); err != nil {
+	if err := ensureParentDirectories([]string{plan.Paths.QMPSocket}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if guestAgentSocketPath != "" {
-		if err := ensureParentDirectories([]string{guestAgentSocketPath}); err != nil {
+	if plan.Paths.GuestAgentSocket != "" {
+		if err := ensureParentDirectories([]string{plan.Paths.GuestAgentSocket}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if sshReadySocketPath != "" {
-		if err := ensureParentDirectories([]string{sshReadySocketPath}); err != nil {
+	if plan.Paths.SSHReadySocket != "" {
+		if err := ensureParentDirectories([]string{plan.Paths.SSHReadySocket}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if controlSocketPath != "" {
-		if err := ensureParentDirectories([]string{controlSocketPath}); err != nil {
+	if plan.Paths.ControlSocket != "" {
+		if err := ensureParentDirectories([]string{plan.Paths.ControlSocket}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if err := ensureExistingSocketPaths(externalVirtioFSSocketPaths); err != nil {
+	if err := ensureExistingSocketPaths(plan.ExternalVirtioFSSocketPaths); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	volumeImagePaths := make([]string, 0, len(volumes))
-	for _, volume := range volumes {
-		volumeImagePaths = append(volumeImagePaths, volume.ImagePath)
-	}
-	if err := ensureParentDirectories(volumeImagePaths); err != nil {
+	if err := ensureParentDirectories(plan.VolumeImagePaths); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := removeSocketPaths([]string{qmpSocketPath}); err != nil {
+	if err := removeSocketPaths([]string{plan.Paths.QMPSocket}); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if err := removeSocketPaths(cleanupFiles); err != nil {
+	if err := removeSocketPaths(plan.CleanupFiles); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
-	if guestAgentSocketPath != "" {
-		if err := removeSocketPaths([]string{guestAgentSocketPath}); err != nil {
+	if plan.Paths.GuestAgentSocket != "" {
+		if err := removeSocketPaths([]string{plan.Paths.GuestAgentSocket}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if sshReadySocketPath != "" {
-		if err := removeSocketPaths([]string{sshReadySocketPath}); err != nil {
+	if plan.Paths.SSHReadySocket != "" {
+		if err := removeSocketPaths([]string{plan.Paths.SSHReadySocket}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if controlSocketPath != "" {
-		if err := removeSocketPaths([]string{controlSocketPath}); err != nil {
+	if plan.Paths.ControlSocket != "" {
+		if err := removeSocketPaths([]string{plan.Paths.ControlSocket}); err != nil {
 			return &stageError{Stage: "preflight", Err: err}
 		}
 	}
-	if err := ensureVolumeImages(volumes, m.logger); err != nil {
+	if err := ensureVolumeImages(plan.Volumes, m.logger); err != nil {
 		return &stageError{Stage: "preflight", Err: err}
 	}
 
@@ -293,13 +329,14 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	var runtime *Runtime
 	writeBackOnExit := false
 	defer func() {
+		lifecycle.SetPhase(launchPhaseTeardown)
 		savedSuspend := errors.Is(err, errSavedSuspendExit)
 		if savedSuspend {
 			err = nil
 		}
 		if writeBackOnExit && !savedSuspend {
 			writeBackCtx, cancelWriteBack := context.WithTimeout(context.Background(), m.effectiveQMPCommandTimeout())
-			writeBackErr := m.writeBackGuestFiles(writeBackCtx, manifest, executor.Group{})
+			writeBackErr := m.writeBackGuestFiles(writeBackCtx, plan.Manifest, executor.Group{})
 			cancelWriteBack()
 			if writeBackErr != nil {
 				err = errors.Join(err, writeBackErr)
@@ -315,18 +352,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if qmpClient != nil {
 			disconnectErr = qmpClient.Disconnect()
 		}
-		socketCleanupFiles := []string{qmpSocketPath}
-		if guestAgentSocketPath != "" {
-			socketCleanupFiles = append(socketCleanupFiles, guestAgentSocketPath)
-		}
-		if sshReadySocketPath != "" {
-			socketCleanupFiles = append(socketCleanupFiles, sshReadySocketPath)
-		}
-		if controlSocketPath != "" {
-			socketCleanupFiles = append(socketCleanupFiles, controlSocketPath)
-		}
-		socketCleanupFiles = append(socketCleanupFiles, cleanupFiles...)
-		cleanupErr := removeSocketPaths(socketCleanupFiles)
+		cleanupErr := removeSocketPaths(plan.RuntimeSocketCleanupFiles())
 		if err == nil {
 			err = errors.Join(runtimeErr, featureErr, stopErr, disconnectErr, cleanupErr)
 		} else if runtimeErr != nil || featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {
@@ -336,56 +362,46 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 	}()
 
-	runProcesses, err := m.startRuns(cid, manifest)
+	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
 	if err != nil {
 		return err
 	}
 	started.Add(runProcesses.Processes()...)
 
-	if len(virtioFSSocketPaths) > 0 {
+	if len(plan.VirtioFSSocketPaths) > 0 {
 		m.logger.Info("waiting for virtiofs sockets")
-		if err := m.waitForSockets(launchCtx, "virtiofs startup", virtioFSSocketPaths, started); err != nil {
+		if err := m.waitForSockets(launchCtx, "virtiofs startup", plan.VirtioFSSocketPaths, started); err != nil {
 			return err
 		}
 	}
 
-	if resumeState != nil {
+	if plan.ResumeState != nil {
 		m.logger.Info("starting qemu for restore")
 	} else {
 		m.logger.Info("starting qemu")
 	}
 	stats.MarkBootStarted(time.Now())
-	qemuCmd, err := buildQEMUCommand(manifest, cid, resumeState != nil)
-	if err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	qemu, err := m.startManagedProcess(qemuCmd)
+	qemu, err := m.startManagedProcess(plan.QEMUCommand)
 	if err != nil {
 		return &stageError{Stage: "vm startup", Err: err}
 	}
 	started.Add(qemu)
 
 	m.logger.Info("waiting for qmp readiness")
-	qmpClient, err = m.waitForQMP(launchCtx, qmpSocketPath, started)
+	qmpClient, err = m.waitForQMP(launchCtx, plan.Paths.QMPSocket, started)
 	if err != nil {
 		return err
 	}
-	runtime = newRuntime(m, manifest, RuntimePaths{
-		StateDir:         manifest.ResolvedPersistenceStateDir(),
-		ControlSocket:    controlSocketPath,
-		QMPSocket:        qmpSocketPath,
-		GuestAgentSocket: guestAgentSocketPath,
-		SSHReadySocket:   sshReadySocketPath,
-		Cleanup:          append([]string(nil), cleanupFiles...),
-	}, cid, stats, qmpClient, suspendRequests)
+	lifecycle.SetPhase(launchPhaseQMPReady)
+	runtime = newRuntime(m, plan.Manifest, plan.Paths, plan.CID, stats, qmpClient, lifecycle.Suspend())
 	qmpClient = runtime.QMP()
 	stats.MarkQMPReady(time.Now())
 	qemu.SetShutdown(func() error {
 		return qmpClient.Quit(m.effectiveQMPQuitTimeout())
 	})
-	if resumeState != nil {
-		m.logger.Info("restoring vm state", "path", resumeState.VMStatePath)
-		if err := qmpClient.MigrateIncoming(m.effectiveQMPMigrationTimeout(), resumeState.VMStatePath); err != nil {
+	if plan.ResumeState != nil {
+		m.logger.Info("restoring vm state", "path", plan.ResumeState.VMStatePath)
+		if err := qmpClient.MigrateIncoming(m.effectiveQMPMigrationTimeout(), plan.ResumeState.VMStatePath); err != nil {
 			return &stageError{Stage: "restore", Err: err}
 		}
 		if err := m.waitForMigration(launchCtx, qmpClient); err != nil {
@@ -395,13 +411,14 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return &stageError{Stage: "restore", Err: err}
 		}
 		writeBackOnExit = true
-		notifier.Notify(launchCtx, notifyStateRuntimeResume, "Restored saved VM state", map[string]string{
-			"host_name":     manifest.Identity.HostName,
-			"vm_state_path": resumeState.VMStatePath,
-			"cid":           fmt.Sprintf("%d", cid),
+		plan.Notifier.Notify(launchCtx, notifyStateRuntimeResume, "Restored saved VM state", map[string]string{
+			"host_name":     plan.Manifest.Identity.HostName,
+			"vm_state_path": plan.ResumeState.VMStatePath,
+			"cid":           fmt.Sprintf("%d", plan.CID),
 		})
 	}
-	suspendHandler := newLaunchSuspendHandler(m, manifest, qmpSocketPath, qmpClient, cid, notifier, func() bool {
+	lifecycle.SetPhase(launchPhaseRestoreComplete)
+	suspendHandler := newLaunchSuspendHandler(m, plan.Manifest, plan.Paths.QMPSocket, qmpClient, plan.CID, plan.Notifier, func() bool {
 		return writeBackOnExit
 	})
 	runtime.SetSuspendHandler(suspendHandler)
@@ -412,41 +429,44 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	// Honor a suspend signal queued during startup before guest-file install or
 	// SSH startup proceeds.
 	select {
-	case <-suspendRequests.Notify():
-		return handleSuspendRequest(launchCtx, suspendRequests, suspendHandler)
+	case <-lifecycle.Suspend().Notify():
+		return handleSuspendRequest(launchCtx, lifecycle.Suspend(), suspendHandler)
 	default:
 	}
 
-	if resumeState == nil {
-		if err := m.writeGuestFiles(launchCtx, manifest, stats, started); err != nil {
+	if plan.ResumeState == nil {
+		if err := m.writeGuestFiles(launchCtx, plan.Manifest, stats, started); err != nil {
 			return err
 		}
 		writeBackOnExit = true
+		lifecycle.SetPhase(launchPhaseGuestProvisioned)
 		stats.MarkFilesReady(time.Now())
 
-		if sshReadySocketPath != "" {
+		if plan.Paths.SSHReadySocket != "" {
 			m.logger.Info("waiting for ssh readiness")
-			if err := m.waitForSSHReady(launchCtx, sshReadySocketPath, started); err != nil {
+			if err := m.waitForSSHReady(launchCtx, plan.Paths.SSHReadySocket, started); err != nil {
 				return err
 			}
 		}
+		lifecycle.SetPhase(launchPhaseSSHReady)
 		stats.MarkSSHReady(time.Now())
 	}
 
-	if options.SSH && len(manifest.SSH.Argv) > 0 {
+	if plan.Options.SSH && len(plan.Manifest.SSH.Argv) > 0 {
 		featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
 			qmpTimeout: m.effectiveQMPCommandTimeout(),
-			notifier:   notifier,
-		}, manifest, qmpClient)
+			notifier:   plan.Notifier,
+		}, plan.Manifest, qmpClient)
+		lifecycle.SetPhase(launchPhaseFeaturesStarted)
 
-		if err := m.runSSHSession(launchCtx, manifest, cid, remoteCommand, stats, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, &started); err != nil {
+		if err := m.runSSHSession(launchCtx, plan, stats, lifecycle, suspendHandler, &started); err != nil {
 			return err
 		}
-		if resumeState != nil {
-			if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
+		if plan.ResumeState != nil {
+			if err := os.Remove(plan.ResumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", plan.ResumeState.VMStatePath, err)}
 			}
-			if err := removeSuspendState(manifest); err != nil {
+			if err := removeSuspendState(plan.Manifest); err != nil {
 				return &stageError{Stage: "restore", Err: err}
 			}
 		}
@@ -455,19 +475,20 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 
 	featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
 		qmpTimeout: m.effectiveQMPCommandTimeout(),
-		notifier:   notifier,
-	}, manifest, qmpClient)
+		notifier:   plan.Notifier,
+	}, plan.Manifest, qmpClient)
+	lifecycle.SetPhase(launchPhaseFeaturesStarted)
 
-	if resumeState != nil {
-		if err := os.Remove(resumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", resumeState.VMStatePath, err)}
+	if plan.ResumeState != nil {
+		if err := os.Remove(plan.ResumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", plan.ResumeState.VMStatePath, err)}
 		}
-		if err := removeSuspendState(manifest); err != nil {
+		if err := removeSuspendState(plan.Manifest); err != nil {
 			return &stageError{Stage: "restore", Err: err}
 		}
 	}
 
-	hint, err := buildSSHCommandHint(manifest, cid)
+	hint, err := buildSSHCommandHint(plan.Manifest, plan.CID)
 	if err != nil {
 		m.logger.Info("ssh command hint template failed", "err", err)
 	} else if hint != "" {
@@ -476,7 +497,8 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	vmWatchers := started.Snapshot()
 	vmWatchers.Remove(qemu)
 	runtime.SetWatchers(vmWatchers)
-	if err := m.waitForVM(launchCtx, qemu, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, vmWatchers); err != nil {
+	lifecycle.SetPhase(launchPhaseForegroundWait)
+	if err := m.waitForVM(launchCtx, qemu, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, vmWatchers); err != nil {
 		return err
 	}
 	return nil
@@ -737,6 +759,90 @@ type launchSuspendCoordinator struct {
 	result    error
 }
 
+type launchLifecyclePhase string
+
+const (
+	launchPhaseQMPReady         launchLifecyclePhase = "qmp-ready"
+	launchPhaseRestoreComplete  launchLifecyclePhase = "restore-complete"
+	launchPhaseGuestProvisioned launchLifecyclePhase = "guest-provisioned"
+	launchPhaseSSHReady         launchLifecyclePhase = "ssh-ready"
+	launchPhaseFeaturesStarted  launchLifecyclePhase = "features-started"
+	launchPhaseForegroundWait   launchLifecyclePhase = "foreground-wait"
+	launchPhaseTeardown         launchLifecyclePhase = "teardown"
+)
+
+type launchLifecycle struct {
+	suspend    *launchSuspendCoordinator
+	info       chan struct{}
+	signalDone chan struct{}
+	stopSignal func()
+	stopOnce   sync.Once
+
+	mu    sync.Mutex
+	phase launchLifecyclePhase
+}
+
+func (m *manager) startLaunchLifecycle(cancel context.CancelFunc) *launchLifecycle {
+	signalCh, stopSignals := m.launchSignalChannel()
+	lifecycle := &launchLifecycle{
+		suspend:    newLaunchSuspendCoordinator(),
+		info:       make(chan struct{}, 1),
+		signalDone: make(chan struct{}),
+		stopSignal: stopSignals,
+	}
+	go lifecycle.watchSignals(signalCh, cancel)
+	return lifecycle
+}
+
+func (l *launchLifecycle) watchSignals(signalCh <-chan os.Signal, cancel context.CancelFunc) {
+	for {
+		select {
+		case <-l.signalDone:
+			return
+		case sig, ok := <-signalCh:
+			if !ok {
+				return
+			}
+			switch sig {
+			case os.Interrupt, syscall.SIGTERM:
+				cancel()
+			case syscall.SIGTSTP:
+				l.Suspend().Request()
+			case syscall.SIGUSR1:
+				l.RequestInfo()
+			}
+		}
+	}
+}
+
+func (l *launchLifecycle) Stop() {
+	l.stopOnce.Do(func() {
+		close(l.signalDone)
+		l.stopSignal()
+	})
+}
+
+func (l *launchLifecycle) Suspend() *launchSuspendCoordinator {
+	return l.suspend
+}
+
+func (l *launchLifecycle) Info() <-chan struct{} {
+	return l.info
+}
+
+func (l *launchLifecycle) RequestInfo() {
+	select {
+	case l.info <- struct{}{}:
+	default:
+	}
+}
+
+func (l *launchLifecycle) SetPhase(phase launchLifecyclePhase) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.phase = phase
+}
+
 func newLaunchSuspendCoordinator() *launchSuspendCoordinator {
 	return &launchSuspendCoordinator{notify: make(chan struct{}, 1)}
 }
@@ -847,16 +953,13 @@ func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 
 func (m *manager) runSSHSession(
 	ctx context.Context,
-	launchManifest *manifest.Manifest,
-	cid int,
-	remoteCommand []string,
+	plan *launchPlan,
 	stats *launchStats,
-	suspendRequests *launchSuspendCoordinator,
-	infoRequests <-chan struct{},
+	lifecycle *launchLifecycle,
 	suspendHandler *launchSuspendHandler,
-	guestAgentSocketPath string,
 	started *executor.Group,
 ) error {
+	launchManifest := plan.Manifest
 	argv := append([]string(nil), launchManifest.SSH.Argv...)
 	sessionLogger := m.logger
 	if sessionLogger == nil {
@@ -869,7 +972,7 @@ func (m *manager) runSSHSession(
 		stderr := sshtools.NewRetryOutput(m.outputWriter(), false, sshRetryOutputRevealDelay)
 		attemptStarted := time.Now()
 		stats.MarkSSHAttempt(attemptStarted)
-		cmd, err := buildSSHSpecWithArgv(launchManifest, cid, remoteCommand, argv)
+		cmd, err := buildSSHSpecWithArgv(launchManifest, plan.CID, plan.RemoteCommand, argv)
 		if err != nil {
 			return &stageError{Stage: "active session", Err: err}
 		}
@@ -883,7 +986,8 @@ func (m *manager) runSSHSession(
 		started.Add(session)
 		stats.MarkSSHStarted(attemptStarted)
 
-		err = m.waitForSession(ctx, session, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers)
+		lifecycle.SetPhase(launchPhaseForegroundWait)
+		err = m.waitForSession(ctx, session, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
 		stderrText := stderr.String()
 		if err == nil {
 			stderr.Flush()
@@ -893,7 +997,7 @@ func (m *manager) runSSHSession(
 			stderr.Suppress()
 			retryLog.Log(err, stderrText)
 			started.Remove(session)
-			if waitErr := m.waitBeforeSSHRetry(ctx, launchManifest, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers); waitErr != nil {
+			if waitErr := m.waitBeforeSSHRetry(ctx, launchManifest, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers); waitErr != nil {
 				return waitErr
 			}
 			continue
@@ -919,7 +1023,7 @@ func (m *manager) runSSHSession(
 	}
 }
 
-func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, suspendRequests *launchSuspendCoordinator, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	delay := launchManifest.SSHRetryDelay(m.sshRetryDelay)
 	if delay <= 0 {
 		delay = m.sshRetryDelay
@@ -928,7 +1032,7 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 		return nil
 	}
 
-	return m.waitForLifecycleEvent(ctx, "active session", nil, delay, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers)
+	return m.waitForLifecycleEvent(ctx, "active session", nil, delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
 type sshRetryLogger struct {
@@ -970,8 +1074,8 @@ func (l *sshRetryLogger) Log(err error, stderr string) {
 	}
 }
 
-func (m *manager) waitForSession(ctx context.Context, session *executor.Process, suspendRequests *launchSuspendCoordinator, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
-	if err := m.waitForLifecycleEvent(ctx, "active session", session, 0, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers); err != nil {
+func (m *manager) waitForSession(ctx context.Context, session *executor.Process, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+	if err := m.waitForLifecycleEvent(ctx, "active session", session, 0, lifecycle, suspendHandler, guestAgentSocketPath, watchers); err != nil {
 		return err
 	}
 	err := session.Wait()
@@ -981,8 +1085,8 @@ func (m *manager) waitForSession(ctx context.Context, session *executor.Process,
 	return nil
 }
 
-func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, suspendRequests *launchSuspendCoordinator, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
-	if err := m.waitForLifecycleEvent(ctx, "vm session", qemu, 0, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers); err != nil {
+func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+	if err := m.waitForLifecycleEvent(ctx, "vm session", qemu, 0, lifecycle, suspendHandler, guestAgentSocketPath, watchers); err != nil {
 		return err
 	}
 	err := qemu.Wait()
@@ -992,7 +1096,7 @@ func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, suspend
 	return nil
 }
 
-func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, process *executor.Process, delay time.Duration, suspendRequests *launchSuspendCoordinator, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, process *executor.Process, delay time.Duration, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	var processDone <-chan struct{}
 	if process != nil {
 		processDone = process.Done()
@@ -1014,9 +1118,9 @@ func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, proce
 			return nil
 		case <-delayDone:
 			return nil
-		case <-suspendRequests.Notify():
-			return handleSuspendRequest(ctx, suspendRequests, suspendHandler)
-		case <-infoRequests:
+		case <-lifecycle.Suspend().Notify():
+			return handleSuspendRequest(ctx, lifecycle.Suspend(), suspendHandler)
+		case <-lifecycle.Info():
 			m.printGuestInfo(ctx, guestAgentSocketPath, watchers)
 		case <-ticker.C:
 			if err := firstUnexpectedExit(stage, watchers); err != nil {

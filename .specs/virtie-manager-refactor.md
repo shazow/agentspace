@@ -64,6 +64,9 @@ Acceptance criteria:
 - [x] Add the typed control socket server and client.
 - [x] Route CLI control commands through `virtie.sock` with compatibility
   fallbacks.
+- [x] Started the post-mortem corrective phase by extracting a resolved
+  launch plan and lifecycle coordinator inside `manager` before any subpackage
+  split.
 
 ## Landed Control Flow
 
@@ -124,6 +127,72 @@ flowchart TD
 	Runtime -->|Info via QGA| QGA
 	Runtime -->|Balloon via serialized QMP| QMP
 ```
+
+## Post-Mortem Follow-Up Plan
+
+The control socket landed before the launch phases were extracted. That kept
+the implementation shippable, but it also made lifecycle boundaries implicit
+and caused review fixes around suspend ordering, launch teardown, and fallback
+semantics. The next phase should pause new control-plane capabilities and
+make the launch lifecycle explicit.
+
+### Lessons Learned
+
+- Control requests are lifecycle events, not just RPC methods. Suspend in
+  particular must be owned by the launch loop because it coordinates guest
+  file write-back, QMP migration, suspend metadata, foreground exit, PID
+  removal, and teardown.
+- Compatibility behavior is part of the contract during migration. Fallbacks
+  for unavailable sockets, unsupported capabilities, PID/signal suspend, and
+  direct-QMP hotplug need explicit tests before changing call paths.
+- Starting the socket during startup exposes intermediate launch states to
+  external commands. Any RPC that mutates VM state must either queue through
+  the launch lifecycle or prove it is safe during guest provisioning, restore,
+  SSH readiness, optional feature startup, and foreground waits.
+- Sequence diagrams and request-flow tests should come before new runtime
+  surfaces. The landed Mermaid diagram should be kept current as the
+  extraction proceeds.
+
+### Corrective Refactor Steps
+
+1. Extract a small lifecycle coordinator from `launchWithOptions` before
+   adding more RPC capabilities. It should own local signal requests, RPC
+   requests, foreground wait events, suspend completion, info requests, and
+   cancellation.
+2. Move startup checkpoints into named phases: QMP ready, restore complete,
+   guest provisioning complete, SSH readiness complete, optional features
+   started, foreground wait active, and teardown. Each phase should define
+   which lifecycle events it accepts and which are deferred.
+3. Introduce a value-oriented launch plan for resolved paths, cleanup
+   ownership, resume state, CID, QEMU command, run commands, and control socket
+   path. Startup should consume the plan instead of repeatedly resolving
+   manifest facts.
+4. Keep `Runtime` focused on launch-owned resources and typed capability
+   adapters. Avoid moving foreground lifecycle decisions into RPC handlers.
+   RPC handlers may enqueue, wait, query, or adapt owned clients, but they
+   should not independently advance launch state.
+5. Turn compatibility behavior into a table in tests: socket unavailable,
+   socket unsupported, socket failed-precondition, stale PID, saved state
+   already present, hotplug-capable CLI talking to `virtie_no_hotplug` launch,
+   and duplicate suspend requests.
+6. Only after the lifecycle coordinator and plan extraction are stable, split
+   code into `launch`, `runtime`, and `control` subpackages. Moving files
+   before the boundaries are explicit would mostly preserve the current
+   coupling under new package names.
+
+### Acceptance Criteria For The Next Phase
+
+- `launchWithOptions` reads as orchestration over a plan, lifecycle
+  coordinator, runtime startup, foreground wait, and teardown rather than one
+  monolithic control flow.
+- Local signals and `virtie.sock` requests share one lifecycle event path for
+  suspend and info.
+- Tests cover suspend requests during startup provisioning, foreground SSH,
+  headless VM wait, duplicate suspend, and teardown wait behavior.
+- Fallback behavior for `Suspend` and `Hotplug` is documented in tests and
+  does not depend on incidental error strings.
+- The Mermaid diagram in this spec is updated in the same commit as any
+  lifecycle topology change.
 
 ## Appendix
 

@@ -52,6 +52,15 @@ func manifestWritePath(path string) manifest.WriteFile {
 	}
 }
 
+func newTestLaunchLifecycle() *launchLifecycle {
+	return &launchLifecycle{
+		suspend:    newLaunchSuspendCoordinator(),
+		info:       make(chan struct{}, 1),
+		signalDone: make(chan struct{}),
+		stopSignal: func() {},
+	}
+}
+
 func TestManifestValidate(t *testing.T) {
 	emptyManifest := &manifest.Manifest{}
 	if err := emptyManifest.Validate(); err == nil {
@@ -86,6 +95,74 @@ func TestManifestValidate(t *testing.T) {
 	invalidQMP.QEMU.QMP.SocketPath = ""
 	if err := invalidQMP.Validate(); err == nil {
 		t.Fatalf("expected validation error for missing qmp socket path")
+	}
+}
+
+func TestManagerPlanLaunchResolvesRuntimeInputs(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".runtime"}
+	cfg.Persistence.StateDir = ".state"
+
+	remoteCommand := []string{"uname", "-a"}
+	manager := &manager{}
+	plan, err := manager.planLaunch(cfg, remoteCommand, LaunchOptions{Resume: ResumeModeNo, SSH: true})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
+
+	remoteCommand[0] = "mutated"
+	if got, want := plan.RemoteCommand, []string{"uname", "-a"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected copied remote command: got %#v want %#v", got, want)
+	}
+	if got, want := plan.Paths.ControlSocket, filepath.Join(tmpDir, ".runtime", "virtie.sock"); got != want {
+		t.Fatalf("unexpected control socket path: got %q want %q", got, want)
+	}
+	if got, want := plan.Paths.QMPSocket, filepath.Join(tmpDir, ".runtime", "qmp.sock"); got != want {
+		t.Fatalf("unexpected qmp socket path: got %q want %q", got, want)
+	}
+	if got, want := plan.Paths.StateDir, filepath.Join(tmpDir, ".state"); got != want {
+		t.Fatalf("unexpected state dir: got %q want %q", got, want)
+	}
+
+	if err := manager.completeLaunchPlan(plan); err != nil {
+		t.Fatalf("complete launch plan: %v", err)
+	}
+	if plan.CID != cfg.VSock.CIDRange.Start {
+		t.Fatalf("unexpected cid: got %d want %d", plan.CID, cfg.VSock.CIDRange.Start)
+	}
+	if plan.QEMUCommand == nil || !containsString(plan.QEMUCommand.Args, "-qmp") {
+		t.Fatalf("expected qemu command with qmp args, got %#v", plan.QEMUCommand)
+	}
+}
+
+func TestLaunchLifecycleRoutesSignalsToEvents(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	signals := make(chan os.Signal, 3)
+	manager := &manager{signals: signals}
+	lifecycle := manager.startLaunchLifecycle(cancel)
+	defer lifecycle.Stop()
+
+	signals <- syscall.SIGUSR1
+	select {
+	case <-lifecycle.Info():
+	case <-time.After(time.Second):
+		t.Fatal("SIGUSR1 did not queue info request")
+	}
+
+	signals <- syscall.SIGTSTP
+	select {
+	case <-lifecycle.Suspend().Notify():
+	case <-time.After(time.Second):
+		t.Fatal("SIGTSTP did not queue suspend request")
+	}
+
+	signals <- syscall.SIGTERM
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("SIGTERM did not cancel launch context")
 	}
 }
 
@@ -3495,7 +3572,7 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 	cancel()
 	session := (&executortest.Process{OverrideName: "ssh"}).Process()
 
-	err := (&manager{}).waitForSession(ctx, session, newLaunchSuspendCoordinator(), make(chan struct{}), nil, "", executor.Group{})
+	err := (&manager{}).waitForSession(ctx, session, newTestLaunchLifecycle(), nil, "", executor.Group{})
 	if err == nil {
 		t.Fatal("expected active session cancellation error")
 	}
