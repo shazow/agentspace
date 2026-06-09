@@ -103,6 +103,9 @@ Acceptance criteria:
   leaving the concrete `Runtime.Close` implementation in `manager`.
 - [x] Move launch/runtime stats into `virtie/internal/manager/runtime`, with a
   package helper for converting stats into control-plane `RuntimeStats`.
+- [x] Move suspend-state, VM-state, launch PID, and launch lock validation
+  helpers into `virtie/internal/manager/launch`, with manager aliases
+  preserving existing command and test call sites.
 
 ## Landed Control Flow
 
@@ -449,7 +452,8 @@ implementation packages should avoid importing the facade package.
 - `virtie/internal/manager/launch` (partial): launch value types including
   `Plan`, options, wait mode, runtime paths, suspend state, notifier
   interface, plan-owned socket cleanup, and lifecycle event coordination.
-  `Launcher`, `Config`, preflight resolution, startup sequencing, and
+  Suspend-state and launch PID file helpers have also landed there. `Launcher`,
+  `Config`, preflight resolution orchestration, startup sequencing, and
   conversion from manifest facts into runtime inputs still live in `manager`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, and runtime stats have landed. The
@@ -861,7 +865,8 @@ readiness, and managed virtiofs sockets:
 1. Extract `Plan`, `RuntimePaths`, and preflight resolution from
    `launchWithOptions`. `Plan` and `RuntimePaths` have landed under
    `manager/launch` with facade aliases. Lifecycle coordination has also
-   moved there. Preflight resolution still lives in `manager`.
+   moved there, along with suspend-state and launch PID helpers. Preflight
+   resolution orchestration still lives in `manager`.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
