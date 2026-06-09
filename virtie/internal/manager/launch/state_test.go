@@ -43,6 +43,31 @@ func TestSuspendStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRemoveRestoredSuspendState(t *testing.T) {
+	cfg := testManifest(t)
+	vmStatePath := VMStatePath(cfg)
+	if err := os.MkdirAll(filepath.Dir(vmStatePath), 0o755); err != nil {
+		t.Fatalf("create vm state dir: %v", err)
+	}
+	if err := os.WriteFile(vmStatePath, []byte("state"), 0o644); err != nil {
+		t.Fatalf("write vm state: %v", err)
+	}
+	if err := WriteSuspendStateData(cfg, SuspendState{Status: "saved", VMStatePath: vmStatePath}); err != nil {
+		t.Fatalf("write suspend state: %v", err)
+	}
+
+	err := RemoveRestoredSuspendState(&Plan{Manifest: cfg, ResumeState: &SuspendState{VMStatePath: vmStatePath}})
+	if err != nil {
+		t.Fatalf("remove restored state: %v", err)
+	}
+	if _, err := os.Stat(vmStatePath); !os.IsNotExist(err) {
+		t.Fatalf("expected vm state removal, got %v", err)
+	}
+	if _, err := os.Stat(SuspendStatePath(cfg)); !os.IsNotExist(err) {
+		t.Fatalf("expected suspend state removal, got %v", err)
+	}
+}
+
 func TestLaunchPIDRoundTripAndLockValidation(t *testing.T) {
 	cfg := testManifest(t)
 	if err := WriteLaunchPID(cfg, 12345); err != nil {

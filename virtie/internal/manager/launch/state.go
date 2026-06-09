@@ -83,6 +83,13 @@ func RemoveSuspendState(manifest *manifest.Manifest) error {
 	return nil
 }
 
+func RemoveRestoredSuspendState(plan *Plan) error {
+	if err := os.Remove(plan.ResumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove saved vm state %q: %w", plan.ResumeState.VMStatePath, err)
+	}
+	return RemoveSuspendState(plan.Manifest)
+}
+
 func WriteLaunchPID(manifest *manifest.Manifest, pid int) error {
 	path := LaunchPIDPath(manifest)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
