@@ -338,6 +338,9 @@ Acceptance criteria:
 - [x] Move guest-agent socket wait and retry-dial sequencing into
   `virtie/internal/manager/launch`, with manager supplying concrete QGA
   dialer and timeout policy.
+- [x] Remove manager-local concrete QMP/QGA socket-dialer aliases, so default
+  and fallback manager dependencies instantiate `qmpclient` and `qga`
+  dialers directly.
 - [x] Allow manager call sites to supply operation-specific guest-agent wait
   stages while keeping wait wrapping in `virtie/internal/manager/launch`.
 - [x] Move default startup wait stage wrapping and process-exit checks into

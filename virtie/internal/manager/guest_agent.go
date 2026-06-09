@@ -14,7 +14,6 @@ import (
 
 type guestAgentClient = qga.Client
 type guestAgentDialer = qga.Dialer
-type socketGuestAgentDialer = qga.SocketDialer
 type guestExecStatus = qga.ExecStatus
 
 func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *runtimepkg.Stats, watchers executor.Group) error {
@@ -205,7 +204,7 @@ func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watc
 func (m *manager) waitForGuestAgentStage(ctx context.Context, stage string, socketPath string, watchers executor.Group) (guestAgentClient, error) {
 	dialer := m.guestAgentDialer
 	if dialer == nil {
-		dialer = &socketGuestAgentDialer{}
+		dialer = &qga.SocketDialer{}
 	}
 	retryDelay := m.qmpRetryDelay
 	if retryDelay <= 0 {
