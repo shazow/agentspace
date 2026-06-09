@@ -136,6 +136,29 @@ func TestManagerPlanLaunchResolvesRuntimeInputs(t *testing.T) {
 	}
 }
 
+func TestLauncherPlanUsesDefaultConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	remoteCommand := []string{"hostname"}
+
+	plan, err := NewLauncher(DefaultConfig()).Plan(context.Background(), LaunchSpec{
+		Manifest:      cfg,
+		RemoteCommand: remoteCommand,
+		Options:       LaunchOptions{Resume: ResumeModeNo, SSH: true},
+	})
+	if err != nil {
+		t.Fatalf("launcher plan: %v", err)
+	}
+
+	remoteCommand[0] = "mutated"
+	if got, want := plan.RemoteCommand, []string{"hostname"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected copied remote command: got %#v want %#v", got, want)
+	}
+	if got, want := plan.Paths.ControlSocket, filepath.Join(tmpDir, "virtie.sock"); got != want {
+		t.Fatalf("unexpected control socket path: got %q want %q", got, want)
+	}
+}
+
 func TestLaunchLifecycleRoutesSignalsToEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
