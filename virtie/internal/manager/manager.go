@@ -267,14 +267,14 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	writeBackOnExit := runtimepkg.NewWriteBackState()
 	defer func() {
 		if err != nil {
-			var runtimeErr error
+			var startedRuntime runtimepkg.StartedRuntime
 			if runtime != nil {
-				if errors.Is(err, errSavedSuspendExit) {
-					runtime.savedSuspend.MarkSaved()
-				}
-				runtimeErr = runtime.Close()
-			} else {
-				runtimeErr = runtimepkg.ConfiguredStartupFailureActions(runtimepkg.StartupFailureConfig{
+				startedRuntime = runtime
+			}
+			err = runtimepkg.CleanupStartError(
+				err,
+				startedRuntime,
+				runtimepkg.ConfiguredStartupFailureActions(runtimepkg.StartupFailureConfig{
 					Processes:     processes,
 					ShutdownDelay: m.shutdownDelay,
 					LockCleanup:   cleanupRuntime,
@@ -286,9 +286,11 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 					},
 					Stats:       stats,
 					StatsOutput: m.outputWriter(),
-				}).Run()
-			}
-			err = errors.Join(err, runtimeErr)
+				}),
+				func(err error) bool {
+					return errors.Is(err, errSavedSuspendExit)
+				},
+			)
 		}
 	}()
 

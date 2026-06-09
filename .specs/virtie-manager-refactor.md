@@ -293,6 +293,10 @@ Acceptance criteria:
 - [x] Move pre-runtime startup-failure cleanup assembly into
   `virtie/internal/manager/runtime`, leaving manager responsible for supplying
   concrete process, lock, socket, QMP, stats, and output dependencies.
+- [x] Move startup-error cleanup branching into
+  `virtie/internal/manager/runtime`, so manager supplies concrete cleanup
+  actions while runtime policy decides between started-runtime close and
+  pre-runtime startup-failure cleanup.
 - [x] Move control-plane failed-precondition and compatibility error helpers
   into `virtie/internal/manager/control`, with manager facade aliases
   preserving migration call sites.
