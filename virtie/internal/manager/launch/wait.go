@@ -18,6 +18,56 @@ type EventWait struct {
 	Cancel  func(stage string, err error) error
 }
 
+type WaitProcess interface {
+	Done() <-chan struct{}
+	Wait() error
+	Name() string
+}
+
+type ProcessWait struct {
+	Stage     string
+	Process   WaitProcess
+	Delay     time.Duration
+	Lifecycle *Lifecycle
+	PollDelay time.Duration
+
+	Suspend      func(context.Context) error
+	Info         func(context.Context)
+	Check        func(stage string) error
+	Cancel       func(stage string, err error) error
+	ProcessError func(stage string, name string, err error) error
+}
+
+func WaitForProcess(ctx context.Context, wait ProcessWait) error {
+	var processDone <-chan struct{}
+	if wait.Process != nil {
+		processDone = wait.Process.Done()
+	}
+	if err := WaitForEvent(ctx, EventWait{
+		Stage:       wait.Stage,
+		ProcessDone: processDone,
+		Delay:       wait.Delay,
+		Lifecycle:   wait.Lifecycle,
+		PollDelay:   wait.PollDelay,
+		Suspend:     wait.Suspend,
+		Info:        wait.Info,
+		Check:       wait.Check,
+		Cancel:      wait.Cancel,
+	}); err != nil {
+		return err
+	}
+	if wait.Process == nil {
+		return nil
+	}
+	if err := wait.Process.Wait(); err != nil {
+		if wait.ProcessError != nil {
+			return wait.ProcessError(wait.Stage, wait.Process.Name(), err)
+		}
+		return err
+	}
+	return nil
+}
+
 func WaitForEvent(ctx context.Context, wait EventWait) error {
 	if wait.PollDelay <= 0 {
 		wait.PollDelay = time.Second

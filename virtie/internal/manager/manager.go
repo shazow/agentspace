@@ -720,42 +720,24 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 		return nil
 	}
 
-	return m.waitForLifecycleEvent(ctx, "active session", nil, delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
+	return m.waitForLifecycleEvent(ctx, "active session", delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
 func (m *manager) waitForSession(ctx context.Context, session *executor.Process, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
-	if err := m.waitForLifecycleEvent(ctx, "active session", session, 0, lifecycle, suspendHandler, guestAgentSocketPath, watchers); err != nil {
-		return err
-	}
-	err := session.Wait()
-	if err != nil {
-		return wrapCommandError("active session", session.Name(), err)
-	}
-	return nil
+	return m.waitForProcess(ctx, "active session", session, 0, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
 func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
-	if err := m.waitForLifecycleEvent(ctx, "vm session", qemu, 0, lifecycle, suspendHandler, guestAgentSocketPath, watchers); err != nil {
-		return err
-	}
-	err := qemu.Wait()
-	if err != nil {
-		return wrapCommandError("vm session", qemu.Name(), err)
-	}
-	return nil
+	return m.waitForProcess(ctx, "vm session", qemu, 0, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
-func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, process *executor.Process, delay time.Duration, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
-	var processDone <-chan struct{}
-	if process != nil {
-		processDone = process.Done()
-	}
-	return launch.WaitForEvent(ctx, launch.EventWait{
-		Stage:       stage,
-		ProcessDone: processDone,
-		Delay:       delay,
-		Lifecycle:   lifecycle,
-		PollDelay:   defaultSocketPollInterval,
+func (m *manager) waitForProcess(ctx context.Context, stage string, process *executor.Process, delay time.Duration, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+	return launch.WaitForProcess(ctx, launch.ProcessWait{
+		Stage:     stage,
+		Process:   process,
+		Delay:     delay,
+		Lifecycle: lifecycle,
+		PollDelay: defaultSocketPollInterval,
 		Suspend: func(ctx context.Context) error {
 			return handleSuspendRequest(ctx, lifecycle.Suspend(), suspendHandler)
 		},
@@ -768,7 +750,14 @@ func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, proce
 		Cancel: func(stage string, err error) error {
 			return &stageError{Stage: stage, Err: err}
 		},
+		ProcessError: func(stage string, name string, err error) error {
+			return wrapCommandError(stage, name, err)
+		},
 	})
+}
+
+func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, delay time.Duration, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+	return m.waitForProcess(ctx, stage, nil, delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
 func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink) error {
