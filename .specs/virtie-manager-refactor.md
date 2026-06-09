@@ -231,6 +231,9 @@ Acceptance criteria:
 - [x] Move runtime hotplug unsupported-response construction into
   `virtie/internal/manager/runtime`, leaving build-tagged manager files as
   thin capability adapters.
+- [x] Move concrete runtime logger and QMP timeout dependencies onto the
+  concrete `Runtime`, reducing manager back-references from control startup,
+  close write-back timeout, balloon control, and hotplug QMP adapters.
 - [x] Move runtime info response construction into
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
   responsible for collecting guest data and applying failed-precondition
@@ -662,8 +665,9 @@ implementation packages should avoid importing the facade package.
   construction, balloon/hotplug control dispatch, and unsupported hotplug
   response construction have landed. Pre-runtime startup failure cleanup,
   write-back-on-exit state, and close-hook write-back gating also live there
-  now. The concrete launch-owned runtime, concrete cleanup/stat callbacks, and
-  lifecycle adapters still live in `manager`.
+  now. Concrete runtime logger/QMP timeout dependencies are stored directly on
+  `Runtime`. The concrete launch-owned runtime, concrete cleanup/stat
+  callbacks, and lifecycle adapters still live in `manager`.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, compatibility
   error helpers, and optional handler registration.
@@ -1094,9 +1098,9 @@ readiness, and managed virtiofs sockets:
    tracking have moved there too, along with idempotent close coordination and
    close action ordering, startup failure cleanup ordering, runtime
    write-back state, close-hook write-back gating, suspend response
-   construction, unsupported hotplug response construction, and
-   control-capability dispatch. The concrete `Runtime` type still lives behind
-   the `manager`
+   construction, unsupported hotplug response construction, concrete runtime
+   logger/QMP timeout dependency wiring, and control-capability dispatch. The
+   concrete `Runtime` type still lives behind the `manager`
    facade.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
    manager call sites to use the same interfaces through the facade. QMP has

@@ -366,7 +366,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *lau
 	if err != nil {
 		return nil, nil, err
 	}
-	runtime := newRuntime(m, plan.Manifest, plan.Paths, plan.CID, stats, started.QMP, lifecycle.Suspend())
+	runtime := newRuntime(m, plan.Manifest, plan.Paths, plan.CID, stats, started.QMP, lifecycle.Suspend(), m.effectiveQMPCommandTimeout(), m.logger)
 	runtime.SetProcesses(processes, m.shutdownDelay)
 	client := runtime.QMP()
 	launch.FinalizeRuntimeStartup(launch.RuntimeStartupFinalize{
