@@ -324,11 +324,9 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	})
 	runtime.SetReady()
 	runtime.SetLaunchLifecycle(plan, lifecycle, suspendHandler)
-	runtime.SetCloseHooks(runtimeCloseHooks{
+	runtime.SetCloseHooks(runtimepkg.NewCloseHooks(runtimepkg.CloseHookActions{
+		WriteBackState: writeBackOnExit,
 		WriteBack: func(ctx context.Context) error {
-			if !writeBackOnExit.Enabled() {
-				return nil
-			}
 			return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
 		},
 		Cleanup: func() error {
@@ -338,7 +336,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 			stats.MarkCompleted(time.Now())
 			fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 		},
-	})
+	}))
 	if err := runtime.StartControl(launchCtx); err != nil {
 		return nil, &stageError{Stage: "control startup", Err: err}
 	}
