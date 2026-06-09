@@ -86,27 +86,16 @@ func (r *Runtime) StartControl(ctx context.Context) error {
 }
 
 func (r *Runtime) Close() error {
-	return r.closer.Close(func() error {
-		var err error
-		if r.closeHooks.WriteBack != nil && !r.savedSuspend {
-			writeBackCtx, cancelWriteBack := context.WithTimeout(context.Background(), r.manager.effectiveQMPCommandTimeout())
-			err = errors.Join(err, r.closeHooks.WriteBack(writeBackCtx))
-			cancelWriteBack()
-		}
-		err = errors.Join(err, r.control.Close())
-		if r.processes != nil {
-			err = errors.Join(err, r.processes.Close(r.shutdownDelay))
-		}
-		if r.qmp != nil {
-			err = errors.Join(err, r.qmp.Disconnect())
-		}
-		if r.closeHooks.Cleanup != nil {
-			err = errors.Join(err, r.closeHooks.Cleanup())
-		}
-		if r.closeHooks.Stats != nil {
-			r.closeHooks.Stats()
-		}
-		return err
+	return r.closer.Close(runtimepkg.CloseActions{
+		WriteBack:        r.closeHooks.WriteBack,
+		WriteBackTimeout: r.manager.effectiveQMPCommandTimeout(),
+		SkipWriteBack:    r.savedSuspend,
+		Control:          r.control,
+		Processes:        r.processes,
+		ShutdownDelay:    r.shutdownDelay,
+		QMP:              r.qmp,
+		Cleanup:          r.closeHooks.Cleanup,
+		Stats:            r.closeHooks.Stats,
 	})
 }
 

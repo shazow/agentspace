@@ -1,8 +1,10 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
@@ -12,18 +14,22 @@ func TestCloserRunsOnceAndTracksStoppedState(t *testing.T) {
 	closer := NewCloser(state)
 	calls := 0
 
-	if err := closer.Close(func() error {
-		calls++
-		if got := state.Current(); got != control.RuntimeStopping {
-			t.Fatalf("state during close: got %q want %q", got, control.RuntimeStopping)
-		}
-		return nil
+	if err := closer.Close(CloseActions{
+		Cleanup: func() error {
+			calls++
+			if got := state.Current(); got != control.RuntimeStopping {
+				t.Fatalf("state during close: got %q want %q", got, control.RuntimeStopping)
+			}
+			return nil
+		},
 	}); err != nil {
 		t.Fatalf("first close: %v", err)
 	}
-	if err := closer.Close(func() error {
-		calls++
-		return errors.New("second close should not run")
+	if err := closer.Close(CloseActions{
+		Cleanup: func() error {
+			calls++
+			return errors.New("second close should not run")
+		},
 	}); err != nil {
 		t.Fatalf("second close: %v", err)
 	}
@@ -38,10 +44,70 @@ func TestCloserRunsOnceAndTracksStoppedState(t *testing.T) {
 func TestCloserReturnsFirstCloseError(t *testing.T) {
 	wantErr := errors.New("close failed")
 	closer := NewCloser(NewState(control.RuntimeReady))
-	if err := closer.Close(func() error { return wantErr }); !errors.Is(err, wantErr) {
+	if err := closer.Close(CloseActions{Cleanup: func() error { return wantErr }}); !errors.Is(err, wantErr) {
 		t.Fatalf("close error: got %v want %v", err, wantErr)
 	}
-	if err := closer.Close(func() error { return nil }); err != nil {
+	if err := closer.Close(CloseActions{Cleanup: func() error { return nil }}); err != nil {
 		t.Fatalf("second close: %v", err)
 	}
+}
+
+func TestCloseActionsRunInShutdownOrder(t *testing.T) {
+	var calls []string
+	actions := CloseActions{
+		WriteBackTimeout: time.Second,
+		WriteBack: func(context.Context) error {
+			calls = append(calls, "writeback")
+			return nil
+		},
+		Processes:     NewProcessSet(),
+		ShutdownDelay: time.Millisecond,
+		QMP: closeQMPFunc(func() error {
+			calls = append(calls, "qmp")
+			return nil
+		}),
+		Cleanup: func() error {
+			calls = append(calls, "cleanup")
+			return nil
+		},
+		Stats: func() {
+			calls = append(calls, "stats")
+		},
+	}
+
+	if err := actions.Run(); err != nil {
+		t.Fatalf("run close actions: %v", err)
+	}
+	want := []string{"writeback", "qmp", "cleanup", "stats"}
+	if len(calls) != len(want) {
+		t.Fatalf("calls: got %#v want %#v", calls, want)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("calls: got %#v want %#v", calls, want)
+		}
+	}
+}
+
+func TestCloseActionsSkipWriteBack(t *testing.T) {
+	called := false
+	actions := CloseActions{
+		WriteBack: func(context.Context) error {
+			called = true
+			return nil
+		},
+		SkipWriteBack: true,
+	}
+	if err := actions.Run(); err != nil {
+		t.Fatalf("run close actions: %v", err)
+	}
+	if called {
+		t.Fatal("write-back ran despite skip flag")
+	}
+}
+
+type closeQMPFunc func() error
+
+func (fn closeQMPFunc) Disconnect() error {
+	return fn()
 }
