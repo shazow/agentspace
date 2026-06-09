@@ -18,7 +18,7 @@ func (r *Runtime) Hotplug(ctx context.Context, req controlpkg.HotplugRequest) (c
 		Devices:  r.manifest.Hotplug,
 		Start:    r.hotplugStart,
 		Sockets:  r.hotplugSockets,
-		QMP:      managerHotplugQMP{client: r.qmp, timeout: r.qmpTimeout},
+		QMP:      runtimepkg.HotplugQMP{Client: r.qmp, Timeout: r.qmpTimeout},
 		Guest:    r.hotplugGuest,
 	}
 	resp, err := runtimepkg.Hotplug(ctx, runtime, req)

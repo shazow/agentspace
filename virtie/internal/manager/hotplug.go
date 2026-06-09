@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
 	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
+	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
@@ -45,11 +45,11 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 			return &launch.StageError{Stage: "control hotplug", Err: err}
 		}
 	}
-	runtime, err := m.hotplugRuntime(ctx, launchManifest)
+	runtime, client, err := m.hotplugRuntime(ctx, launchManifest)
 	if err != nil {
 		return &launch.StageError{Stage: "hotplug", Err: err}
 	}
-	defer runtime.QMP.(managerHotplugQMP).client.Disconnect()
+	defer client.Disconnect()
 	if options.Detach {
 		if err := runtime.Detach(ctx, id); err != nil {
 			return launch.WrapHotplugError(err)
@@ -62,14 +62,14 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 	return nil
 }
 
-func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.Manifest) (hotplug.Runtime, error) {
+func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.Manifest) (hotplug.Runtime, qmpclient.Client, error) {
 	socketPath, err := launchManifest.ResolvedQMPSocketPath()
 	if err != nil {
-		return hotplug.Runtime{}, err
+		return hotplug.Runtime{}, nil, err
 	}
 	client, err := m.waitForQMP(ctx, socketPath, executor.Group{})
 	if err != nil {
-		return hotplug.Runtime{}, err
+		return hotplug.Runtime{}, nil, err
 	}
 	return hotplug.Runtime{
 		StateDir: launchManifest.ResolvedPersistenceStateDir(),
@@ -77,9 +77,9 @@ func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.M
 		Devices:  launchManifest.Hotplug,
 		Start:    managerHotplugStarter{m: m},
 		Sockets:  managerHotplugSocketWaiter{m: m},
-		QMP:      managerHotplugQMP{client: client, timeout: m.effectiveQMPCommandTimeout()},
+		QMP:      runtimepkg.HotplugQMP{Client: client, Timeout: m.effectiveQMPCommandTimeout()},
 		Guest:    managerHotplugGuest{m: m, manifest: launchManifest},
-	}, nil
+	}, client, nil
 }
 
 func configureRuntimeHotplugDependencies(deps *runtimeDependencies, m *manager, launchManifest *manifest.Manifest) {
@@ -122,19 +122,6 @@ func (w managerHotplugSocketWaiter) Wait(ctx context.Context, stage string, sock
 		return w.m.waitForSockets(ctx, stage, socketPaths, executor.NewGroup(process))
 	}
 	return w.m.waitForSockets(ctx, stage, socketPaths, executor.Group{})
-}
-
-type managerHotplugQMP struct {
-	client  qmpclient.Client
-	timeout time.Duration
-}
-
-func (q managerHotplugQMP) Run(ctx context.Context, command string) error {
-	return q.client.RunRaw(q.timeout, command)
-}
-
-func (q managerHotplugQMP) DeviceDel(ctx context.Context, id string) error {
-	return q.client.DeviceDelAndWait(q.timeout, id)
 }
 
 type managerHotplugGuest struct {
