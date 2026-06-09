@@ -65,6 +65,66 @@ Acceptance criteria:
 - [x] Route CLI control commands through `virtie.sock` with compatibility
   fallbacks.
 
+## Landed Control Flow
+
+The current migration phase keeps `launchWithOptions` as the orchestration
+entrypoint, but QMP-affecting control commands now prefer the launch-owned
+runtime through `virtie.sock`. The launch process remains the owner of QMP,
+QGA, process groups, suspend state, and runtime socket cleanup.
+
+```mermaid
+flowchart TD
+	subgraph Launch["virtie launch process"]
+		L[launchWithOptions]
+		QEMU[QEMU process]
+		QMP[serialized QMP client]
+		QGA[guest agent client]
+		Runtime[Runtime]
+		Router[typed Router]
+		Server[virtie.sock Server]
+		SuspendQueue[launchSuspendCoordinator]
+		Loop[launch foreground loop]
+		SuspendSave[launchSuspendHandler.saveAndExit]
+		Teardown[deferred runtime close and socket cleanup]
+	end
+
+	subgraph Clients["other virtie commands"]
+		SuspendCLI[virtie suspend]
+		HotplugCLI[virtie hotplug]
+		StatusInfo[status/info/balloon clients]
+	end
+
+	L --> QEMU
+	L --> QMP
+	L --> Runtime
+	Runtime --> QMP
+	Runtime --> QGA
+	Runtime --> Router
+	Router --> Server
+	Server -. JSON over Unix socket .- SuspendCLI
+	Server -. JSON over Unix socket .- HotplugCLI
+	Server -. JSON over Unix socket .- StatusInfo
+
+	SuspendCLI -->|Suspend RPC| Runtime
+	Runtime -->|enqueue and wait| SuspendQueue
+	Loop -->|handles queued request| SuspendQueue
+	Loop --> SuspendSave
+	SuspendSave -->|write-back when needed| QGA
+	SuspendSave -->|migrate-to-file| QMP
+	SuspendSave -->|write suspend state| Teardown
+	SuspendCLI -. waits for launch PID removal .-> Teardown
+
+	HotplugCLI -->|Hotplug RPC| Runtime
+	Runtime -->|attach/detach via hotplug.Runtime adapter| QMP
+	Runtime -->|guest mount/umount when needed| QGA
+	HotplugCLI -. unsupported or unavailable socket fallback .-> QMP
+
+	StatusInfo -->|Status/Info/Balloon RPC| Runtime
+	Runtime -->|Status from state/stats| StatusInfo
+	Runtime -->|Info via QGA| QGA
+	Runtime -->|Balloon via serialized QMP| QMP
+```
+
 ## Appendix
 
 ### Current Problems
