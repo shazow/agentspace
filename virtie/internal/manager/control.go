@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"time"
 
+	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -21,7 +22,7 @@ func Suspend(ctx context.Context, manifest *manifest.Manifest) error {
 func (m *manager) suspend(ctx context.Context, manifest *manifest.Manifest) error {
 	controlSocketPath, err := manifest.ResolvedControlSocketPath()
 	if err == nil && controlSocketPath != "" {
-		resp, err := Dial(controlSocketPath).Suspend(ctx, SuspendRequest{})
+		resp, err := controlpkg.Dial(controlSocketPath).Suspend(ctx, SuspendRequest{})
 		if err == nil {
 			if resp.Saved {
 				timeout := m.effectiveSuspendSignalTimeout(manifest)
@@ -34,7 +35,7 @@ func (m *manager) suspend(ctx context.Context, manifest *manifest.Manifest) erro
 			}
 			return &launch.StageError{Stage: "qmp suspend", Err: fmt.Errorf("launch process did not save VM state")}
 		}
-		if !isControlSocketUnavailable(err) {
+		if !controlpkg.IsSocketUnavailable(err) {
 			return &launch.StageError{Stage: "control suspend", Err: err}
 		}
 	}
