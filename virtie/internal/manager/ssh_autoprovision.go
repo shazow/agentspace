@@ -29,7 +29,7 @@ func (m *manager) installSSHAutoprovisionKey(ctx context.Context, launchManifest
 	if err != nil {
 		return &stageError{Stage: "ssh autoprovision", Err: err}
 	}
-	client, err := m.waitForGuestAgent(ctx, socketPath, watchers)
+	client, err := m.waitForGuestAgentStage(ctx, "ssh autoprovision", socketPath, watchers)
 	if err != nil {
 		return err
 	}

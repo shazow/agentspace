@@ -81,9 +81,9 @@ func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manif
 	}
 
 	m.logger.Info("waiting for guest agent readiness for write-back")
-	client, err := m.waitForGuestAgent(ctx, socketPath, watchers)
+	client, err := m.waitForGuestAgentStage(ctx, "guest file write-back", socketPath, watchers)
 	if err != nil {
-		return &stageError{Stage: "guest file write-back", Err: err}
+		return err
 	}
 	defer client.Disconnect()
 
@@ -198,6 +198,10 @@ func (m *manager) runGuestCommandStatus(ctx context.Context, client guestAgentCl
 }
 
 func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (guestAgentClient, error) {
+	return m.waitForGuestAgentStage(ctx, "guest agent", socketPath, watchers)
+}
+
+func (m *manager) waitForGuestAgentStage(ctx context.Context, stage string, socketPath string, watchers executor.Group) (guestAgentClient, error) {
 	dialer := m.guestAgentDialer
 	if dialer == nil {
 		dialer = &socketGuestAgentDialer{}
@@ -207,7 +211,7 @@ func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watc
 		retryDelay = defaultQMPRetryDelay
 	}
 	return launch.WaitForGuestAgent(ctx, launch.GuestAgentWait{
-		Stage:          "guest agent",
+		Stage:          stage,
 		SocketPath:     socketPath,
 		SocketWaiter:   m.socketWaiter,
 		Dialer:         dialer,
