@@ -350,7 +350,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	return runtime, nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *runtimepkg.Stats, lifecycle *launch.Lifecycle, processes *ProcessSet) (*Runtime, qmpClient, error) {
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *runtimepkg.Stats, lifecycle *launch.Lifecycle, processes *runtimepkg.ProcessSet) (*Runtime, qmpClient, error) {
 	started, err := launch.StartRuntimeProcesses(ctx, launch.RuntimeStartup{
 		Plan:           plan,
 		Processes:      processes,
@@ -419,7 +419,7 @@ func (m *manager) waitForLaunchForeground(
 	qmpClient qmpClient,
 	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
-	processes *ProcessSet,
+	processes *runtimepkg.ProcessSet,
 ) error {
 	return launch.WaitForeground(ctx, launch.ForegroundWait{
 		Plan:      plan,
@@ -573,7 +573,7 @@ func (m *manager) runSSHSession(
 	stats *runtimepkg.Stats,
 	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
-	processes *ProcessSet,
+	processes *runtimepkg.ProcessSet,
 ) error {
 	return launch.RunSSHSession(ctx, launch.SSHSession{
 		Plan:                   plan,
