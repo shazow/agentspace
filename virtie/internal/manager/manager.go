@@ -87,12 +87,6 @@ type Config struct {
 	Notifier            notificationSink
 }
 
-type ProcessSet struct {
-	group    executor.Group
-	qemu     *executor.Process
-	features managedTaskGroup
-}
-
 type Launcher struct {
 	manager *manager
 }
@@ -139,49 +133,6 @@ func (l *Launcher) Start(ctx context.Context, plan *Plan) (*Runtime, error) {
 		l = NewLauncher()
 	}
 	return l.manager.startWithPlan(ctx, plan)
-}
-
-func newProcessSet() *ProcessSet {
-	return &ProcessSet{group: executor.NewGroup()}
-}
-
-func (p *ProcessSet) Add(processes ...*executor.Process) {
-	p.group.Add(processes...)
-}
-
-func (p *ProcessSet) AddGroup(group executor.Group) {
-	p.group.Add(group.Processes()...)
-}
-
-func (p *ProcessSet) SetQEMU(process *executor.Process) {
-	p.qemu = process
-	p.Add(process)
-}
-
-func (p *ProcessSet) QEMU() *executor.Process {
-	return p.qemu
-}
-
-func (p *ProcessSet) Remove(process *executor.Process) bool {
-	return p.group.Remove(process)
-}
-
-func (p *ProcessSet) Watchers() executor.Group {
-	return p.group.Snapshot()
-}
-
-func (p *ProcessSet) VMWatchers() executor.Group {
-	watchers := p.Watchers()
-	watchers.Remove(p.qemu)
-	return watchers
-}
-
-func (p *ProcessSet) StartFeatures(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, client qmpClient) {
-	p.features = startOptionalFeatureTasks(ctx, runtime, manifest, client)
-}
-
-func (p *ProcessSet) Close(delay time.Duration) error {
-	return errors.Join(p.features.Stop(), p.group.StopAll(delay))
 }
 
 type manager struct {
@@ -682,10 +633,10 @@ func (m *manager) waitForLaunchForeground(
 	suspendHandler *launchSuspendHandler,
 	processes *ProcessSet,
 ) error {
-	processes.StartFeatures(ctx, optionalFeatureRuntime{
+	processes.SetFeatures(startOptionalFeatureTasks(ctx, optionalFeatureRuntime{
 		qmpTimeout: m.effectiveQMPCommandTimeout(),
 		notifier:   plan.Notifier,
-	}, plan.Manifest, qmpClient)
+	}, plan.Manifest, qmpClient))
 
 	if plan.Options.SSH && len(plan.Manifest.SSH.Argv) > 0 {
 		if err := m.runSSHSession(ctx, plan, stats, lifecycle, suspendHandler, processes); err != nil {
