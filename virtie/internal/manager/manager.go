@@ -352,37 +352,30 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 }
 
 func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *launchStats, lifecycle *launchLifecycle, processes *ProcessSet) (*Runtime, qmpClient, error) {
-	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
+	started, err := launch.StartRuntimeProcesses(ctx, launch.RuntimeStartup{
+		Plan:           plan,
+		Processes:      processes,
+		Stats:          stats,
+		Runner:         m.runner,
+		Logger:         m.logger,
+		StartRuns:      m.startRuns,
+		WaitForSockets: m.waitForSockets,
+		WaitForQMP:     m.waitForQMP,
+		WrapVMStartup: func(err error) error {
+			return &stageError{Stage: "vm startup", Err: err}
+		},
+	})
 	if err != nil {
 		return nil, nil, err
 	}
-	processes.AddGroup(runProcesses)
-
-	if len(plan.VirtioFSSocketPaths) > 0 {
-		m.logger.Info("waiting for virtiofs sockets")
-		if err := m.waitForSockets(ctx, "virtiofs startup", plan.VirtioFSSocketPaths, processes.Watchers()); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	stats.MarkBootStarted(time.Now())
-	qemu, err := launch.StartQEMU(m.runner, m.logger, plan)
-	if err != nil {
-		return nil, nil, &stageError{Stage: "vm startup", Err: err}
-	}
-	processes.SetQEMU(qemu)
-
-	m.logger.Info("waiting for qmp readiness")
-	client, err := m.waitForQMP(ctx, plan.Paths.QMPSocket, processes.Watchers())
-	if err != nil {
-		return nil, nil, err
-	}
-	runtime := newRuntime(m, plan.Manifest, plan.Paths, plan.CID, stats, client, lifecycle.Suspend())
+	runtime := newRuntime(m, plan.Manifest, plan.Paths, plan.CID, stats, started.QMP, lifecycle.Suspend())
 	runtime.SetProcesses(processes, m.shutdownDelay)
-	client = runtime.QMP()
-	stats.MarkQMPReady(time.Now())
-	qemu.SetShutdown(func() error {
-		return client.Quit(m.effectiveQMPQuitTimeout())
+	client := runtime.QMP()
+	launch.FinalizeRuntimeStartup(launch.RuntimeStartupFinalize{
+		QEMU:        started.QEMU,
+		QMP:         client,
+		Stats:       stats,
+		QuitTimeout: m.effectiveQMPQuitTimeout(),
 	})
 	return runtime, client, nil
 }
