@@ -228,6 +228,9 @@ Acceptance criteria:
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
   responsible for constructing the hotplug engine adapters and applying
   stage-specific error wrapping.
+- [x] Move runtime hotplug unsupported-response construction into
+  `virtie/internal/manager/runtime`, leaving build-tagged manager files as
+  thin capability adapters.
 - [x] Move runtime info response construction into
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
   responsible for collecting guest data and applying failed-precondition
@@ -656,8 +659,8 @@ implementation packages should avoid importing the facade package.
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, close action
   ordering, ready/status/suspend transition policy, suspend response
-  construction, and balloon/hotplug control dispatch have landed.
-  Pre-runtime startup failure cleanup,
+  construction, balloon/hotplug control dispatch, and unsupported hotplug
+  response construction have landed. Pre-runtime startup failure cleanup,
   write-back-on-exit state, and close-hook write-back gating also live there
   now. The concrete launch-owned runtime, concrete cleanup/stat callbacks, and
   lifecycle adapters still live in `manager`.
@@ -1091,8 +1094,9 @@ readiness, and managed virtiofs sockets:
    tracking have moved there too, along with idempotent close coordination and
    close action ordering, startup failure cleanup ordering, runtime
    write-back state, close-hook write-back gating, suspend response
-   construction, and control-capability dispatch. The concrete `Runtime` type
-   still lives behind the `manager`
+   construction, unsupported hotplug response construction, and
+   control-capability dispatch. The concrete `Runtime` type still lives behind
+   the `manager`
    facade.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
    manager call sites to use the same interfaces through the facade. QMP has

@@ -23,3 +23,7 @@ func Hotplug(ctx context.Context, runtime HotplugRuntime, req control.HotplugReq
 	}
 	return control.HotplugResponse{ID: req.ID}, nil
 }
+
+func UnsupportedHotplug() error {
+	return &control.RPCError{Code: control.ErrUnsupported, Message: "hotplug support is not built into this virtie binary"}
+}
