@@ -252,10 +252,10 @@ Acceptance criteria:
 - [x] Move runtime info response construction into
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
   responsible for collecting guest data.
-- [x] Move runtime Info, Suspend, and Balloon failed-precondition adaptation
-  into `virtie/internal/manager/runtime`, leaving the concrete manager
-  `Runtime` responsible for supplying concrete collectors, requesters, and
-  devices.
+- [x] Move runtime foreground wait, Info, Suspend, and Balloon
+  failed-precondition adaptation into `virtie/internal/manager/runtime`,
+  leaving the concrete manager `Runtime` responsible for supplying concrete
+  wait callbacks, collectors, requesters, and devices.
 - [x] Move control-plane failed-precondition and compatibility error helpers
   into `virtie/internal/manager/control`, with manager facade aliases
   preserving migration call sites.
@@ -680,7 +680,7 @@ implementation packages should avoid importing the facade package.
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, close action
   ordering, ready/status/suspend transition policy, suspend response
-  construction, Info/Suspend/Balloon failed-precondition adaptation,
+  construction, foreground wait/Info/Suspend/Balloon failed-precondition adaptation,
   balloon/hotplug control dispatch, and unsupported hotplug response
   construction have landed. Pre-runtime startup failure cleanup,
   write-back-on-exit state, and close-hook write-back gating also live there
@@ -1119,7 +1119,7 @@ readiness, and managed virtiofs sockets:
    tracking have moved there too, along with idempotent close coordination and
    close action ordering, startup failure cleanup ordering, runtime
    write-back state, close-hook write-back gating, suspend response
-   construction, Info/Suspend/Balloon failed-precondition adaptation,
+   construction, foreground wait/Info/Suspend/Balloon failed-precondition adaptation,
    unsupported hotplug response construction, concrete runtime logger/QMP
    timeout/foreground wait/info collection/hotplug adapter dependency wiring,
    removal of the concrete runtime manager back-reference, foreground wait
