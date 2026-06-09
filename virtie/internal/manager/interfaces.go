@@ -1,34 +1,10 @@
 package manager
 
-import (
-	"context"
-	"io"
-	"os/exec"
-	"time"
+import "github.com/shazow/agentspace/virtie/internal/manager/launch"
 
-	"github.com/shazow/agentspace/virtie/internal/executor"
-)
-
-type lock interface {
-	Release() error
-}
-
-type locker interface {
-	Acquire(path string) (lock, error)
-}
-
-type vsockCIDChecker interface {
-	Available(cid int) (bool, error)
-}
-
-type runner interface {
-	Start(cmd *exec.Cmd) (*executor.Process, error)
-}
-
-type socketWaiter interface {
-	Wait(ctx context.Context, socketPaths []string) error
-}
-
-type sshReadyDialer interface {
-	Dial(ctx context.Context, socketPath string, timeout time.Duration) (io.ReadCloser, error)
-}
+type lock = launch.Lock
+type locker = launch.Locker
+type vsockCIDChecker = launch.VSockCIDChecker
+type runner = launch.Runner
+type socketWaiter = launch.SocketWaiter
+type sshReadyDialer = launch.SSHReadyDialer

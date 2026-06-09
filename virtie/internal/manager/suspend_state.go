@@ -21,10 +21,9 @@ var readLaunchPID = launch.ReadLaunchPID
 var removeLaunchPID = launch.RemoveLaunchPID
 var validateLaunchLock = launch.ValidateLaunchLock
 
-type pidSignaler interface {
-	Exists(pid int) error
-	Signal(pid int, sig os.Signal) error
-}
+type pidSignaler = launch.PIDSignaler
+
+var _ launch.PIDSignaler = syscallPIDSignaler{}
 
 type syscallPIDSignaler struct{}
 

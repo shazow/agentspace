@@ -66,30 +66,9 @@ type suspendState = launch.SuspendState
 type notificationSink = launch.NotificationSink
 type launchLifecycle = launch.Lifecycle
 type launchSuspendCoordinator = launch.SuspendCoordinator
+type Config = launch.Config
 
 var newLaunchSuspendCoordinator = launch.NewSuspendCoordinator
-
-type Config struct {
-	Locker              locker
-	VSockCIDChecker     vsockCIDChecker
-	Runner              runner
-	SocketWaiter        socketWaiter
-	QMPDialer           qmpDialer
-	GuestAgentDialer    guestAgentDialer
-	SSHReadyDialer      sshReadyDialer
-	Logger              *slog.Logger
-	LogWriter           io.Writer
-	SSHRetryDelay       time.Duration
-	SSHReadyTimeout     time.Duration
-	ShutdownDelay       time.Duration
-	QMPRetryDelay       time.Duration
-	QMPConnectTimeout   time.Duration
-	QMPQuitTimeout      time.Duration
-	QMPMigrationTimeout time.Duration
-	Signals             <-chan os.Signal
-	PIDSignaler         pidSignaler
-	Notifier            notificationSink
-}
 
 type Launcher struct {
 	manager *manager
@@ -119,7 +98,7 @@ func DefaultConfig() Config {
 func NewLauncher(configs ...Config) *Launcher {
 	config := DefaultConfig()
 	if len(configs) > 0 {
-		config = mergeLauncherConfig(config, configs[0])
+		config = launch.MergeConfig(config, configs[0])
 	}
 	return &Launcher{manager: newManagerFromConfig(config)}
 }
@@ -166,7 +145,7 @@ func newManager() *manager {
 }
 
 func newManagerFromConfig(config Config) *manager {
-	config = mergeLauncherConfig(DefaultConfig(), config)
+	config = launch.MergeConfig(DefaultConfig(), config)
 	return &manager{
 		locker:              config.Locker,
 		vsockCIDChecker:     config.VSockCIDChecker,
@@ -188,67 +167,6 @@ func newManagerFromConfig(config Config) *manager {
 		pidSignaler:         config.PIDSignaler,
 		notifier:            config.Notifier,
 	}
-}
-
-func mergeLauncherConfig(base Config, override Config) Config {
-	if override.Locker != nil {
-		base.Locker = override.Locker
-	}
-	if override.VSockCIDChecker != nil {
-		base.VSockCIDChecker = override.VSockCIDChecker
-	}
-	if override.Runner != nil {
-		base.Runner = override.Runner
-	}
-	if override.SocketWaiter != nil {
-		base.SocketWaiter = override.SocketWaiter
-	}
-	if override.QMPDialer != nil {
-		base.QMPDialer = override.QMPDialer
-	}
-	if override.GuestAgentDialer != nil {
-		base.GuestAgentDialer = override.GuestAgentDialer
-	}
-	if override.SSHReadyDialer != nil {
-		base.SSHReadyDialer = override.SSHReadyDialer
-	}
-	if override.Logger != nil {
-		base.Logger = override.Logger
-	}
-	if override.LogWriter != nil {
-		base.LogWriter = override.LogWriter
-	}
-	if override.SSHRetryDelay != 0 {
-		base.SSHRetryDelay = override.SSHRetryDelay
-	}
-	if override.SSHReadyTimeout != 0 {
-		base.SSHReadyTimeout = override.SSHReadyTimeout
-	}
-	if override.ShutdownDelay != 0 {
-		base.ShutdownDelay = override.ShutdownDelay
-	}
-	if override.QMPRetryDelay != 0 {
-		base.QMPRetryDelay = override.QMPRetryDelay
-	}
-	if override.QMPConnectTimeout != 0 {
-		base.QMPConnectTimeout = override.QMPConnectTimeout
-	}
-	if override.QMPQuitTimeout != 0 {
-		base.QMPQuitTimeout = override.QMPQuitTimeout
-	}
-	if override.QMPMigrationTimeout != 0 {
-		base.QMPMigrationTimeout = override.QMPMigrationTimeout
-	}
-	if override.Signals != nil {
-		base.Signals = override.Signals
-	}
-	if override.PIDSignaler != nil {
-		base.PIDSignaler = override.PIDSignaler
-	}
-	if override.Notifier != nil {
-		base.Notifier = override.Notifier
-	}
-	return base
 }
 
 // Launch runs the supported virtie sandbox session.
