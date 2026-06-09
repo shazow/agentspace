@@ -59,3 +59,14 @@ func TestHotplugPropagatesRuntimeError(t *testing.T) {
 		t.Fatalf("error: got %v want %v", err, hotplugErr)
 	}
 }
+
+func TestUnsupportedHotplug(t *testing.T) {
+	err := UnsupportedHotplug()
+	var rpcErr *control.RPCError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("error type: got %T", err)
+	}
+	if rpcErr.Code != control.ErrUnsupported {
+		t.Fatalf("code: got %s want %s", rpcErr.Code, control.ErrUnsupported)
+	}
+}
