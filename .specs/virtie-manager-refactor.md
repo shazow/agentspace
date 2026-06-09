@@ -154,6 +154,9 @@ Acceptance criteria:
 - [x] Move restored suspend-state cleanup into
   `virtie/internal/manager/launch`, leaving manager responsible for restore
   stage wrapping.
+- [x] Move runtime resume notification state and payload construction into
+  `virtie/internal/manager/launch`, leaving manager responsible for invoking
+  the helper after QMP restore succeeds.
 - [x] Move QMP migration polling into `virtie/internal/qmpclient`, with
   manager supplying lifecycle-specific timeouts and stage wrapping.
 - [x] Move QMP dial retry mechanics into `virtie/internal/qmpclient`, with
