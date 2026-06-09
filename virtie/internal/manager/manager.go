@@ -27,6 +27,7 @@ import (
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
 	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
@@ -40,33 +41,29 @@ const (
 
 var errSavedSuspendExit = errors.New("saved suspend requested")
 
-type ResumeMode string
+type ResumeMode = launch.ResumeMode
 
 const (
-	ResumeModeNo    ResumeMode = "no"
-	ResumeModeAuto  ResumeMode = "auto"
-	ResumeModeForce ResumeMode = "force"
+	ResumeModeNo    = launch.ResumeModeNo
+	ResumeModeAuto  = launch.ResumeModeAuto
+	ResumeModeForce = launch.ResumeModeForce
 )
 
-type LaunchOptions struct {
-	Resume    ResumeMode
-	SSH       bool
-	Verbosity int
-}
+type LaunchOptions = launch.Options
 
-type WaitMode string
+type WaitMode = launch.WaitMode
 
 const (
-	WaitAuto WaitMode = "auto"
-	WaitSSH  WaitMode = "ssh"
-	WaitVM   WaitMode = "vm"
+	WaitAuto = launch.WaitAuto
+	WaitSSH  = launch.WaitSSH
+	WaitVM   = launch.WaitVM
 )
 
-type LaunchSpec struct {
-	Manifest      *manifest.Manifest
-	RemoteCommand []string
-	Options       LaunchOptions
-}
+type LaunchSpec = launch.Spec
+type Plan = launch.Plan
+type RuntimePaths = launch.RuntimePaths
+type suspendState = launch.SuspendState
+type notificationSink = launch.NotificationSink
 
 type Config struct {
 	Locker              locker
@@ -88,22 +85,6 @@ type Config struct {
 	Signals             <-chan os.Signal
 	PIDSignaler         pidSignaler
 	Notifier            notificationSink
-}
-
-type Plan struct {
-	Manifest                    *manifest.Manifest
-	RemoteCommand               []string
-	Options                     LaunchOptions
-	ResumeState                 *suspendState
-	Notifier                    notificationSink
-	Paths                       RuntimePaths
-	VirtioFSSocketPaths         []string
-	ExternalVirtioFSSocketPaths []string
-	CleanupFiles                []string
-	Volumes                     []manifest.Volume
-	VolumeImagePaths            []string
-	CID                         int
-	QEMUCommand                 *exec.Cmd
 }
 
 type ProcessSet struct {
@@ -201,23 +182,6 @@ func (p *ProcessSet) StartFeatures(ctx context.Context, runtime optionalFeatureR
 
 func (p *ProcessSet) Close(delay time.Duration) error {
 	return errors.Join(p.features.Stop(), p.group.StopAll(delay))
-}
-
-func (p *Plan) RuntimeSocketCleanupFiles() []string {
-	paths := make([]string, 0, 4+len(p.CleanupFiles))
-	if p.Paths.QMPSocket != "" {
-		paths = append(paths, p.Paths.QMPSocket)
-	}
-	if p.Paths.GuestAgentSocket != "" {
-		paths = append(paths, p.Paths.GuestAgentSocket)
-	}
-	if p.Paths.SSHReadySocket != "" {
-		paths = append(paths, p.Paths.SSHReadySocket)
-	}
-	if p.Paths.ControlSocket != "" {
-		paths = append(paths, p.Paths.ControlSocket)
-	}
-	return append(paths, p.CleanupFiles...)
 }
 
 type manager struct {
