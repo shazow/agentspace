@@ -67,9 +67,9 @@ Acceptance criteria:
 - [x] Started the post-mortem corrective phase by extracting a resolved
   launch plan and lifecycle coordinator inside `manager` before any subpackage
   split.
-- [x] Introduced `Launcher`, `LaunchSpec`, `Plan`, and `ProcessSet` as real
-  manager package types while preserving the existing package-level launch
-  entrypoints.
+- [x] Introduced `Launcher`, `DefaultConfig`, `LaunchSpec`, `Plan`, and
+  `ProcessSet` as real manager package types while preserving the existing
+  package-level launch entrypoints.
 
 ## Landed Control Flow
 

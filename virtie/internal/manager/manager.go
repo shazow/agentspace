@@ -60,6 +60,28 @@ type LaunchSpec struct {
 	Options       LaunchOptions
 }
 
+type Config struct {
+	Locker              locker
+	VSockCIDChecker     vsockCIDChecker
+	Runner              runner
+	SocketWaiter        socketWaiter
+	QMPDialer           qmpDialer
+	GuestAgentDialer    guestAgentDialer
+	SSHReadyDialer      sshReadyDialer
+	Logger              *slog.Logger
+	LogWriter           io.Writer
+	SSHRetryDelay       time.Duration
+	SSHReadyTimeout     time.Duration
+	ShutdownDelay       time.Duration
+	QMPRetryDelay       time.Duration
+	QMPConnectTimeout   time.Duration
+	QMPQuitTimeout      time.Duration
+	QMPMigrationTimeout time.Duration
+	Signals             <-chan os.Signal
+	PIDSignaler         pidSignaler
+	Notifier            notificationSink
+}
+
 type Plan struct {
 	Manifest                    *manifest.Manifest
 	RemoteCommand               []string
@@ -86,8 +108,33 @@ type Launcher struct {
 	manager *manager
 }
 
-func NewLauncher() *Launcher {
-	return &Launcher{manager: newManager()}
+func DefaultConfig() Config {
+	return Config{
+		Locker:              &fileLocker{},
+		VSockCIDChecker:     newHostVSockCIDChecker(),
+		Runner:              &executor.Runner{},
+		SocketWaiter:        &pollingSocketWaiter{},
+		QMPDialer:           &socketMonitorDialer{},
+		GuestAgentDialer:    &socketGuestAgentDialer{},
+		SSHReadyDialer:      &unixSSHReadyDialer{},
+		Logger:              logger,
+		LogWriter:           os.Stderr,
+		SSHRetryDelay:       defaultSSHRetryDelay,
+		SSHReadyTimeout:     configuredSSHReadyTimeout(),
+		ShutdownDelay:       defaultShutdownDelay,
+		QMPRetryDelay:       defaultQMPRetryDelay,
+		QMPConnectTimeout:   defaultQMPConnectTimeout,
+		QMPQuitTimeout:      defaultQMPQuitTimeout,
+		QMPMigrationTimeout: defaultQMPMigrationTimeout,
+	}
+}
+
+func NewLauncher(configs ...Config) *Launcher {
+	config := DefaultConfig()
+	if len(configs) > 0 {
+		config = mergeLauncherConfig(config, configs[0])
+	}
+	return &Launcher{manager: newManagerFromConfig(config)}
 }
 
 func (l *Launcher) Plan(ctx context.Context, spec LaunchSpec) (*Plan, error) {
@@ -181,25 +228,93 @@ type manager struct {
 }
 
 func newManager() *manager {
-	logWriter := io.Writer(os.Stderr)
+	return newManagerFromConfig(DefaultConfig())
+}
+
+func newManagerFromConfig(config Config) *manager {
+	config = mergeLauncherConfig(DefaultConfig(), config)
 	return &manager{
-		locker:              &fileLocker{},
-		vsockCIDChecker:     newHostVSockCIDChecker(),
-		runner:              &executor.Runner{},
-		socketWaiter:        &pollingSocketWaiter{},
-		qmpDialer:           &socketMonitorDialer{},
-		guestAgentDialer:    &socketGuestAgentDialer{},
-		sshReadyDialer:      &unixSSHReadyDialer{},
-		logger:              logger,
-		logWriter:           logWriter,
-		sshRetryDelay:       defaultSSHRetryDelay,
-		sshReadyTimeout:     configuredSSHReadyTimeout(),
-		shutdownDelay:       defaultShutdownDelay,
-		qmpRetryDelay:       defaultQMPRetryDelay,
-		qmpConnectTimeout:   defaultQMPConnectTimeout,
-		qmpQuitTimeout:      defaultQMPQuitTimeout,
-		qmpMigrationTimeout: defaultQMPMigrationTimeout,
+		locker:              config.Locker,
+		vsockCIDChecker:     config.VSockCIDChecker,
+		runner:              config.Runner,
+		socketWaiter:        config.SocketWaiter,
+		qmpDialer:           config.QMPDialer,
+		guestAgentDialer:    config.GuestAgentDialer,
+		sshReadyDialer:      config.SSHReadyDialer,
+		logger:              config.Logger,
+		logWriter:           config.LogWriter,
+		sshRetryDelay:       config.SSHRetryDelay,
+		sshReadyTimeout:     config.SSHReadyTimeout,
+		shutdownDelay:       config.ShutdownDelay,
+		qmpRetryDelay:       config.QMPRetryDelay,
+		qmpConnectTimeout:   config.QMPConnectTimeout,
+		qmpQuitTimeout:      config.QMPQuitTimeout,
+		qmpMigrationTimeout: config.QMPMigrationTimeout,
+		signals:             config.Signals,
+		pidSignaler:         config.PIDSignaler,
+		notifier:            config.Notifier,
 	}
+}
+
+func mergeLauncherConfig(base Config, override Config) Config {
+	if override.Locker != nil {
+		base.Locker = override.Locker
+	}
+	if override.VSockCIDChecker != nil {
+		base.VSockCIDChecker = override.VSockCIDChecker
+	}
+	if override.Runner != nil {
+		base.Runner = override.Runner
+	}
+	if override.SocketWaiter != nil {
+		base.SocketWaiter = override.SocketWaiter
+	}
+	if override.QMPDialer != nil {
+		base.QMPDialer = override.QMPDialer
+	}
+	if override.GuestAgentDialer != nil {
+		base.GuestAgentDialer = override.GuestAgentDialer
+	}
+	if override.SSHReadyDialer != nil {
+		base.SSHReadyDialer = override.SSHReadyDialer
+	}
+	if override.Logger != nil {
+		base.Logger = override.Logger
+	}
+	if override.LogWriter != nil {
+		base.LogWriter = override.LogWriter
+	}
+	if override.SSHRetryDelay != 0 {
+		base.SSHRetryDelay = override.SSHRetryDelay
+	}
+	if override.SSHReadyTimeout != 0 {
+		base.SSHReadyTimeout = override.SSHReadyTimeout
+	}
+	if override.ShutdownDelay != 0 {
+		base.ShutdownDelay = override.ShutdownDelay
+	}
+	if override.QMPRetryDelay != 0 {
+		base.QMPRetryDelay = override.QMPRetryDelay
+	}
+	if override.QMPConnectTimeout != 0 {
+		base.QMPConnectTimeout = override.QMPConnectTimeout
+	}
+	if override.QMPQuitTimeout != 0 {
+		base.QMPQuitTimeout = override.QMPQuitTimeout
+	}
+	if override.QMPMigrationTimeout != 0 {
+		base.QMPMigrationTimeout = override.QMPMigrationTimeout
+	}
+	if override.Signals != nil {
+		base.Signals = override.Signals
+	}
+	if override.PIDSignaler != nil {
+		base.PIDSignaler = override.PIDSignaler
+	}
+	if override.Notifier != nil {
+		base.Notifier = override.Notifier
+	}
+	return base
 }
 
 // Launch runs the supported virtie sandbox session.
