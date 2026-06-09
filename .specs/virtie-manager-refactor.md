@@ -151,6 +151,9 @@ Acceptance criteria:
   manager supplying lifecycle-specific timeouts and stage wrapping.
 - [x] Move QMP dial retry mechanics into `virtie/internal/qmpclient`, with
   manager supplying startup exit checks, timeouts, and stage wrapping.
+- [x] Move QGA dial retry and ping-readiness mechanics into
+  `virtie/internal/qga`, with manager supplying startup exit checks,
+  timeouts, and stage wrapping.
 - [x] Move QMP restore sequencing into `virtie/internal/qmpclient`, with
   manager retaining restore notifications and stage wrapping.
 - [x] Move QMP suspend save sequencing into `virtie/internal/qmpclient`, with
@@ -561,8 +564,8 @@ implementation packages should avoid importing the facade package.
   dial retry mechanics, migration polling, restore sequencing, serialization
   adapter, suspend save sequencing, and role interfaces used by runtime
   capabilities and add-on packages.
-- `virtie/internal/qga` (landed): guest agent dial/client implementation and low-level
-  QGA protocol helpers.
+- `virtie/internal/qga` (landed): guest agent dial/client implementation,
+  dial retry and ping-readiness mechanics, and low-level QGA protocol helpers.
 - `virtie/internal/sshtools` (partial): SSH command construction, failure
   classification, retry-output buffering, autoprovisioned key storage, and
   retry logging have landed. Manager still owns the foreground SSH session
