@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -41,6 +42,54 @@ func TestRuntimeStatusAndBalloonUseOwnedQMP(t *testing.T) {
 	}
 	if got := qmp.setBalloonLogicalSizes; len(got) != 1 || got[0] != 768*testMiB {
 		t.Fatalf("expected balloon resize through qmp, got %#v", got)
+	}
+}
+
+func TestRuntimeSuspendQueuesAndWaitsForLaunchLoop(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	coordinator := newLaunchSuspendCoordinator()
+	qmp := &fakeQMPClient{status: "running"}
+	runtime := newRuntime(&manager{logger: slog.New(slog.DiscardHandler)}, cfg, RuntimePaths{
+		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
+		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
+	}, 9, newLaunchStats(time.Now()), qmp, coordinator)
+	runtime.SetReady()
+
+	done := make(chan error, 1)
+	go func() {
+		resp, err := runtime.Suspend(context.Background(), SuspendRequest{})
+		if err == nil && !resp.Saved {
+			err = errors.New("suspend response was not saved")
+		}
+		done <- err
+	}()
+
+	select {
+	case <-coordinator.Notify():
+	case err := <-done:
+		t.Fatalf("suspend returned before launch loop handled request: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("suspend request was not queued")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("suspend returned before launch loop completion: %v", err)
+	case <-time.After(testNoReturnTimeout):
+	}
+	if qmp.migrateCalls != 0 {
+		t.Fatalf("runtime suspend migrated directly over qmp, got %d calls", qmp.migrateCalls)
+	}
+
+	coordinator.Begin()
+	coordinator.Complete(errSavedSuspendExit)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("suspend: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("suspend did not return after launch loop completion")
 	}
 }
 
