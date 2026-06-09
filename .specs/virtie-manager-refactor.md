@@ -182,6 +182,9 @@ Acceptance criteria:
 - [x] Move foreground SSH session retry/autoprovision loop into
   `virtie/internal/manager/launch`, with manager supplying process runner,
   lifecycle waits, stats, and guest-key install hooks.
+- [x] Move foreground SSH-vs-headless orchestration into
+  `virtie/internal/manager/launch`, with manager still starting optional
+  feature tasks and supplying concrete wait callbacks.
 
 ## Landed Control Flow
 
@@ -538,6 +541,7 @@ implementation packages should avoid importing the facade package.
   there, along with manifest-backed SSH command and hint construction.
   Foreground process lifecycle wait mechanics have moved there as well.
   Foreground SSH session retry/autoprovision orchestration now lives there.
+  Foreground SSH-vs-headless orchestration has moved there too.
   `Launcher`, default concrete dependencies, stage wrapping, notifier
   selection, and the remaining startup sequencing still live in `manager`;
   async readiness wait mechanics now live in `launch`.
