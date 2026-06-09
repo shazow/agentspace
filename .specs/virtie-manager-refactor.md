@@ -81,6 +81,8 @@ Acceptance criteria:
 - [x] Split the typed control socket transport into
   `virtie/internal/manager/control`, with `manager` package aliases preserving
   the existing facade during the migration.
+- [x] Split the QMP protocol client into `virtie/internal/qmpclient`, with
+  `manager` package aliases preserving the current runtime interfaces.
 
 ## Landed Control Flow
 
@@ -433,7 +435,7 @@ implementation packages should avoid importing the facade package.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, and optional
   handler registration.
-- `virtie/internal/qmpclient`: QMP dial/client implementation and role
+- `virtie/internal/qmpclient` (landed): QMP dial/client implementation and role
   interfaces used by runtime capabilities and add-on packages.
 - `virtie/internal/qga`: guest agent dial/client implementation and low-level
   QGA protocol helpers.
@@ -837,7 +839,9 @@ readiness, and managed virtiofs sockets:
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
-   manager call sites to use the same interfaces through the facade.
+   manager call sites to use the same interfaces through the facade. The QMP
+   client has landed under `internal/qmpclient`; QGA remains in `manager`
+   until guest provisioning is separated from the low-level protocol client.
 4. Introduce `RuntimeCore`, `RuntimeSuspend`, `RuntimeHotplug`, and
    `RuntimeBalloon`. Move status and info onto the core runtime, move suspend,
    hotplug, and balloon onto optional capability implementations, and keep old
