@@ -76,13 +76,7 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 }
 
 func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, watchers executor.Group) error {
-	files := launchManifest.ResolvedWriteFiles()
-	writeBackFiles := make([]manifest.ResolvedWriteFile, 0, len(files))
-	for _, file := range files {
-		if file.WriteBack {
-			writeBackFiles = append(writeBackFiles, file)
-		}
-	}
+	writeBackFiles := launch.GuestWriteBackFiles(launchManifest.ResolvedWriteFiles())
 	if len(writeBackFiles) == 0 {
 		return nil
 	}
@@ -99,22 +93,16 @@ func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manif
 	}
 	defer client.Disconnect()
 
-	for _, file := range writeBackFiles {
-		data, err := m.readGuestFile(client, file.GuestPath)
-		if err != nil {
-			return &stageError{Stage: "guest file write-back", Err: err}
-		}
-		if file.Content.Kind != manifest.WriteFileContentPath {
-			return &stageError{Stage: "guest file write-back", Err: fmt.Errorf("guest file %q has no host path", file.GuestPath)}
-		}
-		hostPath, err := launch.WriteBackHostPath(file)
-		if err != nil {
-			return &stageError{Stage: "guest file write-back", Err: err}
-		}
-		if err := launch.WriteHostFileAtomic(hostPath, data); err != nil {
-			return &stageError{Stage: "guest file write-back", Err: fmt.Errorf("write host file %q from guest path %q: %w", hostPath, file.GuestPath, err)}
-		}
-		m.logger.Info("wrote guest file back to host", "guest_path", file.GuestPath, "host_path", hostPath)
+	if err := launch.WriteBackGuestFiles(ctx, writeBackFiles, launch.GuestFileWriteBacker{
+		ReadFile: func(_ context.Context, guestPath string) ([]byte, error) {
+			return m.readGuestFile(client, guestPath)
+		},
+		WriteHostFile: launch.WriteHostFileAtomic,
+		Wrote: func(guestPath string, hostPath string) {
+			m.logger.Info("wrote guest file back to host", "guest_path", guestPath, "host_path", hostPath)
+		},
+	}); err != nil {
+		return &stageError{Stage: "guest file write-back", Err: err}
 	}
 	return nil
 }

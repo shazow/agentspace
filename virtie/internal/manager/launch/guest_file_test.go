@@ -181,6 +181,103 @@ func TestWriteGuestFilesWritesAndAppliesMetadataInOrder(t *testing.T) {
 	}
 }
 
+func TestGuestWriteBackFilesFiltersEnabledFiles(t *testing.T) {
+	files := []manifest.ResolvedWriteFile{
+		{GuestPath: "/guest/a", WriteBack: true},
+		{GuestPath: "/guest/b", WriteBack: false},
+		{GuestPath: "/guest/c", WriteBack: true},
+	}
+	got := GuestWriteBackFiles(files)
+	want := []manifest.ResolvedWriteFile{files[0], files[2]}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("write-back files: got %#v want %#v", got, want)
+	}
+}
+
+func TestWriteBackGuestFilesReadsGuestAndWritesHost(t *testing.T) {
+	tmpDir := t.TempDir()
+	hostPath := filepath.Join(tmpDir, "host")
+	var events []string
+	err := WriteBackGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
+		{
+			GuestPath: "/var/lib/virtie/host",
+			Content: manifest.WriteFileContent{
+				Kind: manifest.WriteFileContentPath,
+				Path: hostPath,
+			},
+		},
+	}, GuestFileWriteBacker{
+		ReadFile: func(_ context.Context, guestPath string) ([]byte, error) {
+			events = append(events, "read:"+guestPath)
+			return []byte("guest content"), nil
+		},
+		WriteHostFile: func(path string, data []byte) error {
+			events = append(events, "write:"+path+":"+string(data))
+			return nil
+		},
+		Wrote: func(guestPath string, hostPath string) {
+			events = append(events, "wrote:"+guestPath+":"+hostPath)
+		},
+	})
+	if err != nil {
+		t.Fatalf("write back guest files: %v", err)
+	}
+	want := []string{
+		"read:/var/lib/virtie/host",
+		"write:" + hostPath + ":guest content",
+		"wrote:/var/lib/virtie/host:" + hostPath,
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events: got %#v want %#v", events, want)
+	}
+}
+
+func TestWriteBackGuestFilesRejectsFilesWithoutHostPath(t *testing.T) {
+	err := WriteBackGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
+		{
+			GuestPath: "/var/lib/virtie/text",
+			Content: manifest.WriteFileContent{
+				Kind: manifest.WriteFileContentText,
+				Text: "content",
+			},
+		},
+	}, GuestFileWriteBacker{
+		ReadFile: func(context.Context, string) ([]byte, error) {
+			return []byte("guest content"), nil
+		},
+		WriteHostFile: func(string, []byte) error {
+			t.Fatalf("host write should not run without host path")
+			return nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "has no host path") {
+		t.Fatalf("expected missing host path error, got %v", err)
+	}
+}
+
+func TestWriteBackGuestFilesWrapsHostWriteError(t *testing.T) {
+	writeErr := errors.New("disk full")
+	err := WriteBackGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
+		{
+			GuestPath: "/var/lib/virtie/host",
+			Content: manifest.WriteFileContent{
+				Kind: manifest.WriteFileContentPath,
+				Path: "/tmp/virtie-host",
+			},
+		},
+	}, GuestFileWriteBacker{
+		ReadFile: func(context.Context, string) ([]byte, error) {
+			return []byte("guest content"), nil
+		},
+		WriteHostFile: func(string, []byte) error {
+			return writeErr
+		},
+	})
+	if !errors.Is(err, writeErr) || !strings.Contains(err.Error(), "write host file") {
+		t.Fatalf("expected wrapped host write error, got %v", err)
+	}
+}
+
 func TestInstallGuestFileDirectoryNoopsForRootOrCurrentDirectory(t *testing.T) {
 	called := false
 	installer := GuestDirectoryInstaller{

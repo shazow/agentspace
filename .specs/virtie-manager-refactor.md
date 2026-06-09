@@ -214,6 +214,9 @@ Acceptance criteria:
 - [x] Move manifest-backed guest-file write orchestration into
   `virtie/internal/manager/launch`, with manager supplying QGA-backed file
   operations, logging callbacks, and stage wrapping.
+- [x] Move guest-file write-back filtering and host-write orchestration into
+  `virtie/internal/manager/launch`, with manager supplying QGA reads, host
+  write implementation, logging callbacks, and stage wrapping.
 
 ## Landed Control Flow
 
