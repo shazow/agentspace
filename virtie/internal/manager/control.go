@@ -32,17 +32,17 @@ func (m *manager) suspend(ctx context.Context, manifest *manifest.Manifest) erro
 				}
 				return nil
 			}
-			return &stageError{Stage: "qmp suspend", Err: fmt.Errorf("launch process did not save VM state")}
+			return &launch.StageError{Stage: "qmp suspend", Err: fmt.Errorf("launch process did not save VM state")}
 		}
 		if !isControlSocketUnavailable(err) {
-			return &stageError{Stage: "control suspend", Err: err}
+			return &launch.StageError{Stage: "control suspend", Err: err}
 		}
 	}
 
 	pid, err := m.launchPID(manifest)
 	if err != nil {
 		if saved, stateErr := launch.HasSavedSuspendState(manifest); stateErr != nil {
-			return &stageError{Stage: "qmp suspend", Err: stateErr}
+			return &launch.StageError{Stage: "qmp suspend", Err: stateErr}
 		} else if saved {
 			return nil
 		}
@@ -50,7 +50,7 @@ func (m *manager) suspend(ctx context.Context, manifest *manifest.Manifest) erro
 	}
 
 	if err := m.signalLaunchPID(pid, syscall.SIGTSTP); err != nil {
-		return &stageError{Stage: "launch signal", Err: err}
+		return &launch.StageError{Stage: "launch signal", Err: err}
 	}
 
 	waitCtx, cancel := context.WithTimeout(ctx, m.effectiveSuspendSignalTimeout(manifest))

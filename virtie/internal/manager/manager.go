@@ -196,18 +196,18 @@ func (m *manager) planLaunch(spec LaunchSpec) (*Plan, error) {
 	options := spec.Options
 	resumeMode, err := launch.NormalizeResumeMode(options.Resume)
 	if err != nil {
-		return nil, &stageError{Stage: "preflight", Err: err}
+		return nil, &launch.StageError{Stage: "preflight", Err: err}
 	}
 	resumeState, err := launch.ResolveResumeState(cfg, resumeMode)
 	if err != nil {
-		return nil, &stageError{Stage: "restore", Err: err}
+		return nil, &launch.StageError{Stage: "restore", Err: err}
 	}
 	notifier := launch.SelectNotifier(cfg, m.notifier, func(cfg *manifest.Manifest) launch.NotificationSink {
 		return newCommandNotifier(cfg, m.logger)
 	})
 	plan, err := launch.BuildPlan(spec, resumeState, notifier)
 	if err != nil {
-		return nil, &stageError{Stage: "preflight", Err: err}
+		return nil, &launch.StageError{Stage: "preflight", Err: err}
 	}
 	return plan, nil
 }
@@ -244,7 +244,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 		PID:         os.Getpid(),
 	})
 	if err != nil {
-		return nil, &stageError{Stage: "preflight", Err: err}
+		return nil, &launch.StageError{Stage: "preflight", Err: err}
 	}
 
 	cleanupRuntime := func() error {
@@ -258,7 +258,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 		Logger:    m.logger,
 		Cleanup:   cleanupRuntime,
 	}); err != nil {
-		return nil, &stageError{Stage: "preflight", Err: err}
+		return nil, &launch.StageError{Stage: "preflight", Err: err}
 	}
 
 	processes := newProcessSet()
@@ -406,7 +406,7 @@ func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client q
 
 func removeRestoredSuspendState(plan *Plan) error {
 	if err := launch.RemoveRestoredSuspendState(plan); err != nil {
-		return &stageError{Stage: "restore", Err: err}
+		return &launch.StageError{Stage: "restore", Err: err}
 	}
 	return nil
 }
@@ -454,7 +454,7 @@ func (m *manager) startRuns(cid int, manifest *manifest.Manifest) (executor.Grou
 		ShutdownDelay: m.shutdownDelay,
 	}, cid, manifest)
 	if err != nil {
-		return executor.Group{}, &stageError{Stage: "run startup", Err: err}
+		return executor.Group{}, &launch.StageError{Stage: "run startup", Err: err}
 	}
 	return runs, nil
 }

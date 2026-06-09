@@ -31,7 +31,7 @@ func Hotplug(ctx context.Context, manifest *manifest.Manifest, id string, option
 
 func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest, id string, options HotplugOptions) error {
 	if err := launchManifest.Validate(); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+		return &launch.StageError{Stage: "preflight", Err: err}
 	}
 	controlSocketPath, err := launchManifest.ResolvedControlSocketPath()
 	if err == nil && controlSocketPath != "" {
@@ -40,12 +40,12 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 			return nil
 		}
 		if !isControlSocketUnavailable(err) && !isControlUnsupported(err) {
-			return &stageError{Stage: "control hotplug", Err: err}
+			return &launch.StageError{Stage: "control hotplug", Err: err}
 		}
 	}
 	runtime, err := m.hotplugRuntime(ctx, launchManifest)
 	if err != nil {
-		return &stageError{Stage: "hotplug", Err: err}
+		return &launch.StageError{Stage: "hotplug", Err: err}
 	}
 	defer runtime.QMP.(managerHotplugQMP).client.Disconnect()
 	if options.Detach {

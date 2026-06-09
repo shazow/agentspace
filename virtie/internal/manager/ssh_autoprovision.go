@@ -27,7 +27,7 @@ func (m *manager) ensureSSHAutoprovisionKey(launchManifest *manifest.Manifest) (
 func (m *manager) installSSHAutoprovisionKey(ctx context.Context, launchManifest *manifest.Manifest, key launch.SSHAutoprovisionKey, watchers executor.Group) error {
 	socketPath, err := launchManifest.ResolvedGuestAgentSocketPath()
 	if err != nil {
-		return &stageError{Stage: "ssh autoprovision", Err: err}
+		return &launch.StageError{Stage: "ssh autoprovision", Err: err}
 	}
 	client, err := m.waitForGuestAgentStage(ctx, "ssh autoprovision", socketPath, watchers)
 	if err != nil {
