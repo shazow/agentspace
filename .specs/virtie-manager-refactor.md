@@ -189,6 +189,10 @@ Acceptance criteria:
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
   responsible for constructing the hotplug engine adapters and applying
   stage-specific error wrapping.
+- [x] Move runtime info response construction into
+  `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
+  responsible for collecting guest data and applying failed-precondition
+  adaptation.
 - [x] Move control-plane failed-precondition and compatibility error helpers
   into `virtie/internal/manager/control`, with manager facade aliases
   preserving migration call sites.
@@ -599,9 +603,10 @@ implementation packages should avoid importing the facade package.
   async readiness and socket wait mechanics now live in `launch`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
-  wiring, runtime state tracking, idempotent close coordination, and close
-  action ordering have landed. The launch-owned runtime, transition decisions,
-  concrete cleanup hooks, and lifecycle adapters still live in `manager`.
+  wiring, runtime state tracking, idempotent close coordination, close action
+  ordering, ready/status/suspend transition policy, and balloon/hotplug
+  control dispatch have landed. The concrete launch-owned runtime, concrete
+  cleanup hooks, and lifecycle adapters still live in `manager`.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, compatibility
   error helpers, and optional handler registration.

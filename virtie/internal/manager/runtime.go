@@ -120,11 +120,23 @@ func (r *Runtime) Status(ctx context.Context, req StatusRequest) (StatusResponse
 }
 
 func (r *Runtime) Info(ctx context.Context, req InfoRequest) (InfoResponse, error) {
-	info, err := r.manager.collectGuestInfo(ctx, r.paths.GuestAgentSocket, r.watchers)
+	resp, err := runtimepkg.Info(ctx, runtimeInfoCollector{runtime: r})
 	if err != nil {
 		return InfoResponse{}, failedPrecondition(err)
 	}
-	return InfoResponse{ProcessList: info.ProcessList}, nil
+	return resp, nil
+}
+
+type runtimeInfoCollector struct {
+	runtime *Runtime
+}
+
+func (c runtimeInfoCollector) CollectInfo(ctx context.Context) (runtimepkg.GuestInfo, error) {
+	info, err := c.runtime.manager.collectGuestInfo(ctx, c.runtime.paths.GuestAgentSocket, c.runtime.watchers)
+	if err != nil {
+		return runtimepkg.GuestInfo{}, err
+	}
+	return runtimepkg.GuestInfo{ProcessList: info.ProcessList}, nil
 }
 
 func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendResponse, error) {
