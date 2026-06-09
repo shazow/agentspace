@@ -6,7 +6,20 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
+	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
+
+type RuntimeConfig struct {
+	Manifest        *manifest.Manifest
+	Paths           launch.RuntimePaths
+	CID             int
+	Stats           *Stats
+	QMP             qmpclient.Client
+	SuspendRequests *launch.SuspendCoordinator
+	Dependencies    Dependencies
+}
 
 type Dependencies struct {
 	QMPTimeout       time.Duration

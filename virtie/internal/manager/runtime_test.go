@@ -24,10 +24,17 @@ func TestRuntimeStatusAndBalloonUseOwnedQMP(t *testing.T) {
 	stats.MarkBootStarted(time.Now())
 	stats.MarkQMPReady(time.Now())
 	qmp := (&fakeQMPClient{queryBalloonActualBytes: 640 * testMiB}).withDefaultBalloonPath("/machine/peripheral/balloon0")
-	runtime := newRuntime(cfg, RuntimePaths{
-		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
-		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 9, stats, qmp, nil, runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)})
+	runtime := newRuntime(runtimepkg.RuntimeConfig{
+		Manifest: cfg,
+		Paths: RuntimePaths{
+			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
+			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
+		},
+		CID:          9,
+		Stats:        stats,
+		QMP:          qmp,
+		Dependencies: runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
+	})
 	runtime.SetReady()
 
 	status, err := runtime.Status(context.Background(), StatusRequest{})
@@ -55,13 +62,21 @@ func TestRuntimeSuspendQueuesAndWaitsForLaunchLoop(t *testing.T) {
 	cfg := validManifest(tmpDir)
 	coordinator := launch.NewSuspendCoordinator()
 	qmp := &fakeQMPClient{status: "running"}
-	runtime := newRuntime(cfg, RuntimePaths{
-		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
-		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 9, runtimepkg.NewStats(time.Now()), qmp, coordinator, runtimepkg.Dependencies{
-		QMPTimeout:       time.Second,
-		Logger:           slog.New(slog.DiscardHandler),
-		SavedSuspendExit: isSavedSuspendExit,
+	runtime := newRuntime(runtimepkg.RuntimeConfig{
+		Manifest: cfg,
+		Paths: RuntimePaths{
+			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
+			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
+		},
+		CID:             9,
+		Stats:           runtimepkg.NewStats(time.Now()),
+		QMP:             qmp,
+		SuspendRequests: coordinator,
+		Dependencies: runtimepkg.Dependencies{
+			QMPTimeout:       time.Second,
+			Logger:           slog.New(slog.DiscardHandler),
+			SavedSuspendExit: isSavedSuspendExit,
+		},
 	})
 	runtime.SetReady()
 
@@ -106,10 +121,17 @@ func TestRuntimeStartControlServesStatus(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	controlPath := filepath.Join(tmpDir, "virtie.sock")
-	runtime := newRuntime(cfg, RuntimePaths{
-		ControlSocket: controlPath,
-		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 11, runtimepkg.NewStats(time.Now()), &fakeQMPClient{}, nil, runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)})
+	runtime := newRuntime(runtimepkg.RuntimeConfig{
+		Manifest: cfg,
+		Paths: RuntimePaths{
+			ControlSocket: controlPath,
+			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
+		},
+		CID:          11,
+		Stats:        runtimepkg.NewStats(time.Now()),
+		QMP:          &fakeQMPClient{},
+		Dependencies: runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
+	})
 	runtime.SetReady()
 	if err := runtime.StartControl(context.Background()); err != nil {
 		t.Fatalf("start control: %v", err)
@@ -133,10 +155,17 @@ func TestRuntimeWaitUsesConfiguredForegroundCallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	processes := runtimepkg.NewProcessSet()
-	runtime := newRuntime(cfg, RuntimePaths{
-		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
-		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 11, runtimepkg.NewStats(time.Now()), &fakeQMPClient{}, nil, runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)})
+	runtime := newRuntime(runtimepkg.RuntimeConfig{
+		Manifest: cfg,
+		Paths: RuntimePaths{
+			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
+			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
+		},
+		CID:          11,
+		Stats:        runtimepkg.NewStats(time.Now()),
+		QMP:          &fakeQMPClient{},
+		Dependencies: runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
+	})
 	runtime.SetProcesses(processes, time.Millisecond)
 
 	var called bool
@@ -158,22 +187,29 @@ func TestRuntimeWaitUsesConfiguredForegroundCallback(t *testing.T) {
 func TestRuntimeInfoUsesConfiguredCollector(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	runtime := newRuntime(cfg, RuntimePaths{
-		ControlSocket:    filepath.Join(tmpDir, "virtie.sock"),
-		QMPSocket:        filepath.Join(tmpDir, "qmp.sock"),
-		GuestAgentSocket: filepath.Join(tmpDir, "qga.sock"),
-		SSHReadySocket:   filepath.Join(tmpDir, "ssh-ready.sock"),
-	}, 11, runtimepkg.NewStats(time.Now()), &fakeQMPClient{}, nil, runtimepkg.Dependencies{
-		QMPTimeout: time.Second,
-		Logger:     slog.New(slog.DiscardHandler),
-		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
-			if socketPath != filepath.Join(tmpDir, "qga.sock") {
-				t.Fatalf("socket path: got %q", socketPath)
-			}
-			if watchers.Len() != 1 {
-				t.Fatalf("watchers: got %d want 1", watchers.Len())
-			}
-			return runtimepkg.GuestInfo{ProcessList: "PID COMMAND\n1 init"}, nil
+	runtime := newRuntime(runtimepkg.RuntimeConfig{
+		Manifest: cfg,
+		Paths: RuntimePaths{
+			ControlSocket:    filepath.Join(tmpDir, "virtie.sock"),
+			QMPSocket:        filepath.Join(tmpDir, "qmp.sock"),
+			GuestAgentSocket: filepath.Join(tmpDir, "qga.sock"),
+			SSHReadySocket:   filepath.Join(tmpDir, "ssh-ready.sock"),
+		},
+		CID:   11,
+		Stats: runtimepkg.NewStats(time.Now()),
+		QMP:   &fakeQMPClient{},
+		Dependencies: runtimepkg.Dependencies{
+			QMPTimeout: time.Second,
+			Logger:     slog.New(slog.DiscardHandler),
+			CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
+				if socketPath != filepath.Join(tmpDir, "qga.sock") {
+					t.Fatalf("socket path: got %q", socketPath)
+				}
+				if watchers.Len() != 1 {
+					t.Fatalf("watchers: got %d want 1", watchers.Len())
+				}
+				return runtimepkg.GuestInfo{ProcessList: "PID COMMAND\n1 init"}, nil
+			},
 		},
 	})
 	processes := executor.NewGroup()
@@ -196,10 +232,17 @@ func TestRuntimeCloseStopsProcessesAndDisconnectsQMPOnce(t *testing.T) {
 	process := (&executortest.Process{OverrideName: "qemu-system-x86_64"}).Process()
 	processes := runtimepkg.NewProcessSet()
 	processes.SetQEMU(process)
-	runtime := newRuntime(cfg, RuntimePaths{
-		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
-		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 11, runtimepkg.NewStats(time.Now()), qmp, nil, runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)})
+	runtime := newRuntime(runtimepkg.RuntimeConfig{
+		Manifest: cfg,
+		Paths: RuntimePaths{
+			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
+			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
+		},
+		CID:          11,
+		Stats:        runtimepkg.NewStats(time.Now()),
+		QMP:          qmp,
+		Dependencies: runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
+	})
 	runtime.SetProcesses(processes, time.Millisecond)
 
 	if err := runtime.Close(); err != nil {
