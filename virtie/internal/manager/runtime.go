@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os/exec"
+	"syscall"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
@@ -15,7 +17,6 @@ import (
 )
 
 type Runtime struct {
-	manager         *manager
 	manifest        *manifest.Manifest
 	plan            *Plan
 	paths           RuntimePaths
@@ -34,25 +35,53 @@ type Runtime struct {
 	closeHooks      runtimeCloseHooks
 	savedSuspend    *runtimepkg.SavedSuspendState
 	watchers        executor.Group
+	hotplugStart    runtimeHotplugStarter
+	hotplugSockets  runtimeHotplugSocketWaiter
+	hotplugGuest    runtimeHotplugGuest
 
 	state   *runtimepkg.State
 	closer  *runtimepkg.Closer
 	control *runtimepkg.ControlServer
 }
 
-func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator, qmpTimeout time.Duration, logger *slog.Logger, collectInfo func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)) *Runtime {
+type runtimeDependencies struct {
+	QMPTimeout     time.Duration
+	Logger         *slog.Logger
+	CollectInfo    func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
+	HotplugStart   runtimeHotplugStarter
+	HotplugSockets runtimeHotplugSocketWaiter
+	HotplugGuest   runtimeHotplugGuest
+}
+
+type runtimeHotplugStarter interface {
+	Start(context.Context, *exec.Cmd) (*executor.Process, error)
+	Stop(*executor.Process) error
+	SignalPIDGroup(int, syscall.Signal) error
+}
+
+type runtimeHotplugSocketWaiter interface {
+	Wait(context.Context, string, []string, *executor.Process) error
+}
+
+type runtimeHotplugGuest interface {
+	Run(context.Context, []string) error
+}
+
+func newRuntime(manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator, deps runtimeDependencies) *Runtime {
 	state := runtimepkg.NewState(RuntimeStarting)
 	return &Runtime{
-		manager:         manager,
 		manifest:        manifest,
 		paths:           paths,
 		cid:             cid,
 		stats:           stats,
 		qmp:             qmpclient.Serialized(qmp),
 		suspendRequests: suspendRequests,
-		qmpTimeout:      qmpTimeout,
-		logger:          logger,
-		collectInfo:     collectInfo,
+		qmpTimeout:      deps.QMPTimeout,
+		logger:          deps.Logger,
+		collectInfo:     deps.CollectInfo,
+		hotplugStart:    deps.HotplugStart,
+		hotplugSockets:  deps.HotplugSockets,
+		hotplugGuest:    deps.HotplugGuest,
 		savedSuspend:    runtimepkg.NewSavedSuspendState(),
 		state:           state,
 		closer:          runtimepkg.NewCloser(state),

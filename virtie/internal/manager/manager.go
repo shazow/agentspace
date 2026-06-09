@@ -368,13 +368,19 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *lau
 	if err != nil {
 		return nil, nil, err
 	}
-	runtime := newRuntime(m, plan.Manifest, plan.Paths, plan.CID, stats, started.QMP, lifecycle.Suspend(), m.effectiveQMPCommandTimeout(), m.logger, func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
-		info, err := m.collectGuestInfo(ctx, socketPath, watchers)
-		if err != nil {
-			return runtimepkg.GuestInfo{}, err
-		}
-		return runtimepkg.GuestInfo{ProcessList: info.ProcessList}, nil
-	})
+	runtimeDeps := runtimeDependencies{
+		QMPTimeout: m.effectiveQMPCommandTimeout(),
+		Logger:     m.logger,
+		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
+			info, err := m.collectGuestInfo(ctx, socketPath, watchers)
+			if err != nil {
+				return runtimepkg.GuestInfo{}, err
+			}
+			return runtimepkg.GuestInfo{ProcessList: info.ProcessList}, nil
+		},
+	}
+	configureRuntimeHotplugDependencies(&runtimeDeps, m, plan.Manifest)
+	runtime := newRuntime(plan.Manifest, plan.Paths, plan.CID, stats, started.QMP, lifecycle.Suspend(), runtimeDeps)
 	runtime.SetProcesses(processes, m.shutdownDelay)
 	client := runtime.QMP()
 	launch.FinalizeRuntimeStartup(launch.RuntimeStartupFinalize{
