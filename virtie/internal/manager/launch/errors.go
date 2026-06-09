@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 type CommandError struct {
@@ -68,4 +70,15 @@ func WrapCommandError(stage string, command string, err error) error {
 		ExitCode: -1,
 		Err:      err,
 	}
+}
+
+func FirstUnexpectedExit(stage string, watchers executor.Group) error {
+	process, err, ok := watchers.FirstExit()
+	if !ok {
+		return nil
+	}
+	if err == nil {
+		return WrapStage(stage, fmt.Errorf("%s exited unexpectedly", process.Name()))
+	}
+	return WrapCommandError(stage, process.Name(), err)
 }

@@ -3,6 +3,9 @@ package launch
 import (
 	"errors"
 	"testing"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 )
 
 func TestWrapStagePreservesStageAndCause(t *testing.T) {
@@ -56,5 +59,53 @@ func TestWrapCommandError(t *testing.T) {
 func TestWrapCommandErrorNoopsWithoutError(t *testing.T) {
 	if err := WrapCommandError("active session", "ssh", nil); err != nil {
 		t.Fatalf("error: got %v want nil", err)
+	}
+}
+
+func TestFirstUnexpectedExitNoopsWithoutExitedProcess(t *testing.T) {
+	group := executor.NewGroup((&executortest.Process{OverrideName: "qemu"}).Process())
+	if err := FirstUnexpectedExit("vm startup", group); err != nil {
+		t.Fatalf("unexpected exit: %v", err)
+	}
+}
+
+func TestFirstUnexpectedExitWrapsCleanExit(t *testing.T) {
+	process := &executortest.Process{OverrideName: "qemu"}
+	wrapped := process.Process()
+	process.Complete(nil)
+	<-wrapped.Done()
+	group := executor.NewGroup(wrapped)
+
+	err := FirstUnexpectedExit("vm startup", group)
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) {
+		t.Fatalf("error type: got %T", err)
+	}
+	if stageErr.Stage != "vm startup" {
+		t.Fatalf("stage: got %q want vm startup", stageErr.Stage)
+	}
+	if got, want := err.Error(), "vm startup: qemu exited unexpectedly"; got != want {
+		t.Fatalf("error string: got %q want %q", got, want)
+	}
+}
+
+func TestFirstUnexpectedExitWrapsProcessError(t *testing.T) {
+	waitErr := errors.New("wait failed")
+	process := &executortest.Process{OverrideName: "virtiofsd"}
+	wrapped := process.Process()
+	process.Complete(waitErr)
+	<-wrapped.Done()
+	group := executor.NewGroup(wrapped)
+
+	err := FirstUnexpectedExit("virtiofs startup", group)
+	if !errors.Is(err, waitErr) {
+		t.Fatalf("error cause: got %v want %v", err, waitErr)
+	}
+	var commandErr *CommandError
+	if !errors.As(err, &commandErr) {
+		t.Fatalf("error type: got %T", err)
+	}
+	if commandErr.Stage != "virtiofs startup" || commandErr.Command != "virtiofsd" {
+		t.Fatalf("command error: %#v", commandErr)
 	}
 }
