@@ -12,7 +12,6 @@ package manager
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -719,17 +718,7 @@ func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manif
 }
 
 func firstUnexpectedExit(stage string, watchers executor.Group) error {
-	process, err, ok := watchers.FirstExit()
-	if !ok {
-		return nil
-	}
-	if err == nil {
-		return &stageError{
-			Stage: stage,
-			Err:   fmt.Errorf("%s exited unexpectedly", process.Name()),
-		}
-	}
-	return wrapCommandError(stage, process.Name(), err)
+	return launch.FirstUnexpectedExit(stage, watchers)
 }
 
 func joinDeferredError(target *error, fn func() error) {
