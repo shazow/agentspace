@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 )
 
 type commandError struct {
@@ -24,18 +26,7 @@ func (e *commandError) Unwrap() error {
 	return e.Err
 }
 
-type stageError struct {
-	Stage string
-	Err   error
-}
-
-func (e *stageError) Error() string {
-	return fmt.Sprintf("%s: %v", e.Stage, e.Err)
-}
-
-func (e *stageError) Unwrap() error {
-	return e.Err
-}
+type stageError = launch.StageError
 
 // ExitCode maps launcher failures onto process exit codes.
 func ExitCode(err error) int {

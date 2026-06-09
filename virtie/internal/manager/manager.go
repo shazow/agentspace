@@ -336,9 +336,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 			}))
 		},
 		StartControl: runtime.StartControl,
-		WrapControl: func(err error) error {
-			return &stageError{Stage: "control startup", Err: err}
-		},
+		WrapControl:  launch.WrapFixedStage("control startup"),
 		HandleSuspend: func(ctx context.Context, coordinator *launchSuspendCoordinator) error {
 			return handleSuspendRequest(ctx, coordinator, suspendHandler)
 		},
@@ -371,9 +369,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *lau
 		StartRuns:      m.startRuns,
 		WaitForSockets: m.waitForSockets,
 		WaitForQMP:     m.waitForQMP,
-		WrapVMStartup: func(err error) error {
-			return &stageError{Stage: "vm startup", Err: err}
-		},
+		WrapVMStartup:  launch.WrapFixedStage("vm startup"),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -413,9 +409,7 @@ func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client q
 				PollDelay:        defaultMigrationPollDelay,
 			})
 		},
-		Wrap: func(err error) error {
-			return &stageError{Stage: "restore", Err: err}
-		},
+		Wrap: launch.WrapFixedStage("restore"),
 	})
 }
 
@@ -519,12 +513,8 @@ func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers ex
 		Check: func(stage string) error {
 			return firstUnexpectedExit(stage, watchers)
 		},
-		Result: func(stage string, err error) error {
-			return &stageError{Stage: stage, Err: err}
-		},
-		Cancel: func(stage string, err error) error {
-			return &stageError{Stage: stage, Err: err}
-		},
+		Result: launch.WrapStage,
+		Cancel: launch.WrapStage,
 	})
 }
 
@@ -537,12 +527,8 @@ func (m *manager) waitForLaunchSockets(ctx context.Context, stage string, socket
 		Check: func(stage string) error {
 			return firstUnexpectedExit(stage, watchers)
 		},
-		Result: func(stage string, err error) error {
-			return &stageError{Stage: stage, Err: err}
-		},
-		Cancel: func(stage string, err error) error {
-			return &stageError{Stage: stage, Err: err}
-		},
+		Result: launch.WrapStage,
+		Cancel: launch.WrapStage,
 	})
 }
 
@@ -664,9 +650,7 @@ func (m *manager) runSSHSession(
 				AuthorizedKey: key.AuthorizedKey,
 			}, watchers)
 		},
-		WrapStage: func(stage string, err error) error {
-			return &stageError{Stage: stage, Err: err}
-		},
+		WrapStage: launch.WrapStage,
 	})
 }
 
@@ -706,9 +690,7 @@ func (m *manager) waitForProcess(ctx context.Context, stage string, process *exe
 		Check: func(stage string) error {
 			return firstUnexpectedExit(stage, watchers)
 		},
-		Cancel: func(stage string, err error) error {
-			return &stageError{Stage: stage, Err: err}
-		},
+		Cancel: launch.WrapStage,
 		ProcessError: func(stage string, name string, err error) error {
 			return wrapCommandError(stage, name, err)
 		},
@@ -732,9 +714,7 @@ func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manif
 				PollDelay:        defaultMigrationPollDelay,
 			})
 		},
-		Wrap: func(err error) error {
-			return &stageError{Stage: "qmp suspend", Err: err}
-		},
+		Wrap: launch.WrapFixedStage("qmp suspend"),
 	})
 }
 

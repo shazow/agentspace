@@ -317,6 +317,9 @@ Acceptance criteria:
 - [x] Move notifier selection policy into
   `virtie/internal/manager/launch`, leaving manager responsible for
   constructing the concrete manifest-backed command notifier.
+- [x] Move generic launch stage-error construction into
+  `virtie/internal/manager/launch`, leaving manager responsible for
+  command-specific and remaining stage-specific wrapping.
 
 ## Landed Control Flow
 
@@ -682,9 +685,10 @@ implementation packages should avoid importing the facade package.
   Guest-file directory install argument policy has moved there too.
   Runtime restore and suspend-save orchestration, plus runtime resume/suspend
   notification payloads, also live there now.
-  `Launcher`, default concrete dependencies, and stage wrapping still live in
-  `manager`; notifier selection, async readiness, socket wait mechanics, and
-  the major startup sequencing phases now live in `launch`.
+  `Launcher`, default concrete dependencies, and some stage-specific wrapping
+  still live in `manager`; generic stage-error construction, notifier
+  selection, async readiness, socket wait mechanics, and the major startup
+  sequencing phases now live in `launch`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, close action
@@ -1121,8 +1125,9 @@ readiness, and managed virtiofs sockets:
    queued-suspend handling, VSock CID selection, locked plan finalization, and
    pre-runtime launch lock/PID setup have moved there too. Runtime process/QMP
    startup sequencing, runtime activation sequencing, and restored-state
-   cleanup have moved there too. Notifier selection policy has moved there as
-   well. Manager still owns default concrete dependencies and stage wrapping.
+   cleanup have moved there too. Notifier selection policy and generic
+   stage-error construction have moved there as well. Manager still owns
+   default concrete dependencies and some stage-specific wrapping.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
