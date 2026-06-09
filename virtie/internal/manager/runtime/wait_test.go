@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
 
 func TestWaitForegroundMarksSavedSuspend(t *testing.T) {
@@ -35,5 +37,36 @@ func TestWaitForegroundLeavesStateUnmarkedForOtherErrors(t *testing.T) {
 	}
 	if state.Saved() {
 		t.Fatal("saved suspend state was marked for unrelated error")
+	}
+}
+
+func TestControlWaitForegroundMapsMissingWaitToFailedPrecondition(t *testing.T) {
+	err := ControlWaitForeground(context.Background(), ForegroundWaitOperation{})
+	var rpcErr *control.RPCError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("error type: got %T", err)
+	}
+	if rpcErr.Code != control.ErrFailedPrecondition {
+		t.Fatalf("code: got %s want %s", rpcErr.Code, control.ErrFailedPrecondition)
+	}
+}
+
+func TestControlWaitForegroundRunsConfiguredWait(t *testing.T) {
+	var called bool
+	err := ControlWaitForeground(context.Background(), ForegroundWaitOperation{
+		SavedSuspend: NewSavedSuspendState(),
+		Wait: func(context.Context) error {
+			called = true
+			return nil
+		},
+		SavedSuspendExit: func(error) bool {
+			return false
+		},
+	})
+	if err != nil {
+		t.Fatalf("control wait foreground: %v", err)
+	}
+	if !called {
+		t.Fatal("wait callback was not called")
 	}
 }

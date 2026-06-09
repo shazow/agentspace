@@ -134,13 +134,17 @@ func (r *Runtime) Close() error {
 
 func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
 	if r.plan == nil || r.processes == nil || r.waitForeground == nil {
-		return failedPrecondition(fmt.Errorf("runtime foreground wait is not configured"))
+		return runtimepkg.ControlWaitForeground(ctx, runtimepkg.ForegroundWaitOperation{})
 	}
 	plan := launch.PlanForWaitMode(r.plan, mode)
-	return runtimepkg.WaitForeground(ctx, r.savedSuspend, func(ctx context.Context) error {
-		return r.waitForeground(ctx, plan)
-	}, func(err error) bool {
-		return errors.Is(err, errSavedSuspendExit)
+	return runtimepkg.ControlWaitForeground(ctx, runtimepkg.ForegroundWaitOperation{
+		SavedSuspend: r.savedSuspend,
+		Wait: func(ctx context.Context) error {
+			return r.waitForeground(ctx, plan)
+		},
+		SavedSuspendExit: func(err error) bool {
+			return errors.Is(err, errSavedSuspendExit)
+		},
 	})
 }
 
