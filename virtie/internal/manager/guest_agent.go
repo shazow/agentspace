@@ -85,8 +85,6 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 	return nil
 }
 
-const guestFileReadChunkSize = 1024 * 1024
-
 func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, watchers executor.Group) error {
 	files := launchManifest.ResolvedWriteFiles()
 	writeBackFiles := make([]manifest.ResolvedWriteFile, 0, len(files))
@@ -191,58 +189,11 @@ func writeBackHostPath(file manifest.ResolvedWriteFile) (string, error) {
 }
 
 func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, payloadBase64 string) error {
-	timeout := m.effectiveQMPCommandTimeout()
-	handle, err := client.OpenFile(timeout, guestPath)
-	if err != nil {
-		return err
-	}
-
-	writeErr := client.WriteFile(timeout, handle, payloadBase64)
-	closeErr := client.CloseFile(timeout, handle)
-	if writeErr != nil {
-		if closeErr != nil {
-			return errors.Join(writeErr, closeErr)
-		}
-		return writeErr
-	}
-	return closeErr
+	return qga.WriteFile(client, m.effectiveQMPCommandTimeout(), guestPath, payloadBase64)
 }
 
 func (m *manager) readGuestFile(client guestAgentClient, guestPath string) ([]byte, error) {
-	timeout := m.effectiveQMPCommandTimeout()
-	handle, err := client.OpenFileRead(timeout, guestPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var result []byte
-	for {
-		payloadBase64, eof, readErr := client.ReadFile(timeout, handle, guestFileReadChunkSize)
-		if readErr == nil && payloadBase64 != "" {
-			chunk, decodeErr := base64.StdEncoding.DecodeString(payloadBase64)
-			if decodeErr != nil {
-				readErr = fmt.Errorf("decode guest file %q chunk: %w", guestPath, decodeErr)
-			} else {
-				result = append(result, chunk...)
-			}
-		}
-		if readErr != nil {
-			closeErr := client.CloseFile(timeout, handle)
-			if closeErr != nil {
-				return nil, errors.Join(readErr, closeErr)
-			}
-			return nil, readErr
-		}
-		if eof {
-			break
-		}
-	}
-
-	closeErr := client.CloseFile(timeout, handle)
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	return result, nil
+	return qga.ReadFile(client, m.effectiveQMPCommandTimeout(), guestPath, qga.DefaultFileReadChunkSize)
 }
 
 func writeHostFileAtomic(hostPath string, data []byte) error {
