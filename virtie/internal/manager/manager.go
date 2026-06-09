@@ -599,32 +599,20 @@ func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers ex
 }
 
 func (m *manager) waitForAsyncStage(ctx context.Context, stage string, watchers executor.Group, wait func(context.Context) error) error {
-	waitCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- wait(waitCtx)
-	}()
-
-	ticker := time.NewTicker(defaultSocketPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case err := <-errCh:
-			if err != nil {
-				return &stageError{Stage: stage, Err: err}
-			}
-			return nil
-		case <-ticker.C:
-			if err := firstUnexpectedExit(stage, watchers); err != nil {
-				return err
-			}
-		case <-ctx.Done():
-			return &stageError{Stage: stage, Err: ctx.Err()}
-		}
-	}
+	return launch.WaitForAsync(ctx, launch.AsyncWait{
+		Stage:     stage,
+		PollDelay: defaultSocketPollInterval,
+		Wait:      wait,
+		Check: func(stage string) error {
+			return firstUnexpectedExit(stage, watchers)
+		},
+		Result: func(stage string, err error) error {
+			return &stageError{Stage: stage, Err: err}
+		},
+		Cancel: func(stage string, err error) error {
+			return &stageError{Stage: stage, Err: err}
+		},
+	})
 }
 
 func (m *manager) connectQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpClient, error) {
