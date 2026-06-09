@@ -12,6 +12,26 @@ type MigrationWait struct {
 	PollDelay      time.Duration
 }
 
+type RestoreWait struct {
+	MigrationTimeout time.Duration
+	CommandTimeout   time.Duration
+	PollDelay        time.Duration
+}
+
+func RestoreFromFile(ctx context.Context, client Client, path string, wait RestoreWait) error {
+	if err := client.MigrateIncoming(wait.MigrationTimeout, path); err != nil {
+		return err
+	}
+	if err := WaitForMigration(ctx, client, MigrationWait{
+		Timeout:        wait.MigrationTimeout,
+		CommandTimeout: wait.CommandTimeout,
+		PollDelay:      wait.PollDelay,
+	}); err != nil {
+		return err
+	}
+	return client.Cont(wait.CommandTimeout)
+}
+
 func WaitForMigration(ctx context.Context, client Client, wait MigrationWait) error {
 	if wait.PollDelay <= 0 {
 		wait.PollDelay = time.Second
