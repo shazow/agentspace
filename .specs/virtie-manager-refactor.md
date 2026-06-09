@@ -129,6 +129,8 @@ Acceptance criteria:
 - [x] Move async startup/readiness waiting into
   `virtie/internal/manager/launch`, with manager supplying unexpected-exit and
   stage-wrapping callbacks.
+- [x] Move QMP migration polling into `virtie/internal/qmpclient`, with
+  manager supplying lifecycle-specific timeouts and stage wrapping.
 - [x] Move runtime control-server start/close wiring into
   `virtie/internal/manager/runtime`, with the concrete manager `Runtime`
   passing itself as the typed control handler.
@@ -503,8 +505,8 @@ implementation packages should avoid importing the facade package.
   typed client, server, router, wire envelopes, error codes, and optional
   handler registration.
 - `virtie/internal/qmpclient` (landed): QMP dial/client implementation,
-  serialization adapter, and role interfaces used by runtime capabilities and
-  add-on packages.
+  migration polling, serialization adapter, and role interfaces used by
+  runtime capabilities and add-on packages.
 - `virtie/internal/qga` (landed): guest agent dial/client implementation and low-level
   QGA protocol helpers.
 
@@ -920,8 +922,9 @@ readiness, and managed virtiofs sockets:
    `manager` facade.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
    manager call sites to use the same interfaces through the facade. QMP has
-   landed under `internal/qmpclient`; QGA has landed under `internal/qga` with
-   guest provisioning orchestration still in `manager`.
+   landed under `internal/qmpclient`, including migration polling; QGA has
+   landed under `internal/qga` with guest provisioning orchestration still in
+   `manager`.
 4. Introduce `RuntimeCore`, `RuntimeSuspend`, `RuntimeHotplug`, and
    `RuntimeBalloon`. Move status and info onto the core runtime, move suspend,
    hotplug, and balloon onto optional capability implementations, and keep old

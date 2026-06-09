@@ -26,6 +26,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
 
@@ -953,39 +954,11 @@ func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manif
 }
 
 func (m *manager) waitForMigration(ctx context.Context, client qmpClient) error {
-	timeout := m.effectiveQMPMigrationTimeout()
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(defaultMigrationPollDelay)
-	defer ticker.Stop()
-
-	var lastStatus string
-	for {
-		status, err := client.QueryMigrate(m.effectiveQMPCommandTimeout())
-		if err != nil {
-			return err
-		}
-		if status != "" {
-			lastStatus = status
-		}
-		switch status {
-		case "completed":
-			return nil
-		case "failed", "cancelled":
-			return fmt.Errorf("migration %s", status)
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			if lastStatus == "" {
-				lastStatus = "unknown"
-			}
-			return fmt.Errorf("migration did not complete within %s; last status %q", timeout, lastStatus)
-		case <-ticker.C:
-		}
-	}
+	return qmpclient.WaitForMigration(ctx, client, qmpclient.MigrationWait{
+		Timeout:        m.effectiveQMPMigrationTimeout(),
+		CommandTimeout: m.effectiveQMPCommandTimeout(),
+		PollDelay:      defaultMigrationPollDelay,
+	})
 }
 
 func firstUnexpectedExit(stage string, watchers executor.Group) error {
