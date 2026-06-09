@@ -218,13 +218,6 @@ func (m *manager) planLaunch(spec LaunchSpec) (*Plan, error) {
 	return plan, nil
 }
 
-func (m *manager) finalizeLockedLaunchPlan(plan *Plan) error {
-	if err := launch.FinalizeLockedPlan(plan, m.vsockCIDChecker, buildQEMUCommand); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	return nil
-}
-
 func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
 	runtime, err := m.startWithPlan(ctx, plan)
 	if err != nil {
@@ -264,19 +257,14 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 		return runtimeLock.Cleanup()
 	}
 
-	if err := m.finalizeLockedLaunchPlan(plan); err != nil {
-		_ = cleanupRuntime()
-		return nil, err
-	}
-	if plan.ResumeState != nil {
-		m.logger.Info("restoring saved vsock cid", "cid", plan.CID)
-	} else {
-		m.logger.Info("allocated vsock cid", "cid", plan.CID)
-	}
-
-	if err := m.prepareLaunchFilesystem(plan); err != nil {
-		_ = cleanupRuntime()
-		return nil, err
+	if err := launch.SetupLockedPlan(launch.LockedPlanSetup{
+		Plan:      plan,
+		Checker:   m.vsockCIDChecker,
+		BuildQEMU: buildQEMUCommand,
+		Logger:    m.logger,
+		Cleanup:   cleanupRuntime,
+	}); err != nil {
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
 
 	processes := newProcessSet()
@@ -361,13 +349,6 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	}
 
 	return runtime, nil
-}
-
-func (m *manager) prepareLaunchFilesystem(plan *Plan) error {
-	if err := launch.PrepareFilesystem(plan, m.logger); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	return nil
 }
 
 func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *launchStats, lifecycle *launchLifecycle, processes *ProcessSet) (*Runtime, qmpClient, error) {
