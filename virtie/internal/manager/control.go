@@ -79,7 +79,7 @@ func (m *manager) signalLaunchPID(pid int, sig os.Signal) error {
 	return nil
 }
 
-func (m *manager) effectivePIDSignaler() pidSignaler {
+func (m *manager) effectivePIDSignaler() launch.PIDSignaler {
 	if m.pidSignaler != nil {
 		return m.pidSignaler
 	}

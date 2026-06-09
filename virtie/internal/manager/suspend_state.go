@@ -9,8 +9,6 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 )
 
-type pidSignaler = launch.PIDSignaler
-
 var _ launch.PIDSignaler = syscallPIDSignaler{}
 
 type syscallPIDSignaler struct{}

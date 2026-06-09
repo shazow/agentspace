@@ -134,6 +134,8 @@ Acceptance criteria:
 - [x] Remove manager-local launch dependency interface aliases, so manager
   concrete dependency fields and adapters use the launch package interfaces
   directly.
+- [x] Remove manager-local notifier and PID signaler aliases, so remaining
+  internal call sites use launch package interfaces directly.
 - [x] Move startup queued-suspend handling into
   `virtie/internal/manager/launch`, with manager supplying the concrete
   suspend handler callback.
@@ -714,7 +716,8 @@ implementation packages should avoid importing the facade package.
   local migration aliases. Foreground wait-mode selection, launcher
   configuration, launch dependency interface usage, foreground lifecycle event
   waiting, startup signal-channel construction/cleanup, lifecycle type usage,
-  and startup queued-suspend handling have also moved there.
+  notifier/PID signaler interface usage, and startup queued-suspend handling
+  have also moved there.
   Plan-owned filesystem
   preflight, VSock CID selection, locked plan finalization, pre-runtime launch
   lock/PID setup, restored-state cleanup, and QEMU process startup have moved
