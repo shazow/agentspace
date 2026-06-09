@@ -47,6 +47,9 @@ type Client = control.Client
 
 var NewRouter = control.NewRouter
 var NewRuntimeRouter = control.NewRuntimeRouter
+var failedPrecondition = control.FailedPrecondition
+var isControlSocketUnavailable = control.IsSocketUnavailable
+var isControlUnsupported = control.IsUnsupported
 var Listen = control.Listen
 var Serve = control.Serve
 var ListenAndServe = control.ListenAndServe

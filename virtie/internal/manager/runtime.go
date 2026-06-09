@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"syscall"
 	"time"
 
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
@@ -179,10 +177,6 @@ func (r *Runtime) Balloon(ctx context.Context, req BalloonRequest) (BalloonRespo
 	return BalloonResponse{ActualBytes: actual, TargetBytes: req.TargetBytes}, nil
 }
 
-func failedPrecondition(err error) error {
-	return &RPCError{Code: ErrFailedPrecondition, Message: err.Error()}
-}
-
 func (r *Runtime) setState(state RuntimeState) {
 	r.state.Set(state)
 }
@@ -193,16 +187,4 @@ func (r *Runtime) currentState() RuntimeState {
 
 func runtimeStatsFromLaunchStats(stats *launchStats) RuntimeStats {
 	return runtimepkg.ControlStats(stats)
-}
-
-func isControlSocketUnavailable(err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
-}
-
-func isControlUnsupported(err error) bool {
-	var rpcErr *RPCError
-	return errors.As(err, &rpcErr) && rpcErr.Code == ErrUnsupported
 }
