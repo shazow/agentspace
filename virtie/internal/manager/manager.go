@@ -134,7 +134,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	defer cancelLaunch()
 
 	signalCh, stopSignals := m.launchSignalChannel()
-	suspendRequests := make(chan struct{}, 1)
+	suspendRequests := newLaunchSuspendCoordinator()
 	infoRequests := make(chan struct{}, 1)
 	signalDone := make(chan struct{})
 	go func() {
@@ -150,10 +150,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 				case os.Interrupt, syscall.SIGTERM:
 					cancelLaunch()
 				case syscall.SIGTSTP:
-					select {
-					case suspendRequests <- struct{}{}:
-					default:
-					}
+					suspendRequests.Request()
 				case syscall.SIGUSR1:
 					select {
 					case infoRequests <- struct{}{}:
@@ -415,8 +412,8 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	// Honor a suspend signal queued during startup before guest-file install or
 	// SSH startup proceeds.
 	select {
-	case <-suspendRequests:
-		return suspendHandler.saveAndExit(launchCtx)
+	case <-suspendRequests.Notify():
+		return handleSuspendRequest(launchCtx, suspendRequests, suspendHandler)
 	default:
 	}
 
@@ -730,6 +727,88 @@ type launchSuspendHandler struct {
 	err           error
 }
 
+type launchSuspendCoordinator struct {
+	mu        sync.Mutex
+	notify    chan struct{}
+	waiters   []chan error
+	requested bool
+	inFlight  bool
+	completed bool
+	result    error
+}
+
+func newLaunchSuspendCoordinator() *launchSuspendCoordinator {
+	return &launchSuspendCoordinator{notify: make(chan struct{}, 1)}
+}
+
+func (c *launchSuspendCoordinator) Notify() <-chan struct{} {
+	return c.notify
+}
+
+func (c *launchSuspendCoordinator) Request() {
+	c.request(nil)
+}
+
+func (c *launchSuspendCoordinator) RequestAndWait(ctx context.Context) error {
+	done := make(chan error, 1)
+	c.request(done)
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *launchSuspendCoordinator) request(done chan error) {
+	c.mu.Lock()
+	if c.completed {
+		result := c.result
+		c.mu.Unlock()
+		if done != nil {
+			done <- result
+		}
+		return
+	}
+	if done != nil {
+		c.waiters = append(c.waiters, done)
+	}
+	notify := false
+	if !c.requested && !c.inFlight {
+		c.requested = true
+		notify = true
+	}
+	c.mu.Unlock()
+
+	if notify {
+		select {
+		case c.notify <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (c *launchSuspendCoordinator) Begin() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.requested = false
+	c.inFlight = true
+}
+
+func (c *launchSuspendCoordinator) Complete(err error) {
+	c.mu.Lock()
+	c.inFlight = false
+	c.completed = true
+	c.result = err
+	waiters := c.waiters
+	c.waiters = nil
+	c.mu.Unlock()
+
+	for _, waiter := range waiters {
+		waiter <- err
+	}
+}
+
 func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink, writeBack func() bool) *launchSuspendHandler {
 	return &launchSuspendHandler{
 		manager:       manager,
@@ -740,6 +819,13 @@ func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpS
 		notifier:      notifier,
 		writeBack:     writeBack,
 	}
+}
+
+func handleSuspendRequest(ctx context.Context, coordinator *launchSuspendCoordinator, handler *launchSuspendHandler) error {
+	coordinator.Begin()
+	err := handler.saveAndExit(ctx)
+	coordinator.Complete(err)
+	return err
 }
 
 func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
@@ -765,7 +851,7 @@ func (m *manager) runSSHSession(
 	cid int,
 	remoteCommand []string,
 	stats *launchStats,
-	suspendRequests <-chan struct{},
+	suspendRequests *launchSuspendCoordinator,
 	infoRequests <-chan struct{},
 	suspendHandler *launchSuspendHandler,
 	guestAgentSocketPath string,
@@ -833,7 +919,7 @@ func (m *manager) runSSHSession(
 	}
 }
 
-func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, suspendRequests *launchSuspendCoordinator, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	delay := launchManifest.SSHRetryDelay(m.sshRetryDelay)
 	if delay <= 0 {
 		delay = m.sshRetryDelay
@@ -884,7 +970,7 @@ func (l *sshRetryLogger) Log(err error, stderr string) {
 	}
 }
 
-func (m *manager) waitForSession(ctx context.Context, session *executor.Process, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForSession(ctx context.Context, session *executor.Process, suspendRequests *launchSuspendCoordinator, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	if err := m.waitForLifecycleEvent(ctx, "active session", session, 0, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers); err != nil {
 		return err
 	}
@@ -895,7 +981,7 @@ func (m *manager) waitForSession(ctx context.Context, session *executor.Process,
 	return nil
 }
 
-func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, suspendRequests *launchSuspendCoordinator, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	if err := m.waitForLifecycleEvent(ctx, "vm session", qemu, 0, suspendRequests, infoRequests, suspendHandler, guestAgentSocketPath, watchers); err != nil {
 		return err
 	}
@@ -906,7 +992,7 @@ func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, suspend
 	return nil
 }
 
-func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, process *executor.Process, delay time.Duration, suspendRequests <-chan struct{}, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, process *executor.Process, delay time.Duration, suspendRequests *launchSuspendCoordinator, infoRequests <-chan struct{}, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	var processDone <-chan struct{}
 	if process != nil {
 		processDone = process.Done()
@@ -928,8 +1014,8 @@ func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, proce
 			return nil
 		case <-delayDone:
 			return nil
-		case <-suspendRequests:
-			return suspendHandler.saveAndExit(ctx)
+		case <-suspendRequests.Notify():
+			return handleSuspendRequest(ctx, suspendRequests, suspendHandler)
 		case <-infoRequests:
 			m.printGuestInfo(ctx, guestAgentSocketPath, watchers)
 		case <-ticker.C:

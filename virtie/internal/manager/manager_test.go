@@ -2439,6 +2439,121 @@ func TestManagerLaunchWithoutSSHSavesQueuedSuspend(t *testing.T) {
 	}
 }
 
+func TestManagerLaunchControlSuspendWaitsForGuestProvisioning(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.QEMU.SSHReady.SocketPath = ""
+	cfg.Volumes[0].AutoCreate = false
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/virtie/startup": {
+			Overwrite: true,
+			Content:   manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: "ready\n"},
+		},
+	}
+
+	writeStarted := make(chan struct{})
+	allowWrite := make(chan struct{})
+	var writeStartedOnce sync.Once
+	guestAgent := &fakeGuestAgentClient{
+		record: func(event string) {
+			if strings.HasPrefix(event, "guest-write:") {
+				writeStartedOnce.Do(func() {
+					close(writeStarted)
+				})
+				<-allowWrite
+			}
+		},
+	}
+	runner := &launchRunner{}
+	qmpClient := &fakeQMPClient{
+		status: "running",
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:    &fakeGuestAgentDialer{client: guestAgent},
+		sshRetryDelay:       time.Hour,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpRetryDelay:       0,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+	}
+
+	launchDone := make(chan error, 1)
+	go func() {
+		launchDone <- manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: false})
+	}()
+
+	select {
+	case <-writeStarted:
+	case err := <-launchDone:
+		t.Fatalf("launch returned before guest write started: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("guest write did not start")
+	}
+
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
+	if err != nil {
+		t.Fatalf("resolve control socket: %v", err)
+	}
+	rpcCtx, cancelRPC := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelRPC()
+	rpcDone := make(chan error, 1)
+	go func() {
+		resp, err := Dial(controlSocketPath).Suspend(rpcCtx, SuspendRequest{})
+		if err == nil && !resp.Saved {
+			err = errors.New("suspend response was not saved")
+		}
+		rpcDone <- err
+	}()
+
+	select {
+	case err := <-rpcDone:
+		t.Fatalf("control suspend returned before guest write completed: %v", err)
+	case <-time.After(testNoReturnTimeout):
+	}
+	qmpClient.mu.Lock()
+	migrateCalls := qmpClient.migrateCalls
+	qmpClient.mu.Unlock()
+	if migrateCalls != 0 {
+		t.Fatalf("control suspend migrated during guest provisioning, got %d calls", migrateCalls)
+	}
+
+	close(allowWrite)
+	select {
+	case err := <-rpcDone:
+		if err != nil {
+			t.Fatalf("control suspend: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("control suspend did not return after guest provisioning")
+	}
+	select {
+	case err := <-launchDone:
+		if err != nil {
+			t.Fatalf("launch: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("launch did not return after control suspend")
+	}
+	qmpClient.mu.Lock()
+	migrateCalls = qmpClient.migrateCalls
+	qmpClient.mu.Unlock()
+	if migrateCalls != 1 {
+		t.Fatalf("expected one migration after guest provisioning, got %d", migrateCalls)
+	}
+}
+
 func TestManagerLaunchHandlesDuplicateSuspendDuringActiveSessionWithoutForwardingJobControl(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -3380,7 +3495,7 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 	cancel()
 	session := (&executortest.Process{OverrideName: "ssh"}).Process()
 
-	err := (&manager{}).waitForSession(ctx, session, make(chan struct{}), make(chan struct{}), nil, "", executor.Group{})
+	err := (&manager{}).waitForSession(ctx, session, newLaunchSuspendCoordinator(), make(chan struct{}), nil, "", executor.Group{})
 	if err == nil {
 		t.Fatal("expected active session cancellation error")
 	}

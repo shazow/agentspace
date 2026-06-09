@@ -32,7 +32,7 @@ type Runtime struct {
 	stats           *launchStats
 	qmp             qmpClient
 	suspendHandler  *launchSuspendHandler
-	suspendRequests chan<- struct{}
+	suspendRequests *launchSuspendCoordinator
 	watchers        executor.Group
 	server          *Server
 
@@ -41,7 +41,7 @@ type Runtime struct {
 	closeOnce sync.Once
 }
 
-func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests chan<- struct{}) *Runtime {
+func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator) *Runtime {
 	return &Runtime{
 		manager:         manager,
 		manifest:        manifest,
@@ -129,21 +129,15 @@ func (r *Runtime) Info(ctx context.Context, req InfoRequest) (InfoResponse, erro
 }
 
 func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendResponse, error) {
-	if r.suspendHandler == nil {
+	if r.suspendRequests == nil {
 		return SuspendResponse{}, failedPrecondition(fmt.Errorf("suspend handler is not ready"))
 	}
 	r.setState(RuntimeSuspending)
-	err := r.suspendHandler.saveAndExit(ctx)
+	err := r.suspendRequests.RequestAndWait(ctx)
 	if err != nil && !errors.Is(err, errSavedSuspendExit) {
 		return SuspendResponse{}, err
 	}
 	r.setState(RuntimeSuspended)
-	if r.suspendRequests != nil {
-		select {
-		case r.suspendRequests <- struct{}{}:
-		default:
-		}
-	}
 	return SuspendResponse{Saved: true, VMStatePath: vmStatePath(r.manifest)}, nil
 }
 
