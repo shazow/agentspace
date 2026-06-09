@@ -123,6 +123,12 @@ type GuestFileWriter struct {
 	Wrote            func(guestPath string)
 }
 
+type GuestFileWriteBacker struct {
+	ReadFile      func(ctx context.Context, guestPath string) ([]byte, error)
+	WriteHostFile func(hostPath string, data []byte) error
+	Wrote         func(guestPath string, hostPath string)
+}
+
 func WriteGuestFiles(ctx context.Context, files []manifest.ResolvedWriteFile, writer GuestFileWriter) error {
 	for _, file := range files {
 		if !file.Overwrite {
@@ -159,6 +165,36 @@ func WriteGuestFiles(ctx context.Context, files []manifest.ResolvedWriteFile, wr
 		}
 		if writer.Wrote != nil {
 			writer.Wrote(file.GuestPath)
+		}
+	}
+	return nil
+}
+
+func GuestWriteBackFiles(files []manifest.ResolvedWriteFile) []manifest.ResolvedWriteFile {
+	writeBackFiles := make([]manifest.ResolvedWriteFile, 0, len(files))
+	for _, file := range files {
+		if file.WriteBack {
+			writeBackFiles = append(writeBackFiles, file)
+		}
+	}
+	return writeBackFiles
+}
+
+func WriteBackGuestFiles(ctx context.Context, files []manifest.ResolvedWriteFile, backer GuestFileWriteBacker) error {
+	for _, file := range files {
+		data, err := backer.ReadFile(ctx, file.GuestPath)
+		if err != nil {
+			return err
+		}
+		hostPath, err := WriteBackHostPath(file)
+		if err != nil {
+			return err
+		}
+		if err := backer.WriteHostFile(hostPath, data); err != nil {
+			return fmt.Errorf("write host file %q from guest path %q: %w", hostPath, file.GuestPath, err)
+		}
+		if backer.Wrote != nil {
+			backer.Wrote(file.GuestPath, hostPath)
 		}
 	}
 	return nil
