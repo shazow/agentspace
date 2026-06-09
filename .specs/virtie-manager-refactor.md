@@ -88,6 +88,9 @@ Acceptance criteria:
 - [x] Split launch value types into `virtie/internal/manager/launch`,
   including `Plan`, launch options, wait mode, runtime paths, suspend state,
   notifier interface, and plan-owned socket cleanup.
+- [x] Move the serialized QMP wrapper into `virtie/internal/qmpclient`, so the
+  launch-owned runtime depends on a serialized client rather than owning the
+  synchronization adapter itself.
 
 ## Landed Control Flow
 
@@ -442,8 +445,9 @@ implementation packages should avoid importing the facade package.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, and optional
   handler registration.
-- `virtie/internal/qmpclient` (landed): QMP dial/client implementation and role
-  interfaces used by runtime capabilities and add-on packages.
+- `virtie/internal/qmpclient` (landed): QMP dial/client implementation,
+  serialization adapter, and role interfaces used by runtime capabilities and
+  add-on packages.
 - `virtie/internal/qga` (landed): guest agent dial/client implementation and low-level
   QGA protocol helpers.
 
