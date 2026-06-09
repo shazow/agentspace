@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
-	"syscall"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
@@ -34,9 +32,9 @@ type Runtime struct {
 	closeHooks       runtimepkg.CloseHooks
 	savedSuspend     *runtimepkg.SavedSuspendState
 	watchers         executor.Group
-	hotplugStart     runtimeHotplugStarter
-	hotplugSockets   runtimeHotplugSocketWaiter
-	hotplugGuest     runtimeHotplugGuest
+	hotplugStart     runtimepkg.HotplugStarter
+	hotplugSockets   runtimepkg.HotplugSocketWaiter
+	hotplugGuest     runtimepkg.HotplugGuest
 
 	state   *runtimepkg.State
 	closer  *runtimepkg.Closer
@@ -48,23 +46,9 @@ type runtimeDependencies struct {
 	Logger           *slog.Logger
 	SavedSuspendExit func(error) bool
 	CollectInfo      func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
-	HotplugStart     runtimeHotplugStarter
-	HotplugSockets   runtimeHotplugSocketWaiter
-	HotplugGuest     runtimeHotplugGuest
-}
-
-type runtimeHotplugStarter interface {
-	Start(context.Context, *exec.Cmd) (*executor.Process, error)
-	Stop(*executor.Process) error
-	SignalPIDGroup(int, syscall.Signal) error
-}
-
-type runtimeHotplugSocketWaiter interface {
-	Wait(context.Context, string, []string, *executor.Process) error
-}
-
-type runtimeHotplugGuest interface {
-	Run(context.Context, []string) error
+	HotplugStart     runtimepkg.HotplugStarter
+	HotplugSockets   runtimepkg.HotplugSocketWaiter
+	HotplugGuest     runtimepkg.HotplugGuest
 }
 
 func newRuntime(manifest *manifest.Manifest, paths launch.RuntimePaths, cid int, stats *runtimepkg.Stats, qmp qmpclient.Client, suspendRequests *launch.SuspendCoordinator, deps runtimeDependencies) *Runtime {

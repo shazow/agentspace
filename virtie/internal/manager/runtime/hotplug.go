@@ -2,8 +2,11 @@ package runtime
 
 import (
 	"context"
+	"os/exec"
+	"syscall"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
@@ -11,6 +14,20 @@ import (
 type HotplugRuntime interface {
 	Attach(context.Context, string) error
 	Detach(context.Context, string) error
+}
+
+type HotplugStarter interface {
+	Start(context.Context, *exec.Cmd) (*executor.Process, error)
+	Stop(*executor.Process) error
+	SignalPIDGroup(int, syscall.Signal) error
+}
+
+type HotplugSocketWaiter interface {
+	Wait(context.Context, string, []string, *executor.Process) error
+}
+
+type HotplugGuest interface {
+	Run(context.Context, []string) error
 }
 
 type HotplugQMP struct {
