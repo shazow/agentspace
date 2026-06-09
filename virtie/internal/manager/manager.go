@@ -715,24 +715,17 @@ func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manif
 		return &stageError{Stage: "qmp suspend", Err: err}
 	}
 
-	if err := writeSuspendStateData(manifest, suspendState{
+	state := suspendState{
 		HostName:      manifest.Identity.HostName,
 		QMPSocketPath: qmpSocketPath,
 		VMStatePath:   statePath,
 		CID:           cid,
 		Status:        "saved",
-	}); err != nil {
+	}
+	if err := writeSuspendStateData(manifest, state); err != nil {
 		return &stageError{Stage: "qmp suspend", Err: err}
 	}
-	if notifier == nil {
-		notifier = noopNotifier{}
-	}
-	notifier.Notify(ctx, notifyStateRuntimeSuspend, "Saved VM suspend state", map[string]string{
-		"host_name":       manifest.Identity.HostName,
-		"qmp_socket_path": qmpSocketPath,
-		"vm_state_path":   statePath,
-		"cid":             fmt.Sprintf("%d", cid),
-	})
+	launch.NotifyRuntimeSuspend(ctx, notifier, state)
 	return nil
 }
 

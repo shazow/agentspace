@@ -51,3 +51,30 @@ func TestNotifyRuntimeResumeNoopsWithoutResumeState(t *testing.T) {
 		t.Fatalf("calls: got %d want 0", len(notifier.calls))
 	}
 }
+
+func TestNotifyRuntimeSuspend(t *testing.T) {
+	notifier := &recordingNotifier{}
+	NotifyRuntimeSuspend(context.Background(), notifier, SuspendState{
+		HostName:      "agent",
+		QMPSocketPath: "/tmp/qmp.sock",
+		VMStatePath:   "/tmp/agent.vmstate",
+		CID:           7,
+	})
+	if len(notifier.calls) != 1 {
+		t.Fatalf("calls: got %d want 1", len(notifier.calls))
+	}
+	call := notifier.calls[0]
+	if call.state != NotifyStateRuntimeSuspend || call.message != "Saved VM suspend state" {
+		t.Fatalf("call: %#v", call)
+	}
+	if call.values["host_name"] != "agent" ||
+		call.values["qmp_socket_path"] != "/tmp/qmp.sock" ||
+		call.values["vm_state_path"] != "/tmp/agent.vmstate" ||
+		call.values["cid"] != "7" {
+		t.Fatalf("values: %#v", call.values)
+	}
+}
+
+func TestNotifyRuntimeSuspendNoopsWithoutNotifier(t *testing.T) {
+	NotifyRuntimeSuspend(context.Background(), nil, SuspendState{})
+}
