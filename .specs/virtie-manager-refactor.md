@@ -281,6 +281,9 @@ Acceptance criteria:
 - [x] Move runtime hotplug dependency interfaces into
   `virtie/internal/manager/runtime`, leaving manager to provide concrete
   process, socket, and guest command adapters.
+- [x] Move concrete runtime dependency configuration into
+  `virtie/internal/manager/runtime`, leaving manager to populate the runtime
+  package-owned constructor contract.
 - [x] Make the concrete manager `Runtime` use `manager/launch` and
   `manager/control` types directly instead of manager facade aliases,
   reducing blockers for eventually moving the concrete runtime under

@@ -370,7 +370,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, sta
 	if err != nil {
 		return nil, nil, err
 	}
-	runtimeDeps := runtimeDependencies{
+	runtimeDeps := runtimepkg.Dependencies{
 		QMPTimeout:       m.effectiveQMPCommandTimeout(),
 		Logger:           m.logger,
 		SavedSuspendExit: isSavedSuspendExit,
