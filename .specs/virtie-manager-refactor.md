@@ -121,7 +121,8 @@ Acceptance criteria:
   unexpected-exit, and cancellation callbacks.
 - [x] Move plan-owned filesystem preflight into
   `virtie/internal/manager/launch`, leaving manager responsible for
-  stage-specific wrapping.
+  stage-specific wrapping. Manager call sites now use the launch package
+  helpers directly instead of local compatibility wrappers.
 - [x] Move runtime control-server start/close wiring into
   `virtie/internal/manager/runtime`, with the concrete manager `Runtime`
   passing itself as the typed control handler.
