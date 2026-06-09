@@ -16,9 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
@@ -240,7 +238,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	manifest := plan.Manifest
 
 	launchCtx, cancelLaunch := context.WithCancel(ctx)
-	lifecycle := m.startLaunchLifecycle(cancelLaunch)
+	lifecycle := launch.NewSignalLifecycle(m.signals, cancelLaunch)
 
 	runtimeLock, err := launch.AcquireRuntimeLock(launch.RuntimeLockSpec{
 		Manifest:    manifest,
@@ -450,19 +448,6 @@ func (m *manager) waitForLaunchForeground(
 	})
 }
 
-func (m *manager) launchSignalChannel() (<-chan os.Signal, func()) {
-	if m.signals != nil {
-		return m.signals, func() {}
-	}
-
-	ch := make(chan os.Signal, 8)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGTSTP, syscall.SIGUSR1)
-	return ch, func() {
-		signal.Stop(ch)
-		close(ch)
-	}
-}
-
 func (m *manager) startManagedProcess(cmd *exec.Cmd) (*executor.Process, error) {
 	return m.runner.Start(cmd)
 }
@@ -549,11 +534,6 @@ type launchSuspendHandler struct {
 	writeBack     func() bool
 	once          sync.Once
 	err           error
-}
-
-func (m *manager) startLaunchLifecycle(cancel context.CancelFunc) *launchLifecycle {
-	signalCh, stopSignals := m.launchSignalChannel()
-	return launch.NewLifecycle(signalCh, stopSignals, cancel)
 }
 
 func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink, writeBack func() bool) *launchSuspendHandler {

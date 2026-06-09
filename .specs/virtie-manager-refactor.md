@@ -126,6 +126,9 @@ Acceptance criteria:
 - [x] Move foreground lifecycle event waiting into
   `virtie/internal/manager/launch`, with manager supplying suspend, info,
   unexpected-exit, and cancellation callbacks.
+- [x] Move launch signal-channel construction and cleanup into
+  `virtie/internal/manager/launch`, so manager startup passes only its
+  configured signal channel and cancel callback.
 - [x] Move startup queued-suspend handling into
   `virtie/internal/manager/launch`, with manager supplying the concrete
   suspend handler callback.
@@ -705,7 +708,8 @@ implementation packages should avoid importing the facade package.
   there, with manager call sites now using those helpers directly instead of
   local migration aliases. Foreground wait-mode selection, launcher
   configuration, foreground lifecycle event waiting, and startup
-  queued-suspend handling have also moved there.
+  signal-channel construction/cleanup, and startup queued-suspend handling
+  have also moved there.
   Plan-owned filesystem
   preflight, VSock CID selection, locked plan finalization, pre-runtime launch
   lock/PID setup, restored-state cleanup, and QEMU process startup have moved
@@ -1174,11 +1178,11 @@ readiness, and managed virtiofs sockets:
    cleanup have moved there too. Guest-agent socket wait/retry-dial
    sequencing, operation-specific guest-agent wait stages, SSH-readiness token
    wait sequencing, default startup wait wrapping/check policy, foreground
-   lifecycle suspend/info adapter wiring, default foreground SSH session
-   wrapping, SSH autoprovision guest install sequencing, default guest-file
-   stage wrapping, hotplug attach/detach stage classification, notifier
-   selection policy, generic stage-error/command-error construction, and
-   unexpected-process-exit wrapping have moved there as well. Suspend fallback
+   lifecycle signal setup and suspend/info adapter wiring, default foreground
+   SSH session wrapping, SSH autoprovision guest install sequencing, default
+   guest-file stage wrapping, hotplug attach/detach stage classification,
+   notifier selection policy, generic stage-error/command-error construction,
+   and unexpected-process-exit wrapping have moved there as well. Suspend fallback
    PID-removal and saved-state polling now live there too. Manager still owns
    default concrete dependencies and some stage-specific wrapping, but no
    longer carries manager-local suspend-state or launch-PID compatibility

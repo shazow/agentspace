@@ -3,6 +3,7 @@ package launch
 import (
 	"context"
 	"os"
+	"os/signal"
 	"sync"
 	"syscall"
 )
@@ -37,6 +38,19 @@ func NewLifecycle(signalCh <-chan os.Signal, stopSignals func(), cancel context.
 	}
 	go lifecycle.watchSignals(signalCh, cancel)
 	return lifecycle
+}
+
+func NewSignalLifecycle(signalCh <-chan os.Signal, cancel context.CancelFunc) *Lifecycle {
+	if signalCh != nil {
+		return NewLifecycle(signalCh, func() {}, cancel)
+	}
+
+	ch := make(chan os.Signal, 8)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGTSTP, syscall.SIGUSR1)
+	return NewLifecycle(ch, func() {
+		signal.Stop(ch)
+		close(ch)
+	}, cancel)
 }
 
 func NewSuspendCoordinator() *SuspendCoordinator {
