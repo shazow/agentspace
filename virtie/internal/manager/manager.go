@@ -626,31 +626,21 @@ func (m *manager) connectQMP(ctx context.Context, socketPath string, watchers ex
 	if retryDelay <= 0 {
 		retryDelay = defaultQMPRetryDelay
 	}
-
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, &stageError{Stage: "vm startup", Err: ctx.Err()}
-		case <-timer.C:
+	client, err := qmpclient.DialWithRetry(ctx, dialer, qmpclient.DialRetry{
+		SocketPath: socketPath,
+		Timeout:    connectTimeout,
+		RetryDelay: retryDelay,
+		Check: func() error {
+			return firstUnexpectedExit("vm startup", watchers)
+		},
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, &stageError{Stage: "vm startup", Err: err}
 		}
-
-		if err := firstUnexpectedExit("vm startup", watchers); err != nil {
-			return nil, err
-		}
-
-		client, err := dialer.Dial(ctx, socketPath, connectTimeout)
-		if err == nil {
-			return client, nil
-		}
-		if ctx.Err() != nil {
-			return nil, &stageError{Stage: "vm startup", Err: ctx.Err()}
-		}
-
-		timer.Reset(retryDelay)
+		return nil, err
 	}
+	return client, nil
 }
 
 func (m *manager) effectiveQMPConnectTimeout() time.Duration {
