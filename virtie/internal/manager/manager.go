@@ -339,10 +339,10 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	}
 	// Honor a suspend signal queued during startup before guest-file install or
 	// SSH startup proceeds.
-	select {
-	case <-lifecycle.Suspend().Notify():
-		return nil, handleSuspendRequest(launchCtx, lifecycle.Suspend(), suspendHandler)
-	default:
+	if err := launch.HandleQueuedSuspend(launchCtx, lifecycle, func(ctx context.Context, coordinator *launchSuspendCoordinator) error {
+		return handleSuspendRequest(ctx, coordinator, suspendHandler)
+	}); err != nil {
+		return nil, err
 	}
 
 	if plan.ResumeState == nil {
