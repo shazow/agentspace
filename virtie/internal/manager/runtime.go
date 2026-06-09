@@ -51,7 +51,7 @@ func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePath
 }
 
 func (r *Runtime) SetReady() {
-	r.setState(RuntimeReady)
+	runtimepkg.MarkReady(r.state)
 }
 
 func (r *Runtime) SetWatchers(watchers executor.Group) {
@@ -118,17 +118,12 @@ func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
 
 func (r *Runtime) Status(ctx context.Context, req StatusRequest) (StatusResponse, error) {
 	_ = ctx
-	return StatusResponse{
-		State: r.currentState(),
-		CID:   r.cid,
-		Paths: StatusPaths{
-			ControlSocket:    r.paths.ControlSocket,
-			QMPSocket:        r.paths.QMPSocket,
-			GuestAgentSocket: r.paths.GuestAgentSocket,
-			SSHReadySocket:   r.paths.SSHReadySocket,
-		},
-		Stats: runtimeStatsFromLaunchStats(r.stats),
-	}, nil
+	return runtimepkg.Status(r.state, r.cid, StatusPaths{
+		ControlSocket:    r.paths.ControlSocket,
+		QMPSocket:        r.paths.QMPSocket,
+		GuestAgentSocket: r.paths.GuestAgentSocket,
+		SSHReadySocket:   r.paths.SSHReadySocket,
+	}, r.stats), nil
 }
 
 func (r *Runtime) Info(ctx context.Context, req InfoRequest) (InfoResponse, error) {
@@ -143,12 +138,11 @@ func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendRespo
 	if r.suspendRequests == nil {
 		return SuspendResponse{}, failedPrecondition(fmt.Errorf("suspend handler is not ready"))
 	}
-	r.setState(RuntimeSuspending)
-	err := r.suspendRequests.RequestAndWait(ctx)
-	if err != nil && !errors.Is(err, errSavedSuspendExit) {
+	if err := runtimepkg.QueueSuspend(ctx, r.state, r.suspendRequests, func(err error) bool {
+		return errors.Is(err, errSavedSuspendExit)
+	}); err != nil {
 		return SuspendResponse{}, err
 	}
-	r.setState(RuntimeSuspended)
 	return SuspendResponse{Saved: true, VMStatePath: vmStatePath(r.manifest)}, nil
 }
 
@@ -175,16 +169,4 @@ func (r *Runtime) Balloon(ctx context.Context, req BalloonRequest) (BalloonRespo
 		return BalloonResponse{}, err
 	}
 	return BalloonResponse{ActualBytes: actual, TargetBytes: req.TargetBytes}, nil
-}
-
-func (r *Runtime) setState(state RuntimeState) {
-	r.state.Set(state)
-}
-
-func (r *Runtime) currentState() RuntimeState {
-	return r.state.Current()
-}
-
-func runtimeStatsFromLaunchStats(stats *launchStats) RuntimeStats {
-	return runtimepkg.ControlStats(stats)
 }
