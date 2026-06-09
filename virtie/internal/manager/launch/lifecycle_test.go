@@ -11,9 +11,8 @@ import (
 
 func TestLifecycleMapsSignalsToEvents(t *testing.T) {
 	signals := make(chan os.Signal, 3)
-	stopped := false
 	ctx, cancel := context.WithCancel(context.Background())
-	lifecycle := NewLifecycle(signals, func() { stopped = true }, cancel)
+	lifecycle := NewSignalLifecycle(signals, cancel)
 	defer lifecycle.Stop()
 
 	signals <- syscall.SIGUSR1
@@ -37,6 +36,12 @@ func TestLifecycleMapsSignalsToEvents(t *testing.T) {
 		t.Fatal("timed out waiting for cancellation signal")
 	}
 
+	lifecycle.Stop()
+}
+
+func TestLifecycleStopCallsCallback(t *testing.T) {
+	stopped := false
+	lifecycle := NewLifecycle(nil, func() { stopped = true }, nil)
 	lifecycle.Stop()
 	if !stopped {
 		t.Fatal("stop signal callback was not called")

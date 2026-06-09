@@ -155,36 +155,6 @@ func TestLauncherPlanUsesDefaultConfig(t *testing.T) {
 	}
 }
 
-func TestLaunchLifecycleRoutesSignalsToEvents(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	signals := make(chan os.Signal, 3)
-	manager := &manager{signals: signals}
-	lifecycle := manager.startLaunchLifecycle(cancel)
-	defer lifecycle.Stop()
-
-	signals <- syscall.SIGUSR1
-	select {
-	case <-lifecycle.Info():
-	case <-time.After(time.Second):
-		t.Fatal("SIGUSR1 did not queue info request")
-	}
-
-	signals <- syscall.SIGTSTP
-	select {
-	case <-lifecycle.Suspend().Notify():
-	case <-time.After(time.Second):
-		t.Fatal("SIGTSTP did not queue suspend request")
-	}
-
-	signals <- syscall.SIGTERM
-	select {
-	case <-ctx.Done():
-	case <-time.After(time.Second):
-		t.Fatal("SIGTERM did not cancel launch context")
-	}
-}
-
 func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
