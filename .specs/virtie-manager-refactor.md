@@ -150,6 +150,8 @@ Acceptance criteria:
   manager supplying startup exit checks, timeouts, and stage wrapping.
 - [x] Move QMP restore sequencing into `virtie/internal/qmpclient`, with
   manager retaining restore notifications and stage wrapping.
+- [x] Move QMP suspend save sequencing into `virtie/internal/qmpclient`, with
+  manager retaining suspend metadata, notifications, and stage wrapping.
 - [x] Move runtime control-server start/close wiring into
   `virtie/internal/manager/runtime`, with the concrete manager `Runtime`
   passing itself as the typed control handler.
@@ -527,8 +529,8 @@ implementation packages should avoid importing the facade package.
   handler registration.
 - `virtie/internal/qmpclient` (landed): QMP dial/client implementation,
   dial retry mechanics, migration polling, restore sequencing, serialization
-  adapter, and role interfaces used by runtime capabilities and add-on
-  packages.
+  adapter, suspend save sequencing, and role interfaces used by runtime
+  capabilities and add-on packages.
 - `virtie/internal/qga` (landed): guest agent dial/client implementation and low-level
   QGA protocol helpers.
 
@@ -948,8 +950,9 @@ readiness, and managed virtiofs sockets:
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
    manager call sites to use the same interfaces through the facade. QMP has
    landed under `internal/qmpclient`, including dial retry mechanics,
-   migration polling, and restore sequencing; QGA has landed under
-   `internal/qga` with guest provisioning orchestration still in `manager`.
+   migration polling, restore sequencing, and suspend save sequencing; QGA has
+   landed under `internal/qga` with guest provisioning orchestration still in
+   `manager`.
 4. Introduce `RuntimeCore`, `RuntimeSuspend`, `RuntimeHotplug`, and
    `RuntimeBalloon`. Move status and info onto the core runtime, move suspend,
    hotplug, and balloon onto optional capability implementations, and keep old

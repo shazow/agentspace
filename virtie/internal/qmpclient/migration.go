@@ -18,6 +18,36 @@ type RestoreWait struct {
 	PollDelay        time.Duration
 }
 
+type SaveWait struct {
+	MigrationTimeout time.Duration
+	CommandTimeout   time.Duration
+	PollDelay        time.Duration
+}
+
+func SaveToFile(ctx context.Context, client Client, path string, wait SaveWait) error {
+	status, err := client.QueryStatus(wait.CommandTimeout)
+	if err != nil {
+		return err
+	}
+	switch status {
+	case "paused":
+	case "running":
+		if err := client.Stop(wait.CommandTimeout); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("cannot save VM while QMP status is %q", status)
+	}
+	if err := client.MigrateToFile(wait.MigrationTimeout, path); err != nil {
+		return err
+	}
+	return WaitForMigration(ctx, client, MigrationWait{
+		Timeout:        wait.MigrationTimeout,
+		CommandTimeout: wait.CommandTimeout,
+		PollDelay:      wait.PollDelay,
+	})
+}
+
 func RestoreFromFile(ctx context.Context, client Client, path string, wait RestoreWait) error {
 	if err := client.MigrateIncoming(wait.MigrationTimeout, path); err != nil {
 		return err
