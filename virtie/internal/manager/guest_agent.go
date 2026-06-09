@@ -171,37 +171,14 @@ func (m *manager) mountWorkspaceCWD(ctx context.Context, client guestAgentClient
 // mode is expected to be a file mode and is converted to a directory mode by
 // adding execute bits wherever read bits are set.
 func (m *manager) installGuestFileDirectory(ctx context.Context, client guestAgentClient, guestPath string, owner string, mode string) error {
-	guestDir := path.Clean(path.Dir(guestPath))
-	if guestDir == "." || guestDir == "/" {
-		return nil
-	}
-
-	missingDirs := make([]string, 0, 4)
-	current := guestDir
-	for {
-		exists, err := m.guestDirectoryExists(ctx, client, current)
-		if err != nil {
-			return err
-		}
-		if exists {
-			break
-		}
-		missingDirs = append(missingDirs, current)
-		parent := path.Dir(current)
-		if parent == current {
-			return fmt.Errorf("resolve existing parent for %q", guestDir)
-		}
-		current = parent
-	}
-
-	for i := len(missingDirs) - 1; i >= 0; i-- {
-		dir := missingDirs[i]
-		args := launch.GuestInstallDirectoryArgs(dir, owner, mode)
-		if err := m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, args, dir); err != nil {
-			return err
-		}
-	}
-	return nil
+	return launch.InstallGuestFileDirectory(ctx, launch.GuestDirectoryInstaller{
+		Exists: func(ctx context.Context, guestDir string) (bool, error) {
+			return m.guestDirectoryExists(ctx, client, guestDir)
+		},
+		Install: func(ctx context.Context, guestDir string, args []string) error {
+			return m.runGuestFileCommand(ctx, client, "install -d", guestInstallPath, args, guestDir)
+		},
+	}, guestPath, owner, mode)
 }
 
 func (m *manager) guestDirectoryExists(ctx context.Context, client guestAgentClient, guestDir string) (bool, error) {

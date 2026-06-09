@@ -1,10 +1,12 @@
 package launch
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -103,6 +105,48 @@ func WriteHostFileAtomic(hostPath string, data []byte) error {
 		return err
 	}
 	cleanup = false
+	return nil
+}
+
+type GuestDirectoryInstaller struct {
+	Exists  func(ctx context.Context, guestDir string) (bool, error)
+	Install func(ctx context.Context, guestDir string, args []string) error
+}
+
+// InstallGuestFileDirectory ensures that the parent directory for guestPath exists.
+// It walks upward until it finds an existing ancestor, then creates only the
+// missing directories from top to bottom. owner and mode are applied to newly
+// created directories only.
+func InstallGuestFileDirectory(ctx context.Context, installer GuestDirectoryInstaller, guestPath string, owner string, mode string) error {
+	guestDir := path.Clean(path.Dir(guestPath))
+	if guestDir == "." || guestDir == "/" {
+		return nil
+	}
+
+	missingDirs := make([]string, 0, 4)
+	current := guestDir
+	for {
+		exists, err := installer.Exists(ctx, current)
+		if err != nil {
+			return err
+		}
+		if exists {
+			break
+		}
+		missingDirs = append(missingDirs, current)
+		parent := path.Dir(current)
+		if parent == current {
+			return fmt.Errorf("resolve existing parent for %q", guestDir)
+		}
+		current = parent
+	}
+
+	for i := len(missingDirs) - 1; i >= 0; i-- {
+		dir := missingDirs[i]
+		if err := installer.Install(ctx, dir, GuestInstallDirectoryArgs(dir, owner, mode)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
