@@ -3678,13 +3678,8 @@ func TestAllocateCIDSkipsHostUnavailableIDs(t *testing.T) {
 		},
 	}
 
-	locker := &fileLocker{}
 	checker := &fakeVSockCIDChecker{unavailable: map[int]bool{7: true}}
-	manager := &manager{
-		locker:          locker,
-		vsockCIDChecker: checker,
-	}
-	cid, err := manager.allocateCID(manifest)
+	cid, err := launch.AcquireCID(manifest, nil, checker)
 	if err != nil {
 		t.Fatalf("allocate cid: %v", err)
 	}
@@ -3712,12 +3707,9 @@ func TestAllocateCIDReturnsHostCheckError(t *testing.T) {
 		},
 	}
 
-	manager := &manager{
-		vsockCIDChecker: &fakeVSockCIDChecker{
-			err: errors.New("probe failed"),
-		},
-	}
-	_, err := manager.allocateCID(manifest)
+	_, err := launch.AcquireCID(manifest, nil, &fakeVSockCIDChecker{
+		err: errors.New("probe failed"),
+	})
 	if err == nil || !strings.Contains(err.Error(), "probe failed") {
 		t.Fatalf("expected probe failure, got %v", err)
 	}
