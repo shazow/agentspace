@@ -125,8 +125,8 @@ func TestManagerPlanLaunchResolvesRuntimeInputs(t *testing.T) {
 		t.Fatalf("unexpected state dir: got %q want %q", got, want)
 	}
 
-	if err := manager.completeLaunchPlan(plan); err != nil {
-		t.Fatalf("complete launch plan: %v", err)
+	if err := manager.finalizeLockedLaunchPlan(plan); err != nil {
+		t.Fatalf("finalize locked launch plan: %v", err)
 	}
 	if plan.CID != cfg.VSock.CIDRange.Start {
 		t.Fatalf("unexpected cid: got %d want %d", plan.CID, cfg.VSock.CIDRange.Start)

@@ -31,7 +31,6 @@ type Runtime struct {
 	cid             int
 	stats           *launchStats
 	qmp             qmpClient
-	suspendHandler  *launchSuspendHandler
 	suspendRequests *launchSuspendCoordinator
 	watchers        executor.Group
 	server          *Server
@@ -56,10 +55,6 @@ func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePath
 
 func (r *Runtime) SetReady() {
 	r.setState(RuntimeReady)
-}
-
-func (r *Runtime) SetSuspendHandler(handler *launchSuspendHandler) {
-	r.suspendHandler = handler
 }
 
 func (r *Runtime) SetWatchers(watchers executor.Group) {

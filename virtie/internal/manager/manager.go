@@ -208,7 +208,7 @@ func (m *manager) planLaunch(manifest *manifest.Manifest, remoteCommand []string
 	}, nil
 }
 
-func (m *manager) completeLaunchPlan(plan *launchPlan) error {
+func (m *manager) finalizeLockedLaunchPlan(plan *launchPlan) error {
 	cid, err := m.acquireLaunchCID(plan.Manifest, plan.ResumeState)
 	if err != nil {
 		return &stageError{Stage: "preflight", Err: err}
@@ -259,7 +259,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return removeLaunchPID(manifest, os.Getpid())
 	})
 
-	if err := m.completeLaunchPlan(plan); err != nil {
+	if err := m.finalizeLockedLaunchPlan(plan); err != nil {
 		return err
 	}
 	if plan.ResumeState != nil {
@@ -268,59 +268,8 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		m.logger.Info("allocated vsock cid", "cid", plan.CID)
 	}
 
-	if err := ensureDirectories(manifest.ResolvedPersistenceDirectories()); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	if err := ensureParentDirectories(plan.CleanupFiles); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	if err := ensureParentDirectories([]string{plan.Paths.QMPSocket}); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	if plan.Paths.GuestAgentSocket != "" {
-		if err := ensureParentDirectories([]string{plan.Paths.GuestAgentSocket}); err != nil {
-			return &stageError{Stage: "preflight", Err: err}
-		}
-	}
-	if plan.Paths.SSHReadySocket != "" {
-		if err := ensureParentDirectories([]string{plan.Paths.SSHReadySocket}); err != nil {
-			return &stageError{Stage: "preflight", Err: err}
-		}
-	}
-	if plan.Paths.ControlSocket != "" {
-		if err := ensureParentDirectories([]string{plan.Paths.ControlSocket}); err != nil {
-			return &stageError{Stage: "preflight", Err: err}
-		}
-	}
-	if err := ensureExistingSocketPaths(plan.ExternalVirtioFSSocketPaths); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	if err := ensureParentDirectories(plan.VolumeImagePaths); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	if err := removeSocketPaths([]string{plan.Paths.QMPSocket}); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	if err := removeSocketPaths(plan.CleanupFiles); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
-	}
-	if plan.Paths.GuestAgentSocket != "" {
-		if err := removeSocketPaths([]string{plan.Paths.GuestAgentSocket}); err != nil {
-			return &stageError{Stage: "preflight", Err: err}
-		}
-	}
-	if plan.Paths.SSHReadySocket != "" {
-		if err := removeSocketPaths([]string{plan.Paths.SSHReadySocket}); err != nil {
-			return &stageError{Stage: "preflight", Err: err}
-		}
-	}
-	if plan.Paths.ControlSocket != "" {
-		if err := removeSocketPaths([]string{plan.Paths.ControlSocket}); err != nil {
-			return &stageError{Stage: "preflight", Err: err}
-		}
-	}
-	if err := ensureVolumeImages(plan.Volumes, m.logger); err != nil {
-		return &stageError{Stage: "preflight", Err: err}
+	if err := m.prepareLaunchFilesystem(plan); err != nil {
+		return err
 	}
 
 	started := executor.NewGroup()
@@ -329,7 +278,6 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	var runtime *Runtime
 	writeBackOnExit := false
 	defer func() {
-		lifecycle.SetPhase(launchPhaseTeardown)
 		savedSuspend := errors.Is(err, errSavedSuspendExit)
 		if savedSuspend {
 			err = nil
@@ -362,66 +310,19 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 	}()
 
-	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
+	qemu, runtime, qmpClient, err := m.startLaunchRuntime(launchCtx, plan, stats, lifecycle, &started)
 	if err != nil {
 		return err
 	}
-	started.Add(runProcesses.Processes()...)
-
-	if len(plan.VirtioFSSocketPaths) > 0 {
-		m.logger.Info("waiting for virtiofs sockets")
-		if err := m.waitForSockets(launchCtx, "virtiofs startup", plan.VirtioFSSocketPaths, started); err != nil {
+	if plan.ResumeState != nil {
+		if err := m.restoreLaunchRuntime(launchCtx, plan, qmpClient); err != nil {
 			return err
 		}
-	}
-
-	if plan.ResumeState != nil {
-		m.logger.Info("starting qemu for restore")
-	} else {
-		m.logger.Info("starting qemu")
-	}
-	stats.MarkBootStarted(time.Now())
-	qemu, err := m.startManagedProcess(plan.QEMUCommand)
-	if err != nil {
-		return &stageError{Stage: "vm startup", Err: err}
-	}
-	started.Add(qemu)
-
-	m.logger.Info("waiting for qmp readiness")
-	qmpClient, err = m.waitForQMP(launchCtx, plan.Paths.QMPSocket, started)
-	if err != nil {
-		return err
-	}
-	lifecycle.SetPhase(launchPhaseQMPReady)
-	runtime = newRuntime(m, plan.Manifest, plan.Paths, plan.CID, stats, qmpClient, lifecycle.Suspend())
-	qmpClient = runtime.QMP()
-	stats.MarkQMPReady(time.Now())
-	qemu.SetShutdown(func() error {
-		return qmpClient.Quit(m.effectiveQMPQuitTimeout())
-	})
-	if plan.ResumeState != nil {
-		m.logger.Info("restoring vm state", "path", plan.ResumeState.VMStatePath)
-		if err := qmpClient.MigrateIncoming(m.effectiveQMPMigrationTimeout(), plan.ResumeState.VMStatePath); err != nil {
-			return &stageError{Stage: "restore", Err: err}
-		}
-		if err := m.waitForMigration(launchCtx, qmpClient); err != nil {
-			return &stageError{Stage: "restore", Err: err}
-		}
-		if err := qmpClient.Cont(m.effectiveQMPCommandTimeout()); err != nil {
-			return &stageError{Stage: "restore", Err: err}
-		}
 		writeBackOnExit = true
-		plan.Notifier.Notify(launchCtx, notifyStateRuntimeResume, "Restored saved VM state", map[string]string{
-			"host_name":     plan.Manifest.Identity.HostName,
-			"vm_state_path": plan.ResumeState.VMStatePath,
-			"cid":           fmt.Sprintf("%d", plan.CID),
-		})
 	}
-	lifecycle.SetPhase(launchPhaseRestoreComplete)
 	suspendHandler := newLaunchSuspendHandler(m, plan.Manifest, plan.Paths.QMPSocket, qmpClient, plan.CID, plan.Notifier, func() bool {
 		return writeBackOnExit
 	})
-	runtime.SetSuspendHandler(suspendHandler)
 	runtime.SetReady()
 	if err := runtime.StartControl(launchCtx); err != nil {
 		return &stageError{Stage: "control startup", Err: err}
@@ -439,7 +340,6 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			return err
 		}
 		writeBackOnExit = true
-		lifecycle.SetPhase(launchPhaseGuestProvisioned)
 		stats.MarkFilesReady(time.Now())
 
 		if plan.Paths.SSHReadySocket != "" {
@@ -448,7 +348,6 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 				return err
 			}
 		}
-		lifecycle.SetPhase(launchPhaseSSHReady)
 		stats.MarkSSHReady(time.Now())
 	}
 
@@ -457,17 +356,13 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 			qmpTimeout: m.effectiveQMPCommandTimeout(),
 			notifier:   plan.Notifier,
 		}, plan.Manifest, qmpClient)
-		lifecycle.SetPhase(launchPhaseFeaturesStarted)
 
 		if err := m.runSSHSession(launchCtx, plan, stats, lifecycle, suspendHandler, &started); err != nil {
 			return err
 		}
 		if plan.ResumeState != nil {
-			if err := os.Remove(plan.ResumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", plan.ResumeState.VMStatePath, err)}
-			}
-			if err := removeSuspendState(plan.Manifest); err != nil {
-				return &stageError{Stage: "restore", Err: err}
+			if err := removeRestoredSuspendState(plan); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -477,14 +372,10 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		qmpTimeout: m.effectiveQMPCommandTimeout(),
 		notifier:   plan.Notifier,
 	}, plan.Manifest, qmpClient)
-	lifecycle.SetPhase(launchPhaseFeaturesStarted)
 
 	if plan.ResumeState != nil {
-		if err := os.Remove(plan.ResumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", plan.ResumeState.VMStatePath, err)}
-		}
-		if err := removeSuspendState(plan.Manifest); err != nil {
-			return &stageError{Stage: "restore", Err: err}
+		if err := removeRestoredSuspendState(plan); err != nil {
+			return err
 		}
 	}
 
@@ -497,9 +388,99 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	vmWatchers := started.Snapshot()
 	vmWatchers.Remove(qemu)
 	runtime.SetWatchers(vmWatchers)
-	lifecycle.SetPhase(launchPhaseForegroundWait)
 	if err := m.waitForVM(launchCtx, qemu, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, vmWatchers); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (m *manager) prepareLaunchFilesystem(plan *launchPlan) error {
+	if err := ensureDirectories(plan.Manifest.ResolvedPersistenceDirectories()); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	if err := ensureParentDirectories(plan.RuntimeSocketCleanupFiles()); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	if err := ensureExistingSocketPaths(plan.ExternalVirtioFSSocketPaths); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	if err := ensureParentDirectories(plan.VolumeImagePaths); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	if err := removeSocketPaths(plan.RuntimeSocketCleanupFiles()); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	if err := ensureVolumeImages(plan.Volumes, m.logger); err != nil {
+		return &stageError{Stage: "preflight", Err: err}
+	}
+	return nil
+}
+
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *launchPlan, stats *launchStats, lifecycle *launchLifecycle, started *executor.Group) (*executor.Process, *Runtime, qmpClient, error) {
+	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	started.Add(runProcesses.Processes()...)
+
+	if len(plan.VirtioFSSocketPaths) > 0 {
+		m.logger.Info("waiting for virtiofs sockets")
+		if err := m.waitForSockets(ctx, "virtiofs startup", plan.VirtioFSSocketPaths, *started); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	if plan.ResumeState != nil {
+		m.logger.Info("starting qemu for restore")
+	} else {
+		m.logger.Info("starting qemu")
+	}
+	stats.MarkBootStarted(time.Now())
+	qemu, err := m.startManagedProcess(plan.QEMUCommand)
+	if err != nil {
+		return nil, nil, nil, &stageError{Stage: "vm startup", Err: err}
+	}
+	started.Add(qemu)
+
+	m.logger.Info("waiting for qmp readiness")
+	client, err := m.waitForQMP(ctx, plan.Paths.QMPSocket, *started)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	runtime := newRuntime(m, plan.Manifest, plan.Paths, plan.CID, stats, client, lifecycle.Suspend())
+	client = runtime.QMP()
+	stats.MarkQMPReady(time.Now())
+	qemu.SetShutdown(func() error {
+		return client.Quit(m.effectiveQMPQuitTimeout())
+	})
+	return qemu, runtime, client, nil
+}
+
+func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *launchPlan, client qmpClient) error {
+	m.logger.Info("restoring vm state", "path", plan.ResumeState.VMStatePath)
+	if err := client.MigrateIncoming(m.effectiveQMPMigrationTimeout(), plan.ResumeState.VMStatePath); err != nil {
+		return &stageError{Stage: "restore", Err: err}
+	}
+	if err := m.waitForMigration(ctx, client); err != nil {
+		return &stageError{Stage: "restore", Err: err}
+	}
+	if err := client.Cont(m.effectiveQMPCommandTimeout()); err != nil {
+		return &stageError{Stage: "restore", Err: err}
+	}
+	plan.Notifier.Notify(ctx, notifyStateRuntimeResume, "Restored saved VM state", map[string]string{
+		"host_name":     plan.Manifest.Identity.HostName,
+		"vm_state_path": plan.ResumeState.VMStatePath,
+		"cid":           fmt.Sprintf("%d", plan.CID),
+	})
+	return nil
+}
+
+func removeRestoredSuspendState(plan *launchPlan) error {
+	if err := os.Remove(plan.ResumeState.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return &stageError{Stage: "restore", Err: fmt.Errorf("remove saved vm state %q: %w", plan.ResumeState.VMStatePath, err)}
+	}
+	if err := removeSuspendState(plan.Manifest); err != nil {
+		return &stageError{Stage: "restore", Err: err}
 	}
 	return nil
 }
@@ -759,27 +740,12 @@ type launchSuspendCoordinator struct {
 	result    error
 }
 
-type launchLifecyclePhase string
-
-const (
-	launchPhaseQMPReady         launchLifecyclePhase = "qmp-ready"
-	launchPhaseRestoreComplete  launchLifecyclePhase = "restore-complete"
-	launchPhaseGuestProvisioned launchLifecyclePhase = "guest-provisioned"
-	launchPhaseSSHReady         launchLifecyclePhase = "ssh-ready"
-	launchPhaseFeaturesStarted  launchLifecyclePhase = "features-started"
-	launchPhaseForegroundWait   launchLifecyclePhase = "foreground-wait"
-	launchPhaseTeardown         launchLifecyclePhase = "teardown"
-)
-
 type launchLifecycle struct {
 	suspend    *launchSuspendCoordinator
 	info       chan struct{}
 	signalDone chan struct{}
 	stopSignal func()
 	stopOnce   sync.Once
-
-	mu    sync.Mutex
-	phase launchLifecyclePhase
 }
 
 func (m *manager) startLaunchLifecycle(cancel context.CancelFunc) *launchLifecycle {
@@ -835,12 +801,6 @@ func (l *launchLifecycle) RequestInfo() {
 	case l.info <- struct{}{}:
 	default:
 	}
-}
-
-func (l *launchLifecycle) SetPhase(phase launchLifecyclePhase) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.phase = phase
 }
 
 func newLaunchSuspendCoordinator() *launchSuspendCoordinator {
@@ -986,7 +946,6 @@ func (m *manager) runSSHSession(
 		started.Add(session)
 		stats.MarkSSHStarted(attemptStarted)
 
-		lifecycle.SetPhase(launchPhaseForegroundWait)
 		err = m.waitForSession(ctx, session, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
 		stderrText := stderr.String()
 		if err == nil {
