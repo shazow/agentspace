@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
@@ -141,26 +140,9 @@ func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendRespo
 }
 
 func (r *Runtime) Balloon(ctx context.Context, req BalloonRequest) (BalloonResponse, error) {
-	_ = ctx
-	if r.manifest.QEMU.Devices.Balloon == nil {
-		return BalloonResponse{}, failedPrecondition(fmt.Errorf("balloon device is not configured"))
+	resp, err := runtimepkg.Balloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.manager.effectiveQMPCommandTimeout(), req)
+	if errors.Is(err, runtimepkg.ErrBalloonNotConfigured) {
+		return BalloonResponse{}, failedPrecondition(err)
 	}
-	timeout := r.manager.effectiveQMPCommandTimeout()
-	var actual int64
-	if err := r.qmp.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {
-		info, err := monitor.QueryBalloon()
-		if err != nil {
-			return fmt.Errorf("qmp query-balloon: %w", err)
-		}
-		actual = info.Actual
-		if req.TargetBytes > 0 {
-			if err := monitor.Balloon(req.TargetBytes); err != nil {
-				return fmt.Errorf("qmp balloon: %w", err)
-			}
-		}
-		return nil
-	}); err != nil {
-		return BalloonResponse{}, err
-	}
-	return BalloonResponse{ActualBytes: actual, TargetBytes: req.TargetBytes}, nil
+	return resp, err
 }
