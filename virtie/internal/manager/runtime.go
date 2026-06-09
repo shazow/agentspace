@@ -27,19 +27,30 @@ type RuntimePaths struct {
 type Runtime struct {
 	manager         *manager
 	manifest        *manifest.Manifest
+	plan            *Plan
 	paths           RuntimePaths
 	cid             int
 	stats           *launchStats
 	qmp             qmpClient
 	suspendRequests *launchSuspendCoordinator
+	lifecycle       *launchLifecycle
+	suspendHandler  *launchSuspendHandler
 	processes       *ProcessSet
 	shutdownDelay   time.Duration
+	closeHooks      runtimeCloseHooks
+	savedSuspend    bool
 	watchers        executor.Group
 	server          *Server
 
 	stateMu   sync.Mutex
 	state     RuntimeState
 	closeOnce sync.Once
+}
+
+type runtimeCloseHooks struct {
+	writeBack func(context.Context) error
+	cleanup   func() error
+	stats     func()
 }
 
 func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator) *Runtime {
@@ -66,6 +77,16 @@ func (r *Runtime) SetWatchers(watchers executor.Group) {
 func (r *Runtime) SetProcesses(processes *ProcessSet, shutdownDelay time.Duration) {
 	r.processes = processes
 	r.shutdownDelay = shutdownDelay
+}
+
+func (r *Runtime) SetLaunchLifecycle(plan *Plan, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler) {
+	r.plan = plan
+	r.lifecycle = lifecycle
+	r.suspendHandler = suspendHandler
+}
+
+func (r *Runtime) SetCloseHooks(hooks runtimeCloseHooks) {
+	r.closeHooks = hooks
 }
 
 func (r *Runtime) QMP() qmpClient {
@@ -99,8 +120,13 @@ func (r *Runtime) Close() error {
 	var err error
 	r.closeOnce.Do(func() {
 		r.setState(RuntimeStopping)
+		if r.closeHooks.writeBack != nil && !r.savedSuspend {
+			writeBackCtx, cancelWriteBack := context.WithTimeout(context.Background(), r.manager.effectiveQMPCommandTimeout())
+			err = errors.Join(err, r.closeHooks.writeBack(writeBackCtx))
+			cancelWriteBack()
+		}
 		if r.server != nil {
-			err = r.server.Close()
+			err = errors.Join(err, r.server.Close())
 		}
 		if r.processes != nil {
 			err = errors.Join(err, r.processes.Close(r.shutdownDelay))
@@ -108,8 +134,33 @@ func (r *Runtime) Close() error {
 		if r.qmp != nil {
 			err = errors.Join(err, r.qmp.Disconnect())
 		}
+		if r.closeHooks.cleanup != nil {
+			err = errors.Join(err, r.closeHooks.cleanup())
+		}
+		if r.closeHooks.stats != nil {
+			r.closeHooks.stats()
+		}
 		r.setState(RuntimeStopped)
 	})
+	return err
+}
+
+func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
+	if r.plan == nil || r.lifecycle == nil || r.suspendHandler == nil || r.processes == nil {
+		return failedPrecondition(fmt.Errorf("runtime foreground wait is not configured"))
+	}
+	plan := r.plan
+	if mode == WaitSSH || mode == WaitVM {
+		copyPlan := *r.plan
+		copyOptions := copyPlan.Options
+		copyOptions.SSH = mode == WaitSSH
+		copyPlan.Options = copyOptions
+		plan = &copyPlan
+	}
+	err := r.manager.waitForLaunchForeground(ctx, plan, r.stats, r, r.qmp, r.lifecycle, r.suspendHandler, r.processes)
+	if errors.Is(err, errSavedSuspendExit) {
+		r.savedSuspend = true
+	}
 	return err
 }
 

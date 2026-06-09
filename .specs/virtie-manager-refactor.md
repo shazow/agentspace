@@ -34,7 +34,7 @@ Out of scope:
 
 Acceptance criteria:
 
-- [ ] `launchWithOptions` is reduced to composing `Plan`, `Launcher`,
+- [x] `launchWithOptions` is reduced to composing `Plan`, `Launcher`,
   `Runtime`, and foreground wait/teardown calls.
 - [x] The launch process starts a `virtie.sock` server after QMP readiness and
   stops it during teardown.
@@ -75,6 +75,9 @@ Acceptance criteria:
   launch path.
 - [x] Extracted foreground waiting into a named launch helper covering both
   interactive SSH sessions and headless VM waits.
+- [x] Added `Launcher.Start`, `Runtime.Wait`, and `WaitMode`, with
+  `LaunchWithOptions` now following the planned `Plan -> Start -> Wait ->
+  Close` structure.
 
 ## Landed Control Flow
 
@@ -88,7 +91,9 @@ flowchart TD
 	subgraph Launch["virtie launch process"]
 		Launcher[Launcher]
 		Plan[Plan]
-		L[launchWithPlan]
+		Start[Launcher.Start]
+		L[launchWithOptions]
+		Wait[Runtime.Wait]
 		Processes[ProcessSet]
 		QEMU[QEMU process]
 		QMP[serialized QMP client]
@@ -99,7 +104,7 @@ flowchart TD
 		SuspendQueue[launchSuspendCoordinator]
 		Loop[waitForLaunchForeground]
 		SuspendSave[launchSuspendHandler.saveAndExit]
-		Teardown[deferred runtime close and socket cleanup]
+		Teardown[Runtime.Close]
 	end
 
 	subgraph Clients["other virtie commands"]
@@ -109,11 +114,15 @@ flowchart TD
 	end
 
 	Launcher --> Plan
-	Plan --> L
-	L --> Processes
+	Plan --> Start
+	L --> Launcher
+	Start --> Processes
 	Processes --> QEMU
-	L --> QMP
-	L --> Runtime
+	Start --> QMP
+	Start --> Runtime
+	L --> Wait
+	Wait --> Runtime
+	Wait --> Teardown
 	Runtime --> QMP
 	Runtime --> QGA
 	Runtime --> Router
