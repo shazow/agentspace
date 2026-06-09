@@ -15,6 +15,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qga"
 )
 
 type HotplugOptions struct {
@@ -170,7 +171,7 @@ func (g managerHotplugGuest) Run(ctx context.Context, command []string) error {
 		return err
 	}
 	if status.ExitCode != 0 {
-		return fmt.Errorf("guest command %q exited with status %d%s", strings.Join(command, " "), status.ExitCode, guestExecOutputSuffix(status))
+		return fmt.Errorf("guest command %q exited with status %d%s", strings.Join(command, " "), status.ExitCode, qga.ExecOutputSuffix(status))
 	}
 	return nil
 }

@@ -370,7 +370,7 @@ func (m *manager) runGuestFileCommand(ctx context.Context, client guestAgentClie
 		return err
 	}
 	if status.ExitCode != 0 {
-		return fmt.Errorf("%s %q exited with status %d%s", name, guestPath, status.ExitCode, guestExecOutputSuffix(status))
+		return fmt.Errorf("%s %q exited with status %d%s", name, guestPath, status.ExitCode, qga.ExecOutputSuffix(status))
 	}
 	return nil
 }
@@ -380,72 +380,15 @@ func (m *manager) runGuestFileCommandStatus(ctx context.Context, client guestAge
 }
 
 func (m *manager) runGuestCommandStatus(ctx context.Context, client guestAgentClient, name string, path string, args []string, subject string) (guestExecStatus, error) {
-	timeout := m.effectiveQMPCommandTimeout()
-	pid, err := client.Exec(timeout, path, args, true)
-	if err != nil {
-		return guestExecStatus{}, fmt.Errorf("%s %q: %w", name, subject, err)
-	}
-
-	deadline := time.Now().Add(timeout)
-	for {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return guestExecStatus{}, fmt.Errorf("%s %q timed out after %s", name, subject, timeout)
-		}
-
-		status, err := client.ExecStatus(minDuration(timeout, remaining), pid)
-		if err != nil {
-			return guestExecStatus{}, fmt.Errorf("%s %q: %w", name, subject, err)
-		}
-		if status.Exited {
-			return status, nil
-		}
-
-		sleep := minDuration(defaultMigrationPollDelay, time.Until(deadline))
-		if sleep <= 0 {
-			continue
-		}
-		timer := time.NewTimer(sleep)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return guestExecStatus{}, ctx.Err()
-		case <-timer.C:
-		}
-	}
-}
-
-func guestExecOutputSuffix(status guestExecStatus) string {
-	stdout := decodeGuestExecData(status.OutData)
-	stderr := decodeGuestExecData(status.ErrData)
-	switch {
-	case stdout != "" && stderr != "":
-		return fmt.Sprintf(": stdout=%q stderr=%q", stdout, stderr)
-	case stdout != "":
-		return fmt.Sprintf(": stdout=%q", stdout)
-	case stderr != "":
-		return fmt.Sprintf(": stderr=%q", stderr)
-	default:
-		return ""
-	}
-}
-
-func decodeGuestExecData(data string) string {
-	if data == "" {
-		return ""
-	}
-	decoded, err := base64.StdEncoding.DecodeString(data)
-	if err != nil {
-		return data
-	}
-	return string(decoded)
-}
-
-func minDuration(a time.Duration, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
+	return qga.RunCommandStatus(ctx, client, qga.ExecWait{
+		Timeout:       m.effectiveQMPCommandTimeout(),
+		PollDelay:     defaultMigrationPollDelay,
+		Name:          name,
+		Path:          path,
+		Args:          args,
+		Subject:       subject,
+		CaptureOutput: true,
+	})
 }
 
 func (m *manager) waitForGuestAgent(ctx context.Context, socketPath string, watchers executor.Group) (guestAgentClient, error) {
