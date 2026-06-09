@@ -12,6 +12,7 @@ import (
 	govmmQemu "github.com/kata-containers/govmm/qemu"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
 type fakeOptionalFeature struct {
@@ -109,7 +110,7 @@ func (f *fakeOptionalFeature) AppendQEMUArgs(
 	return append(args, "-device", f.appendMarker), nil
 }
 
-func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, qmpClient qmpClient) *runtimepkg.Task {
+func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, qmpClient qmpclient.Client) *runtimepkg.Task {
 	if f.runner != nil {
 		f.runner.mu.Lock()
 		f.startedAfterSSHSession = f.runner.interactiveStarts

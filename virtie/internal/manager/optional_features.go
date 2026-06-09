@@ -8,6 +8,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
 type qemuTransportResolver func(string) (govmmQemu.VirtioTransport, error)
@@ -28,7 +29,7 @@ type optionalFeature interface {
 		ctx context.Context,
 		runtime optionalFeatureRuntime,
 		manifest *manifest.Manifest,
-		qmpClient qmpClient,
+		qmpClient qmpclient.Client,
 	) *runtimepkg.Task
 }
 
@@ -49,7 +50,7 @@ func startOptionalFeatureTasks(
 	ctx context.Context,
 	runtime optionalFeatureRuntime,
 	manifest *manifest.Manifest,
-	qmpClient qmpClient,
+	qmpClient qmpclient.Client,
 ) runtimepkg.TaskGroup {
 	var tasks runtimepkg.TaskGroup
 	for _, feature := range optionalFeatures {

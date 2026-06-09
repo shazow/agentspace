@@ -4,8 +4,6 @@ import (
 	"errors"
 	"net"
 	"time"
-
-	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
 const (
@@ -14,8 +12,6 @@ const (
 	defaultQMPQuitTimeout      = 500 * time.Millisecond
 	defaultQMPMigrationTimeout = 30 * time.Second
 )
-
-type qmpClient = qmpclient.Client
 
 func appendQMPDelimiter(command []byte) []byte {
 	if len(command) > 0 && command[len(command)-1] == '\n' {

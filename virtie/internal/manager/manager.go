@@ -263,7 +263,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	}
 
 	processes := runtimepkg.NewProcessSet()
-	var qmpClient qmpClient
+	var qmpClient qmpclient.Client
 	writeBackOnExit := runtimepkg.NewWriteBackState()
 	defer func() {
 		if err != nil {
@@ -353,7 +353,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	return runtime, nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *runtimepkg.Stats, lifecycle *launch.Lifecycle, processes *runtimepkg.ProcessSet) (*Runtime, qmpClient, error) {
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *runtimepkg.Stats, lifecycle *launch.Lifecycle, processes *runtimepkg.ProcessSet) (*Runtime, qmpclient.Client, error) {
 	started, err := launch.StartRuntimeProcesses(ctx, launch.RuntimeStartup{
 		Plan:           plan,
 		Processes:      processes,
@@ -392,7 +392,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *run
 	return runtime, client, nil
 }
 
-func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client qmpClient) error {
+func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *Plan, client qmpclient.Client) error {
 	return launch.RestoreRuntime(ctx, launch.RuntimeRestore{
 		Plan:   plan,
 		Logger: m.logger,
@@ -419,7 +419,7 @@ func (m *manager) waitForLaunchForeground(
 	plan *Plan,
 	stats *runtimepkg.Stats,
 	runtime *Runtime,
-	qmpClient qmpClient,
+	qmpClient qmpclient.Client,
 	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
 	processes *runtimepkg.ProcessSet,
@@ -466,7 +466,7 @@ func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths 
 	return m.waitForLaunchSockets(ctx, stage, socketPaths, watchers)
 }
 
-func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpClient, error) {
+func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpclient.Client, error) {
 	dialer := m.qmpDialer
 	if dialer == nil {
 		dialer = &qmpclient.SocketMonitorDialer{}
@@ -526,7 +526,7 @@ type launchSuspendHandler struct {
 	manager       *manager
 	manifest      *manifest.Manifest
 	qmpSocketPath string
-	client        qmpClient
+	client        qmpclient.Client
 	cid           int
 	notifier      launch.NotificationSink
 	writeBack     func() bool
@@ -534,7 +534,7 @@ type launchSuspendHandler struct {
 	err           error
 }
 
-func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier launch.NotificationSink, writeBack func() bool) *launchSuspendHandler {
+func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpclient.Client, cid int, notifier launch.NotificationSink, writeBack func() bool) *launchSuspendHandler {
 	return &launchSuspendHandler{
 		manager:       manager,
 		manifest:      manifest,
@@ -638,7 +638,7 @@ func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, delay
 	return m.waitForProcess(ctx, stage, nil, delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
-func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier launch.NotificationSink) error {
+func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpclient.Client, cid int, notifier launch.NotificationSink) error {
 	return launch.SaveRuntimeSuspend(ctx, launch.RuntimeSuspendSave{
 		Manifest:      manifest,
 		QMPSocketPath: qmpSocketPath,

@@ -18,6 +18,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
 type HotplugOptions struct {
@@ -124,7 +125,7 @@ func (w managerHotplugSocketWaiter) Wait(ctx context.Context, stage string, sock
 }
 
 type managerHotplugQMP struct {
-	client  qmpClient
+	client  qmpclient.Client
 	timeout time.Duration
 }
 
