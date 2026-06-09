@@ -1,8 +1,11 @@
 package runtime
 
 import (
+	"bytes"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestStartupFailureActionsRunInCleanupOrder(t *testing.T) {
@@ -48,5 +51,40 @@ func TestStartupFailureActionsJoinErrors(t *testing.T) {
 	}).Run()
 	if !errors.Is(err, lockErr) || !errors.Is(err, qmpErr) {
 		t.Fatalf("joined error: got %v want lock and qmp errors", err)
+	}
+}
+
+func TestConfiguredStartupFailureActionsJoinsSocketCleanupAndFinalizesStats(t *testing.T) {
+	socketErr := errors.New("socket cleanup failed")
+	var output bytes.Buffer
+	stats := NewStats(time.Now().Add(-time.Second))
+	var socketCalls int
+
+	actions := ConfiguredStartupFailureActions(StartupFailureConfig{
+		SocketCleanup: []func() error{
+			func() error {
+				socketCalls++
+				return socketErr
+			},
+			func() error {
+				socketCalls++
+				return nil
+			},
+		},
+		Stats:       stats,
+		StatsOutput: &output,
+	})
+
+	if err := actions.Run(); !errors.Is(err, socketErr) {
+		t.Fatalf("startup failure error: got %v want %v", err, socketErr)
+	}
+	if socketCalls != 2 {
+		t.Fatalf("socket cleanup calls: got %d want 2", socketCalls)
+	}
+	if ControlStats(stats).CompletedAt.IsZero() {
+		t.Fatal("stats were not finalized")
+	}
+	if !strings.Contains(output.String(), "total=") {
+		t.Fatalf("stats output missing runtime: %q", output.String())
 	}
 }
