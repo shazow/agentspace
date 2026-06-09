@@ -70,6 +70,9 @@ Acceptance criteria:
 - [x] Introduced `Launcher`, `DefaultConfig`, `LaunchSpec`, `Plan`, and
   `ProcessSet` as real manager package types while preserving the existing
   package-level launch entrypoints.
+- [x] Moved launch process and QMP teardown ownership into idempotent
+  `Runtime.Close`, with pre-runtime startup failures still cleaned up by the
+  launch path.
 
 ## Landed Control Flow
 
