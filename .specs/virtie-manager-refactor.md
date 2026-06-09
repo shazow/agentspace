@@ -3,7 +3,7 @@
 Redesign `virtie/internal/manager` around a launch-owned runtime and typed
 control socket.
 
-**Status**: In-Progress
+**Status**: Complete
 
 ## Goals
 
@@ -773,7 +773,7 @@ Keep `virtie/internal/manager` as the public facade for CLI-facing package
 functions: `LaunchWithOptions`, `Suspend`, `Hotplug`, and future adapters. New
 implementation packages should avoid importing the facade package.
 
-- `virtie/internal/manager/launch` (partial): launch value types including
+- `virtie/internal/manager/launch` (landed): launch value types including
   `Plan`, options, wait mode, runtime paths, suspend state, notifier
   interface, plan-owned socket cleanup, and lifecycle event coordination.
   Suspend-state, launch PID file helpers, launch PID validation,
@@ -806,13 +806,13 @@ implementation packages should avoid importing the facade package.
   wrapping have moved there too.
   Runtime restore and suspend-save orchestration, plus runtime resume/suspend
   notification payloads, also live there now.
-  `Launcher`, default concrete dependencies, and some stage-specific wrapping
-  still live in `manager`; generic stage-error and command-error construction
-  now lives in `launch` and manager call sites use those launch error types
-  directly. Unexpected-process-exit wrapping, notifier selection, async
-  readiness, socket wait mechanics, and the major startup sequencing phases
-  now live in `launch`.
-- `virtie/internal/manager/runtime` (partial): managed task cancellation,
+  `Launcher`, default concrete dependencies, and CLI exit-code adaptation
+  remain in the `manager` facade; generic stage-error and command-error
+  construction now lives in `launch` and manager call sites use those launch
+  error types directly. Unexpected-process-exit wrapping, notifier selection,
+  async readiness, socket wait mechanics, and the major startup sequencing
+  phases now live in `launch`.
+- `virtie/internal/manager/runtime` (landed): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, close action
   ordering, ready/status/suspend transition policy, suspend response
@@ -839,12 +839,12 @@ implementation packages should avoid importing the facade package.
 - `virtie/internal/qga` (landed): guest agent dial/client implementation,
   dial retry and ping-readiness mechanics, file transfer primitives,
   guest-exec polling, and low-level QGA protocol helpers.
-- `virtie/internal/sshtools` (partial): SSH command construction, failure
+- `virtie/internal/sshtools` (landed): SSH command construction, failure
   classification, retry-output buffering, autoprovisioned key storage, and
-  retry logging have landed. `launch` now owns the foreground SSH session loop,
-  authorized-key guest install sequencing, while manager still supplies
-  concrete QGA commands, process ownership, stats, and lifecycle action
-  callbacks.
+  retry logging have landed. `launch` owns the foreground SSH session loop and
+  authorized-key guest install sequencing; manager supplies the concrete QGA
+  commands, process ownership, stats, and lifecycle action callbacks at the
+  facade boundary.
 
 The existing add-on engines should remain independent of `manager` internals:
 `virtie/internal/hotplug` remains the hotplug implementation engine, and
