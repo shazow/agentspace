@@ -326,7 +326,7 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *Plan) (err error) {
 		return err
 	}
 	defer joinDeferredError(&err, runtime.Close)
-	err = runtime.Wait(ctx, waitModeFromOptions(plan.Options))
+	err = runtime.Wait(ctx, plan.Options.WaitMode())
 	if errors.Is(err, errSavedSuspendExit) {
 		return nil
 	}
@@ -478,13 +478,6 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	}
 
 	return runtime, nil
-}
-
-func waitModeFromOptions(options LaunchOptions) WaitMode {
-	if options.SSH {
-		return WaitSSH
-	}
-	return WaitVM
 }
 
 func (m *manager) prepareLaunchFilesystem(plan *Plan) error {
