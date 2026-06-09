@@ -258,6 +258,10 @@ Acceptance criteria:
 - [x] Move guest provisioning and SSH-readiness startup checkpoint sequencing
   into `virtie/internal/manager/launch`, with manager supplying concrete QGA
   writes and SSH-ready waits.
+- [x] Move runtime activation sequencing into
+  `virtie/internal/manager/launch`, so ready-state marking, concrete runtime
+  configuration callbacks, control startup, queued suspend handling, guest
+  provisioning, and write-back enabling run as one package-owned phase.
 - [x] Move host-side guest-file payload and write-back path helpers into
   `virtie/internal/manager/launch`, leaving manager responsible for QGA
   guest-write orchestration and stage wrapping.
@@ -635,6 +639,7 @@ implementation packages should avoid importing the facade package.
   Foreground SSH session retry/autoprovision orchestration now lives there.
   Foreground SSH-vs-headless orchestration has moved there too.
   Guest provisioning and SSH-readiness checkpoint sequencing also live there.
+  Runtime activation sequencing lives there as well.
   Host-side guest-file payload and write-back path helpers now live there.
   Guest-file directory install argument policy has moved there too.
   Runtime restore and suspend-save orchestration, plus runtime resume/suspend
@@ -1070,8 +1075,8 @@ readiness, and managed virtiofs sockets:
    startup. QEMU process startup, async startup/readiness waiting, startup
    queued-suspend handling, VSock CID selection, locked plan finalization, and
    pre-runtime launch lock/PID setup have moved there too. Runtime process/QMP
-   startup sequencing and restored-state cleanup have moved there too. Manager
-   still owns default concrete
+   startup sequencing, runtime activation sequencing, and restored-state
+   cleanup have moved there too. Manager still owns default concrete
    dependencies, stage wrapping, and notifier selection.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
