@@ -157,6 +157,9 @@ Acceptance criteria:
 - [x] Move runtime resume notification state and payload construction into
   `virtie/internal/manager/launch`, leaving manager responsible for invoking
   the helper after QMP restore succeeds.
+- [x] Move runtime suspend notification state and payload construction into
+  `virtie/internal/manager/launch`, leaving manager responsible for invoking
+  the helper after QMP suspend save succeeds.
 - [x] Move QMP migration polling into `virtie/internal/qmpclient`, with
   manager supplying lifecycle-specific timeouts and stage wrapping.
 - [x] Move QMP dial retry mechanics into `virtie/internal/qmpclient`, with
@@ -624,6 +627,7 @@ implementation packages should avoid importing the facade package.
   Guest provisioning and SSH-readiness checkpoint sequencing also live there.
   Host-side guest-file payload and write-back path helpers now live there.
   Guest-file directory install argument policy has moved there too.
+  Runtime resume and suspend notification payloads also live there now.
   `Launcher`, default concrete dependencies, stage wrapping, notifier
   selection, and the remaining startup sequencing still live in `manager`;
   async readiness and socket wait mechanics now live in `launch`.
