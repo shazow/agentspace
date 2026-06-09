@@ -106,7 +106,7 @@ func TestManagerPlanLaunchResolvesRuntimeInputs(t *testing.T) {
 
 	remoteCommand := []string{"uname", "-a"}
 	manager := &manager{}
-	plan, err := manager.planLaunch(cfg, remoteCommand, LaunchOptions{Resume: ResumeModeNo, SSH: true})
+	plan, err := manager.planLaunch(LaunchSpec{Manifest: cfg, RemoteCommand: remoteCommand, Options: LaunchOptions{Resume: ResumeModeNo, SSH: true}})
 	if err != nil {
 		t.Fatalf("plan launch: %v", err)
 	}
