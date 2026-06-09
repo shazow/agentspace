@@ -29,6 +29,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	hotplug "github.com/shazow/agentspace/virtie/internal/hotplugtypes"
+	control "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/units"
@@ -2449,7 +2450,7 @@ func TestManagerLaunchControlSuspendWaitsForGuestProvisioning(t *testing.T) {
 	defer cancelRPC()
 	rpcDone := make(chan error, 1)
 	go func() {
-		resp, err := Dial(controlSocketPath).Suspend(rpcCtx, SuspendRequest{})
+		resp, err := control.Dial(controlSocketPath).Suspend(rpcCtx, SuspendRequest{})
 		if err == nil && !resp.Saved {
 			err = errors.New("suspend response was not saved")
 		}

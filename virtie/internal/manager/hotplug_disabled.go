@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
+	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -27,11 +28,11 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 	}
 	controlSocketPath, err := launchManifest.ResolvedControlSocketPath()
 	if err == nil && controlSocketPath != "" {
-		_, err := Dial(controlSocketPath).Hotplug(ctx, HotplugRequest{ID: id, Detach: options.Detach})
+		_, err := controlpkg.Dial(controlSocketPath).Hotplug(ctx, HotplugRequest{ID: id, Detach: options.Detach})
 		if err == nil {
 			return nil
 		}
-		if !isControlSocketUnavailable(err) {
+		if !controlpkg.IsSocketUnavailable(err) {
 			return &launch.StageError{Stage: "control hotplug", Err: err}
 		}
 	}

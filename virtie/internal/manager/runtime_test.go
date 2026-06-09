@@ -11,6 +11,7 @@ import (
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloontypes"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
+	control "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 )
@@ -115,7 +116,7 @@ func TestRuntimeStartControlServesStatus(t *testing.T) {
 		}
 	})
 
-	status, err := Dial(controlPath).Status(context.Background(), StatusRequest{})
+	status, err := control.Dial(controlPath).Status(context.Background(), StatusRequest{})
 	if err != nil {
 		t.Fatalf("status over control socket: %v", err)
 	}

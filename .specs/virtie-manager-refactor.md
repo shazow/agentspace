@@ -284,6 +284,9 @@ Acceptance criteria:
 - [x] Move control-plane failed-precondition and compatibility error helpers
   into `virtie/internal/manager/control`, with manager facade aliases
   preserving migration call sites.
+- [x] Remove private manager control-helper aliases from command paths, so
+  manager internals use the control package helpers directly while exported
+  facade aliases remain for compatibility.
 - [x] Move SSH retry logging into `virtie/internal/sshtools`, so manager
   foreground-session retry behavior depends on reusable SSH classification
   helpers instead of package-local logging state.
@@ -1224,7 +1227,9 @@ readiness, and managed virtiofs sockets:
    package-level entrypoints as adapters.
 5. Add `Client`, `Server`, typed request/response structs, router, and
    Unix-socket transport tests under `manager/control`. This has landed with
-   temporary aliases in `manager` for migration compatibility.
+   exported temporary aliases in `manager` for migration compatibility; private
+   command-path helper aliases have been removed in favor of direct
+   `manager/control` calls.
 6. Start `virtie.sock` from the launch runtime after QMP readiness. Register
    core handlers unconditionally and capability handlers only when implemented.
    Stop the server before process teardown and socket cleanup.
