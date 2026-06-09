@@ -444,31 +444,20 @@ func (m *manager) waitForLaunchForeground(
 		notifier:   plan.Notifier,
 	}, plan.Manifest, qmpClient))
 
-	if plan.Options.SSH && len(plan.Manifest.SSH.Argv) > 0 {
-		if err := m.runSSHSession(ctx, plan, stats, lifecycle, suspendHandler, processes); err != nil {
-			return err
-		}
-		if plan.ResumeState != nil {
-			return removeRestoredSuspendState(plan)
-		}
-		return nil
-	}
-
-	if plan.ResumeState != nil {
-		if err := removeRestoredSuspendState(plan); err != nil {
-			return err
-		}
-	}
-
-	hint, err := launch.BuildSSHCommandHint(plan.Manifest, plan.CID)
-	if err != nil {
-		m.logger.Info("ssh command hint template failed", "err", err)
-	} else if hint != "" {
-		fmt.Fprintf(m.outputWriter(), "connect with: %s\n", hint)
-	}
-	vmWatchers := processes.VMWatchers()
-	runtime.SetWatchers(vmWatchers)
-	return m.waitForVM(ctx, processes.QEMU(), lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, vmWatchers)
+	return launch.WaitForeground(ctx, launch.ForegroundWait{
+		Plan:      plan,
+		Runtime:   runtime,
+		Processes: processes,
+		Logger:    m.logger,
+		Output:    m.outputWriter(),
+		RunSSH: func(ctx context.Context) error {
+			return m.runSSHSession(ctx, plan, stats, lifecycle, suspendHandler, processes)
+		},
+		WaitVM: func(ctx context.Context, qemu *executor.Process, watchers executor.Group) error {
+			return m.waitForVM(ctx, qemu, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
+		},
+		RemoveRestored: removeRestoredSuspendState,
+	})
 }
 
 func resolveLaunchResumeState(manifest *manifest.Manifest, mode ResumeMode) (*suspendState, error) {
