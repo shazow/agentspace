@@ -2,16 +2,15 @@ package manager
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
 )
@@ -60,7 +59,7 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 				continue
 			}
 		}
-		payloadBase64, err := guestFilePayloadBase64(file)
+		payloadBase64, err := launch.GuestFilePayloadBase64(file)
 		if err != nil {
 			return &stageError{Stage: "guest file write", Err: err}
 		}
@@ -117,75 +116,16 @@ func (m *manager) writeBackGuestFiles(ctx context.Context, launchManifest *manif
 		if file.Content.Kind != manifest.WriteFileContentPath {
 			return &stageError{Stage: "guest file write-back", Err: fmt.Errorf("guest file %q has no host path", file.GuestPath)}
 		}
-		hostPath, err := writeBackHostPath(file)
+		hostPath, err := launch.WriteBackHostPath(file)
 		if err != nil {
 			return &stageError{Stage: "guest file write-back", Err: err}
 		}
-		if err := writeHostFileAtomic(hostPath, data); err != nil {
+		if err := launch.WriteHostFileAtomic(hostPath, data); err != nil {
 			return &stageError{Stage: "guest file write-back", Err: fmt.Errorf("write host file %q from guest path %q: %w", hostPath, file.GuestPath, err)}
 		}
 		m.logger.Info("wrote guest file back to host", "guest_path", file.GuestPath, "host_path", hostPath)
 	}
 	return nil
-}
-
-func guestFilePayloadBase64(file manifest.ResolvedWriteFile) (string, error) {
-	if file.Content.Kind == manifest.WriteFileContentText {
-		return base64.StdEncoding.EncodeToString([]byte(file.Content.Text)), nil
-	}
-	if file.Content.Kind != manifest.WriteFileContentPath {
-		return "", fmt.Errorf("guest file %q has no text or host path", file.GuestPath)
-	}
-
-	data, err := readHostFileForGuest(file)
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(data), nil
-}
-
-func readHostFileForGuest(file manifest.ResolvedWriteFile) ([]byte, error) {
-	if file.Content.Kind != manifest.WriteFileContentPath {
-		return nil, fmt.Errorf("guest file %q has no host path", file.GuestPath)
-	}
-	if !file.FollowLinks {
-		info, err := os.Lstat(file.Content.Path)
-		if err != nil {
-			return nil, fmt.Errorf("stat host file %q for guest path %q: %w", file.Content.Path, file.GuestPath, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("host file %q for guest path %q is a symlink and followLinks is false", file.Content.Path, file.GuestPath)
-		}
-	}
-	data, err := os.ReadFile(file.Content.Path)
-	if err != nil {
-		return nil, fmt.Errorf("read host file %q for guest path %q: %w", file.Content.Path, file.GuestPath, err)
-	}
-	return data, nil
-}
-
-func writeBackHostPath(file manifest.ResolvedWriteFile) (string, error) {
-	if file.Content.Kind != manifest.WriteFileContentPath {
-		return "", fmt.Errorf("guest file %q has no host path", file.GuestPath)
-	}
-	info, err := os.Lstat(file.Content.Path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return file.Content.Path, nil
-		}
-		return "", fmt.Errorf("stat host file %q for guest path %q: %w", file.Content.Path, file.GuestPath, err)
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return file.Content.Path, nil
-	}
-	if !file.FollowLinks {
-		return "", fmt.Errorf("host file %q for guest path %q is a symlink and followLinks is false", file.Content.Path, file.GuestPath)
-	}
-	resolvedPath, err := filepath.EvalSymlinks(file.Content.Path)
-	if err != nil {
-		return "", fmt.Errorf("resolve host symlink %q for guest path %q: %w", file.Content.Path, file.GuestPath, err)
-	}
-	return resolvedPath, nil
 }
 
 func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, payloadBase64 string) error {
@@ -194,42 +134,6 @@ func (m *manager) writeGuestFile(client guestAgentClient, guestPath string, payl
 
 func (m *manager) readGuestFile(client guestAgentClient, guestPath string) ([]byte, error) {
 	return qga.ReadFile(client, m.effectiveQMPCommandTimeout(), guestPath, qga.DefaultFileReadChunkSize)
-}
-
-func writeHostFileAtomic(hostPath string, data []byte) error {
-	dir := filepath.Dir(hostPath)
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(hostPath); err == nil {
-		mode = info.Mode().Perm()
-	}
-	temp, err := os.CreateTemp(dir, ".virtie-writeback-*")
-	if err != nil {
-		return err
-	}
-	tempPath := temp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tempPath)
-		}
-	}()
-
-	if _, err := temp.Write(data); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Chmod(mode); err != nil {
-		_ = temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, hostPath); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
 }
 
 const (
