@@ -91,9 +91,54 @@ func TestRestoreFromFileReturnsMigrateIncomingError(t *testing.T) {
 	}
 }
 
+func TestSaveToFileStopsRunningVMAndMigrates(t *testing.T) {
+	client := &migrationClient{vmStatus: "running", statuses: []string{"active", "completed"}}
+	if err := SaveToFile(context.Background(), client, "/tmp/vmstate", SaveWait{
+		MigrationTimeout: 20 * time.Millisecond,
+		CommandTimeout:   10 * time.Millisecond,
+		PollDelay:        time.Millisecond,
+	}); err != nil {
+		t.Fatalf("save to file: %v", err)
+	}
+	wantCalls := []string{"query-status", "stop", "migrate:/tmp/vmstate", "query-migrate", "query-migrate"}
+	if len(client.calls) != len(wantCalls) {
+		t.Fatalf("calls: got %#v want %#v", client.calls, wantCalls)
+	}
+	for i := range wantCalls {
+		if client.calls[i] != wantCalls[i] {
+			t.Fatalf("calls: got %#v want %#v", client.calls, wantCalls)
+		}
+	}
+}
+
+func TestSaveToFileMigratesPausedVMWithoutStop(t *testing.T) {
+	client := &migrationClient{vmStatus: "paused", statuses: []string{"completed"}}
+	if err := SaveToFile(context.Background(), client, "/tmp/vmstate", SaveWait{MigrationTimeout: time.Second, PollDelay: time.Millisecond}); err != nil {
+		t.Fatalf("save paused vm: %v", err)
+	}
+	wantCalls := []string{"query-status", "migrate:/tmp/vmstate", "query-migrate"}
+	if len(client.calls) != len(wantCalls) {
+		t.Fatalf("calls: got %#v want %#v", client.calls, wantCalls)
+	}
+	for i := range wantCalls {
+		if client.calls[i] != wantCalls[i] {
+			t.Fatalf("calls: got %#v want %#v", client.calls, wantCalls)
+		}
+	}
+}
+
+func TestSaveToFileRejectsInvalidVMStatus(t *testing.T) {
+	client := &migrationClient{vmStatus: "shutdown"}
+	err := SaveToFile(context.Background(), client, "/tmp/vmstate", SaveWait{MigrationTimeout: time.Second, PollDelay: time.Millisecond})
+	if err == nil || !strings.Contains(err.Error(), `cannot save VM while QMP status is "shutdown"`) {
+		t.Fatalf("expected invalid status error, got %v", err)
+	}
+}
+
 type migrationClient struct {
 	Client
 	statuses           []string
+	vmStatus           string
 	err                error
 	migrateIncomingErr error
 	commandTimeouts    []time.Duration
@@ -101,6 +146,25 @@ type migrationClient struct {
 	contTimeouts       []time.Duration
 	calls              []string
 	afterQuery         func()
+}
+
+func (c *migrationClient) QueryStatus(timeout time.Duration) (string, error) {
+	c.calls = append(c.calls, "query-status")
+	c.commandTimeouts = append(c.commandTimeouts, timeout)
+	return c.vmStatus, nil
+}
+
+func (c *migrationClient) Stop(timeout time.Duration) error {
+	c.calls = append(c.calls, "stop")
+	c.commandTimeouts = append(c.commandTimeouts, timeout)
+	c.vmStatus = "paused"
+	return nil
+}
+
+func (c *migrationClient) MigrateToFile(timeout time.Duration, path string) error {
+	c.calls = append(c.calls, "migrate:"+path)
+	c.migrationTimeouts = append(c.migrationTimeouts, timeout)
+	return nil
 }
 
 func (c *migrationClient) MigrateIncoming(timeout time.Duration, path string) error {

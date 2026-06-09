@@ -823,22 +823,6 @@ func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, proce
 }
 
 func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manifest.Manifest, qmpSocketPath string, client qmpClient, cid int, notifier notificationSink) error {
-	timeout := m.effectiveQMPCommandTimeout()
-
-	status, err := client.QueryStatus(timeout)
-	if err != nil {
-		return &stageError{Stage: "qmp suspend", Err: err}
-	}
-	switch status {
-	case "paused":
-	case "running":
-		if err := client.Stop(timeout); err != nil {
-			return &stageError{Stage: "qmp suspend", Err: err}
-		}
-	default:
-		return &stageError{Stage: "qmp suspend", Err: fmt.Errorf("cannot save VM while QMP status is %q", status)}
-	}
-
 	statePath := vmStatePath(manifest)
 	if err := launch.EnsureParentDirectories([]string{statePath}); err != nil {
 		return &stageError{Stage: "qmp suspend", Err: err}
@@ -846,10 +830,11 @@ func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manif
 	if err := os.Remove(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return &stageError{Stage: "qmp suspend", Err: fmt.Errorf("remove stale vm state %q: %w", statePath, err)}
 	}
-	if err := client.MigrateToFile(m.effectiveQMPMigrationTimeout(), statePath); err != nil {
-		return &stageError{Stage: "qmp suspend", Err: err}
-	}
-	if err := m.waitForMigration(ctx, client); err != nil {
+	if err := qmpclient.SaveToFile(ctx, client, statePath, qmpclient.SaveWait{
+		MigrationTimeout: m.effectiveQMPMigrationTimeout(),
+		CommandTimeout:   m.effectiveQMPCommandTimeout(),
+		PollDelay:        defaultMigrationPollDelay,
+	}); err != nil {
 		return &stageError{Stage: "qmp suspend", Err: err}
 	}
 
