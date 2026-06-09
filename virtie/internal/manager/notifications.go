@@ -30,13 +30,6 @@ type commandNotifier struct {
 	logger  *slog.Logger
 }
 
-func (m *manager) effectiveNotifier(manifest *manifest.Manifest) notificationSink {
-	if m.notifier != nil {
-		return m.notifier
-	}
-	return newCommandNotifier(manifest, m.logger)
-}
-
 func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger) notificationSink {
 	if manifest == nil {
 		return noopNotifier{}

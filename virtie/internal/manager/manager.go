@@ -201,17 +201,20 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 }
 
 func (m *manager) planLaunch(spec LaunchSpec) (*Plan, error) {
-	manifest := spec.Manifest
+	cfg := spec.Manifest
 	options := spec.Options
 	resumeMode, err := launch.NormalizeResumeMode(options.Resume)
 	if err != nil {
 		return nil, &stageError{Stage: "preflight", Err: err}
 	}
-	resumeState, err := resolveLaunchResumeState(manifest, resumeMode)
+	resumeState, err := resolveLaunchResumeState(cfg, resumeMode)
 	if err != nil {
 		return nil, err
 	}
-	plan, err := launch.BuildPlan(spec, resumeState, m.effectiveNotifier(manifest))
+	notifier := launch.SelectNotifier(cfg, m.notifier, func(cfg *manifest.Manifest) notificationSink {
+		return newCommandNotifier(cfg, m.logger)
+	})
+	plan, err := launch.BuildPlan(spec, resumeState, notifier)
 	if err != nil {
 		return nil, &stageError{Stage: "preflight", Err: err}
 	}
