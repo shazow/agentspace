@@ -101,6 +101,8 @@ Acceptance criteria:
   share one package-owned event path.
 - [x] Move runtime close hook wiring into `virtie/internal/manager/runtime`,
   leaving the concrete `Runtime.Close` implementation in `manager`.
+- [x] Remove the manager-local close-hook alias, so concrete runtime close
+  configuration is typed directly against `virtie/internal/manager/runtime`.
 - [x] Move launch/runtime stats into `virtie/internal/manager/runtime`, with a
   package helper for converting stats into control-plane `RuntimeStats`.
 - [x] Move suspend-state, VM-state, launch PID, and launch lock validation

@@ -30,7 +30,7 @@ type Runtime struct {
 	shutdownDelay   time.Duration
 	qmpTimeout      time.Duration
 	logger          *slog.Logger
-	closeHooks      runtimeCloseHooks
+	closeHooks      runtimepkg.CloseHooks
 	savedSuspend    *runtimepkg.SavedSuspendState
 	watchers        executor.Group
 	hotplugStart    runtimeHotplugStarter
@@ -104,7 +104,7 @@ func (r *Runtime) SetForegroundWait(plan *Plan, waitForeground func(context.Cont
 	r.waitForeground = waitForeground
 }
 
-func (r *Runtime) SetCloseHooks(hooks runtimeCloseHooks) {
+func (r *Runtime) SetCloseHooks(hooks runtimepkg.CloseHooks) {
 	r.closeHooks = hooks
 }
 
