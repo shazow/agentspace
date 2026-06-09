@@ -292,6 +292,9 @@ Acceptance criteria:
 - [x] Move guest provisioning and SSH-readiness startup checkpoint sequencing
   into `virtie/internal/manager/launch`, with manager supplying concrete QGA
   writes and SSH-ready waits.
+- [x] Move SSH-readiness token wait sequencing into
+  `virtie/internal/manager/launch`, with manager supplying concrete socket
+  waiting, readiness dialing, timeout policy, and process-exit checks.
 - [x] Move runtime activation sequencing into
   `virtie/internal/manager/launch`, so ready-state marking, concrete runtime
   configuration callbacks, control startup, queued suspend handling, guest
@@ -682,8 +685,9 @@ implementation packages should avoid importing the facade package.
   Foreground SSH session retry/autoprovision orchestration now lives there.
   Foreground SSH-vs-headless orchestration and optional-feature startup
   sequencing have moved there too.
-  Guest provisioning and SSH-readiness checkpoint sequencing also live there.
-  Runtime activation sequencing lives there as well.
+  Guest provisioning, SSH-readiness checkpoint sequencing, and SSH-readiness
+  token wait sequencing also live there. Runtime activation sequencing lives
+  there as well.
   Host-side guest-file payload and write-back path helpers now live there.
   Guest-file directory install argument policy has moved there too.
   Runtime restore and suspend-save orchestration, plus runtime resume/suspend
@@ -1129,10 +1133,10 @@ readiness, and managed virtiofs sockets:
    queued-suspend handling, VSock CID selection, locked plan finalization, and
    pre-runtime launch lock/PID setup have moved there too. Runtime process/QMP
    startup sequencing, runtime activation sequencing, and restored-state
-   cleanup have moved there too. Notifier selection policy, generic
-   stage-error/command-error construction, and unexpected-process-exit
-   wrapping have moved there as well. Manager still owns default concrete
-   dependencies and some stage-specific wrapping.
+   cleanup have moved there too. SSH-readiness token wait sequencing, notifier
+   selection policy, generic stage-error/command-error construction, and
+   unexpected-process-exit wrapping have moved there as well. Manager still
+   owns default concrete dependencies and some stage-specific wrapping.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
