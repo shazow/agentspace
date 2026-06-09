@@ -25,6 +25,7 @@ type Runtime struct {
 	suspendRequests *launchSuspendCoordinator
 	lifecycle       *launchLifecycle
 	suspendHandler  *launchSuspendHandler
+	waitForeground  func(context.Context, *Plan) error
 	processes       *ProcessSet
 	shutdownDelay   time.Duration
 	qmpTimeout      time.Duration
@@ -69,10 +70,11 @@ func (r *Runtime) SetProcesses(processes *ProcessSet, shutdownDelay time.Duratio
 	r.shutdownDelay = shutdownDelay
 }
 
-func (r *Runtime) SetLaunchLifecycle(plan *Plan, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler) {
+func (r *Runtime) SetLaunchLifecycle(plan *Plan, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, waitForeground func(context.Context, *Plan) error) {
 	r.plan = plan
 	r.lifecycle = lifecycle
 	r.suspendHandler = suspendHandler
+	r.waitForeground = waitForeground
 }
 
 func (r *Runtime) SetCloseHooks(hooks runtimeCloseHooks) {
@@ -104,12 +106,12 @@ func (r *Runtime) Close() error {
 }
 
 func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
-	if r.plan == nil || r.lifecycle == nil || r.suspendHandler == nil || r.processes == nil {
+	if r.plan == nil || r.lifecycle == nil || r.suspendHandler == nil || r.processes == nil || r.waitForeground == nil {
 		return failedPrecondition(fmt.Errorf("runtime foreground wait is not configured"))
 	}
 	plan := launch.PlanForWaitMode(r.plan, mode)
 	return runtimepkg.WaitForeground(ctx, r.savedSuspend, func(ctx context.Context) error {
-		return r.manager.waitForLaunchForeground(ctx, plan, r.stats, r, r.qmp, r.lifecycle, r.suspendHandler, r.processes)
+		return r.waitForeground(ctx, plan)
 	}, func(err error) bool {
 		return errors.Is(err, errSavedSuspendExit)
 	})
