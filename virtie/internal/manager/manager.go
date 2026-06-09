@@ -70,6 +70,55 @@ type launchPlan struct {
 	QEMUCommand                 *exec.Cmd
 }
 
+type launchProcesses struct {
+	group    executor.Group
+	qemu     *executor.Process
+	features managedTaskGroup
+}
+
+func newLaunchProcesses() *launchProcesses {
+	return &launchProcesses{group: executor.NewGroup()}
+}
+
+func (p *launchProcesses) Add(processes ...*executor.Process) {
+	p.group.Add(processes...)
+}
+
+func (p *launchProcesses) AddGroup(group executor.Group) {
+	p.group.Add(group.Processes()...)
+}
+
+func (p *launchProcesses) SetQEMU(process *executor.Process) {
+	p.qemu = process
+	p.Add(process)
+}
+
+func (p *launchProcesses) QEMU() *executor.Process {
+	return p.qemu
+}
+
+func (p *launchProcesses) Remove(process *executor.Process) bool {
+	return p.group.Remove(process)
+}
+
+func (p *launchProcesses) Watchers() executor.Group {
+	return p.group.Snapshot()
+}
+
+func (p *launchProcesses) VMWatchers() executor.Group {
+	watchers := p.Watchers()
+	watchers.Remove(p.qemu)
+	return watchers
+}
+
+func (p *launchProcesses) StartFeatures(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, client qmpClient) {
+	p.features = startOptionalFeatureTasks(ctx, runtime, manifest, client)
+}
+
+func (p *launchProcesses) Close(delay time.Duration) error {
+	return errors.Join(p.features.Stop(), p.group.StopAll(delay))
+}
+
 func (p *launchPlan) RuntimeSocketCleanupFiles() []string {
 	paths := make([]string, 0, 4+len(p.CleanupFiles))
 	if p.Paths.QMPSocket != "" {
@@ -272,9 +321,8 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return err
 	}
 
-	started := executor.NewGroup()
+	processes := newLaunchProcesses()
 	var qmpClient qmpClient
-	var featureTasks managedTaskGroup
 	var runtime *Runtime
 	writeBackOnExit := false
 	defer func() {
@@ -294,23 +342,22 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		if runtime != nil {
 			runtimeErr = runtime.Close()
 		}
-		featureErr := featureTasks.Stop()
-		stopErr := started.StopAll(m.shutdownDelay)
+		processErr := processes.Close(m.shutdownDelay)
 		var disconnectErr error
 		if qmpClient != nil {
 			disconnectErr = qmpClient.Disconnect()
 		}
 		cleanupErr := removeSocketPaths(plan.RuntimeSocketCleanupFiles())
 		if err == nil {
-			err = errors.Join(runtimeErr, featureErr, stopErr, disconnectErr, cleanupErr)
-		} else if runtimeErr != nil || featureErr != nil || stopErr != nil || disconnectErr != nil || cleanupErr != nil {
-			err = errors.Join(err, runtimeErr, featureErr, stopErr, disconnectErr, cleanupErr)
+			err = errors.Join(runtimeErr, processErr, disconnectErr, cleanupErr)
+		} else if runtimeErr != nil || processErr != nil || disconnectErr != nil || cleanupErr != nil {
+			err = errors.Join(err, runtimeErr, processErr, disconnectErr, cleanupErr)
 		}
 		stats.MarkCompleted(time.Now())
 		fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 	}()
 
-	qemu, runtime, qmpClient, err := m.startLaunchRuntime(launchCtx, plan, stats, lifecycle, &started)
+	runtime, qmpClient, err = m.startLaunchRuntime(launchCtx, plan, stats, lifecycle, processes)
 	if err != nil {
 		return err
 	}
@@ -336,7 +383,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 
 	if plan.ResumeState == nil {
-		if err := m.writeGuestFiles(launchCtx, plan.Manifest, stats, started); err != nil {
+		if err := m.writeGuestFiles(launchCtx, plan.Manifest, stats, processes.Watchers()); err != nil {
 			return err
 		}
 		writeBackOnExit = true
@@ -344,7 +391,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 
 		if plan.Paths.SSHReadySocket != "" {
 			m.logger.Info("waiting for ssh readiness")
-			if err := m.waitForSSHReady(launchCtx, plan.Paths.SSHReadySocket, started); err != nil {
+			if err := m.waitForSSHReady(launchCtx, plan.Paths.SSHReadySocket, processes.Watchers()); err != nil {
 				return err
 			}
 		}
@@ -352,12 +399,12 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	}
 
 	if plan.Options.SSH && len(plan.Manifest.SSH.Argv) > 0 {
-		featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
+		processes.StartFeatures(launchCtx, optionalFeatureRuntime{
 			qmpTimeout: m.effectiveQMPCommandTimeout(),
 			notifier:   plan.Notifier,
 		}, plan.Manifest, qmpClient)
 
-		if err := m.runSSHSession(launchCtx, plan, stats, lifecycle, suspendHandler, &started); err != nil {
+		if err := m.runSSHSession(launchCtx, plan, stats, lifecycle, suspendHandler, processes); err != nil {
 			return err
 		}
 		if plan.ResumeState != nil {
@@ -368,7 +415,7 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 		return nil
 	}
 
-	featureTasks = startOptionalFeatureTasks(launchCtx, optionalFeatureRuntime{
+	processes.StartFeatures(launchCtx, optionalFeatureRuntime{
 		qmpTimeout: m.effectiveQMPCommandTimeout(),
 		notifier:   plan.Notifier,
 	}, plan.Manifest, qmpClient)
@@ -385,10 +432,9 @@ func (m *manager) launchWithOptions(ctx context.Context, manifest *manifest.Mani
 	} else if hint != "" {
 		fmt.Fprintf(m.outputWriter(), "connect with: %s\n", hint)
 	}
-	vmWatchers := started.Snapshot()
-	vmWatchers.Remove(qemu)
+	vmWatchers := processes.VMWatchers()
 	runtime.SetWatchers(vmWatchers)
-	if err := m.waitForVM(launchCtx, qemu, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, vmWatchers); err != nil {
+	if err := m.waitForVM(launchCtx, processes.QEMU(), lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, vmWatchers); err != nil {
 		return err
 	}
 	return nil
@@ -416,17 +462,17 @@ func (m *manager) prepareLaunchFilesystem(plan *launchPlan) error {
 	return nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *launchPlan, stats *launchStats, lifecycle *launchLifecycle, started *executor.Group) (*executor.Process, *Runtime, qmpClient, error) {
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *launchPlan, stats *launchStats, lifecycle *launchLifecycle, processes *launchProcesses) (*Runtime, qmpClient, error) {
 	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	started.Add(runProcesses.Processes()...)
+	processes.AddGroup(runProcesses)
 
 	if len(plan.VirtioFSSocketPaths) > 0 {
 		m.logger.Info("waiting for virtiofs sockets")
-		if err := m.waitForSockets(ctx, "virtiofs startup", plan.VirtioFSSocketPaths, *started); err != nil {
-			return nil, nil, nil, err
+		if err := m.waitForSockets(ctx, "virtiofs startup", plan.VirtioFSSocketPaths, processes.Watchers()); err != nil {
+			return nil, nil, err
 		}
 	}
 
@@ -438,14 +484,14 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *launchPlan, stat
 	stats.MarkBootStarted(time.Now())
 	qemu, err := m.startManagedProcess(plan.QEMUCommand)
 	if err != nil {
-		return nil, nil, nil, &stageError{Stage: "vm startup", Err: err}
+		return nil, nil, &stageError{Stage: "vm startup", Err: err}
 	}
-	started.Add(qemu)
+	processes.SetQEMU(qemu)
 
 	m.logger.Info("waiting for qmp readiness")
-	client, err := m.waitForQMP(ctx, plan.Paths.QMPSocket, *started)
+	client, err := m.waitForQMP(ctx, plan.Paths.QMPSocket, processes.Watchers())
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	runtime := newRuntime(m, plan.Manifest, plan.Paths, plan.CID, stats, client, lifecycle.Suspend())
 	client = runtime.QMP()
@@ -453,7 +499,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *launchPlan, stat
 	qemu.SetShutdown(func() error {
 		return client.Quit(m.effectiveQMPQuitTimeout())
 	})
-	return qemu, runtime, client, nil
+	return runtime, client, nil
 }
 
 func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *launchPlan, client qmpClient) error {
@@ -917,7 +963,7 @@ func (m *manager) runSSHSession(
 	stats *launchStats,
 	lifecycle *launchLifecycle,
 	suspendHandler *launchSuspendHandler,
-	started *executor.Group,
+	processes *launchProcesses,
 ) error {
 	launchManifest := plan.Manifest
 	argv := append([]string(nil), launchManifest.SSH.Argv...)
@@ -942,8 +988,8 @@ func (m *manager) runSSHSession(
 		if err != nil {
 			return &stageError{Stage: "active session", Err: err}
 		}
-		watchers := started.Snapshot()
-		started.Add(session)
+		watchers := processes.Watchers()
+		processes.Add(session)
 		stats.MarkSSHStarted(attemptStarted)
 
 		err = m.waitForSession(ctx, session, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
@@ -955,7 +1001,7 @@ func (m *manager) runSSHSession(
 		if sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureTransient {
 			stderr.Suppress()
 			retryLog.Log(err, stderrText)
-			started.Remove(session)
+			processes.Remove(session)
 			if waitErr := m.waitBeforeSSHRetry(ctx, launchManifest, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers); waitErr != nil {
 				return waitErr
 			}
@@ -963,7 +1009,7 @@ func (m *manager) runSSHSession(
 		}
 		if launchManifest.SSH.Autoprovision && !provisioned && sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureAuthentication {
 			stderr.Suppress()
-			started.Remove(session)
+			processes.Remove(session)
 			sessionLogger.Info("ssh authentication failed; autoprovisioning a key", "state_dir", launchManifest.ResolvedPersistenceStateDir(), "user", launchManifest.SSH.User)
 			key, keyErr := m.ensureSSHAutoprovisionKey(launchManifest)
 			if keyErr != nil {
