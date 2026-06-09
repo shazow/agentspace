@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
@@ -62,7 +63,7 @@ func (m *manager) installSSHAutoprovisionKey(ctx context.Context, launchManifest
 			Text: plan.TempKeyText,
 		},
 	}
-	payloadBase64, err := guestFilePayloadBase64(tempFile)
+	payloadBase64, err := launch.GuestFilePayloadBase64(tempFile)
 	if err != nil {
 		return &stageError{Stage: "ssh autoprovision", Err: err}
 	}
