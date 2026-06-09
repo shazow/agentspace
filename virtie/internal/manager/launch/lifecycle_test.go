@@ -1,0 +1,70 @@
+package launch
+
+import (
+	"context"
+	"errors"
+	"os"
+	"syscall"
+	"testing"
+	"time"
+)
+
+func TestLifecycleMapsSignalsToEvents(t *testing.T) {
+	signals := make(chan os.Signal, 3)
+	stopped := false
+	ctx, cancel := context.WithCancel(context.Background())
+	lifecycle := NewLifecycle(signals, func() { stopped = true }, cancel)
+	defer lifecycle.Stop()
+
+	signals <- syscall.SIGUSR1
+	select {
+	case <-lifecycle.Info():
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for info signal")
+	}
+
+	signals <- syscall.SIGTSTP
+	select {
+	case <-lifecycle.Suspend().Notify():
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for suspend signal")
+	}
+
+	signals <- syscall.SIGTERM
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for cancellation signal")
+	}
+
+	lifecycle.Stop()
+	if !stopped {
+		t.Fatal("stop signal callback was not called")
+	}
+}
+
+func TestSuspendCoordinatorRequestAndWait(t *testing.T) {
+	wantErr := errors.New("saved")
+	coordinator := NewSuspendCoordinator()
+	done := make(chan error, 1)
+	go func() {
+		done <- coordinator.RequestAndWait(context.Background())
+	}()
+
+	select {
+	case <-coordinator.Notify():
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for suspend notification")
+	}
+	coordinator.Begin()
+	coordinator.Complete(wantErr)
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("unexpected wait error: got %v want %v", err, wantErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for suspend completion")
+	}
+}
