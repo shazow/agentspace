@@ -295,9 +295,9 @@ func (m *manager) planLaunch(spec LaunchSpec) (*Plan, error) {
 	if options.SSH && len(remoteCommand) > 0 && len(manifest.SSH.Argv) == 0 {
 		return nil, &stageError{Stage: "preflight", Err: fmt.Errorf("remote command arguments require manifest.ssh.exec")}
 	}
-	resumeMode, err := normalizeResumeMode(options.Resume)
+	resumeMode, err := launch.NormalizeResumeMode(options.Resume)
 	if err != nil {
-		return nil, err
+		return nil, &stageError{Stage: "preflight", Err: err}
 	}
 	resumeState, err := resolveLaunchResumeState(manifest, resumeMode)
 	if err != nil {
@@ -669,54 +669,12 @@ func (m *manager) waitForLaunchForeground(
 	return m.waitForVM(ctx, processes.QEMU(), lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, vmWatchers)
 }
 
-func normalizeResumeMode(mode ResumeMode) (ResumeMode, error) {
-	switch mode {
-	case "", ResumeModeNo:
-		return ResumeModeNo, nil
-	case ResumeModeAuto, ResumeModeForce:
-		return mode, nil
-	default:
-		return "", &stageError{Stage: "preflight", Err: fmt.Errorf("unsupported resume mode %q", mode)}
-	}
-}
-
 func resolveLaunchResumeState(manifest *manifest.Manifest, mode ResumeMode) (*suspendState, error) {
-	if mode == ResumeModeNo {
-		return nil, nil
-	}
-
-	state, err := readSuspendState(manifest)
+	state, err := launch.ResolveResumeState(manifest, mode)
 	if err != nil {
-		if os.IsNotExist(err) && mode == ResumeModeAuto {
-			return nil, nil
-		}
-		if os.IsNotExist(err) {
-			return nil, &stageError{Stage: "restore", Err: fmt.Errorf("no saved suspend state found at %q; run virtie suspend first", suspendStatePath(manifest))}
-		}
 		return nil, &stageError{Stage: "restore", Err: err}
 	}
-	if state.Status != "saved" {
-		if mode == ResumeModeAuto {
-			return nil, nil
-		}
-		return nil, &stageError{Stage: "restore", Err: fmt.Errorf("suspend state %q has status %q, not saved; run virtie suspend first", suspendStatePath(manifest), state.Status)}
-	}
-	if state.CID <= 0 {
-		if mode == ResumeModeAuto {
-			return nil, nil
-		}
-		return nil, &stageError{Stage: "restore", Err: fmt.Errorf("saved suspend state %q does not include a valid vsock CID", suspendStatePath(manifest))}
-	}
-	if state.VMStatePath == "" {
-		state.VMStatePath = vmStatePath(manifest)
-	}
-	if _, err := os.Stat(state.VMStatePath); err != nil {
-		if mode == ResumeModeAuto {
-			return nil, nil
-		}
-		return nil, &stageError{Stage: "restore", Err: fmt.Errorf("saved vm state %q is not available: %w", state.VMStatePath, err)}
-	}
-	return &state, nil
+	return state, nil
 }
 
 func (m *manager) acquireLaunchCID(manifest *manifest.Manifest, state *suspendState) (int, error) {

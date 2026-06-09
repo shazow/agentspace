@@ -106,6 +106,9 @@ Acceptance criteria:
 - [x] Move suspend-state, VM-state, launch PID, and launch lock validation
   helpers into `virtie/internal/manager/launch`, with manager aliases
   preserving existing command and test call sites.
+- [x] Move resume-mode normalization and saved-state resolution policy into
+  `virtie/internal/manager/launch`, leaving manager responsible only for
+  stage-specific error wrapping.
 
 ## Landed Control Flow
 
@@ -452,9 +455,10 @@ implementation packages should avoid importing the facade package.
 - `virtie/internal/manager/launch` (partial): launch value types including
   `Plan`, options, wait mode, runtime paths, suspend state, notifier
   interface, plan-owned socket cleanup, and lifecycle event coordination.
-  Suspend-state and launch PID file helpers have also landed there. `Launcher`,
-  `Config`, preflight resolution orchestration, startup sequencing, and
-  conversion from manifest facts into runtime inputs still live in `manager`.
+  Suspend-state, launch PID file helpers, and resume-state resolution have
+  also landed there. `Launcher`, `Config`, preflight resolution orchestration,
+  startup sequencing, and conversion from manifest facts into runtime inputs
+  still live in `manager`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, and runtime stats have landed. The
   launch-owned runtime, state machine, idempotent `Close`, and lifecycle
@@ -866,7 +870,8 @@ readiness, and managed virtiofs sockets:
    `launchWithOptions`. `Plan` and `RuntimePaths` have landed under
    `manager/launch` with facade aliases. Lifecycle coordination has also
    moved there, along with suspend-state and launch PID helpers. Preflight
-   resolution orchestration still lives in `manager`.
+   resume policy has moved there too. Preflight resolution orchestration still
+   lives in `manager`.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
