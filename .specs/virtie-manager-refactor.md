@@ -106,6 +106,8 @@ Acceptance criteria:
 - [x] Move suspend-state, VM-state, launch PID, and launch lock validation
   helpers into `virtie/internal/manager/launch`, with manager aliases
   preserving existing command and test call sites.
+- [x] Move launch PID validation, stale-process classification, and launch-pid
+  stage wrapping into `virtie/internal/manager/launch`.
 - [x] Move resume-mode normalization and saved-state resolution policy into
   `virtie/internal/manager/launch`, leaving manager responsible only for
   stage-specific error wrapping.
@@ -693,10 +695,11 @@ implementation packages should avoid importing the facade package.
 - `virtie/internal/manager/launch` (partial): launch value types including
   `Plan`, options, wait mode, runtime paths, suspend state, notifier
   interface, plan-owned socket cleanup, and lifecycle event coordination.
-  Suspend-state, launch PID file helpers, resume-state resolution, and
-  resolved `Plan` construction have also landed there, along with foreground
-  wait-mode selection, launcher configuration, foreground lifecycle event
-  waiting, and startup queued-suspend handling. Plan-owned filesystem
+  Suspend-state, launch PID file helpers, launch PID validation,
+  resume-state resolution, and resolved `Plan` construction have also landed
+  there, along with foreground wait-mode selection, launcher configuration,
+  foreground lifecycle event waiting, and startup queued-suspend handling.
+  Plan-owned filesystem
   preflight, VSock CID selection, locked plan finalization, pre-runtime launch
   lock/PID setup, restored-state cleanup, and QEMU process startup have moved
   there too. Combined QMP readiness and retry-dial sequencing also now lives
@@ -1152,7 +1155,7 @@ readiness, and managed virtiofs sockets:
 1. Extract `Plan`, `RuntimePaths`, and preflight resolution from
    `launchWithOptions`. `Plan` and `RuntimePaths` have landed under
    `manager/launch` with facade aliases. Lifecycle coordination has also
-   moved there, along with suspend-state and launch PID helpers. Preflight
+   moved there, along with suspend-state and launch PID helpers/validation. Preflight
    resume policy, resolved plan construction, wait-mode selection, and
    configuration merging have moved there too, as has foreground lifecycle
    event waiting, plan-owned filesystem preflight, and launch run-process

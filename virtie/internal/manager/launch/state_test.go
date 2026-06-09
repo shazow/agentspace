@@ -1,9 +1,11 @@
 package launch
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/shazow/agentspace/virtie/internal/manifest"
@@ -100,6 +102,74 @@ func TestLaunchPIDRoundTripAndLockValidation(t *testing.T) {
 	}
 }
 
+func TestResolveLaunchPIDValidatesProcessAndLock(t *testing.T) {
+	cfg := testManifest(t)
+	lockPath := cfg.ResolvedLockPath()
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		t.Fatalf("create lock dir: %v", err)
+	}
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatalf("open lock: %v", err)
+	}
+	defer lockFile.Close()
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("lock file: %v", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	if _, err := lockFile.WriteString("12345\n"); err != nil {
+		t.Fatalf("write lock: %v", err)
+	}
+	if err := WriteLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+
+	pid, err := ResolveLaunchPID(cfg, fakePIDSignaler{})
+	if err != nil {
+		t.Fatalf("resolve launch pid: %v", err)
+	}
+	if pid != 12345 {
+		t.Fatalf("pid: got %d want 12345", pid)
+	}
+}
+
+func TestResolveLaunchPIDWrapsStaleProcess(t *testing.T) {
+	cfg := testManifest(t)
+	if err := WriteLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	_, err := ResolveLaunchPID(cfg, fakePIDSignaler{existsErr: syscall.ESRCH})
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "launch pid" || !strings.Contains(err.Error(), "process does not exist") {
+		t.Fatalf("stale pid err: got %v", err)
+	}
+}
+
+func TestResolveLaunchPIDWrapsProcessCheckError(t *testing.T) {
+	cfg := testManifest(t)
+	if err := WriteLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	checkErr := errors.New("permission check failed")
+	_, err := ResolveLaunchPID(cfg, fakePIDSignaler{existsErr: checkErr})
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "launch pid" || !errors.Is(err, checkErr) {
+		t.Fatalf("check err: got %v", err)
+	}
+}
+
+type fakePIDSignaler struct {
+	existsErr error
+}
+
+func (s fakePIDSignaler) Exists(int) error {
+	return s.existsErr
+}
+
+func (s fakePIDSignaler) Signal(int, os.Signal) error {
+	return nil
+}
+
 func testManifest(t *testing.T) *manifest.Manifest {
 	t.Helper()
 
@@ -113,5 +183,14 @@ func testManifest(t *testing.T) *manifest.Manifest {
 		Persistence: manifest.Persistence{
 			StateDir: filepath.Join(tmpDir, ".agentspace"),
 		},
+		QEMU: manifest.QEMU{
+			BinaryPath: "/bin/qemu",
+			QMP:        manifest.QEMUQMP{SocketPath: "qmp.sock"},
+			Devices: manifest.QEMUDevices{
+				RNG:   manifest.QEMURNGDevice{ID: "rng0", Transport: "pci"},
+				VSOCK: manifest.QEMUVSOCKDevice{ID: "vsock0", Transport: "pci"},
+			},
+		},
+		SSH: manifest.SSH{User: "agent"},
 	}
 }
