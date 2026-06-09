@@ -12,6 +12,7 @@ import (
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
 type Runtime struct {
@@ -50,7 +51,7 @@ func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePath
 		paths:           paths,
 		cid:             cid,
 		stats:           stats,
-		qmp:             newSerializedQMPClient(qmp),
+		qmp:             qmpclient.Serialized(qmp),
 		suspendRequests: suspendRequests,
 		state:           RuntimeStarting,
 	}
@@ -265,81 +266,6 @@ func runtimeStatsFromLaunchStats(stats *launchStats) RuntimeStats {
 		resp.Total = stats.completed.Sub(stats.started).String()
 	}
 	return resp
-}
-
-type serializedQMPClient struct {
-	client qmpClient
-	mu     sync.Mutex
-}
-
-func newSerializedQMPClient(client qmpClient) qmpClient {
-	return &serializedQMPClient{client: client}
-}
-
-func (c *serializedQMPClient) WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.WithRaw(timeout, fn)
-}
-
-func (c *serializedQMPClient) RunRaw(timeout time.Duration, command string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.RunRaw(timeout, command)
-}
-
-func (c *serializedQMPClient) DeviceDelAndWait(timeout time.Duration, id string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.DeviceDelAndWait(timeout, id)
-}
-
-func (c *serializedQMPClient) Stop(timeout time.Duration) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.Stop(timeout)
-}
-
-func (c *serializedQMPClient) Cont(timeout time.Duration) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.Cont(timeout)
-}
-
-func (c *serializedQMPClient) QueryStatus(timeout time.Duration) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.QueryStatus(timeout)
-}
-
-func (c *serializedQMPClient) MigrateToFile(timeout time.Duration, path string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.MigrateToFile(timeout, path)
-}
-
-func (c *serializedQMPClient) MigrateIncoming(timeout time.Duration, path string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.MigrateIncoming(timeout, path)
-}
-
-func (c *serializedQMPClient) QueryMigrate(timeout time.Duration) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.QueryMigrate(timeout)
-}
-
-func (c *serializedQMPClient) Quit(timeout time.Duration) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.Quit(timeout)
-}
-
-func (c *serializedQMPClient) Disconnect() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.client.Disconnect()
 }
 
 func isControlSocketUnavailable(err error) bool {
