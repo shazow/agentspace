@@ -11,6 +11,7 @@ import (
 	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloontypes"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 )
 
@@ -51,7 +52,7 @@ func TestRuntimeStatusAndBalloonUseOwnedQMP(t *testing.T) {
 func TestRuntimeSuspendQueuesAndWaitsForLaunchLoop(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	coordinator := newLaunchSuspendCoordinator()
+	coordinator := launch.NewSuspendCoordinator()
 	qmp := &fakeQMPClient{status: "running"}
 	runtime := newRuntime(cfg, RuntimePaths{
 		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),

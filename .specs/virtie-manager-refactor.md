@@ -129,6 +129,8 @@ Acceptance criteria:
 - [x] Move launch signal-channel construction and cleanup into
   `virtie/internal/manager/launch`, so manager startup passes only its
   configured signal channel and cancel callback.
+- [x] Remove manager-local lifecycle and suspend-coordinator aliases, so
+  manager code and tests use the launch package lifecycle types directly.
 - [x] Move startup queued-suspend handling into
   `virtie/internal/manager/launch`, with manager supplying the concrete
   suspend handler callback.
@@ -708,8 +710,8 @@ implementation packages should avoid importing the facade package.
   there, with manager call sites now using those helpers directly instead of
   local migration aliases. Foreground wait-mode selection, launcher
   configuration, foreground lifecycle event waiting, and startup
-  signal-channel construction/cleanup, and startup queued-suspend handling
-  have also moved there.
+  signal-channel construction/cleanup, lifecycle type usage, and startup
+  queued-suspend handling have also moved there.
   Plan-owned filesystem
   preflight, VSock CID selection, locked plan finalization, pre-runtime launch
   lock/PID setup, restored-state cleanup, and QEMU process startup have moved
