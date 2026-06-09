@@ -383,7 +383,15 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, sta
 		},
 	}
 	configureRuntimeHotplugDependencies(&runtimeDeps, m, plan.Manifest)
-	runtime := newRuntime(plan.Manifest, plan.Paths, plan.CID, stats, started.QMP, lifecycle.Suspend(), runtimeDeps)
+	runtime := newRuntime(runtimepkg.RuntimeConfig{
+		Manifest:        plan.Manifest,
+		Paths:           plan.Paths,
+		CID:             plan.CID,
+		Stats:           stats,
+		QMP:             started.QMP,
+		SuspendRequests: lifecycle.Suspend(),
+		Dependencies:    runtimeDeps,
+	})
 	runtime.SetProcesses(processes, m.shutdownDelay)
 	client := runtime.QMP()
 	launch.FinalizeRuntimeStartup(launch.RuntimeStartupFinalize{

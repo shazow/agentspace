@@ -41,15 +41,16 @@ type Runtime struct {
 	control *runtimepkg.ControlServer
 }
 
-func newRuntime(manifest *manifest.Manifest, paths launch.RuntimePaths, cid int, stats *runtimepkg.Stats, qmp qmpclient.Client, suspendRequests *launch.SuspendCoordinator, deps runtimepkg.Dependencies) *Runtime {
+func newRuntime(config runtimepkg.RuntimeConfig) *Runtime {
+	deps := config.Dependencies
 	state := runtimepkg.NewState(RuntimeStarting)
 	return &Runtime{
-		manifest:         manifest,
-		paths:            paths,
-		cid:              cid,
-		stats:            stats,
-		qmp:              qmpclient.Serialized(qmp),
-		suspendRequests:  suspendRequests,
+		manifest:         config.Manifest,
+		paths:            config.Paths,
+		cid:              config.CID,
+		stats:            config.Stats,
+		qmp:              qmpclient.Serialized(config.QMP),
+		suspendRequests:  config.SuspendRequests,
 		qmpTimeout:       deps.QMPTimeout,
 		logger:           deps.Logger,
 		savedSuspendExit: deps.SavedSuspendExit,

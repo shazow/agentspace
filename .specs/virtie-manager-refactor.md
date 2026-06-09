@@ -284,6 +284,9 @@ Acceptance criteria:
 - [x] Move concrete runtime dependency configuration into
   `virtie/internal/manager/runtime`, leaving manager to populate the runtime
   package-owned constructor contract.
+- [x] Move the concrete runtime constructor input shape into
+  `virtie/internal/manager/runtime`, so manager builds a runtime-owned config
+  instead of passing a manager-shaped parameter list.
 - [x] Make the concrete manager `Runtime` use `manager/launch` and
   `manager/control` types directly instead of manager facade aliases,
   reducing blockers for eventually moving the concrete runtime under
