@@ -4487,11 +4487,11 @@ func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout tim
 }
 
 type fakeGuestAgentDialer struct {
-	client   guestAgentClient
+	client   qga.Client
 	attempts int
 }
 
-func (d *fakeGuestAgentDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (guestAgentClient, error) {
+func (d *fakeGuestAgentDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qga.Client, error) {
 	d.attempts++
 	return d.client, nil
 }
