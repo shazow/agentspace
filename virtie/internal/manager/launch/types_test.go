@@ -28,3 +28,12 @@ func TestPlanRuntimeSocketCleanupFiles(t *testing.T) {
 		t.Fatalf("unexpected cleanup files: got %#v want %#v", got, want)
 	}
 }
+
+func TestOptionsWaitMode(t *testing.T) {
+	if got := (Options{SSH: true}).WaitMode(); got != WaitSSH {
+		t.Fatalf("ssh wait mode: got %q want %q", got, WaitSSH)
+	}
+	if got := (Options{SSH: false}).WaitMode(); got != WaitVM {
+		t.Fatalf("vm wait mode: got %q want %q", got, WaitVM)
+	}
+}

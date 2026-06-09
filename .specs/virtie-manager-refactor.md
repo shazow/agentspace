@@ -111,6 +111,8 @@ Acceptance criteria:
   stage-specific error wrapping.
 - [x] Move resolved `Plan` construction into `virtie/internal/manager/launch`,
   with manager retaining notifier selection and stage-specific error wrapping.
+- [x] Move foreground wait-mode selection onto launch options in
+  `virtie/internal/manager/launch`.
 
 ## Landed Control Flow
 
@@ -459,8 +461,8 @@ implementation packages should avoid importing the facade package.
   interface, plan-owned socket cleanup, and lifecycle event coordination.
   Suspend-state, launch PID file helpers, resume-state resolution, and
   resolved `Plan` construction have also landed there. `Launcher`, `Config`,
-  stage wrapping, notifier selection, and startup sequencing still live in
-  `manager`.
+  foreground wait-mode selection. `Launcher`, `Config`, stage wrapping,
+  notifier selection, and startup sequencing still live in `manager`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, and runtime stats have landed. The
   launch-owned runtime, state machine, idempotent `Close`, and lifecycle

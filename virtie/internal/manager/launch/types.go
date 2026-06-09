@@ -22,6 +22,13 @@ type Options struct {
 	Verbosity int
 }
 
+func (o Options) WaitMode() WaitMode {
+	if o.SSH {
+		return WaitSSH
+	}
+	return WaitVM
+}
+
 type WaitMode string
 
 const (
