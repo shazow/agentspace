@@ -2,13 +2,34 @@ package runtime
 
 import (
 	"context"
+	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
 type HotplugRuntime interface {
 	Attach(context.Context, string) error
 	Detach(context.Context, string) error
+}
+
+type HotplugQMP struct {
+	Client  qmpclient.Client
+	Timeout time.Duration
+}
+
+func (q HotplugQMP) Run(ctx context.Context, command string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return q.Client.RunRaw(q.Timeout, command)
+}
+
+func (q HotplugQMP) DeviceDel(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return q.Client.DeviceDelAndWait(q.Timeout, id)
 }
 
 func Hotplug(ctx context.Context, runtime HotplugRuntime, req control.HotplugRequest) (control.HotplugResponse, error) {
