@@ -287,6 +287,9 @@ Acceptance criteria:
 - [x] Move the concrete runtime constructor input shape into
   `virtie/internal/manager/runtime`, so manager builds a runtime-owned config
   instead of passing a manager-shaped parameter list.
+- [x] Move the concrete launch-owned `Runtime` implementation into
+  `virtie/internal/manager/runtime`, leaving `manager.Runtime` as a facade
+  alias for CLI-facing callers.
 - [x] Make the concrete manager `Runtime` use `manager/launch` and
   `manager/control` types directly instead of manager facade aliases,
   reducing blockers for eventually moving the concrete runtime under
@@ -817,8 +820,9 @@ implementation packages should avoid importing the facade package.
   logger/QMP timeout, foreground wait, info collection, and hotplug adapter
   dependencies are stored directly on `Runtime`; the concrete runtime no
   longer stores a manager back-reference or stale lifecycle adapter fields.
-  The concrete launch-owned runtime and concrete close callbacks still live in
-  `manager`.
+  The concrete launch-owned runtime now lives in this package, with
+  `manager.Runtime` retained as a facade alias. Manager still supplies
+  concrete close, foreground, provisioning, and guest adapters.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, compatibility
   error helpers, and optional handler registration. Suspend fallback polling
@@ -1267,8 +1271,8 @@ readiness, and managed virtiofs sockets:
    startup-failure cleanup assembly, concrete runtime logger/QMP
    timeout/foreground wait/info collection/hotplug adapter dependency wiring,
    removal of the concrete runtime manager back-reference, foreground wait
-   dependency narrowing, and control-capability dispatch. The concrete
-   `Runtime` type still lives behind the `manager` facade.
+   dependency narrowing, control-capability dispatch, and the concrete
+   `Runtime` type itself. The `manager` facade now aliases that runtime type.
 3. Split QMP and QGA protocol clients into dependency-only packages, then adapt
    manager call sites to use the same interfaces through the facade. QMP has
    landed under `internal/qmpclient`, including dial retry mechanics,
