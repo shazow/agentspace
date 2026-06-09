@@ -283,6 +283,9 @@ Acceptance criteria:
 - [x] Move foreground SSH session retry/autoprovision loop into
   `virtie/internal/manager/launch`, with manager supplying process runner,
   lifecycle waits, stats, and guest-key install hooks.
+- [x] Move SSH autoprovision authorized-key guest install sequencing and stage
+  wrapping into `virtie/internal/manager/launch`, with manager supplying
+  concrete QGA command callbacks.
 - [x] Move foreground SSH-vs-headless orchestration into
   `virtie/internal/manager/launch`, with manager supplying optional-feature
   startup and concrete wait callbacks.
@@ -697,7 +700,8 @@ implementation packages should avoid importing the facade package.
   manifest-backed SSH command and hint construction.
   Foreground process lifecycle wait mechanics and lifecycle suspend/info
   adapter wiring have moved there as well.
-  Foreground SSH session retry/autoprovision orchestration now lives there.
+  Foreground SSH session retry/autoprovision orchestration and authorized-key
+  guest install sequencing now live there.
   Foreground SSH-vs-headless orchestration and optional-feature startup
   sequencing have moved there too.
   Guest provisioning, guest-agent socket wait/retry-dial sequencing,
@@ -743,8 +747,9 @@ implementation packages should avoid importing the facade package.
 - `virtie/internal/sshtools` (partial): SSH command construction, failure
   classification, retry-output buffering, autoprovisioned key storage, and
   retry logging have landed. `launch` now owns the foreground SSH session loop,
-  while manager still supplies concrete autoprovisioning, process ownership,
-  stats, and lifecycle action callbacks.
+  authorized-key guest install sequencing, while manager still supplies
+  concrete QGA commands, process ownership, stats, and lifecycle action
+  callbacks.
 
 The existing add-on engines should remain independent of `manager` internals:
 `virtie/internal/hotplug` remains the hotplug implementation engine, and
@@ -1154,10 +1159,11 @@ readiness, and managed virtiofs sockets:
    cleanup have moved there too. Guest-agent socket wait/retry-dial
    sequencing, SSH-readiness token wait sequencing, default startup wait
    wrapping/check policy, foreground lifecycle suspend/info adapter wiring,
-   default foreground SSH session wrapping, default guest-file stage wrapping,
-   notifier selection policy, generic stage-error/command-error construction,
-   and unexpected-process-exit wrapping have moved there as well. Manager still
-   owns default concrete dependencies and some stage-specific wrapping.
+   default foreground SSH session wrapping, SSH autoprovision guest install
+   sequencing, default guest-file stage wrapping, notifier selection policy,
+   generic stage-error/command-error construction, and unexpected-process-exit
+   wrapping have moved there as well. Manager still owns default concrete
+   dependencies and some stage-specific wrapping.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under

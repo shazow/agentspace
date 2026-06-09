@@ -623,24 +623,8 @@ func (m *manager) runSSHSession(
 		WaitForRetry: func(ctx context.Context, watchers executor.Group) error {
 			return m.waitBeforeSSHRetry(ctx, plan.Manifest, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
 		},
-		EnsureKey: func(launchManifest *manifest.Manifest) (launch.SSHAutoprovisionKey, error) {
-			key, err := m.ensureSSHAutoprovisionKey(launchManifest)
-			if err != nil {
-				return launch.SSHAutoprovisionKey{}, err
-			}
-			return launch.SSHAutoprovisionKey{
-				IdentityFile:  key.IdentityFile,
-				PublicKeyFile: key.PublicKeyFile,
-				AuthorizedKey: key.AuthorizedKey,
-			}, nil
-		},
-		InstallKey: func(ctx context.Context, launchManifest *manifest.Manifest, key launch.SSHAutoprovisionKey, watchers executor.Group) error {
-			return m.installSSHAutoprovisionKey(ctx, launchManifest, sshAutoprovisionKey{
-				IdentityFile:  key.IdentityFile,
-				PublicKeyFile: key.PublicKeyFile,
-				AuthorizedKey: key.AuthorizedKey,
-			}, watchers)
-		},
+		EnsureKey:  m.ensureSSHAutoprovisionKey,
+		InstallKey: m.installSSHAutoprovisionKey,
 	})
 }
 
