@@ -385,13 +385,8 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *lau
 		}
 	}
 
-	if plan.ResumeState != nil {
-		m.logger.Info("starting qemu for restore")
-	} else {
-		m.logger.Info("starting qemu")
-	}
 	stats.MarkBootStarted(time.Now())
-	qemu, err := m.startManagedProcess(plan.QEMUCommand)
+	qemu, err := launch.StartQEMU(m.runner, m.logger, plan)
 	if err != nil {
 		return nil, nil, &stageError{Stage: "vm startup", Err: err}
 	}

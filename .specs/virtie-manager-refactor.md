@@ -129,6 +129,9 @@ Acceptance criteria:
 - [x] Move launch run-process startup into
   `virtie/internal/manager/launch`, leaving manager responsible for
   stage-specific error wrapping and process-set ownership.
+- [x] Move QEMU process startup into `virtie/internal/manager/launch`, leaving
+  manager responsible for boot stats, stage wrapping, and process-set
+  ownership.
 - [x] Move async startup/readiness waiting into
   `virtie/internal/manager/launch`, with manager supplying unexpected-exit and
   stage-wrapping callbacks.
@@ -515,10 +518,10 @@ implementation packages should avoid importing the facade package.
   wait-mode selection, launcher configuration, foreground lifecycle event
   waiting, and startup queued-suspend handling. Plan-owned filesystem
   preflight, VSock CID selection, locked plan finalization, pre-runtime launch
-  lock/PID setup, and restored-state cleanup have moved there too. `Launcher`,
-  default concrete dependencies, stage wrapping, notifier selection, and the
-  remaining startup sequencing still live in `manager`; async readiness wait
-  mechanics now live in `launch`.
+  lock/PID setup, restored-state cleanup, and QEMU process startup have moved
+  there too. `Launcher`, default concrete dependencies, stage wrapping,
+  notifier selection, and the remaining startup sequencing still live in
+  `manager`; async readiness wait mechanics now live in `launch`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, and close
@@ -935,11 +938,11 @@ readiness, and managed virtiofs sockets:
    resume policy, resolved plan construction, wait-mode selection, and
    configuration merging have moved there too, as has foreground lifecycle
    event waiting, plan-owned filesystem preflight, and launch run-process
-   startup. Async startup/readiness waiting, startup queued-suspend handling,
-   VSock CID selection, locked plan finalization, and pre-runtime launch
-   lock/PID setup have moved there too. Restored-state cleanup has moved there
-   too. Manager still owns default concrete dependencies, stage wrapping, and
-   notifier selection.
+   startup. QEMU process startup, async startup/readiness waiting, startup
+   queued-suspend handling, VSock CID selection, locked plan finalization, and
+   pre-runtime launch lock/PID setup have moved there too. Restored-state
+   cleanup has moved there too. Manager still owns default concrete
+   dependencies, stage wrapping, and notifier selection.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
