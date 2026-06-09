@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/qga"
 )
 
 type Info struct {
@@ -42,10 +43,10 @@ func (m *manager) collectGuestInfo(ctx context.Context, socketPath string, watch
 		return Info{}, err
 	}
 	if status.ExitCode != 0 {
-		return Info{}, fmt.Errorf("ps %q exited with status %d%s", "process list", status.ExitCode, guestExecOutputSuffix(status))
+		return Info{}, fmt.Errorf("ps %q exited with status %d%s", "process list", status.ExitCode, qga.ExecOutputSuffix(status))
 	}
 
-	return Info{ProcessList: formatGuestProcesses(parseGuestProcesses(decodeGuestExecData(status.OutData)))}, nil
+	return Info{ProcessList: formatGuestProcesses(parseGuestProcesses(qga.DecodeExecData(status.OutData)))}, nil
 }
 
 func (m *manager) printGuestInfo(ctx context.Context, socketPath string, watchers executor.Group) {
