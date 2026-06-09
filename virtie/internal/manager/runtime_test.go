@@ -58,7 +58,11 @@ func TestRuntimeSuspendQueuesAndWaitsForLaunchLoop(t *testing.T) {
 	runtime := newRuntime(cfg, RuntimePaths{
 		ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
 		QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-	}, 9, runtimepkg.NewStats(time.Now()), qmp, coordinator, runtimeDependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)})
+	}, 9, runtimepkg.NewStats(time.Now()), qmp, coordinator, runtimeDependencies{
+		QMPTimeout:       time.Second,
+		Logger:           slog.New(slog.DiscardHandler),
+		SavedSuspendExit: isSavedSuspendExit,
+	})
 	runtime.SetReady()
 
 	done := make(chan error, 1)

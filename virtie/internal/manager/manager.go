@@ -36,6 +36,10 @@ const (
 
 var errSavedSuspendExit = errors.New("saved suspend requested")
 
+func isSavedSuspendExit(err error) bool {
+	return errors.Is(err, errSavedSuspendExit)
+}
+
 type ResumeMode = launch.ResumeMode
 
 const (
@@ -287,9 +291,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 					Stats:       stats,
 					StatsOutput: m.outputWriter(),
 				}),
-				func(err error) bool {
-					return errors.Is(err, errSavedSuspendExit)
-				},
+				isSavedSuspendExit,
 			)
 		}
 	}()
@@ -369,8 +371,9 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *Plan, stats *run
 		return nil, nil, err
 	}
 	runtimeDeps := runtimeDependencies{
-		QMPTimeout: m.effectiveQMPCommandTimeout(),
-		Logger:     m.logger,
+		QMPTimeout:       m.effectiveQMPCommandTimeout(),
+		Logger:           m.logger,
+		SavedSuspendExit: isSavedSuspendExit,
 		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
 			info, err := m.collectGuestInfo(ctx, socketPath, watchers)
 			if err != nil {
