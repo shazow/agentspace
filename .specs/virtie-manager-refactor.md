@@ -170,6 +170,9 @@ Acceptance criteria:
 - [x] Move SSH retry logging into `virtie/internal/sshtools`, so manager
   foreground-session retry behavior depends on reusable SSH classification
   helpers instead of package-local logging state.
+- [x] Move combined QMP readiness and retry-dial sequencing into
+  `virtie/internal/manager/launch`, with manager supplying concrete socket
+  waiting, QMP dialer, startup-exit checks, and stage wrapping.
 
 ## Landed Control Flow
 
@@ -522,9 +525,10 @@ implementation packages should avoid importing the facade package.
   waiting, and startup queued-suspend handling. Plan-owned filesystem
   preflight, VSock CID selection, locked plan finalization, pre-runtime launch
   lock/PID setup, restored-state cleanup, and QEMU process startup have moved
-  there too. `Launcher`, default concrete dependencies, stage wrapping,
-  notifier selection, and the remaining startup sequencing still live in
-  `manager`; async readiness wait mechanics now live in `launch`.
+  there too. Combined QMP readiness and retry-dial sequencing also now lives
+  there. `Launcher`, default concrete dependencies, stage wrapping, notifier
+  selection, and the remaining startup sequencing still live in `manager`;
+  async readiness wait mechanics now live in `launch`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, and close

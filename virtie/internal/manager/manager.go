@@ -517,12 +517,32 @@ func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths 
 }
 
 func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpClient, error) {
-	if err := m.waitForAsyncStage(ctx, "vm startup", watchers, func(waitCtx context.Context) error {
-		return m.socketWaiter.Wait(waitCtx, []string{socketPath})
-	}); err != nil {
-		return nil, err
+	dialer := m.qmpDialer
+	if dialer == nil {
+		dialer = &socketMonitorDialer{}
 	}
-	return m.connectQMP(ctx, socketPath, watchers)
+	retryDelay := m.qmpRetryDelay
+	if retryDelay <= 0 {
+		retryDelay = defaultQMPRetryDelay
+	}
+	return launch.WaitForQMP(ctx, launch.QMPWait{
+		Stage:          "vm startup",
+		SocketPath:     socketPath,
+		SocketWaiter:   m.socketWaiter,
+		Dialer:         dialer,
+		ConnectTimeout: m.effectiveQMPConnectTimeout(),
+		RetryDelay:     retryDelay,
+		PollDelay:      defaultSocketPollInterval,
+		Check: func(stage string) error {
+			return firstUnexpectedExit(stage, watchers)
+		},
+		Result: func(stage string, err error) error {
+			return &stageError{Stage: stage, Err: err}
+		},
+		Cancel: func(stage string, err error) error {
+			return &stageError{Stage: stage, Err: err}
+		},
+	})
 }
 
 func (m *manager) waitForAsyncStage(ctx context.Context, stage string, watchers executor.Group, wait func(context.Context) error) error {
@@ -540,33 +560,6 @@ func (m *manager) waitForAsyncStage(ctx context.Context, stage string, watchers 
 			return &stageError{Stage: stage, Err: err}
 		},
 	})
-}
-
-func (m *manager) connectQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpClient, error) {
-	dialer := m.qmpDialer
-	if dialer == nil {
-		dialer = &socketMonitorDialer{}
-	}
-	connectTimeout := m.effectiveQMPConnectTimeout()
-	retryDelay := m.qmpRetryDelay
-	if retryDelay <= 0 {
-		retryDelay = defaultQMPRetryDelay
-	}
-	client, err := qmpclient.DialWithRetry(ctx, dialer, qmpclient.DialRetry{
-		SocketPath: socketPath,
-		Timeout:    connectTimeout,
-		RetryDelay: retryDelay,
-		Check: func() error {
-			return firstUnexpectedExit("vm startup", watchers)
-		},
-	})
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, &stageError{Stage: "vm startup", Err: err}
-		}
-		return nil, err
-	}
-	return client, nil
 }
 
 func (m *manager) effectiveQMPConnectTimeout() time.Duration {
