@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
+
+const defaultStateWaitTimeout = 500 * time.Millisecond
 
 func SuspendStatePath(manifest *manifest.Manifest) string {
 	return filepath.Join(manifest.ResolvedPersistenceStateDir(), manifest.Identity.HostName+".suspend.json")
@@ -203,4 +206,66 @@ func ResolveLaunchPID(manifest *manifest.Manifest, signaler PIDSignaler) (int, e
 
 func IsNoProcess(err error) bool {
 	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
+}
+
+func WaitForLaunchExited(ctx context.Context, manifest *manifest.Manifest, timeout time.Duration) error {
+	if err := waitForStateCondition(ctx, timeout, func() (bool, error) {
+		_, err := os.Stat(LaunchPIDPath(manifest))
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
+	}, fmt.Sprintf("launch pid %q was not removed", LaunchPIDPath(manifest))); err != nil {
+		return WrapStage("launch signal", err)
+	}
+	return nil
+}
+
+func WaitForSavedSuspendState(ctx context.Context, manifest *manifest.Manifest, timeout time.Duration) error {
+	if err := waitForStateCondition(ctx, timeout, func() (bool, error) {
+		state, err := ReadSuspendState(manifest)
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return state.Status == "saved", nil
+	}, fmt.Sprintf("saved suspend state %q was not written", SuspendStatePath(manifest))); err != nil {
+		return WrapStage("qmp suspend", err)
+	}
+	return nil
+}
+
+func waitForStateCondition(ctx context.Context, timeout time.Duration, ready func() (bool, error), timeoutMessage string) error {
+	if timeout <= 0 {
+		timeout = defaultStateWaitTimeout
+	}
+
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		ok, err := ready()
+		if ok {
+			return nil
+		}
+		if err != nil {
+			lastErr = err
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			if lastErr != nil {
+				return fmt.Errorf("%s before timeout: %w", timeoutMessage, lastErr)
+			}
+			return fmt.Errorf("%s before timeout", timeoutMessage)
+		case <-ticker.C:
+		}
+	}
 }

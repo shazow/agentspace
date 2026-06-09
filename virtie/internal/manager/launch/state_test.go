@@ -1,12 +1,14 @@
 package launch
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -155,6 +157,50 @@ func TestResolveLaunchPIDWrapsProcessCheckError(t *testing.T) {
 	var stageErr *StageError
 	if !errors.As(err, &stageErr) || stageErr.Stage != "launch pid" || !errors.Is(err, checkErr) {
 		t.Fatalf("check err: got %v", err)
+	}
+}
+
+func TestWaitForLaunchExited(t *testing.T) {
+	cfg := testManifest(t)
+	if err := WriteLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	if err := RemoveLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("remove launch pid: %v", err)
+	}
+	if err := WaitForLaunchExited(context.Background(), cfg, time.Millisecond); err != nil {
+		t.Fatalf("wait for launch exited: %v", err)
+	}
+}
+
+func TestWaitForLaunchExitedWrapsTimeout(t *testing.T) {
+	cfg := testManifest(t)
+	if err := WriteLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	err := WaitForLaunchExited(context.Background(), cfg, time.Millisecond)
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "launch signal" || !strings.Contains(err.Error(), "was not removed") {
+		t.Fatalf("wait err: got %v", err)
+	}
+}
+
+func TestWaitForSavedSuspendState(t *testing.T) {
+	cfg := testManifest(t)
+	if err := WriteSuspendStateData(cfg, SuspendState{Status: "saved"}); err != nil {
+		t.Fatalf("write suspend state: %v", err)
+	}
+	if err := WaitForSavedSuspendState(context.Background(), cfg, time.Millisecond); err != nil {
+		t.Fatalf("wait for saved suspend state: %v", err)
+	}
+}
+
+func TestWaitForSavedSuspendStateWrapsTimeout(t *testing.T) {
+	cfg := testManifest(t)
+	err := WaitForSavedSuspendState(context.Background(), cfg, time.Millisecond)
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "qmp suspend" || !strings.Contains(err.Error(), "was not written") {
+		t.Fatalf("wait err: got %v", err)
 	}
 }
 
