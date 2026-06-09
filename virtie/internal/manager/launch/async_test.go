@@ -3,8 +3,12 @@ package launch
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 )
 
 func TestWaitForAsyncReturnsWhenWaitCompletes(t *testing.T) {
@@ -55,6 +59,34 @@ func TestWaitForSocketsWrapsSocketError(t *testing.T) {
 	}
 }
 
+func TestWaitForSocketsDefaultsToStageWrapping(t *testing.T) {
+	waitErr := errors.New("socket failed")
+	err := WaitForSockets(context.Background(), SocketWait{
+		Stage:        "guest agent",
+		SocketWaiter: &fakeAsyncSocketWaiter{err: waitErr},
+		PollDelay:    time.Millisecond,
+	})
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "guest agent" || !errors.Is(err, waitErr) {
+		t.Fatalf("default wrapped err: got %v", err)
+	}
+}
+
+func TestWaitForSocketsDefaultsToWatcherExitCheck(t *testing.T) {
+	process := &executortest.Process{OverrideName: "qemu", Exited: true}
+	err := WaitForSockets(context.Background(), SocketWait{
+		Stage:     "virtiofs startup",
+		Watchers:  executor.NewGroup(process.Process()),
+		PollDelay: time.Millisecond,
+		SocketWaiter: &fakeAsyncSocketWaiter{
+			block: true,
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "virtiofs startup: qemu exited unexpectedly") {
+		t.Fatalf("watcher exit error: got %v", err)
+	}
+}
+
 func TestWaitForAsyncWrapsWaitError(t *testing.T) {
 	waitErr := errors.New("socket failed")
 	wrappedErr := errors.New("wrapped")
@@ -82,10 +114,15 @@ func TestWaitForAsyncWrapsWaitError(t *testing.T) {
 type fakeAsyncSocketWaiter struct {
 	paths []string
 	err   error
+	block bool
 }
 
 func (w *fakeAsyncSocketWaiter) Wait(ctx context.Context, socketPaths []string) error {
 	w.paths = append([]string(nil), socketPaths...)
+	if w.block {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	return w.err
 }
 

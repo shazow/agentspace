@@ -270,7 +270,7 @@ Acceptance criteria:
   helpers instead of package-local logging state.
 - [x] Move combined QMP readiness and retry-dial sequencing into
   `virtie/internal/manager/launch`, with manager supplying concrete socket
-  waiting, QMP dialer, startup-exit checks, and stage wrapping.
+  waiting and QMP dialer.
 - [x] Move manifest-backed SSH command and hint construction into
   `virtie/internal/manager/launch`, leaving manager foreground wait code to
   start and supervise the resulting process.
@@ -297,10 +297,13 @@ Acceptance criteria:
   writes and SSH-ready waits.
 - [x] Move SSH-readiness token wait sequencing into
   `virtie/internal/manager/launch`, with manager supplying concrete socket
-  waiting, readiness dialing, timeout policy, and process-exit checks.
+  waiting, readiness dialing, and timeout policy.
 - [x] Move guest-agent socket wait and retry-dial sequencing into
   `virtie/internal/manager/launch`, with manager supplying concrete QGA
-  dialer, timeout policy, and process-exit checks.
+  dialer and timeout policy.
+- [x] Move default startup wait stage wrapping and process-exit checks into
+  `virtie/internal/manager/launch` for socket, QMP, QGA, and SSH-readiness
+  waits.
 - [x] Move runtime activation sequencing into
   `virtie/internal/manager/launch`, so ready-state marking, concrete runtime
   configuration callbacks, control startup, queued suspend handling, guest
@@ -693,8 +696,9 @@ implementation packages should avoid importing the facade package.
   Foreground SSH-vs-headless orchestration and optional-feature startup
   sequencing have moved there too.
   Guest provisioning, guest-agent socket wait/retry-dial sequencing,
-  SSH-readiness checkpoint sequencing, and SSH-readiness token wait sequencing
-  also live there. Runtime activation sequencing lives there as well.
+  SSH-readiness checkpoint sequencing, SSH-readiness token wait sequencing, and
+  default startup wait wrapping/check policy also live there. Runtime activation
+  sequencing lives there as well.
   Host-side guest-file payload and write-back path helpers now live there.
   Guest-file directory install argument policy has moved there too.
   Runtime restore and suspend-save orchestration, plus runtime resume/suspend
@@ -1141,11 +1145,11 @@ readiness, and managed virtiofs sockets:
    pre-runtime launch lock/PID setup have moved there too. Runtime process/QMP
    startup sequencing, runtime activation sequencing, and restored-state
    cleanup have moved there too. Guest-agent socket wait/retry-dial
-   sequencing, SSH-readiness token wait sequencing, foreground lifecycle
-   suspend/info adapter wiring, notifier selection policy, generic
-   stage-error/command-error construction, and unexpected-process-exit wrapping
-   have moved there as well. Manager still owns default concrete dependencies
-   and some stage-specific wrapping.
+   sequencing, SSH-readiness token wait sequencing, default startup wait
+   wrapping/check policy, foreground lifecycle suspend/info adapter wiring,
+   notifier selection policy, generic stage-error/command-error construction,
+   and unexpected-process-exit wrapping have moved there as well. Manager still
+   owns default concrete dependencies and some stage-specific wrapping.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under

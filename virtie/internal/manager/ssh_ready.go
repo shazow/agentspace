@@ -48,10 +48,7 @@ func (m *manager) waitForSSHReady(ctx context.Context, socketPath string, watche
 		PollDelay:    defaultSocketPollInterval,
 		SocketWaiter: m.socketWaiter,
 		Dialer:       dialer,
-		Check: func(stage string) error {
-			return firstUnexpectedExit(stage, watchers)
-		},
-		Wrap: launch.WrapStage,
+		Watchers:     watchers,
 	})
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/qga"
 )
 
@@ -18,6 +19,7 @@ type GuestAgentWait struct {
 	CommandTimeout time.Duration
 	RetryDelay     time.Duration
 	PollDelay      time.Duration
+	Watchers       executor.Group
 
 	Check  func(stage string) error
 	Result func(stage string, err error) error
@@ -32,14 +34,28 @@ func WaitForGuestAgent(ctx context.Context, wait GuestAgentWait) (qga.Client, er
 	if wait.SocketWaiter == nil {
 		return nil, fmt.Errorf("guest agent socket waiter is not configured")
 	}
+	check := wait.Check
+	if check == nil {
+		check = func(stage string) error {
+			return FirstUnexpectedExit(stage, wait.Watchers)
+		}
+	}
+	result := wait.Result
+	if result == nil {
+		result = WrapStage
+	}
+	cancel := wait.Cancel
+	if cancel == nil {
+		cancel = WrapStage
+	}
 	if err := WaitForSockets(ctx, SocketWait{
 		Stage:        stage,
 		SocketPaths:  []string{wait.SocketPath},
 		SocketWaiter: wait.SocketWaiter,
 		PollDelay:    wait.PollDelay,
-		Check:        wait.Check,
-		Result:       wait.Result,
-		Cancel:       wait.Cancel,
+		Check:        check,
+		Result:       result,
+		Cancel:       cancel,
 	}); err != nil {
 		return nil, err
 	}
@@ -50,15 +66,12 @@ func WaitForGuestAgent(ctx context.Context, wait GuestAgentWait) (qga.Client, er
 		CommandTimeout: wait.CommandTimeout,
 		RetryDelay:     wait.RetryDelay,
 		Check: func() error {
-			if wait.Check == nil {
-				return nil
-			}
-			return wait.Check(stage)
+			return check(stage)
 		},
 	})
 	if err != nil {
-		if wait.Cancel != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-			return nil, wait.Cancel(stage, err)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, cancel(stage, err)
 		}
 		return nil, err
 	}

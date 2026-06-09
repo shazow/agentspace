@@ -113,6 +113,21 @@ func TestWaitForGuestAgentWrapsDialCancellation(t *testing.T) {
 	}
 }
 
+func TestWaitForGuestAgentDefaultsToStageWrappingDialCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := WaitForGuestAgent(ctx, GuestAgentWait{
+		SocketWaiter: &fakeGuestAgentSocketWaiter{},
+		Dialer:       &fakeGuestAgentDialer{client: &fakeGuestAgentClient{}},
+		RetryDelay:   time.Millisecond,
+		PollDelay:    time.Millisecond,
+	})
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "guest agent" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel err: got %v", err)
+	}
+}
+
 type fakeGuestAgentSocketWaiter struct {
 	called bool
 	paths  []string

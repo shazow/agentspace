@@ -3,6 +3,8 @@ package launch
 import (
 	"context"
 	"time"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
 type AsyncWait struct {
@@ -20,6 +22,7 @@ type SocketWait struct {
 	SocketPaths  []string
 	SocketWaiter SocketWaiter
 	PollDelay    time.Duration
+	Watchers     executor.Group
 
 	Check  func(stage string) error
 	Result func(stage string, err error) error
@@ -27,6 +30,20 @@ type SocketWait struct {
 }
 
 func WaitForSockets(ctx context.Context, wait SocketWait) error {
+	check := wait.Check
+	if check == nil {
+		check = func(stage string) error {
+			return FirstUnexpectedExit(stage, wait.Watchers)
+		}
+	}
+	result := wait.Result
+	if result == nil {
+		result = WrapStage
+	}
+	cancel := wait.Cancel
+	if cancel == nil {
+		cancel = WrapStage
+	}
 	return WaitForAsync(ctx, AsyncWait{
 		Stage:     wait.Stage,
 		PollDelay: wait.PollDelay,
@@ -36,9 +53,9 @@ func WaitForSockets(ctx context.Context, wait SocketWait) error {
 			}
 			return wait.SocketWaiter.Wait(waitCtx, wait.SocketPaths)
 		},
-		Check:  wait.Check,
-		Result: wait.Result,
-		Cancel: wait.Cancel,
+		Check:  check,
+		Result: result,
+		Cancel: cancel,
 	})
 }
 

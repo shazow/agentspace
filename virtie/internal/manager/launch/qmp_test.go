@@ -114,6 +114,22 @@ func TestWaitForQMPWrapsDialCancellation(t *testing.T) {
 	}
 }
 
+func TestWaitForQMPDefaultsToStageWrappingDialCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := WaitForQMP(ctx, QMPWait{
+		SocketPath:   "qmp.sock",
+		SocketWaiter: &fakeQMPSocketWaiter{},
+		Dialer:       &fakeQMPDialer{},
+		RetryDelay:   time.Millisecond,
+		PollDelay:    time.Millisecond,
+	})
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "vm startup" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel err: got %v", err)
+	}
+}
+
 type fakeQMPSocketWaiter struct {
 	called bool
 	paths  []string
