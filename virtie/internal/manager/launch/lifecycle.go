@@ -88,6 +88,15 @@ func (l *Lifecycle) RequestInfo() {
 	}
 }
 
+func HandleQueuedSuspend(ctx context.Context, lifecycle *Lifecycle, handle func(context.Context, *SuspendCoordinator) error) error {
+	select {
+	case <-lifecycle.Suspend().Notify():
+		return handle(ctx, lifecycle.Suspend())
+	default:
+		return nil
+	}
+}
+
 func (c *SuspendCoordinator) Notify() <-chan struct{} {
 	return c.notify
 }

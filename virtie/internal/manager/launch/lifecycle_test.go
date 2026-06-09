@@ -68,3 +68,35 @@ func TestSuspendCoordinatorRequestAndWait(t *testing.T) {
 		t.Fatal("timed out waiting for suspend completion")
 	}
 }
+
+func TestHandleQueuedSuspend(t *testing.T) {
+	lifecycle := NewLifecycle(nil, nil, nil)
+	defer lifecycle.Stop()
+	wantErr := errors.New("suspend handled")
+	lifecycle.Suspend().Request()
+
+	err := HandleQueuedSuspend(context.Background(), lifecycle, func(ctx context.Context, coordinator *SuspendCoordinator) error {
+		if ctx == nil {
+			t.Fatal("expected context")
+		}
+		if coordinator != lifecycle.Suspend() {
+			t.Fatal("unexpected coordinator")
+		}
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("queued suspend error: got %v want %v", err, wantErr)
+	}
+}
+
+func TestHandleQueuedSuspendReturnsNilWhenNoRequest(t *testing.T) {
+	lifecycle := NewLifecycle(nil, nil, nil)
+	defer lifecycle.Stop()
+	err := HandleQueuedSuspend(context.Background(), lifecycle, func(context.Context, *SuspendCoordinator) error {
+		t.Fatal("handler should not run without queued request")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("queued suspend without request: %v", err)
+	}
+}
