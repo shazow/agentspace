@@ -111,6 +111,8 @@ Acceptance criteria:
 - [x] Move suspend fallback PID-removal and saved-state polling, including
   launch-signal and qmp-suspend stage wrapping, into
   `virtie/internal/manager/launch`.
+- [x] Remove manager-local suspend-state and launch-PID compatibility aliases,
+  so manager code and tests call the launch-owned helpers directly.
 - [x] Move resume-mode normalization and saved-state resolution policy into
   `virtie/internal/manager/launch`, leaving manager responsible only for
   stage-specific error wrapping.
@@ -700,8 +702,10 @@ implementation packages should avoid importing the facade package.
   interface, plan-owned socket cleanup, and lifecycle event coordination.
   Suspend-state, launch PID file helpers, launch PID validation,
   resume-state resolution, and resolved `Plan` construction have also landed
-  there, along with foreground wait-mode selection, launcher configuration,
-  foreground lifecycle event waiting, and startup queued-suspend handling.
+  there, with manager call sites now using those helpers directly instead of
+  local migration aliases. Foreground wait-mode selection, launcher
+  configuration, foreground lifecycle event waiting, and startup
+  queued-suspend handling have also moved there.
   Plan-owned filesystem
   preflight, VSock CID selection, locked plan finalization, pre-runtime launch
   lock/PID setup, restored-state cleanup, and QEMU process startup have moved
@@ -1176,7 +1180,9 @@ readiness, and managed virtiofs sockets:
    selection policy, generic stage-error/command-error construction, and
    unexpected-process-exit wrapping have moved there as well. Suspend fallback
    PID-removal and saved-state polling now live there too. Manager still owns
-   default concrete dependencies and some stage-specific wrapping.
+   default concrete dependencies and some stage-specific wrapping, but no
+   longer carries manager-local suspend-state or launch-PID compatibility
+   aliases.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under

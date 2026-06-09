@@ -41,7 +41,7 @@ func (m *manager) suspend(ctx context.Context, manifest *manifest.Manifest) erro
 
 	pid, err := m.launchPID(manifest)
 	if err != nil {
-		if saved, stateErr := hasSavedSuspendState(manifest); stateErr != nil {
+		if saved, stateErr := launch.HasSavedSuspendState(manifest); stateErr != nil {
 			return &stageError{Stage: "qmp suspend", Err: stateErr}
 		} else if saved {
 			return nil
