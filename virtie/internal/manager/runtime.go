@@ -38,12 +38,6 @@ type Runtime struct {
 	closeOnce sync.Once
 }
 
-type runtimeCloseHooks struct {
-	writeBack func(context.Context) error
-	cleanup   func() error
-	stats     func()
-}
-
 func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator) *Runtime {
 	return &Runtime{
 		manager:         manager,
@@ -111,9 +105,9 @@ func (r *Runtime) Close() error {
 	var err error
 	r.closeOnce.Do(func() {
 		r.setState(RuntimeStopping)
-		if r.closeHooks.writeBack != nil && !r.savedSuspend {
+		if r.closeHooks.WriteBack != nil && !r.savedSuspend {
 			writeBackCtx, cancelWriteBack := context.WithTimeout(context.Background(), r.manager.effectiveQMPCommandTimeout())
-			err = errors.Join(err, r.closeHooks.writeBack(writeBackCtx))
+			err = errors.Join(err, r.closeHooks.WriteBack(writeBackCtx))
 			cancelWriteBack()
 		}
 		if r.server != nil {
@@ -125,11 +119,11 @@ func (r *Runtime) Close() error {
 		if r.qmp != nil {
 			err = errors.Join(err, r.qmp.Disconnect())
 		}
-		if r.closeHooks.cleanup != nil {
-			err = errors.Join(err, r.closeHooks.cleanup())
+		if r.closeHooks.Cleanup != nil {
+			err = errors.Join(err, r.closeHooks.Cleanup())
 		}
-		if r.closeHooks.stats != nil {
-			r.closeHooks.stats()
+		if r.closeHooks.Stats != nil {
+			r.closeHooks.Stats()
 		}
 		r.setState(RuntimeStopped)
 	})

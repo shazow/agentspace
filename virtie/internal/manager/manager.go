@@ -484,16 +484,16 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 	runtime.SetReady()
 	runtime.SetLaunchLifecycle(plan, lifecycle, suspendHandler)
 	runtime.SetCloseHooks(runtimeCloseHooks{
-		writeBack: func(ctx context.Context) error {
+		WriteBack: func(ctx context.Context) error {
 			if !writeBackOnExit {
 				return nil
 			}
 			return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
 		},
-		cleanup: func() error {
+		Cleanup: func() error {
 			return errors.Join(removeSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
 		},
-		stats: func() {
+		Stats: func() {
 			stats.MarkCompleted(time.Now())
 			fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 		},
