@@ -345,6 +345,8 @@ Acceptance criteria:
 - [x] Remove manager-local concrete QMP/QGA socket-dialer aliases, so default
   and fallback manager dependencies instantiate `qmpclient` and `qga`
   dialers directly.
+- [x] Remove manager-local QMP/QGA dialer interface aliases, so manager
+  configuration fields use `qmpclient.Dialer` and `qga.Dialer` directly.
 - [x] Allow manager call sites to supply operation-specific guest-agent wait
   stages while keeping wait wrapping in `virtie/internal/manager/launch`.
 - [x] Move default startup wait stage wrapping and process-exit checks into

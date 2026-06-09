@@ -16,7 +16,6 @@ const (
 )
 
 type qmpClient = qmpclient.Client
-type qmpDialer = qmpclient.Dialer
 
 func appendQMPDelimiter(command []byte) []byte {
 	if len(command) > 0 && command[len(command)-1] == '\n' {

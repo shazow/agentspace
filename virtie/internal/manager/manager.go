@@ -112,8 +112,8 @@ type manager struct {
 	vsockCIDChecker     launch.VSockCIDChecker
 	runner              launch.Runner
 	socketWaiter        launch.SocketWaiter
-	qmpDialer           qmpDialer
-	guestAgentDialer    guestAgentDialer
+	qmpDialer           qmpclient.Dialer
+	guestAgentDialer    qga.Dialer
 	sshReadyDialer      launch.SSHReadyDialer
 	logger              *slog.Logger
 	logWriter           io.Writer

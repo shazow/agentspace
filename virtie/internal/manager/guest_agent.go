@@ -13,7 +13,6 @@ import (
 )
 
 type guestAgentClient = qga.Client
-type guestAgentDialer = qga.Dialer
 type guestExecStatus = qga.ExecStatus
 
 func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *runtimepkg.Stats, watchers executor.Group) error {
