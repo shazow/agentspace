@@ -26,6 +26,7 @@ type Runtime struct {
 	lifecycle       *launchLifecycle
 	suspendHandler  *launchSuspendHandler
 	waitForeground  func(context.Context, *Plan) error
+	collectInfo     func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)
 	processes       *ProcessSet
 	shutdownDelay   time.Duration
 	qmpTimeout      time.Duration
@@ -39,7 +40,7 @@ type Runtime struct {
 	control *runtimepkg.ControlServer
 }
 
-func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator, qmpTimeout time.Duration, logger *slog.Logger) *Runtime {
+func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePaths, cid int, stats *launchStats, qmp qmpClient, suspendRequests *launchSuspendCoordinator, qmpTimeout time.Duration, logger *slog.Logger, collectInfo func(context.Context, string, executor.Group) (runtimepkg.GuestInfo, error)) *Runtime {
 	state := runtimepkg.NewState(RuntimeStarting)
 	return &Runtime{
 		manager:         manager,
@@ -51,6 +52,7 @@ func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePath
 		suspendRequests: suspendRequests,
 		qmpTimeout:      qmpTimeout,
 		logger:          logger,
+		collectInfo:     collectInfo,
 		savedSuspend:    runtimepkg.NewSavedSuspendState(),
 		state:           state,
 		closer:          runtimepkg.NewCloser(state),
@@ -140,11 +142,10 @@ type runtimeInfoCollector struct {
 }
 
 func (c runtimeInfoCollector) CollectInfo(ctx context.Context) (runtimepkg.GuestInfo, error) {
-	info, err := c.runtime.manager.collectGuestInfo(ctx, c.runtime.paths.GuestAgentSocket, c.runtime.watchers)
-	if err != nil {
-		return runtimepkg.GuestInfo{}, err
+	if c.runtime.collectInfo == nil {
+		return runtimepkg.GuestInfo{}, fmt.Errorf("runtime info collector is not configured")
 	}
-	return runtimepkg.GuestInfo{ProcessList: info.ProcessList}, nil
+	return c.runtime.collectInfo(ctx, c.runtime.paths.GuestAgentSocket, c.runtime.watchers)
 }
 
 func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendResponse, error) {
