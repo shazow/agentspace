@@ -290,6 +290,8 @@ Acceptance criteria:
 - [x] Move the concrete launch-owned `Runtime` implementation into
   `virtie/internal/manager/runtime`, leaving `manager.Runtime` as a facade
   alias for CLI-facing callers.
+- [x] Split the exported manager launcher facade into its own file, leaving
+  `manager.go` focused on internal orchestration and concrete adapter wiring.
 - [x] Make the concrete manager `Runtime` use `manager/launch` and
   `manager/control` types directly instead of manager facade aliases,
   reducing blockers for eventually moving the concrete runtime under
