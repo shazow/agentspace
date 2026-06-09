@@ -281,7 +281,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 
 	processes := newProcessSet()
 	var qmpClient qmpClient
-	writeBackOnExit := false
+	writeBackOnExit := runtimepkg.NewWriteBackState()
 	defer func() {
 		if err != nil {
 			var runtimeErr error
@@ -317,16 +317,16 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 		if err := m.restoreLaunchRuntime(launchCtx, plan, qmpClient); err != nil {
 			return nil, err
 		}
-		writeBackOnExit = true
+		writeBackOnExit.Enable()
 	}
 	suspendHandler := newLaunchSuspendHandler(m, plan.Manifest, plan.Paths.QMPSocket, qmpClient, plan.CID, plan.Notifier, func() bool {
-		return writeBackOnExit
+		return writeBackOnExit.Enabled()
 	})
 	runtime.SetReady()
 	runtime.SetLaunchLifecycle(plan, lifecycle, suspendHandler)
 	runtime.SetCloseHooks(runtimeCloseHooks{
 		WriteBack: func(ctx context.Context) error {
-			if !writeBackOnExit {
+			if !writeBackOnExit.Enabled() {
 				return nil
 			}
 			return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
@@ -365,7 +365,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 		return nil, err
 	}
 	if writeBack {
-		writeBackOnExit = true
+		writeBackOnExit.Enable()
 	}
 
 	return runtime, nil

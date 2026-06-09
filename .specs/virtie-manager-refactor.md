@@ -182,6 +182,9 @@ Acceptance criteria:
   `virtie/internal/manager/runtime`, so process teardown, launch-lock cleanup,
   QMP disconnect, socket cleanup, and stats finalization share package-owned
   cleanup sequencing.
+- [x] Move runtime write-back-on-exit state into
+  `virtie/internal/manager/runtime`, so restore/provisioning, suspend-save,
+  and close-hook callbacks share an explicit runtime-owned state holder.
 - [x] Move runtime ready/status/suspend transition policy into
   `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
   responsible for wiring paths, manifest state, and launch suspend adapters.
