@@ -511,37 +511,24 @@ func (m *manager) connectGuestAgent(ctx context.Context, socketPath string, watc
 	if dialer == nil {
 		dialer = &socketGuestAgentDialer{}
 	}
-	connectTimeout := m.effectiveQMPConnectTimeout()
 	retryDelay := m.qmpRetryDelay
 	if retryDelay <= 0 {
 		retryDelay = defaultQMPRetryDelay
 	}
-
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, &stageError{Stage: "guest agent", Err: ctx.Err()}
-		case <-timer.C:
-		}
-
-		if err := firstUnexpectedExit("guest agent", watchers); err != nil {
-			return nil, err
-		}
-
-		client, err := dialer.Dial(ctx, socketPath, connectTimeout)
-		if err == nil {
-			if err := client.Ping(m.effectiveQMPCommandTimeout()); err == nil {
-				return client, nil
-			}
-			_ = client.Disconnect()
-		}
-		if ctx.Err() != nil {
+	client, err := qga.DialWithRetry(ctx, dialer, qga.DialRetry{
+		SocketPath:     socketPath,
+		ConnectTimeout: m.effectiveQMPConnectTimeout(),
+		CommandTimeout: m.effectiveQMPCommandTimeout(),
+		RetryDelay:     retryDelay,
+		Check: func() error {
+			return firstUnexpectedExit("guest agent", watchers)
+		},
+	})
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, &stageError{Stage: "guest agent", Err: ctx.Err()}
 		}
-
-		timer.Reset(retryDelay)
+		return nil, err
 	}
+	return client, nil
 }
