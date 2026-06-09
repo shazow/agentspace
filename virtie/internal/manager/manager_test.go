@@ -814,7 +814,7 @@ func TestRemoveSocketPathsIgnoresMissing(t *testing.T) {
 		t.Fatalf("write cleanup file: %v", err)
 	}
 
-	if err := removeSocketPaths([]string{filePath, missingPath}); err != nil {
+	if err := launch.RemoveSocketPaths([]string{filePath, missingPath}); err != nil {
 		t.Fatalf("remove socket paths: %v", err)
 	}
 	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
@@ -838,7 +838,7 @@ func TestCreateVolumeImageCreatesNativeExt4(t *testing.T) {
 			tmpDir := t.TempDir()
 			imagePath := filepath.Join(tmpDir, "volume.img")
 
-			err := createVolumeImage(manifest.Volume{
+			err := launch.CreateVolumeImage(manifest.Volume{
 				ImagePath:  imagePath,
 				Size:       tt.sizeMiB,
 				FSType:     "ext4",
@@ -890,7 +890,7 @@ func TestCreateVolumeImageRunsChattrBeforeSizingImage(t *testing.T) {
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 
 	imagePath := filepath.Join(tmpDir, "volume.img")
-	if err := createVolumeImage(manifest.Volume{
+	if err := launch.CreateVolumeImage(manifest.Volume{
 		ImagePath:  imagePath,
 		Size:       256,
 		FSType:     "ext4",

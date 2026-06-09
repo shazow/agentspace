@@ -327,7 +327,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 				if qmpClient != nil {
 					runtimeErr = errors.Join(runtimeErr, qmpClient.Disconnect())
 				}
-				runtimeErr = errors.Join(runtimeErr, removeSocketPaths(plan.RuntimeSocketCleanupFiles()))
+				runtimeErr = errors.Join(runtimeErr, launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()))
 				stats.MarkCompleted(time.Now())
 				fmt.Fprintf(m.outputWriter(), "stats: %s\n", stats.String())
 			}
@@ -358,7 +358,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 			return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
 		},
 		Cleanup: func() error {
-			return errors.Join(removeSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
+			return errors.Join(launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
 		},
 		Stats: func() {
 			stats.MarkCompleted(time.Now())
@@ -946,7 +946,7 @@ func (m *manager) saveSuspendStateConnected(ctx context.Context, manifest *manif
 	}
 
 	statePath := vmStatePath(manifest)
-	if err := ensureParentDirectories([]string{statePath}); err != nil {
+	if err := launch.EnsureParentDirectories([]string{statePath}); err != nil {
 		return &stageError{Stage: "qmp suspend", Err: err}
 	}
 	if err := os.Remove(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -1085,30 +1085,6 @@ func joinDeferredError(target *error, fn func() error) {
 		return
 	}
 	*target = errors.Join(*target, next)
-}
-
-func ensureDirectories(directories []string) error {
-	return launch.EnsureDirectories(directories)
-}
-
-func ensureVolumeImages(volumes []manifest.Volume, logger *slog.Logger) error {
-	return launch.EnsureVolumeImages(volumes, logger)
-}
-
-func createVolumeImage(volume manifest.Volume) error {
-	return launch.CreateVolumeImage(volume)
-}
-
-func ensureParentDirectories(paths []string) error {
-	return launch.EnsureParentDirectories(paths)
-}
-
-func removeSocketPaths(paths []string) error {
-	return launch.RemoveSocketPaths(paths)
-}
-
-func ensureExistingSocketPaths(paths []string) error {
-	return launch.EnsureExistingSocketPaths(paths)
 }
 
 func wrapCommandError(stage string, command string, err error) error {
