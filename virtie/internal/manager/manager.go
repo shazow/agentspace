@@ -287,7 +287,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *Plan) (runtime *Runti
 			var runtimeErr error
 			if runtime != nil {
 				if errors.Is(err, errSavedSuspendExit) {
-					runtime.savedSuspend = true
+					runtime.savedSuspend.MarkSaved()
 				}
 				runtimeErr = runtime.Close()
 			} else {

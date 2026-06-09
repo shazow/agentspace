@@ -27,7 +27,7 @@ type Runtime struct {
 	processes       *ProcessSet
 	shutdownDelay   time.Duration
 	closeHooks      runtimeCloseHooks
-	savedSuspend    bool
+	savedSuspend    *runtimepkg.SavedSuspendState
 	watchers        executor.Group
 
 	state   *runtimepkg.State
@@ -45,6 +45,7 @@ func newRuntime(manager *manager, manifest *manifest.Manifest, paths RuntimePath
 		stats:           stats,
 		qmp:             qmpclient.Serialized(qmp),
 		suspendRequests: suspendRequests,
+		savedSuspend:    runtimepkg.NewSavedSuspendState(),
 		state:           state,
 		closer:          runtimepkg.NewCloser(state),
 	}
@@ -87,7 +88,7 @@ func (r *Runtime) Close() error {
 	return r.closer.Close(runtimepkg.CloseActions{
 		WriteBack:        r.closeHooks.WriteBack,
 		WriteBackTimeout: r.manager.effectiveQMPCommandTimeout(),
-		SkipWriteBack:    r.savedSuspend,
+		SkipWriteBack:    r.savedSuspend.Saved(),
 		Control:          r.control,
 		Processes:        r.processes,
 		ShutdownDelay:    r.shutdownDelay,
@@ -104,7 +105,7 @@ func (r *Runtime) Wait(ctx context.Context, mode WaitMode) error {
 	plan := launch.PlanForWaitMode(r.plan, mode)
 	err := r.manager.waitForLaunchForeground(ctx, plan, r.stats, r, r.qmp, r.lifecycle, r.suspendHandler, r.processes)
 	if errors.Is(err, errSavedSuspendExit) {
-		r.savedSuspend = true
+		r.savedSuspend.MarkSaved()
 	}
 	return err
 }
