@@ -108,6 +108,9 @@ Acceptance criteria:
   preserving existing command and test call sites.
 - [x] Move launch PID validation, stale-process classification, and launch-pid
   stage wrapping into `virtie/internal/manager/launch`.
+- [x] Move suspend fallback PID-removal and saved-state polling, including
+  launch-signal and qmp-suspend stage wrapping, into
+  `virtie/internal/manager/launch`.
 - [x] Move resume-mode normalization and saved-state resolution policy into
   `virtie/internal/manager/launch`, leaving manager responsible only for
   stage-specific error wrapping.
@@ -743,7 +746,8 @@ implementation packages should avoid importing the facade package.
   `manager`.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, compatibility
-  error helpers, and optional handler registration.
+  error helpers, and optional handler registration. Suspend fallback polling
+  now delegates PID-removal and saved-state waits to `launch`.
 - `virtie/internal/qmpclient` (landed): QMP dial/client implementation,
   dial retry mechanics, migration polling, restore sequencing, serialization
   adapter, suspend save sequencing, and role interfaces used by runtime
@@ -1170,7 +1174,8 @@ readiness, and managed virtiofs sockets:
    wrapping, SSH autoprovision guest install sequencing, default guest-file
    stage wrapping, hotplug attach/detach stage classification, notifier
    selection policy, generic stage-error/command-error construction, and
-   unexpected-process-exit wrapping have moved there as well. Manager still owns
+   unexpected-process-exit wrapping have moved there as well. Suspend fallback
+   PID-removal and saved-state polling now live there too. Manager still owns
    default concrete dependencies and some stage-specific wrapping.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.

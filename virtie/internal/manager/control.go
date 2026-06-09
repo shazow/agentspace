@@ -27,8 +27,8 @@ func (m *manager) suspend(ctx context.Context, manifest *manifest.Manifest) erro
 				timeout := m.effectiveSuspendSignalTimeout(manifest)
 				waitCtx, cancel := context.WithTimeout(ctx, timeout)
 				defer cancel()
-				if err := waitForLaunchExited(waitCtx, manifest, timeout); err != nil {
-					return &stageError{Stage: "launch signal", Err: err}
+				if err := launch.WaitForLaunchExited(waitCtx, manifest, timeout); err != nil {
+					return err
 				}
 				return nil
 			}
@@ -56,11 +56,11 @@ func (m *manager) suspend(ctx context.Context, manifest *manifest.Manifest) erro
 	waitCtx, cancel := context.WithTimeout(ctx, m.effectiveSuspendSignalTimeout(manifest))
 	defer cancel()
 
-	if err := waitForSavedSuspendState(waitCtx, manifest, m.effectiveSuspendSignalTimeout(manifest)); err != nil {
-		return &stageError{Stage: "qmp suspend", Err: err}
+	if err := launch.WaitForSavedSuspendState(waitCtx, manifest, m.effectiveSuspendSignalTimeout(manifest)); err != nil {
+		return err
 	}
-	if err := waitForLaunchExited(waitCtx, manifest, m.effectiveSuspendSignalTimeout(manifest)); err != nil {
-		return &stageError{Stage: "launch signal", Err: err}
+	if err := launch.WaitForLaunchExited(waitCtx, manifest, m.effectiveSuspendSignalTimeout(manifest)); err != nil {
+		return err
 	}
 	return nil
 }
@@ -84,62 +84,6 @@ func (m *manager) effectivePIDSignaler() pidSignaler {
 		return m.pidSignaler
 	}
 	return syscallPIDSignaler{}
-}
-
-func waitForLaunchExited(ctx context.Context, manifest *manifest.Manifest, timeout time.Duration) error {
-	return waitForStateCondition(ctx, timeout, func() (bool, error) {
-		_, err := os.Stat(launchPIDPath(manifest))
-		if os.IsNotExist(err) {
-			return true, nil
-		}
-		return false, err
-	}, fmt.Sprintf("launch pid %q was not removed", launchPIDPath(manifest)))
-}
-
-func waitForSavedSuspendState(ctx context.Context, manifest *manifest.Manifest, timeout time.Duration) error {
-	return waitForStateCondition(ctx, timeout, func() (bool, error) {
-		state, err := readSuspendState(manifest)
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		return state.Status == "saved", nil
-	}, fmt.Sprintf("saved suspend state %q was not written", suspendStatePath(manifest)))
-}
-
-func waitForStateCondition(ctx context.Context, timeout time.Duration, ready func() (bool, error), timeoutMessage string) error {
-	if timeout <= 0 {
-		timeout = defaultQMPConnectTimeout
-	}
-
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
-
-	var lastErr error
-	for {
-		ok, err := ready()
-		if ok {
-			return nil
-		}
-		if err != nil {
-			lastErr = err
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			if lastErr != nil {
-				return fmt.Errorf("%s before timeout: %w", timeoutMessage, lastErr)
-			}
-			return fmt.Errorf("%s before timeout", timeoutMessage)
-		case <-ticker.C:
-		}
-	}
 }
 
 func (m *manager) effectiveSuspendSignalTimeout(manifest *manifest.Manifest) time.Duration {
