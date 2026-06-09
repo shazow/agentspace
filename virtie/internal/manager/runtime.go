@@ -155,11 +155,7 @@ func (r *Runtime) Status(ctx context.Context, req StatusRequest) (StatusResponse
 }
 
 func (r *Runtime) Info(ctx context.Context, req InfoRequest) (InfoResponse, error) {
-	resp, err := runtimepkg.Info(ctx, runtimeInfoCollector{runtime: r})
-	if err != nil {
-		return InfoResponse{}, failedPrecondition(err)
-	}
-	return resp, nil
+	return runtimepkg.ControlInfo(ctx, runtimeInfoCollector{runtime: r})
 }
 
 type runtimeInfoCollector struct {
@@ -174,7 +170,7 @@ func (c runtimeInfoCollector) CollectInfo(ctx context.Context) (runtimepkg.Guest
 }
 
 func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendResponse, error) {
-	resp, err := runtimepkg.Suspend(ctx, runtimepkg.SuspendOperation{
+	return runtimepkg.ControlSuspend(ctx, runtimepkg.SuspendOperation{
 		State:       r.state,
 		Requester:   r.suspendRequests,
 		VMStatePath: vmStatePath(r.manifest),
@@ -182,19 +178,8 @@ func (r *Runtime) Suspend(ctx context.Context, req SuspendRequest) (SuspendRespo
 			return errors.Is(err, errSavedSuspendExit)
 		},
 	})
-	if errors.Is(err, runtimepkg.ErrSuspendNotReady) {
-		return SuspendResponse{}, failedPrecondition(err)
-	}
-	if err != nil {
-		return SuspendResponse{}, err
-	}
-	return resp, nil
 }
 
 func (r *Runtime) Balloon(ctx context.Context, req BalloonRequest) (BalloonResponse, error) {
-	resp, err := runtimepkg.Balloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
-	if errors.Is(err, runtimepkg.ErrBalloonNotConfigured) {
-		return BalloonResponse{}, failedPrecondition(err)
-	}
-	return resp, err
+	return runtimepkg.ControlBalloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
 }

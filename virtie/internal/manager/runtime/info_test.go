@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
 
 type fakeInfoCollector struct {
@@ -30,5 +32,16 @@ func TestInfoPropagatesCollectorError(t *testing.T) {
 	_, err := Info(context.Background(), fakeInfoCollector{err: collectErr})
 	if !errors.Is(err, collectErr) {
 		t.Fatalf("error: got %v want %v", err, collectErr)
+	}
+}
+
+func TestControlInfoMapsCollectorErrorToFailedPrecondition(t *testing.T) {
+	_, err := ControlInfo(context.Background(), fakeInfoCollector{err: errors.New("guest agent failed")})
+	var rpcErr *control.RPCError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("error type: got %T", err)
+	}
+	if rpcErr.Code != control.ErrFailedPrecondition {
+		t.Fatalf("code: got %s want %s", rpcErr.Code, control.ErrFailedPrecondition)
 	}
 }
