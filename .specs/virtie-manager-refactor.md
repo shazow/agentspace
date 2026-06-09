@@ -123,6 +123,9 @@ Acceptance criteria:
   `virtie/internal/manager/launch`, leaving manager responsible for
   stage-specific wrapping. Manager call sites now use the launch package
   helpers directly instead of local compatibility wrappers.
+- [x] Move launch run-process startup into
+  `virtie/internal/manager/launch`, leaving manager responsible for
+  stage-specific error wrapping and process-set ownership.
 - [x] Move runtime control-server start/close wiring into
   `virtie/internal/manager/runtime`, with the concrete manager `Runtime`
   passing itself as the typed control handler.
@@ -485,8 +488,8 @@ implementation packages should avoid importing the facade package.
   resolved `Plan` construction have also landed there, along with foreground
   wait-mode selection, launcher configuration, and foreground lifecycle event
   waiting. Plan-owned filesystem preflight has moved there too. `Launcher`,
-  default concrete dependencies, stage wrapping, notifier selection, and
-  startup sequencing still live in `manager`.
+  default concrete dependencies, stage wrapping, notifier selection, and the
+  remaining startup sequencing still live in `manager`.
 - `virtie/internal/manager/runtime` (partial): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, and close
@@ -901,8 +904,9 @@ readiness, and managed virtiofs sockets:
    moved there, along with suspend-state and launch PID helpers. Preflight
    resume policy, resolved plan construction, wait-mode selection, and
    configuration merging have moved there too, as has foreground lifecycle
-   event waiting and plan-owned filesystem preflight. Manager still owns
-   default concrete dependencies, stage wrapping, and notifier selection.
+   event waiting, plan-owned filesystem preflight, and launch run-process
+   startup. Manager still owns default concrete dependencies, stage wrapping,
+   and notifier selection.
 2. Introduce `Launcher`, `Runtime`, and `ProcessSet`. Move startup and teardown
    code behind methods while keeping `LaunchWithOptions` as the public wrapper.
    Managed task cancellation and `ProcessSet` have landed under
