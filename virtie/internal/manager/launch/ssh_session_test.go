@@ -108,6 +108,21 @@ func TestRunSSHSessionWrapsCommandBuildError(t *testing.T) {
 	}
 }
 
+func TestRunSSHSessionDefaultsToStageWrapping(t *testing.T) {
+	launchManifest := testSSHSessionManifest()
+	launchManifest.SSH.Argv = nil
+
+	err := RunSSHSession(context.Background(), SSHSession{
+		Plan:      &Plan{Manifest: launchManifest, CID: 10},
+		Runner:    &fakeSSHSessionRunner{},
+		Processes: &fakeSSHSessionProcesses{},
+	})
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "active session" {
+		t.Fatalf("default wrapped err: got %v", err)
+	}
+}
+
 func testSSHSessionManifest() *manifest.Manifest {
 	return &manifest.Manifest{
 		Paths: manifest.Paths{WorkingDir: "/tmp/work"},

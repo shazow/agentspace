@@ -641,7 +641,6 @@ func (m *manager) runSSHSession(
 				AuthorizedKey: key.AuthorizedKey,
 			}, watchers)
 		},
-		WrapStage: launch.WrapStage,
 	})
 }
 

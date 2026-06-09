@@ -128,5 +128,5 @@ func wrapSSHSessionStage(session SSHSession, stage string, err error) error {
 	if session.WrapStage != nil {
 		return session.WrapStage(stage, err)
 	}
-	return err
+	return WrapStage(stage, err)
 }
