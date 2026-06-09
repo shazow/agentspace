@@ -101,6 +101,8 @@ Acceptance criteria:
   share one package-owned event path.
 - [x] Move runtime close hook wiring into `virtie/internal/manager/runtime`,
   leaving the concrete `Runtime.Close` implementation in `manager`.
+- [x] Move launch/runtime stats into `virtie/internal/manager/runtime`, with a
+  package helper for converting stats into control-plane `RuntimeStats`.
 
 ## Landed Control Flow
 
@@ -449,10 +451,10 @@ implementation packages should avoid importing the facade package.
   interface, plan-owned socket cleanup, and lifecycle event coordination.
   `Launcher`, `Config`, preflight resolution, startup sequencing, and
   conversion from manifest facts into runtime inputs still live in `manager`.
-- `virtie/internal/manager/runtime` (partial): managed task cancellation and
-  `ProcessSet` have landed, along with the close hook value type. The
-  launch-owned runtime, state machine, stats, idempotent `Close`, and
-  lifecycle adapters still live in `manager`.
+- `virtie/internal/manager/runtime` (partial): managed task cancellation,
+  `ProcessSet`, close hook wiring, and runtime stats have landed. The
+  launch-owned runtime, state machine, idempotent `Close`, and lifecycle
+  adapters still live in `manager`.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, and optional
   handler registration.

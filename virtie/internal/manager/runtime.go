@@ -11,6 +11,7 @@ import (
 
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
@@ -227,39 +228,7 @@ func (r *Runtime) currentState() RuntimeState {
 }
 
 func runtimeStatsFromLaunchStats(stats *launchStats) RuntimeStats {
-	if stats == nil {
-		return RuntimeStats{}
-	}
-	resp := RuntimeStats{
-		StartedAt:     stats.started,
-		BootStartedAt: stats.bootStarted,
-		QMPReadyAt:    stats.qmpReady,
-		FilesReadyAt:  stats.filesReady,
-		SSHReadyAt:    stats.sshReady,
-		SSHStartedAt:  stats.sshStarted,
-		CompletedAt:   stats.completed,
-		SSHAttempts:   stats.sshAttempts,
-	}
-	if !stats.started.IsZero() && !stats.bootStarted.IsZero() {
-		resp.StartedToBoot = stats.bootStarted.Sub(stats.started).String()
-	}
-	if !stats.bootStarted.IsZero() && !stats.qmpReady.IsZero() {
-		resp.BootToQMP = stats.qmpReady.Sub(stats.bootStarted).String()
-	}
-	sshReady := stats.sshReady
-	if sshReady.IsZero() {
-		sshReady = stats.sshStarted
-	}
-	if !stats.filesReady.IsZero() && !sshReady.IsZero() {
-		resp.FilesToSSH = sshReady.Sub(stats.filesReady).String()
-	}
-	if !stats.bootStarted.IsZero() && !stats.completed.IsZero() {
-		resp.BootToCompleted = stats.completed.Sub(stats.bootStarted).String()
-	}
-	if !stats.started.IsZero() && !stats.completed.IsZero() {
-		resp.Total = stats.completed.Sub(stats.started).String()
-	}
-	return resp
+	return runtimepkg.ControlStats(stats)
 }
 
 func isControlSocketUnavailable(err error) bool {
