@@ -500,9 +500,7 @@ func (m *manager) startRuns(cid int, manifest *manifest.Manifest) (executor.Grou
 }
 
 func (m *manager) waitForSockets(ctx context.Context, stage string, socketPaths []string, watchers executor.Group) error {
-	return m.waitForAsyncStage(ctx, stage, watchers, func(waitCtx context.Context) error {
-		return m.socketWaiter.Wait(waitCtx, socketPaths)
-	})
+	return m.waitForLaunchSockets(ctx, stage, socketPaths, watchers)
 }
 
 func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers executor.Group) (qmpClient, error) {
@@ -534,11 +532,12 @@ func (m *manager) waitForQMP(ctx context.Context, socketPath string, watchers ex
 	})
 }
 
-func (m *manager) waitForAsyncStage(ctx context.Context, stage string, watchers executor.Group, wait func(context.Context) error) error {
-	return launch.WaitForAsync(ctx, launch.AsyncWait{
-		Stage:     stage,
-		PollDelay: defaultSocketPollInterval,
-		Wait:      wait,
+func (m *manager) waitForLaunchSockets(ctx context.Context, stage string, socketPaths []string, watchers executor.Group) error {
+	return launch.WaitForSockets(ctx, launch.SocketWait{
+		Stage:        stage,
+		SocketPaths:  socketPaths,
+		SocketWaiter: m.socketWaiter,
+		PollDelay:    defaultSocketPollInterval,
 		Check: func(stage string) error {
 			return firstUnexpectedExit(stage, watchers)
 		},
