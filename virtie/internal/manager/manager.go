@@ -22,12 +22,10 @@ import (
 	"syscall"
 	"time"
 
-	shellquote "github.com/kballard/go-shellquote"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
-	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
 
 const (
@@ -648,67 +646,42 @@ func (m *manager) runSSHSession(
 	suspendHandler *launchSuspendHandler,
 	processes *ProcessSet,
 ) error {
-	launchManifest := plan.Manifest
-	argv := append([]string(nil), launchManifest.SSH.Argv...)
-	sessionLogger := m.logger
-	if sessionLogger == nil {
-		sessionLogger = slog.New(slog.DiscardHandler)
-	}
-	retryLog := sshtools.NewRetryLogger(sessionLogger)
-	provisioned := false
-
-	for {
-		stderr := sshtools.NewRetryOutput(m.outputWriter(), false, sshRetryOutputRevealDelay)
-		attemptStarted := time.Now()
-		stats.MarkSSHAttempt(attemptStarted)
-		cmd, err := launch.BuildSSHCommandWithArgv(launchManifest, plan.CID, plan.RemoteCommand, argv)
-		if err != nil {
-			return &stageError{Stage: "active session", Err: err}
-		}
-		sessionLogger.Info("ssh command", "command", shellquote.Join(cmd.Args...))
-		cmd.Stderr = stderr
-		session, err := m.startManagedProcess(cmd)
-		if err != nil {
-			return &stageError{Stage: "active session", Err: err}
-		}
-		watchers := processes.Watchers()
-		processes.Add(session)
-		stats.MarkSSHStarted(attemptStarted)
-
-		err = m.waitForSession(ctx, session, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
-		stderrText := stderr.String()
-		if err == nil {
-			stderr.Flush()
-			return nil
-		}
-		if sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureTransient {
-			stderr.Suppress()
-			retryLog.Log(err, stderrText)
-			processes.Remove(session)
-			if waitErr := m.waitBeforeSSHRetry(ctx, launchManifest, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers); waitErr != nil {
-				return waitErr
+	return launch.RunSSHSession(ctx, launch.SSHSession{
+		Plan:                   plan,
+		Runner:                 m.runner,
+		Processes:              processes,
+		Stats:                  stats,
+		Logger:                 m.logger,
+		Output:                 m.outputWriter(),
+		RetryOutputRevealDelay: sshRetryOutputRevealDelay,
+		Wait: func(ctx context.Context, session *executor.Process, watchers executor.Group) error {
+			return m.waitForSession(ctx, session, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
+		},
+		WaitForRetry: func(ctx context.Context, watchers executor.Group) error {
+			return m.waitBeforeSSHRetry(ctx, plan.Manifest, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
+		},
+		EnsureKey: func(launchManifest *manifest.Manifest) (launch.SSHAutoprovisionKey, error) {
+			key, err := m.ensureSSHAutoprovisionKey(launchManifest)
+			if err != nil {
+				return launch.SSHAutoprovisionKey{}, err
 			}
-			continue
-		}
-		if launchManifest.SSH.Autoprovision && !provisioned && sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureAuthentication {
-			stderr.Suppress()
-			processes.Remove(session)
-			sessionLogger.Info("ssh authentication failed; autoprovisioning a key", "state_dir", launchManifest.ResolvedPersistenceStateDir(), "user", launchManifest.SSH.User)
-			key, keyErr := m.ensureSSHAutoprovisionKey(launchManifest)
-			if keyErr != nil {
-				return &stageError{Stage: "ssh autoprovision", Err: keyErr}
-			}
-			if installErr := m.installSSHAutoprovisionKey(ctx, launchManifest, key, watchers); installErr != nil {
-				return installErr
-			}
-			sessionLogger.Info("installed autoprovisioned ssh key; retrying ssh", "identity_file", key.IdentityFile, "public_key_file", key.PublicKeyFile)
-			argv = (sshtools.Config{Exec: launchManifest.SSH.Argv, User: launchManifest.SSH.User}).WithIdentity(key.IdentityFile).Exec
-			provisioned = true
-			continue
-		}
-		stderr.Flush()
-		return err
-	}
+			return launch.SSHAutoprovisionKey{
+				IdentityFile:  key.IdentityFile,
+				PublicKeyFile: key.PublicKeyFile,
+				AuthorizedKey: key.AuthorizedKey,
+			}, nil
+		},
+		InstallKey: func(ctx context.Context, launchManifest *manifest.Manifest, key launch.SSHAutoprovisionKey, watchers executor.Group) error {
+			return m.installSSHAutoprovisionKey(ctx, launchManifest, sshAutoprovisionKey{
+				IdentityFile:  key.IdentityFile,
+				PublicKeyFile: key.PublicKeyFile,
+				AuthorizedKey: key.AuthorizedKey,
+			}, watchers)
+		},
+		WrapStage: func(stage string, err error) error {
+			return &stageError{Stage: stage, Err: err}
+		},
+	})
 }
 
 func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, lifecycle *launchLifecycle, suspendHandler *launchSuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {

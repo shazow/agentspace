@@ -179,6 +179,9 @@ Acceptance criteria:
 - [x] Move foreground process lifecycle wait mechanics into
   `virtie/internal/manager/launch`, with manager retaining suspend/info
   callbacks and command-error wrapping.
+- [x] Move foreground SSH session retry/autoprovision loop into
+  `virtie/internal/manager/launch`, with manager supplying process runner,
+  lifecycle waits, stats, and guest-key install hooks.
 
 ## Landed Control Flow
 
@@ -534,6 +537,7 @@ implementation packages should avoid importing the facade package.
   there too. Combined QMP readiness and retry-dial sequencing also now lives
   there, along with manifest-backed SSH command and hint construction.
   Foreground process lifecycle wait mechanics have moved there as well.
+  Foreground SSH session retry/autoprovision orchestration now lives there.
   `Launcher`, default concrete dependencies, stage wrapping, notifier
   selection, and the remaining startup sequencing still live in `manager`;
   async readiness wait mechanics now live in `launch`.
