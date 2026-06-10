@@ -96,6 +96,14 @@ type manifestDefaultsCommand struct {
 	Resolved bool `long:"resolved" description:"Print the resolved internal runtime manifest instead of the input manifest defaults"`
 }
 
+type manifestResolveCommand struct {
+	options *Options
+}
+
+type manifestValidateCommand struct {
+	options *Options
+}
+
 type manifestSchemaCommand struct{}
 
 func (c *manifestDefaultsCommand) Execute(args []string) error {
@@ -107,6 +115,23 @@ func (c *manifestDefaultsCommand) Execute(args []string) error {
 		return toml.NewEncoder(os.Stdout).Encode(defaults)
 	}
 	return toml.NewEncoder(os.Stdout).Encode(manifest.DefaultDocument())
+}
+
+func (c *manifestResolveCommand) Execute(args []string) error {
+	manifest, err := loadManifest(c.options.Manifest)
+	if err != nil {
+		return err
+	}
+	return toml.NewEncoder(os.Stdout).Encode(manifest)
+}
+
+func (c *manifestValidateCommand) Execute(args []string) error {
+	_, err := loadManifest(c.options.Manifest)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, "manifest is valid")
+	return nil
 }
 
 func (c *manifestSchemaCommand) Execute(args []string) error {
@@ -314,6 +339,26 @@ func newParser() *flags.Parser {
 		"Print the manifest defaults as TOML",
 		"Print the manifest input defaults assumed by virtie when optional fields are omitted, encoded as TOML. Use --resolved to print the internal resolved runtime manifest defaults.",
 		&manifestDefaultsCommand{},
+	); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if _, err := manifestCmd.AddCommand(
+		"validate",
+		"Validate a manifest",
+		"Load, resolve, and validate the virtie manifest input format.",
+		&manifestValidateCommand{options: opts},
+	); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if _, err := manifestCmd.AddCommand(
+		"resolve",
+		"Print the resolved manifest",
+		"Load, resolve, validate, and print the internal runtime manifest as TOML.",
+		&manifestResolveCommand{options: opts},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

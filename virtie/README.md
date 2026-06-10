@@ -22,6 +22,8 @@ virtie --manifest=MANIFEST suspend
 virtie --manifest=MANIFEST [-v] hotplug ID
 virtie --manifest=MANIFEST [-v] hotplug --detach ID
 virtie manifest defaults [--resolved]
+virtie --manifest=MANIFEST manifest validate
+virtie --manifest=MANIFEST manifest resolve
 virtie manifest schema
 ```
 
@@ -32,8 +34,10 @@ minimal manifest and a full manifest with default-valued fields included.
 `virtie manifest defaults` prints the input manifest defaults as TOML.
 `virtie manifest defaults --resolved` prints the internal resolved runtime
 manifest defaults as TOML, using placeholder kernel paths because those required
-inputs have no defaults. A JSON Schema for the manifest input format is generated
-at `manifest.schema.json` and available from the `virtie` binary with
+inputs have no defaults. `virtie manifest validate` loads, resolves, and
+validates a manifest. `virtie manifest resolve` prints the fully resolved
+internal runtime manifest as TOML. A JSON Schema for the manifest input format is
+generated at `manifest.schema.json` and available from the `virtie` binary with
 `virtie manifest schema`. Regenerate it with
 `go run . manifest schema > manifest.schema.json` after manifest shape changes. When
 `--manifest` is omitted, `virtie` checks `./manifest.toml` and then
