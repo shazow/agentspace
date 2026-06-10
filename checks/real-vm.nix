@@ -7,7 +7,7 @@
 }:
 let
   sshKeys = import ./ssh-keys.nix { inherit pkgs; };
-  testKey = sshKeys.realVM;
+  testKey = sshKeys.graphical;
 
   realVM = mkSandbox {
     hostName = "rv";
@@ -30,16 +30,12 @@ let
   };
 
   launchScript = mkLaunch realVM;
-  kernelParams = realVM.config.microvm.kernelParams;
-  initParam = pkgs.lib.findFirst (param: pkgs.lib.hasPrefix "init=" param) null kernelParams;
-  regInfoParam = pkgs.lib.findFirst (param: pkgs.lib.hasPrefix "regInfo=" param) null kernelParams;
 
   realVMSmokeDriver = pkgs.writeShellApplication {
     name = "consumer-real-vm-smoke-driver";
     runtimeInputs = [
       pkgs.coreutils
       pkgs.gnugrep
-      pkgs.openssh
     ];
     text = ''
       set -euo pipefail
@@ -61,7 +57,6 @@ let
       base_dir="$(mktemp -d "$scratch_parent/rv.XXXXXX")"
       launch_dir="$base_dir/w"
       log="$base_dir/launch.log"
-      cleanup=1
 
       finish() {
         status=$?
@@ -71,7 +66,7 @@ let
             echo "== $log ==" >&2
             cat "$log" >&2
           fi
-        elif [ "$cleanup" -eq 1 ]; then
+        else
           rm -rf "$base_dir"
         fi
       }
@@ -109,13 +104,6 @@ in
         allowSubstitutes = false;
         preferLocalBuild = true;
         requiredSystemFeatures = [ "kvm" ];
-        VM_INIT_PARAM = initParam;
-        VM_INITRD = realVM.config.microvm.initrdPath;
-        VM_KERNEL = "${realVM.config.microvm.kernel.out}/${pkgs.stdenv.hostPlatform.linux-kernel.target}";
-        VM_REG_INFO_PARAM = regInfoParam;
-        VM_STORE_DISK = realVM.config.microvm.storeDisk;
-        VM_SYSTEM_CLOSURE = realVM.config.system.build.toplevel;
-        VM_MANIFEST_TEMPLATE = realVM.config.agentspace.sandbox.launch.virtieManifestTemplate;
       }
       ''
         ${realVMSmokeDriver}/bin/consumer-real-vm-smoke-driver "$out"

@@ -40,7 +40,7 @@ Acceptance criteria:
 - [x] Confirmed `/dev/vhost-vsock` is visible in the fresh sandboxed environment.
 - [x] Confirmed `/home/agent/workspace/tmp` is not writable inside the current Nix build sandbox unless the workspace is exposed, so the check uses `$WORKSPACE/tmp` only when available and writable.
 - [x] Confirmed long build sandbox paths can exceed Unix socket path limits for generated `virtiofsd` sockets, so the check uses a short hostname and short scratch directory names.
-- [x] Confirmed retaining the manifest, kernel, initrd, store disk, and VM system closure as explicit derivation inputs is enough for the store-disk VM to boot inside the sandbox.
+- [x] Confirmed the store-disk VM boots inside the sandbox without explicit manifest, kernel, initrd, store disk, or VM system closure retention attrs.
 - [x] Confirmed a live `/nix/store` virtiofs share still fails in initrd with `Failed to start Find NixOS closure` inside a sandboxed derivation.
 - [x] Confirmed `workspace.addCurrentDir = true` reaches guest boot but fails in `virtie`'s guest-side `workspace cwd mount` step because `install -d /home/agent/workspace /home/agent/workspace/w` tries a metadata operation on the existing mapped virtiofs mount point.
 - [x] Chose SSH plus base workspace mounting as the first real VM consumer workflow.
@@ -50,6 +50,7 @@ Acceptance criteria:
 - [x] Confirmed the targeted build fails fast in the current environment because `/dev/vhost-vsock` is not sandbox-visible.
 - [x] Confirmed `nix build .#checks.x86_64-linux.consumer-real-vm-smoke` succeeds in the fresh environment with sandbox-visible `/dev/vhost-vsock`.
 - [x] Validate full `nix flake check`.
+- [x] Removed debugging shims after validating the simplified store-disk check shape.
 
 ## Appendix
 
@@ -59,7 +60,6 @@ Proposed first check shape:
 consumer-real-vm-smoke = pkgs.runCommand "consumer-real-vm-smoke" {
   nativeBuildInputs = [
     pkgs.coreutils
-    pkgs.openssh
   ];
 } ''
   set -euo pipefail
@@ -88,7 +88,7 @@ consumer-real-vm-smoke = pkgs.runCommand "consumer-real-vm-smoke" {
 
   cd "$launch_dir"
   printf 'real vm smoke\n' > sentinel
-  install -m 0600 ${sshKeys.realVM.privateKey} ./id_ed25519
+  install -m 0600 ${sshKeys.graphical.privateKey} ./id_ed25519
 
   timeout 180s ${launchScript} bash -lc '
     test -f "$WORKSPACE/sentinel"
@@ -108,7 +108,7 @@ Minimal sandbox configuration for the check:
 ```nix
 realVM = mkSandbox {
   hostName = "rv";
-  ssh.authorizedKeys = [ sshKeys.realVM.publicKey ];
+  ssh.authorizedKeys = [ sshKeys.graphical.publicKey ];
   ssh.exec = mkExecSSH {
     identityFile = "./id_ed25519";
   };
