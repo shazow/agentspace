@@ -27,6 +27,7 @@ func (d Document) Manifest() (*Manifest, error) {
 }
 
 func (d Document) ManifestWithOptions(options ResolveOptions) (*Manifest, error) {
+	d = DocumentWithDefaults(d)
 	if d.Kernel.Path == "" {
 		return nil, fmt.Errorf("manifest.kernel.path is required")
 	}
@@ -65,29 +66,11 @@ func (d Document) ManifestWithOptions(options ResolveOptions) (*Manifest, error)
 		Notifications: resolveNotifications(d.Notifications),
 		Workspace:     resolveWorkspace(d.Workspace),
 	}
-	if m.Identity.HostName == "" {
-		m.Identity.HostName = defaultHostName
-	}
-	if m.Paths.WorkingDir == "" {
-		m.Paths.WorkingDir = defaultWorkingDir
-	}
-	if m.Persistence.BaseDir == "" {
-		m.Persistence.BaseDir = defaultBaseDir
-	}
-	if m.Persistence.StateDir == "" {
-		m.Persistence.StateDir = m.Persistence.BaseDir
-	}
 	imageMounts := d.Mounts.Image()
 	virtioFSMounts := d.Mounts.VirtioFS()
 	m.Persistence.Directories = persistenceDirectories(imageMounts, m.Persistence.StateDir)
-	if m.Paths.LockPath == "" {
-		m.Paths.LockPath = filepath.Join(m.Persistence.StateDir, m.Identity.HostName+".lock")
-	}
+	m.Paths.LockPath = filepath.Join(m.Persistence.StateDir, m.Identity.HostName+".lock")
 	m.Paths.RuntimeDir = RuntimeDir{Mode: RuntimeDirPath, Path: m.Persistence.StateDir}
-	if m.SSH.User == "" {
-		m.SSH.User = defaultSSHUser
-	}
-
 	hotplugCount := d.hotplugCount()
 	qemu, err := d.resolveQEMU(host, m.Identity.HostName, m.Paths.WorkingDir, m.Persistence.StateDir, hotplugCount)
 	if err != nil {
@@ -138,17 +121,11 @@ func (h HostInput) withDefaults() HostInput {
 
 func (d Document) resolveQEMU(host HostInput, hostName string, workingDir string, stateDir string, hotplugCount int) (QEMU, error) {
 	machineType := d.Machine.Type
-	if machineType == "" {
-		machineType = defaultMachineType
-	}
 	graphics := resolveGraphics(d.Graphics)
 	transport := qemuTransport(machineType, d.Mounts, graphics, hotplugCount > 0)
 	virtioFSMounts := d.Mounts.VirtioFS()
 	hasVirtioFS := len(virtioFSMounts) > 0 || len(d.Hotplug.VirtioFS()) > 0
 	memorySize := d.Machine.Memory
-	if memorySize == 0 {
-		memorySize = defaultMemorySize
-	}
 	cpuModel := d.Machine.CPU
 	if cpuModel == "" {
 		cpuModel = defaultCPUModel(host)
@@ -178,17 +155,8 @@ func (d Document) resolveQEMU(host HostInput, hostName string, workingDir string
 		binaryPath = "qemu-system-" + host.Arch
 	}
 	qmpSocket := d.QEMU.QMPSocket
-	if qmpSocket == "" {
-		qmpSocket = defaultQMP
-	}
 	guestAgentSocket := d.QEMU.GuestAgentSocket
-	if guestAgentSocket == "" {
-		guestAgentSocket = defaultGuestAgent
-	}
 	sshReadySocket := d.SSH.ReadySocket
-	if sshReadySocket == "" {
-		sshReadySocket = defaultSSHReadySocket
-	}
 	noGraphic := graphics.IsZero()
 	cpus := resolveCPUCount(d.Machine.VCPU)
 	networks, err := resolveNetwork(d.Networks, d.QEMU.FwdTunnelExec, host, transport, cpus)
@@ -793,9 +761,6 @@ func (m *Manifest) addCleanupFile(path string) {
 }
 
 func resolveNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostInput, transport string, cpus CPUCount) ([]QEMUNetDevice, error) {
-	if networks == nil {
-		networks = []NetworkInput{{}}
-	}
 	devices := make([]QEMUNetDevice, 0, len(networks))
 	for i, network := range networks {
 		id := network.ID
@@ -804,7 +769,7 @@ func resolveNetwork(networks []NetworkInput, fwdTunnelExec []string, host HostIn
 		}
 		backend := network.Type
 		if backend == "" {
-			backend = "user"
+			backend = defaultNetworkType
 		}
 		mac := network.MAC
 		if mac == "" {
@@ -1036,7 +1001,7 @@ func renderVirtioFSArgv(argv []string, socketPath string, source string, tag str
 }
 
 func resolveGraphics(graphics *GraphicsInput) QEMUGraphics {
-	if graphics == nil || graphics.Backend == "" || graphics.Backend == "headless" {
+	if graphics == nil || graphics.Backend == "" || graphics.Backend == defaultGraphicsBackend {
 		return QEMUGraphics{}
 	}
 	return QEMUGraphics{Backend: graphics.Backend}
