@@ -21,12 +21,17 @@ virtie --manifest=MANIFEST [-v|-vv] launch [--ssh] [--resume=no|auto|force] [-- 
 virtie --manifest=MANIFEST suspend
 virtie --manifest=MANIFEST [-v] hotplug ID
 virtie --manifest=MANIFEST [-v] hotplug --detach ID
+virtie manifest schema
 ```
 
 In normal use this is invoked by the generated launch wrapper rather than by
 hand. See the root flake for packaging and launch integration. Hand-written
 manifests may be JSON or TOML; the TOML examples in this directory show a
-minimal manifest and a full manifest with default-valued fields included. When
+minimal manifest and a full manifest with default-valued fields included. A
+JSON Schema for the manifest input format is generated at
+`manifest.schema.json` and available from the `virtie` binary with
+`virtie manifest schema`. Regenerate it with
+`go run . manifest schema > manifest.schema.json` after manifest shape changes. When
 `--manifest` is omitted, `virtie` checks `./manifest.toml` and then
 `./manifest.json`. `--manifest` and `-v`/`--verbose` are shared options and may
 be placed before or after the subcommand.

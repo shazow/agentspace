@@ -16,6 +16,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/manager"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	manifestschema "github.com/shazow/agentspace/virtie/internal/manifest/schema"
 )
 
 type Options struct {
@@ -86,6 +87,19 @@ type hotplugCommand struct {
 	Args struct {
 		ID string `positional-arg-name:"id" required:"yes"`
 	} `positional-args:"yes"`
+}
+
+type manifestCommand struct{}
+
+type manifestSchemaCommand struct{}
+
+func (c *manifestSchemaCommand) Execute(args []string) error {
+	data, err := manifestschema.GenerateJSON()
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(data)
+	return err
 }
 
 func (c *hotplugCommand) Execute(args []string) error {
@@ -263,6 +277,27 @@ func newParser() *flags.Parser {
 		"Attach or detach a predefined hotplug device",
 		"Attach or detach a device described under manifest [hotplug].",
 		&hotplugCommand{options: opts},
+	); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	manifestCmd, err := parser.AddCommand(
+		"manifest",
+		"Inspect and work with virtie manifests",
+		"Inspect and work with the virtie manifest input format.",
+		&manifestCommand{},
+	)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if _, err := manifestCmd.AddCommand(
+		"schema",
+		"Print the manifest JSON Schema",
+		"Print the generated JSON Schema for the virtie manifest input format.",
+		&manifestSchemaCommand{},
 	); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
