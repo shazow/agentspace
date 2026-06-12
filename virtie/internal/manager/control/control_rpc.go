@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"os"
 	"time"
@@ -150,17 +149,17 @@ type RuntimeBalloon interface {
 }
 
 type Router struct {
-	Core    RuntimeCore
-	Suspend RuntimeSuspend
-	Hotplug RuntimeHotplug
-	Balloon RuntimeBalloon
+	core    RuntimeCore
+	suspend RuntimeSuspend
+	hotplug RuntimeHotplug
+	balloon RuntimeBalloon
 }
 
 func NewRouter(core RuntimeCore) (*Router, error) {
 	if core == nil {
 		return nil, fmt.Errorf("core handler is required")
 	}
-	return &Router{Core: core}, nil
+	return &Router{core: core}, nil
 }
 
 func NewRuntimeRouter(runtime any) (*Router, error) {
@@ -168,14 +167,14 @@ func NewRuntimeRouter(runtime any) (*Router, error) {
 	if !ok {
 		return nil, fmt.Errorf("runtime core handler is required")
 	}
-	router := &Router{Core: core}
-	router.Suspend, _ = runtime.(RuntimeSuspend)
-	router.Hotplug, _ = runtime.(RuntimeHotplug)
-	router.Balloon, _ = runtime.(RuntimeBalloon)
+	router := &Router{core: core}
+	router.suspend, _ = runtime.(RuntimeSuspend)
+	router.hotplug, _ = runtime.(RuntimeHotplug)
+	router.balloon, _ = runtime.(RuntimeBalloon)
 	return router, nil
 }
 
-func (r *Router) Handle(ctx context.Context, req requestEnvelope) responseEnvelope {
+func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelope {
 	var result any
 	var err error
 
@@ -183,39 +182,39 @@ func (r *Router) Handle(ctx context.Context, req requestEnvelope) responseEnvelo
 	case rpcStatus:
 		var params StatusRequest
 		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.Core.Status(ctx, params)
+			result, err = r.core.Status(ctx, params)
 		}
 	case rpcInfo:
 		var params InfoRequest
 		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.Core.Info(ctx, params)
+			result, err = r.core.Info(ctx, params)
 		}
 	case rpcSuspend:
-		if r.Suspend == nil {
+		if r.suspend == nil {
 			err = &RPCError{Code: ErrUnsupported, Message: "suspend is not supported"}
 			break
 		}
 		var params SuspendRequest
 		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.Suspend.Suspend(ctx, params)
+			result, err = r.suspend.Suspend(ctx, params)
 		}
 	case rpcHotplug:
-		if r.Hotplug == nil {
+		if r.hotplug == nil {
 			err = &RPCError{Code: ErrUnsupported, Message: "hotplug is not supported"}
 			break
 		}
 		var params HotplugRequest
 		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.Hotplug.Hotplug(ctx, params)
+			result, err = r.hotplug.Hotplug(ctx, params)
 		}
 	case rpcBalloon:
-		if r.Balloon == nil {
+		if r.balloon == nil {
 			err = &RPCError{Code: ErrUnsupported, Message: "balloon is not supported"}
 			break
 		}
 		var params BalloonRequest
 		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.Balloon.Balloon(ctx, params)
+			result, err = r.balloon.Balloon(ctx, params)
 		}
 	default:
 		err = &RPCError{Code: ErrUnknownMethod, Message: fmt.Sprintf("unknown method %q", req.Method)}
@@ -254,10 +253,17 @@ func rpcError(err error) *RPCError {
 }
 
 type Server struct {
-	Handler  *Router
-	Logger   *slog.Logger
+	handler  *Router
 	listener net.Listener
 	done     chan struct{}
+}
+
+// NewServer returns a closable control server for router.
+func NewServer(h *Router) (*Server, error) {
+	if h == nil {
+		return nil, fmt.Errorf("control handler is required")
+	}
+	return &Server{handler: h}, nil
 }
 
 func Listen(path string) (net.Listener, error) {
@@ -276,7 +282,11 @@ func Listen(path string) (net.Listener, error) {
 }
 
 func Serve(l net.Listener, h *Router) error {
-	return (&Server{Handler: h}).Serve(l)
+	server, err := NewServer(h)
+	if err != nil {
+		return err
+	}
+	return server.Serve(l)
 }
 
 func ListenAndServe(path string, h *Router) error {
@@ -288,7 +298,7 @@ func ListenAndServe(path string, h *Router) error {
 }
 
 func (s *Server) Serve(l net.Listener) error {
-	if s.Handler == nil {
+	if s.handler == nil {
 		return fmt.Errorf("control handler is required")
 	}
 	s.listener = l
@@ -320,7 +330,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		writeResponse(conn, responseEnvelope{Error: &RPCError{Code: ErrInvalidRequest, Message: err.Error()}})
 		return
 	}
-	resp := s.Handler.Handle(context.Background(), req)
+	resp := s.handler.handle(context.Background(), req)
 	writeResponse(conn, resp)
 }
 

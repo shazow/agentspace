@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shazow/agentspace/virtie/internal/balloontypes"
 )
 
 var (
@@ -17,6 +19,8 @@ var (
 	errGuestStatsStale       = errors.New("balloon guest stats stale")
 	errQOMPathNotFound       = errors.New("balloon qom path not found")
 )
+
+const bytesPerMiB int64 = 1024 * 1024
 
 type notifier interface {
 	Notify(ctx context.Context, state string, message string, values map[string]string)
@@ -48,7 +52,7 @@ type controller struct {
 	Session    session
 	Logger     *slog.Logger
 	DeviceID   string
-	Config     ControllerConfig
+	Config     balloontypes.ControllerConfig
 	QMPTimeout time.Duration
 	Now        func() time.Time
 	Notifier   notifier
@@ -223,7 +227,7 @@ func (c *controller) nowFunc() func() time.Time {
 }
 
 func evaluate(
-	config ControllerConfig,
+	config balloontypes.ControllerConfig,
 	state *controllerState,
 	now time.Time,
 	actualBytes int64,

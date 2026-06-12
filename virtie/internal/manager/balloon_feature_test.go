@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/balloontypes"
 )
 
 func TestBuildQEMUCommandAppendsBalloonFeatureArgs(t *testing.T) {
@@ -32,7 +33,7 @@ func TestManagerLaunchStartsBalloonControllerAndStopsItBeforeQuit(t *testing.T) 
 	tmpDir := t.TempDir()
 	manifest := validManifestWithBalloon(tmpDir)
 	manifest.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
-	manifest.QEMU.Devices.Balloon.Controller = &balloonpkg.ControllerConfig{
+	manifest.QEMU.Devices.Balloon.Controller = &balloontypes.ControllerConfig{
 		PollIntervalSeconds:   1,
 		ReclaimHoldoffSeconds: 1,
 	}
@@ -162,10 +163,10 @@ func TestBalloonControllerTaskWithNilLoggerDoesNotPanicOnFailure(t *testing.T) {
 	qmpClient := (&fakeQMPClient{
 		enableBalloonStatsErr: errors.New("guest stats unavailable"),
 	}).withDefaultBalloonPath("/machine/peripheral/balloon0")
-	task := balloonpkg.ControllerTask(time.Second, qmpClient, &balloonpkg.Device{
+	task := balloon.ControllerTask(time.Second, qmpClient, &balloontypes.Device{
 		ID:        "balloon0",
 		Transport: "pci",
-		Controller: &balloonpkg.ControllerConfig{
+		Controller: &balloontypes.ControllerConfig{
 			MinActual:             512,
 			MaxActual:             1024,
 			GrowBelowAvailable:    256,
@@ -195,10 +196,10 @@ func TestBalloonControllerTaskWithNilLoggerDoesNotPanicOnAdjustment(t *testing.T
 		readBalloonStatsUpdated: time.Now(),
 		queryBalloonActualBytes: 512 * testMiB,
 	}).withDefaultBalloonPath("/machine/peripheral/balloon0")
-	task := balloonpkg.ControllerTask(time.Second, qmpClient, &balloonpkg.Device{
+	task := balloon.ControllerTask(time.Second, qmpClient, &balloontypes.Device{
 		ID:        "balloon0",
 		Transport: "pci",
-		Controller: &balloonpkg.ControllerConfig{
+		Controller: &balloontypes.ControllerConfig{
 			MinActual:             512,
 			MaxActual:             1024,
 			GrowBelowAvailable:    600,

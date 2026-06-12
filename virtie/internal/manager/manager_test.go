@@ -25,10 +25,10 @@ import (
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 	diskfs "github.com/diskfs/go-diskfs"
 	"github.com/diskfs/go-diskfs/filesystem"
-	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloontypes"
+	"github.com/shazow/agentspace/virtie/internal/balloontypes"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
-	hotplug "github.com/shazow/agentspace/virtie/internal/hotplugtypes"
+	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
 	control "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
@@ -3569,11 +3569,11 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.QEMU.Hotplug.PCIEPorts = 1
-	cfg.Hotplug = []hotplug.Device{
+	cfg.Hotplug = []hotplugtypes.Device{
 		{
-			Kind: hotplug.KindVirtioFS,
+			Kind: hotplugtypes.KindVirtioFS,
 			ID:   "cache",
-			VirtioFS: hotplug.VirtioFS{
+			VirtioFS: hotplugtypes.VirtioFS{
 				Source:     filepath.Join(tmpDir, "cache"),
 				Target:     "/mnt/cache",
 				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
@@ -3618,7 +3618,7 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read hotplug state: %v", err)
 	}
-	if state.ID != "cache" || state.Kind != hotplug.KindVirtioFS || state.Bus != "pcie.hotplug.0" || state.PID != 1 {
+	if state.ID != "cache" || state.Kind != hotplugtypes.KindVirtioFS || state.Bus != "pcie.hotplug.0" || state.PID != 1 {
 		t.Fatalf("unexpected hotplug state: %#v", state)
 	}
 }
@@ -3633,11 +3633,11 @@ func TestManagerHotplugFallsBackWhenControlSocketUnsupported(t *testing.T) {
 	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.QEMU.Hotplug.PCIEPorts = 1
-	cfg.Hotplug = []hotplug.Device{
+	cfg.Hotplug = []hotplugtypes.Device{
 		{
-			Kind: hotplug.KindVirtioFS,
+			Kind: hotplugtypes.KindVirtioFS,
 			ID:   "cache",
-			VirtioFS: hotplug.VirtioFS{
+			VirtioFS: hotplugtypes.VirtioFS{
 				Source:     filepath.Join(tmpDir, "cache"),
 				Target:     "/mnt/cache",
 				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
@@ -3689,11 +3689,11 @@ func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
 	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
 	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.QEMU.Hotplug.PCIEPorts = 1
-	cfg.Hotplug = []hotplug.Device{
+	cfg.Hotplug = []hotplugtypes.Device{
 		{
-			Kind: hotplug.KindVirtioFS,
+			Kind: hotplugtypes.KindVirtioFS,
 			ID:   "cache",
-			VirtioFS: hotplug.VirtioFS{
+			VirtioFS: hotplugtypes.VirtioFS{
 				Source:     filepath.Join(tmpDir, "cache"),
 				Target:     "/mnt/cache",
 				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
@@ -3702,7 +3702,7 @@ func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
 		},
 	}
 	statePath := filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json")
-	if err := writeHotplugState(statePath, hotplug.State{ID: "cache", Kind: hotplug.KindVirtioFS, Bus: "pcie.hotplug.0"}); err != nil {
+	if err := writeHotplugState(statePath, hotplugtypes.State{ID: "cache", Kind: hotplugtypes.KindVirtioFS, Bus: "pcie.hotplug.0"}); err != nil {
 		t.Fatalf("write hotplug state: %v", err)
 	}
 
@@ -4191,7 +4191,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 
 func validManifestWithBalloon(workingDir string) *manifest.Manifest {
 	manifest := validManifest(workingDir)
-	manifest.QEMU.Devices.Balloon = &balloonpkg.Device{
+	manifest.QEMU.Devices.Balloon = &balloontypes.Device{
 		ID:        "balloon0",
 		Transport: "pci",
 	}

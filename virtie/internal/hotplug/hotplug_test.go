@@ -16,14 +16,15 @@ import (
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
+	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
 )
 
 func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, starter, qmp, guest := testRuntime(tmpDir, Device{
-		Kind: KindVirtioFS,
+	runtime, starter, qmp, guest := testRuntime(tmpDir, hotplugtypes.Device{
+		Kind: hotplugtypes.KindVirtioFS,
 		ID:   "cache",
-		VirtioFS: VirtioFS{
+		VirtioFS: hotplugtypes.VirtioFS{
 			Source:     filepath.Join(tmpDir, "cache"),
 			Target:     "/mnt/cache",
 			SocketPath: filepath.Join(tmpDir, "cache.sock"),
@@ -44,11 +45,11 @@ func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
 	if got, want := guest.commands, [][]string{{"/run/current-system/sw/bin/mount", "-t", "virtiofs", "cache", "/mnt/cache"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("guest commands: got %#v want %#v", got, want)
 	}
-	state, err := ReadState(filepath.Join(tmpDir, "state", "hotplug", "cache.json"))
+	state, err := hotplugtypes.ReadState(filepath.Join(tmpDir, "state", "hotplug", "cache.json"))
 	if err != nil {
 		t.Fatalf("read state: %v", err)
 	}
-	if state.ID != "cache" || state.Kind != KindVirtioFS || state.Bus != "pcie.hotplug.0" || state.PID != 100 {
+	if state.ID != "cache" || state.Kind != hotplugtypes.KindVirtioFS || state.Bus != "pcie.hotplug.0" || state.PID != 100 {
 		t.Fatalf("unexpected state: %#v", state)
 	}
 }
@@ -92,7 +93,7 @@ func TestVirtioFSDetachWaitsForDeviceDeletedBeforeChardevRemove(t *testing.T) {
 	tmpDir := t.TempDir()
 	runtime, _, qmp, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
 	statePath := filepath.Join(tmpDir, "state", "hotplug", "cache.json")
-	if err := WriteState(statePath, State{ID: "cache", Kind: KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
+	if err := hotplugtypes.WriteState(statePath, hotplugtypes.State{ID: "cache", Kind: hotplugtypes.KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
 
@@ -106,13 +107,13 @@ func TestVirtioFSDetachWaitsForDeviceDeletedBeforeChardevRemove(t *testing.T) {
 
 func TestNetAttachDetachCommands(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, qmp, _ := testRuntime(tmpDir, Device{
-		Kind: KindNet,
+	runtime, _, qmp, _ := testRuntime(tmpDir, hotplugtypes.Device{
+		Kind: hotplugtypes.KindNet,
 		ID:   "vpn",
-		Net: Net{
+		Net: hotplugtypes.Net{
 			Backend: "user",
 			MAC:     "02:02:00:00:00:10",
-			Forward: []Forward{{Proto: "tcp", Host: "127.0.0.1:2223", Guest: "10.0.2.15:22"}},
+			Forward: []hotplugtypes.Forward{{Proto: "tcp", Host: "127.0.0.1:2223", Guest: "10.0.2.15:22"}},
 		},
 	})
 
@@ -135,13 +136,13 @@ func TestNetAttachDetachCommands(t *testing.T) {
 
 func TestDetachRejectsStateKindMismatchBeforeCleanup(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, qmp, _ := testRuntime(tmpDir, Device{
-		Kind: KindNet,
+	runtime, _, qmp, _ := testRuntime(tmpDir, hotplugtypes.Device{
+		Kind: hotplugtypes.KindNet,
 		ID:   "cache",
-		Net:  Net{Backend: "user", MAC: "02:02:00:00:00:10"},
+		Net:  hotplugtypes.Net{Backend: "user", MAC: "02:02:00:00:00:10"},
 	})
 	statePath := filepath.Join(tmpDir, "state", "hotplug", "cache.json")
-	if err := WriteState(statePath, State{ID: "cache", Kind: KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
+	if err := hotplugtypes.WriteState(statePath, hotplugtypes.State{ID: "cache", Kind: hotplugtypes.KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
 
@@ -159,10 +160,10 @@ func TestDetachRejectsStateKindMismatchBeforeCleanup(t *testing.T) {
 
 func TestBlockAttachDetachCommands(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, qmp, _ := testRuntime(tmpDir, Device{
-		Kind: KindBlock,
+	runtime, _, qmp, _ := testRuntime(tmpDir, hotplugtypes.Device{
+		Kind: hotplugtypes.KindBlock,
 		ID:   "data",
-		Block: Block{
+		Block: hotplugtypes.Block{
 			ImagePath: filepath.Join(tmpDir, "data.qcow2"),
 			Format:    "qcow2",
 			Serial:    "data",
@@ -214,12 +215,12 @@ func TestHotplugRegistryMissingID(t *testing.T) {
 
 func TestHotplugRegistryRejectsDuplicateIDs(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, _, _ := testRuntimeDevices(tmpDir, []Device{
+	runtime, _, _, _ := testRuntimeDevices(tmpDir, []hotplugtypes.Device{
 		testVirtioFSDevice(tmpDir),
 		{
-			Kind: KindNet,
+			Kind: hotplugtypes.KindNet,
 			ID:   "cache",
-			Net:  Net{Backend: "user", MAC: "02:02:00:00:00:10"},
+			Net:  hotplugtypes.Net{Backend: "user", MAC: "02:02:00:00:00:10"},
 		},
 	})
 
@@ -231,9 +232,9 @@ func TestHotplugRegistryRejectsDuplicateIDs(t *testing.T) {
 
 func TestHotplugRegistryRejectsUnsupportedKind(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, _, _ := testRuntimeDevices(tmpDir, []Device{
+	runtime, _, _, _ := testRuntimeDevices(tmpDir, []hotplugtypes.Device{
 		testVirtioFSDevice(tmpDir),
-		{Kind: Kind("unsupported"), ID: "bad"},
+		{Kind: hotplugtypes.Kind("unsupported"), ID: "bad"},
 	})
 
 	err := runtime.Attach(context.Background(), "cache")
@@ -242,11 +243,11 @@ func TestHotplugRegistryRejectsUnsupportedKind(t *testing.T) {
 	}
 }
 
-func testRuntime(tmpDir string, device Device) (Runtime, *fakeStarter, *fakeQMP, *fakeGuest) {
-	return testRuntimeDevices(tmpDir, []Device{device})
+func testRuntime(tmpDir string, device hotplugtypes.Device) (Runtime, *fakeStarter, *fakeQMP, *fakeGuest) {
+	return testRuntimeDevices(tmpDir, []hotplugtypes.Device{device})
 }
 
-func testRuntimeDevices(tmpDir string, devices []Device) (Runtime, *fakeStarter, *fakeQMP, *fakeGuest) {
+func testRuntimeDevices(tmpDir string, devices []hotplugtypes.Device) (Runtime, *fakeStarter, *fakeQMP, *fakeGuest) {
 	starter := &fakeStarter{}
 	qmp := &fakeQMP{}
 	guest := &fakeGuest{}
@@ -261,11 +262,11 @@ func testRuntimeDevices(tmpDir string, devices []Device) (Runtime, *fakeStarter,
 	}, starter, qmp, guest
 }
 
-func testVirtioFSDevice(tmpDir string) Device {
-	return Device{
-		Kind: KindVirtioFS,
+func testVirtioFSDevice(tmpDir string) hotplugtypes.Device {
+	return hotplugtypes.Device{
+		Kind: hotplugtypes.KindVirtioFS,
 		ID:   "cache",
-		VirtioFS: VirtioFS{
+		VirtioFS: hotplugtypes.VirtioFS{
 			Source:     filepath.Join(tmpDir, "cache"),
 			Target:     "/mnt/cache",
 			SocketPath: filepath.Join(tmpDir, "cache.sock"),

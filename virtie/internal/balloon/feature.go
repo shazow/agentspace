@@ -10,6 +10,7 @@ import (
 	"time"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
+	"github.com/shazow/agentspace/virtie/internal/balloontypes"
 )
 
 func sessionFromMonitor(session MonitorSession) session {
@@ -23,7 +24,7 @@ func AppendQEMUArgs(
 	args []string,
 	config *govmmQemu.Config,
 	resolveTransport func(string) (govmmQemu.VirtioTransport, error),
-	device *Device,
+	device *balloontypes.Device,
 ) ([]string, error) {
 	if device == nil {
 		return args, nil
@@ -44,7 +45,7 @@ func AppendQEMUArgs(
 	return append(args, "-device", strings.Join(deviceParams, ",")), nil
 }
 
-func ControllerTask(qmpTimeout time.Duration, session MonitorSession, device *Device, notificationSink notifier) func(context.Context) error {
+func ControllerTask(qmpTimeout time.Duration, session MonitorSession, device *balloontypes.Device, notificationSink notifier) func(context.Context) error {
 	if device == nil || device.Controller == nil || session == nil {
 		return nil
 	}
