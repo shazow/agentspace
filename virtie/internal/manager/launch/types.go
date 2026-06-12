@@ -74,7 +74,6 @@ type RuntimePaths struct {
 	QMPSocket        string
 	GuestAgentSocket string
 	SSHReadySocket   string
-	Cleanup          []string
 }
 
 type Plan struct {

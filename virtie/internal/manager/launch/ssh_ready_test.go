@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 )
 
 func TestWaitForSSHReadyReadsToken(t *testing.T) {
@@ -55,19 +58,18 @@ func TestWaitForSSHReadyWrapsCanceledWait(t *testing.T) {
 }
 
 func TestWaitForSSHReadyChecksForUnexpectedExit(t *testing.T) {
-	checkErr := errors.New("qemu failed")
+	process := &executortest.Process{OverrideName: "qemu", WaitErr: errors.New("qemu failed")}
+	process.Complete(process.WaitErr)
 	err := WaitForSSHReady(context.Background(), SSHReadyWait{
 		SocketPath:   "ready.sock",
 		Timeout:      time.Second,
 		PollDelay:    time.Millisecond,
 		SocketWaiter: &fakeSSHReadySocketWaiter{},
 		Dialer:       &fakeSSHReadyDialer{block: true},
-		Check: func(string) error {
-			return checkErr
-		},
+		Watchers:     executor.NewGroup(process.Process()),
 	})
-	if !errors.Is(err, checkErr) {
-		t.Fatalf("check error: got %v want %v", err, checkErr)
+	if !errors.Is(err, process.WaitErr) {
+		t.Fatalf("check error: got %v want %v", err, process.WaitErr)
 	}
 }
 

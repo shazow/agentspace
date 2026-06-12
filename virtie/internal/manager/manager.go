@@ -67,8 +67,8 @@ func newManager() *manager {
 	return newManagerFromConfig(DefaultConfig())
 }
 
-func newManagerFromConfig(config launch.Config) *manager {
-	config = launch.MergeConfig(DefaultConfig(), config)
+func newManagerFromConfig(config Config) *manager {
+	config = mergeConfig(DefaultConfig(), config)
 	return &manager{
 		locker:              config.Locker,
 		vsockCIDChecker:     config.VSockCIDChecker,
@@ -188,21 +188,23 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 				err,
 				startedRuntime,
 				runtimepkg.StartupFailureActions{
-					Processes:     processes,
-					ShutdownDelay: m.shutdownDelay,
-					LockCleanup:   cleanupRuntime,
-					QMP:           qmpClient,
+					ShutdownResources: runtimepkg.ShutdownResources{
+						Processes:     processes,
+						ShutdownDelay: m.shutdownDelay,
+						QMP:           qmpClient,
+						Stats:         runtimepkg.StatsFinalizer(stats, m.outputWriter()),
+					},
+					LockCleanup: cleanupRuntime,
 					SocketCleanup: runtimepkg.JoinedCleanup(func() error {
 						return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
 					}),
-					Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
 				},
 				isSavedSuspendExit,
 			)
 		}
 	}()
 
-	runtime, qmpClient, err = m.startLaunchRuntime(launchCtx, plan, stats, lifecycle, processes)
+	qmpClient, err = m.startLaunchRuntime(launchCtx, plan, stats, processes)
 	if err != nil {
 		return nil, err
 	}
@@ -215,25 +217,52 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 	suspendHandler := newLaunchSuspendHandler(m, plan.Manifest, plan.Paths.QMPSocket, qmpClient, plan.CID, plan.Notifier, func() bool {
 		return writeBackOnExit.Load()
 	})
-	runtime.SetReady()
-	runtime.SetForegroundWait(plan, func(ctx context.Context, waitPlan *launch.Plan) error {
-		return m.waitForLaunchForeground(ctx, waitPlan, stats, runtime, qmpClient, lifecycle, suspendHandler, processes)
-	})
-	runtime.SetCloseHooks(runtimepkg.CloseHooks{
-		WriteBack: func(ctx context.Context) error {
-			if !writeBackOnExit.Load() {
-				return nil
+
+	runtimeDeps := runtimepkg.Dependencies{
+		QMPTimeout:       m.effectiveQMPCommandTimeout(),
+		Logger:           m.logger,
+		SavedSuspendExit: isSavedSuspendExit,
+		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
+			info, err := m.collectGuestInfo(ctx, socketPath, watchers)
+			if err != nil {
+				return runtimepkg.GuestInfo{}, err
 			}
-			return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
+			return runtimepkg.GuestInfo{ProcessList: info.ProcessList}, nil
 		},
-		Cleanup: runtimepkg.JoinedCleanup(
-			func() error {
-				return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
+	}
+	configureRuntimeHotplugDependencies(&runtimeDeps, m, plan.Manifest)
+	runtime = runtimepkg.New(runtimepkg.RuntimeConfig{
+		Manifest:        plan.Manifest,
+		Plan:            plan,
+		Paths:           plan.Paths,
+		CID:             plan.CID,
+		Stats:           stats,
+		QMP:             qmpClient,
+		SuspendRequests: lifecycle.Suspend(),
+		Processes:       processes,
+		ShutdownDelay:   m.shutdownDelay,
+		WaitForeground: func(ctx context.Context, waitPlan *launch.Plan) error {
+			return m.waitForLaunchForeground(ctx, waitPlan, stats, runtime, qmpClient, lifecycle, suspendHandler, processes)
+		},
+		CloseHooks: runtimepkg.CloseHooks{
+			WriteBack: func(ctx context.Context) error {
+				if !writeBackOnExit.Load() {
+					return nil
+				}
+				return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
 			},
-			cleanupRuntime,
-		),
-		Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
+			Cleanup: runtimepkg.JoinedCleanup(
+				func() error {
+					return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
+				},
+				cleanupRuntime,
+			),
+			Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
+		},
+		Dependencies: runtimeDeps,
 	})
+	qmpClient = runtime.QMP()
+	runtime.SetReady()
 	if _, err := runtime.StartControl(launchCtx); err != nil {
 		return nil, launch.WrapFixedStage("control startup")(err)
 	}
@@ -261,52 +290,40 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 	return runtime, nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, stats *runtimepkg.Stats, lifecycle *launch.Lifecycle, processes *runtimepkg.ProcessSet) (*runtimepkg.Runtime, qmpclient.Client, error) {
-	started, err := launch.StartRuntimeProcesses(ctx, launch.RuntimeStartup{
-		Plan:           plan,
-		Processes:      processes,
-		Stats:          stats,
-		Runner:         m.runner,
-		Logger:         m.logger,
-		StartRuns:      m.startRuns,
-		WaitForSockets: m.waitForSockets,
-		WaitForQMP:     m.waitForQMP,
-		WrapVMStartup:  launch.WrapFixedStage("vm startup"),
-	})
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, stats *runtimepkg.Stats, processes *runtimepkg.ProcessSet) (qmpclient.Client, error) {
+	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	runtimeDeps := runtimepkg.Dependencies{
-		QMPTimeout:       m.effectiveQMPCommandTimeout(),
-		Logger:           m.logger,
-		SavedSuspendExit: isSavedSuspendExit,
-		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
-			info, err := m.collectGuestInfo(ctx, socketPath, watchers)
-			if err != nil {
-				return runtimepkg.GuestInfo{}, err
-			}
-			return runtimepkg.GuestInfo{ProcessList: info.ProcessList}, nil
-		},
+	processes.AddGroup(runProcesses)
+
+	if len(plan.VirtioFSSocketPaths) > 0 {
+		m.logger.Info("waiting for virtiofs sockets")
+		if err := m.waitForSockets(ctx, "virtiofs startup", plan.VirtioFSSocketPaths, processes.Watchers()); err != nil {
+			return nil, err
+		}
 	}
-	configureRuntimeHotplugDependencies(&runtimeDeps, m, plan.Manifest)
-	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
-		Manifest:        plan.Manifest,
-		Paths:           plan.Paths,
-		CID:             plan.CID,
-		Stats:           stats,
-		QMP:             started.QMP,
-		SuspendRequests: lifecycle.Suspend(),
-		Dependencies:    runtimeDeps,
-	})
-	runtime.SetProcesses(processes, m.shutdownDelay)
-	client := runtime.QMP()
+
+	stats.MarkBootStarted(time.Now())
+	qemu, err := launch.StartQEMU(m.runner, m.logger, plan)
+	if err != nil {
+		return nil, launch.WrapFixedStage("vm startup")(err)
+	}
+	processes.SetQEMU(qemu)
+
+	m.logger.Info("waiting for qmp readiness")
+	qmp, err := m.waitForQMP(ctx, plan.Paths.QMPSocket, processes.Watchers())
+	if err != nil {
+		return nil, err
+	}
+	client := qmpclient.Serialized(qmp)
 	launch.FinalizeRuntimeStartup(launch.RuntimeStartupFinalize{
-		QEMU:        started.QEMU,
-		QMP:         client,
-		Stats:       stats,
-		QuitTimeout: m.effectiveQMPQuitTimeout(),
+		QEMU:         qemu,
+		QMP:          client,
+		MarkQMPReady: stats.MarkQMPReady,
+		QuitTimeout:  m.effectiveQMPQuitTimeout(),
 	})
-	return runtime, client, nil
+	return client, nil
 }
 
 func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *launch.Plan, client qmpclient.Client) error {
@@ -342,11 +359,12 @@ func (m *manager) waitForLaunchForeground(
 	processes *runtimepkg.ProcessSet,
 ) error {
 	return launch.WaitForeground(ctx, launch.ForegroundWait{
-		Plan:      plan,
-		Runtime:   runtime,
-		Processes: processes,
-		Logger:    m.logger,
-		Output:    m.outputWriter(),
+		Plan:        plan,
+		QEMU:        processes.QEMU(),
+		Logger:      m.logger,
+		Output:      m.outputWriter(),
+		SetWatchers: runtime.SetWatchers,
+		VMWatchers:  processes.VMWatchers,
 		StartFeatures: func(ctx context.Context) {
 			processes.SetFeatures(startOptionalFeatureTasks(ctx, optionalFeatureRuntime{
 				qmpTimeout: m.effectiveQMPCommandTimeout(),
@@ -494,11 +512,14 @@ func (m *manager) runSSHSession(
 	return launch.RunSSHSession(ctx, launch.SSHSession{
 		Plan:                   plan,
 		Runner:                 m.runner,
-		Processes:              processes,
-		Stats:                  stats,
 		Logger:                 m.logger,
 		Output:                 m.outputWriter(),
 		RetryOutputRevealDelay: sshRetryOutputRevealDelay,
+		AddProcesses:           processes.Add,
+		RemoveProcess:          processes.Remove,
+		Watchers:               processes.Watchers,
+		MarkSSHAttempt:         stats.MarkSSHAttempt,
+		MarkSSHStarted:         stats.MarkSSHStarted,
 		Wait: func(ctx context.Context, session *executor.Process, watchers executor.Group) error {
 			return m.waitForSession(ctx, session, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
 		},

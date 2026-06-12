@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"errors"
-	"time"
 )
 
 type StartedRuntime interface {
@@ -11,12 +10,9 @@ type StartedRuntime interface {
 }
 
 type StartupFailureActions struct {
-	Processes     *ProcessSet
-	ShutdownDelay time.Duration
+	ShutdownResources
 	LockCleanup   func() error
-	QMP           Disconnecter
 	SocketCleanup func() error
-	Stats         func()
 }
 
 func CleanupStartError(cause error, started StartedRuntime, startup StartupFailureActions, savedSuspendExit func(error) bool) error {

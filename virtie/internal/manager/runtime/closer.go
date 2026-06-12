@@ -13,16 +13,20 @@ type Disconnecter interface {
 	Disconnect() error
 }
 
+type ShutdownResources struct {
+	Processes     *ProcessSet
+	ShutdownDelay time.Duration
+	QMP           Disconnecter
+	Stats         func()
+}
+
 type CloseActions struct {
+	ShutdownResources
 	WriteBack        func(context.Context) error
 	WriteBackTimeout time.Duration
 	SkipWriteBack    bool
 	Control          *control.Server
-	Processes        *ProcessSet
-	ShutdownDelay    time.Duration
-	QMP              Disconnecter
 	Cleanup          func() error
-	Stats            func()
 }
 
 type Closer struct {

@@ -51,10 +51,10 @@ func BuildPlan(spec Spec, resumeState *SuspendState, notifier NotificationSink) 
 		Options:                     options,
 		ResumeState:                 resumeState,
 		Notifier:                    notifier,
-		Paths:                       RuntimePaths{StateDir: manifest.ResolvedPersistenceStateDir(), ControlSocket: controlSocketPath, QMPSocket: qmpSocketPath, GuestAgentSocket: guestAgentSocketPath, SSHReadySocket: sshReadySocketPath, Cleanup: append([]string(nil), cleanupFiles...)},
+		Paths:                       RuntimePaths{StateDir: manifest.ResolvedPersistenceStateDir(), ControlSocket: controlSocketPath, QMPSocket: qmpSocketPath, GuestAgentSocket: guestAgentSocketPath, SSHReadySocket: sshReadySocketPath},
 		VirtioFSSocketPaths:         virtioFSSocketPaths,
 		ExternalVirtioFSSocketPaths: externalVirtioFSSocketPaths,
-		CleanupFiles:                cleanupFiles,
+		CleanupFiles:                append([]string(nil), cleanupFiles...),
 		Volumes:                     volumes,
 		VolumeImagePaths:            volumeImagePaths,
 	}, nil

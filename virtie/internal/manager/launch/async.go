@@ -7,72 +7,28 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
-type AsyncWait struct {
-	Stage     string
-	PollDelay time.Duration
-
-	Wait   func(context.Context) error
-	Check  func(stage string) error
-	Result func(stage string, err error) error
-	Cancel func(stage string, err error) error
-}
-
 type SocketWait struct {
 	Stage        string
 	SocketPaths  []string
 	SocketWaiter SocketWaiter
 	PollDelay    time.Duration
 	Watchers     executor.Group
-
-	Check  func(stage string) error
-	Result func(stage string, err error) error
-	Cancel func(stage string, err error) error
 }
 
 func WaitForSockets(ctx context.Context, wait SocketWait) error {
-	check := wait.Check
-	if check == nil {
-		check = func(stage string) error {
-			return FirstUnexpectedExit(stage, wait.Watchers)
-		}
-	}
-	result := wait.Result
-	if result == nil {
-		result = WrapStage
-	}
-	cancel := wait.Cancel
-	if cancel == nil {
-		cancel = WrapStage
-	}
-	return WaitForAsync(ctx, AsyncWait{
-		Stage:     wait.Stage,
-		PollDelay: wait.PollDelay,
-		Wait: func(waitCtx context.Context) error {
-			if wait.SocketWaiter == nil {
-				return nil
-			}
-			return wait.SocketWaiter.Wait(waitCtx, wait.SocketPaths)
-		},
-		Check:  check,
-		Result: result,
-		Cancel: cancel,
-	})
-}
-
-func WaitForAsync(ctx context.Context, wait AsyncWait) error {
 	if wait.PollDelay <= 0 {
 		wait.PollDelay = time.Second
 	}
-	waitCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	waitCtx, cancelWait := context.WithCancel(ctx)
+	defer cancelWait()
 
 	errCh := make(chan error, 1)
 	go func() {
-		if wait.Wait == nil {
+		if wait.SocketWaiter == nil {
 			errCh <- nil
 			return
 		}
-		errCh <- wait.Wait(waitCtx)
+		errCh <- wait.SocketWaiter.Wait(waitCtx, wait.SocketPaths)
 	}()
 
 	ticker := time.NewTicker(wait.PollDelay)
@@ -81,21 +37,16 @@ func WaitForAsync(ctx context.Context, wait AsyncWait) error {
 	for {
 		select {
 		case err := <-errCh:
-			if err != nil && wait.Result != nil {
-				return wait.Result(wait.Stage, err)
+			if err != nil {
+				return WrapStage(wait.Stage, err)
 			}
-			return err
+			return nil
 		case <-ticker.C:
-			if wait.Check != nil {
-				if err := wait.Check(wait.Stage); err != nil {
-					return err
-				}
+			if err := FirstUnexpectedExit(wait.Stage, wait.Watchers); err != nil {
+				return err
 			}
 		case <-ctx.Done():
-			if wait.Cancel != nil {
-				return wait.Cancel(wait.Stage, ctx.Err())
-			}
-			return ctx.Err()
+			return WrapStage(wait.Stage, ctx.Err())
 		}
 	}
 }

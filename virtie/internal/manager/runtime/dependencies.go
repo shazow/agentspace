@@ -13,11 +13,16 @@ import (
 
 type RuntimeConfig struct {
 	Manifest        *manifest.Manifest
+	Plan            *launch.Plan
 	Paths           launch.RuntimePaths
 	CID             int
 	Stats           *Stats
 	QMP             qmpclient.Client
 	SuspendRequests *launch.SuspendCoordinator
+	Processes       *ProcessSet
+	ShutdownDelay   time.Duration
+	WaitForeground  func(context.Context, *launch.Plan) error
+	CloseHooks      CloseHooks
 	Dependencies    Dependencies
 }
 

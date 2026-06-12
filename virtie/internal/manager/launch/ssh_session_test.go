@@ -14,17 +14,20 @@ import (
 
 func TestRunSSHSessionRetriesTransientFailure(t *testing.T) {
 	launchManifest := testSSHSessionManifest()
-	processes := &fakeSSHSessionProcesses{}
-	stats := &fakeSSHSessionStats{}
+	processes := &recordingSSHProcesses{}
+	stats := &recordingSSHStats{}
 	runner := &fakeSSHSessionRunner{
 		errs: []error{errors.New("Connection refused"), nil},
 	}
 
 	err := RunSSHSession(context.Background(), SSHSession{
-		Plan:      &Plan{Manifest: launchManifest, CID: 10},
-		Runner:    runner,
-		Processes: processes,
-		Stats:     stats,
+		Plan:           &Plan{Manifest: launchManifest, CID: 10},
+		Runner:         runner,
+		AddProcesses:   processes.Add,
+		RemoveProcess:  processes.Remove,
+		Watchers:       processes.Watchers,
+		MarkSSHAttempt: stats.MarkSSHAttempt,
+		MarkSSHStarted: stats.MarkSSHStarted,
 		Wait: func(ctx context.Context, process *executor.Process, watchers executor.Group) error {
 			return process.Wait()
 		},
@@ -49,7 +52,7 @@ func TestRunSSHSessionRetriesTransientFailure(t *testing.T) {
 func TestRunSSHSessionAutoprovisionsAfterAuthenticationFailure(t *testing.T) {
 	launchManifest := testSSHSessionManifest()
 	launchManifest.SSH.Autoprovision = true
-	processes := &fakeSSHSessionProcesses{}
+	processes := &recordingSSHProcesses{}
 	runner := &fakeSSHSessionRunner{
 		errs: []error{errors.New("Permission denied (publickey)."), nil},
 	}
@@ -57,9 +60,11 @@ func TestRunSSHSessionAutoprovisionsAfterAuthenticationFailure(t *testing.T) {
 	var installed bool
 
 	err := RunSSHSession(context.Background(), SSHSession{
-		Plan:      &Plan{Manifest: launchManifest, CID: 10},
-		Runner:    runner,
-		Processes: processes,
+		Plan:          &Plan{Manifest: launchManifest, CID: 10},
+		Runner:        runner,
+		AddProcesses:  processes.Add,
+		RemoveProcess: processes.Remove,
+		Watchers:      processes.Watchers,
 		Wait: func(ctx context.Context, process *executor.Process, watchers executor.Group) error {
 			return process.Wait()
 		},
@@ -93,9 +98,8 @@ func TestRunSSHSessionWrapsCommandBuildError(t *testing.T) {
 	wrappedErr := errors.New("wrapped")
 
 	err := RunSSHSession(context.Background(), SSHSession{
-		Plan:      &Plan{Manifest: launchManifest, CID: 10},
-		Runner:    &fakeSSHSessionRunner{},
-		Processes: &fakeSSHSessionProcesses{},
+		Plan:   &Plan{Manifest: launchManifest, CID: 10},
+		Runner: &fakeSSHSessionRunner{},
 		WrapStage: func(stage string, err error) error {
 			if stage != "active session" {
 				t.Fatalf("stage: got %q want active session", stage)
@@ -113,9 +117,8 @@ func TestRunSSHSessionDefaultsToStageWrapping(t *testing.T) {
 	launchManifest.SSH.Argv = nil
 
 	err := RunSSHSession(context.Background(), SSHSession{
-		Plan:      &Plan{Manifest: launchManifest, CID: 10},
-		Runner:    &fakeSSHSessionRunner{},
-		Processes: &fakeSSHSessionProcesses{},
+		Plan:   &Plan{Manifest: launchManifest, CID: 10},
+		Runner: &fakeSSHSessionRunner{},
 	})
 	var stageErr *StageError
 	if !errors.As(err, &stageErr) || stageErr.Stage != "active session" {
@@ -149,36 +152,36 @@ func (r *fakeSSHSessionRunner) Start(cmd *exec.Cmd) (*executor.Process, error) {
 	return process.Process(), nil
 }
 
-type fakeSSHSessionProcesses struct {
+type recordingSSHProcesses struct {
 	group   executor.Group
 	removed int
 }
 
-func (p *fakeSSHSessionProcesses) Add(processes ...*executor.Process) {
+func (p *recordingSSHProcesses) Add(processes ...*executor.Process) {
 	p.group.Add(processes...)
 }
 
-func (p *fakeSSHSessionProcesses) Remove(process *executor.Process) bool {
+func (p *recordingSSHProcesses) Remove(process *executor.Process) bool {
 	p.removed++
 	return p.group.Remove(process)
 }
 
-func (p *fakeSSHSessionProcesses) Watchers() executor.Group {
+func (p *recordingSSHProcesses) Watchers() executor.Group {
 	return p.group.Snapshot()
 }
 
-type fakeSSHSessionStats struct {
+type recordingSSHStats struct {
 	attempts int
 	started  int
 	times    []time.Time
 }
 
-func (s *fakeSSHSessionStats) MarkSSHAttempt(t time.Time) {
+func (s *recordingSSHStats) MarkSSHAttempt(t time.Time) {
 	s.attempts++
 	s.times = append(s.times, t)
 }
 
-func (s *fakeSSHSessionStats) MarkSSHStarted(t time.Time) {
+func (s *recordingSSHStats) MarkSSHStarted(t time.Time) {
 	s.started++
 	s.times = append(s.times, t)
 }

@@ -12,17 +12,6 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
 
-type SSHSessionStats interface {
-	MarkSSHAttempt(time.Time)
-	MarkSSHStarted(time.Time)
-}
-
-type SSHSessionProcesses interface {
-	Add(...*executor.Process)
-	Remove(*executor.Process) bool
-	Watchers() executor.Group
-}
-
 type SSHAutoprovisionKey struct {
 	IdentityFile  string
 	PublicKeyFile string
@@ -32,18 +21,21 @@ type SSHAutoprovisionKey struct {
 type SSHSession struct {
 	Plan                   *Plan
 	Runner                 Runner
-	Processes              SSHSessionProcesses
-	Stats                  SSHSessionStats
 	Logger                 *slog.Logger
 	Output                 io.Writer
 	RetryOutputRevealDelay time.Duration
 
-	Wait         func(context.Context, *executor.Process, executor.Group) error
-	WaitForRetry func(context.Context, executor.Group) error
-	EnsureKey    func(*manifest.Manifest) (SSHAutoprovisionKey, error)
-	InstallKey   func(context.Context, *manifest.Manifest, SSHAutoprovisionKey, executor.Group) error
-	WrapStage    func(stage string, err error) error
-	Now          func() time.Time
+	AddProcesses   func(...*executor.Process)
+	RemoveProcess  func(*executor.Process) bool
+	Watchers       func() executor.Group
+	MarkSSHAttempt func(time.Time)
+	MarkSSHStarted func(time.Time)
+	Wait           func(context.Context, *executor.Process, executor.Group) error
+	WaitForRetry   func(context.Context, executor.Group) error
+	EnsureKey      func(*manifest.Manifest) (SSHAutoprovisionKey, error)
+	InstallKey     func(context.Context, *manifest.Manifest, SSHAutoprovisionKey, executor.Group) error
+	WrapStage      func(stage string, err error) error
+	Now            func() time.Time
 }
 
 func RunSSHSession(ctx context.Context, session SSHSession) error {
@@ -60,8 +52,8 @@ func RunSSHSession(ctx context.Context, session SSHSession) error {
 	for {
 		stderr := sshtools.NewRetryOutput(session.Output, false, session.RetryOutputRevealDelay)
 		attemptStarted := sshSessionNow(session)
-		if session.Stats != nil {
-			session.Stats.MarkSSHAttempt(attemptStarted)
+		if session.MarkSSHAttempt != nil {
+			session.MarkSSHAttempt(attemptStarted)
 		}
 		cmd, err := BuildSSHCommandWithArgv(launchManifest, plan.CID, plan.RemoteCommand, argv)
 		if err != nil {
@@ -73,10 +65,15 @@ func RunSSHSession(ctx context.Context, session SSHSession) error {
 		if err != nil {
 			return wrapSSHSessionStage(session, "active session", err)
 		}
-		watchers := session.Processes.Watchers()
-		session.Processes.Add(started)
-		if session.Stats != nil {
-			session.Stats.MarkSSHStarted(attemptStarted)
+		watchers := executor.Group{}
+		if session.Watchers != nil {
+			watchers = session.Watchers()
+		}
+		if session.AddProcesses != nil {
+			session.AddProcesses(started)
+		}
+		if session.MarkSSHStarted != nil {
+			session.MarkSSHStarted(attemptStarted)
 		}
 
 		err = session.Wait(ctx, started, watchers)
@@ -88,7 +85,9 @@ func RunSSHSession(ctx context.Context, session SSHSession) error {
 		if sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureTransient {
 			stderr.Suppress()
 			retryLog.Log(err, stderrText)
-			session.Processes.Remove(started)
+			if session.RemoveProcess != nil {
+				session.RemoveProcess(started)
+			}
 			if session.WaitForRetry != nil {
 				if waitErr := session.WaitForRetry(ctx, watchers); waitErr != nil {
 					return waitErr
@@ -98,7 +97,9 @@ func RunSSHSession(ctx context.Context, session SSHSession) error {
 		}
 		if launchManifest.SSH.Autoprovision && !provisioned && sshtools.ClassifyFailure(err, stderrText) == sshtools.FailureAuthentication {
 			stderr.Suppress()
-			session.Processes.Remove(started)
+			if session.RemoveProcess != nil {
+				session.RemoveProcess(started)
+			}
 			sessionLogger.Info("ssh authentication failed; autoprovisioning a key", "state_dir", launchManifest.ResolvedPersistenceStateDir(), "user", launchManifest.SSH.User)
 			key, keyErr := session.EnsureKey(launchManifest)
 			if keyErr != nil {

@@ -206,26 +206,27 @@ func TestRuntimeWaitUsesConfiguredForegroundCallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	processes := runtimepkg.NewProcessSet()
+	var called bool
 	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
+		Plan:     &launch.Plan{Manifest: cfg, Options: LaunchOptions{SSH: false}},
 		Paths: launch.RuntimePaths{
 			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
-		CID:          11,
-		Stats:        runtimepkg.NewStats(time.Now()),
-		QMP:          &fakeQMPClient{},
+		CID:           11,
+		Stats:         runtimepkg.NewStats(time.Now()),
+		QMP:           &fakeQMPClient{},
+		Processes:     processes,
+		ShutdownDelay: time.Millisecond,
+		WaitForeground: func(ctx context.Context, plan *launch.Plan) error {
+			called = true
+			if !plan.Options.SSH {
+				t.Fatalf("wait mode override did not enable ssh: %#v", plan.Options)
+			}
+			return nil
+		},
 		Dependencies: runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
-	})
-	runtime.SetProcesses(processes, time.Millisecond)
-
-	var called bool
-	runtime.SetForegroundWait(&launch.Plan{Manifest: cfg, Options: LaunchOptions{SSH: false}}, func(ctx context.Context, plan *launch.Plan) error {
-		called = true
-		if !plan.Options.SSH {
-			t.Fatalf("wait mode override did not enable ssh: %#v", plan.Options)
-		}
-		return nil
 	})
 	if err := runtime.Wait(context.Background(), WaitSSH); err != nil {
 		t.Fatalf("wait: %v", err)
@@ -265,30 +266,32 @@ func TestRuntimeSavedSuspendWaitSkipsCloseWriteBack(t *testing.T) {
 	cfg := validManifest(tmpDir)
 	processes := runtimepkg.NewProcessSet()
 	qmp := &fakeQMPClient{}
+	var writeBackCalls int
 	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
+		Plan:     &launch.Plan{Manifest: cfg, Options: LaunchOptions{SSH: false}},
 		Paths: launch.RuntimePaths{
 			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
-		CID:   11,
-		Stats: runtimepkg.NewStats(time.Now()),
-		QMP:   qmp,
+		CID:           11,
+		Stats:         runtimepkg.NewStats(time.Now()),
+		QMP:           qmp,
+		Processes:     processes,
+		ShutdownDelay: time.Millisecond,
+		WaitForeground: func(context.Context, *launch.Plan) error {
+			return errSavedSuspendExit
+		},
+		CloseHooks: runtimepkg.CloseHooks{
+			WriteBack: func(context.Context) error {
+				writeBackCalls++
+				return nil
+			},
+		},
 		Dependencies: runtimepkg.Dependencies{
 			QMPTimeout:       time.Second,
 			Logger:           slog.New(slog.DiscardHandler),
 			SavedSuspendExit: isSavedSuspendExit,
-		},
-	})
-	runtime.SetProcesses(processes, time.Millisecond)
-	runtime.SetForegroundWait(&launch.Plan{Manifest: cfg, Options: LaunchOptions{SSH: false}}, func(context.Context, *launch.Plan) error {
-		return errSavedSuspendExit
-	})
-	var writeBackCalls int
-	runtime.SetCloseHooks(runtimepkg.CloseHooks{
-		WriteBack: func(context.Context) error {
-			writeBackCalls++
-			return nil
 		},
 	})
 
@@ -390,12 +393,13 @@ func TestRuntimeCloseStopsProcessesAndDisconnectsQMPOnce(t *testing.T) {
 			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
-		CID:          11,
-		Stats:        runtimepkg.NewStats(time.Now()),
-		QMP:          qmp,
-		Dependencies: runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
+		CID:           11,
+		Stats:         runtimepkg.NewStats(time.Now()),
+		QMP:           qmp,
+		Processes:     processes,
+		ShutdownDelay: time.Millisecond,
+		Dependencies:  runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
 	})
-	runtime.SetProcesses(processes, time.Millisecond)
 
 	if err := runtime.Close(); err != nil {
 		t.Fatalf("first close: %v", err)

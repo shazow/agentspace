@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
@@ -43,78 +45,45 @@ func TestWaitForQMPWaitsForSocketThenDials(t *testing.T) {
 
 func TestWaitForQMPWrapsSocketWaitError(t *testing.T) {
 	waitErr := errors.New("socket failed")
-	wrappedErr := errors.New("wrapped")
 	_, err := WaitForQMP(context.Background(), QMPWait{
 		Stage:        "vm startup",
 		SocketPath:   "qmp.sock",
 		SocketWaiter: &fakeQMPSocketWaiter{err: waitErr},
 		Dialer:       &fakeQMPDialer{},
 		PollDelay:    time.Millisecond,
-		Result: func(stage string, err error) error {
-			if stage != "vm startup" {
-				t.Fatalf("stage: got %q want vm startup", stage)
-			}
-			if !errors.Is(err, waitErr) {
-				t.Fatalf("wait err: got %v want %v", err, waitErr)
-			}
-			return wrappedErr
-		},
 	})
-	if !errors.Is(err, wrappedErr) {
-		t.Fatalf("wrapped err: got %v want %v", err, wrappedErr)
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "vm startup" || !errors.Is(err, waitErr) {
+		t.Fatalf("wrapped err: got %v", err)
 	}
 }
 
-func TestWaitForQMPChecksWhileDialing(t *testing.T) {
+func TestWaitForQMPChecksWatcherExitWhileDialing(t *testing.T) {
 	checkErr := errors.New("qemu exited")
-	dialer := &fakeQMPDialer{err: errors.New("not ready")}
+	process := &executortest.Process{OverrideName: "qemu"}
+	dialer := &fakeQMPDialer{
+		err: errors.New("not ready"),
+		afterDial: func() {
+			process.Complete(checkErr)
+		},
+	}
 	_, err := WaitForQMP(context.Background(), QMPWait{
 		SocketPath:   "qmp.sock",
 		SocketWaiter: &fakeQMPSocketWaiter{},
 		Dialer:       dialer,
 		RetryDelay:   time.Millisecond,
 		PollDelay:    time.Millisecond,
-		Check: func(stage string) error {
-			if stage != "vm startup" {
-				t.Fatalf("stage: got %q want vm startup", stage)
-			}
-			if dialer.calls < 2 {
-				return nil
-			}
-			return checkErr
-		},
+		Watchers:     executor.NewGroup(process.Process()),
 	})
 	if !errors.Is(err, checkErr) {
-		t.Fatalf("check err: got %v want %v", err, checkErr)
+		t.Fatalf("watcher exit err: got %v want %v", err, checkErr)
+	}
+	if dialer.calls != 1 {
+		t.Fatalf("dialer calls: got %d want 1", dialer.calls)
 	}
 }
 
 func TestWaitForQMPWrapsDialCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	cancelErr := errors.New("cancel wrapped")
-	_, err := WaitForQMP(ctx, QMPWait{
-		SocketPath:   "qmp.sock",
-		SocketWaiter: &fakeQMPSocketWaiter{},
-		Dialer:       &fakeQMPDialer{},
-		RetryDelay:   time.Millisecond,
-		PollDelay:    time.Millisecond,
-		Cancel: func(stage string, err error) error {
-			if stage != "vm startup" {
-				t.Fatalf("stage: got %q want vm startup", stage)
-			}
-			if !errors.Is(err, context.Canceled) {
-				t.Fatalf("cancel err: got %v want context canceled", err)
-			}
-			return cancelErr
-		},
-	})
-	if !errors.Is(err, cancelErr) {
-		t.Fatalf("cancel err: got %v want %v", err, cancelErr)
-	}
-}
-
-func TestWaitForQMPDefaultsToStageWrappingDialCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := WaitForQMP(ctx, QMPWait{
@@ -147,12 +116,16 @@ type fakeQMPDialer struct {
 	socketPath string
 	timeout    time.Duration
 	err        error
+	afterDial  func()
 }
 
 func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpclient.Client, error) {
 	d.calls++
 	d.socketPath = socketPath
 	d.timeout = timeout
+	if d.afterDial != nil {
+		d.afterDial()
+	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}

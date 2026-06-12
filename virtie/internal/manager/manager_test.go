@@ -799,7 +799,7 @@ func TestLauncherStartAndRuntimeWaitWithoutSSH(t *testing.T) {
 	runner := &launchRunner{}
 	qmpClient := &fakeQMPClient{}
 	var logOutput bytes.Buffer
-	launcher := NewLauncher(launch.Config{
+	launcher := NewLauncher(Config{
 		Locker:            &fileLocker{},
 		Runner:            runner,
 		SocketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},

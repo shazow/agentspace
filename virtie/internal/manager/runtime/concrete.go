@@ -47,14 +47,19 @@ func New(config RuntimeConfig) *Runtime {
 	return &Runtime{
 		manifest:         config.Manifest,
 		paths:            config.Paths,
+		plan:             config.Plan,
 		cid:              config.CID,
 		stats:            config.Stats,
 		qmp:              qmpclient.Serialized(config.QMP),
 		suspendRequests:  config.SuspendRequests,
+		waitForeground:   config.WaitForeground,
 		qmpTimeout:       deps.QMPTimeout,
 		logger:           deps.Logger,
 		savedSuspendExit: deps.SavedSuspendExit,
 		collectInfo:      deps.CollectInfo,
+		processes:        config.Processes,
+		shutdownDelay:    config.ShutdownDelay,
+		closeHooks:       config.CloseHooks,
 		hotplugStart:     deps.HotplugStart,
 		hotplugSockets:   deps.HotplugSockets,
 		hotplugGuest:     deps.HotplugGuest,
@@ -75,20 +80,6 @@ func (r *Runtime) SetWatchers(watchers executor.Group) {
 	r.watchers = watchers
 }
 
-func (r *Runtime) SetProcesses(processes *ProcessSet, shutdownDelay time.Duration) {
-	r.processes = processes
-	r.shutdownDelay = shutdownDelay
-}
-
-func (r *Runtime) SetForegroundWait(plan *launch.Plan, waitForeground func(context.Context, *launch.Plan) error) {
-	r.plan = plan
-	r.waitForeground = waitForeground
-}
-
-func (r *Runtime) SetCloseHooks(hooks CloseHooks) {
-	r.closeHooks = hooks
-}
-
 func (r *Runtime) QMP() qmpclient.Client {
 	return r.qmp
 }
@@ -103,15 +94,17 @@ func (r *Runtime) StartControl(ctx context.Context) (*control.Server, error) {
 
 func (r *Runtime) Close() error {
 	return r.closer.Close(CloseActions{
+		ShutdownResources: ShutdownResources{
+			Processes:     r.processes,
+			ShutdownDelay: r.shutdownDelay,
+			QMP:           r.qmp,
+			Stats:         r.closeHooks.Stats,
+		},
 		WriteBack:        r.closeHooks.WriteBack,
 		WriteBackTimeout: r.qmpTimeout,
 		SkipWriteBack:    r.savedSuspend.Load(),
 		Control:          r.control,
-		Processes:        r.processes,
-		ShutdownDelay:    r.shutdownDelay,
-		QMP:              r.qmp,
 		Cleanup:          r.closeHooks.Cleanup,
-		Stats:            r.closeHooks.Stats,
 	})
 }
 

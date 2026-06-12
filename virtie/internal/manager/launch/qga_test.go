@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
 )
 
@@ -45,75 +47,43 @@ func TestWaitForGuestAgentWaitsForSocketThenDials(t *testing.T) {
 
 func TestWaitForGuestAgentWrapsSocketWaitError(t *testing.T) {
 	waitErr := errors.New("socket failed")
-	wrappedErr := errors.New("wrapped")
 	_, err := WaitForGuestAgent(context.Background(), GuestAgentWait{
 		Stage:        "guest agent",
 		SocketWaiter: &fakeGuestAgentSocketWaiter{err: waitErr},
 		Dialer:       &fakeGuestAgentDialer{client: &fakeGuestAgentClient{}},
 		PollDelay:    time.Millisecond,
-		Result: func(stage string, err error) error {
-			if stage != "guest agent" {
-				t.Fatalf("stage: got %q want guest agent", stage)
-			}
-			if !errors.Is(err, waitErr) {
-				t.Fatalf("wait err: got %v want %v", err, waitErr)
-			}
-			return wrappedErr
-		},
 	})
-	if !errors.Is(err, wrappedErr) {
-		t.Fatalf("wrapped err: got %v want %v", err, wrappedErr)
+	var stageErr *StageError
+	if !errors.As(err, &stageErr) || stageErr.Stage != "guest agent" || !errors.Is(err, waitErr) {
+		t.Fatalf("wrapped err: got %v", err)
 	}
 }
 
-func TestWaitForGuestAgentChecksWhileDialing(t *testing.T) {
+func TestWaitForGuestAgentChecksWatcherExitWhileDialing(t *testing.T) {
 	checkErr := errors.New("qemu exited")
-	dialer := &fakeGuestAgentDialer{err: errors.New("not ready")}
+	process := &executortest.Process{OverrideName: "qemu"}
+	dialer := &fakeGuestAgentDialer{
+		err: errors.New("not ready"),
+		afterDial: func() {
+			process.Complete(checkErr)
+		},
+	}
 	_, err := WaitForGuestAgent(context.Background(), GuestAgentWait{
 		SocketWaiter: &fakeGuestAgentSocketWaiter{},
 		Dialer:       dialer,
 		RetryDelay:   time.Millisecond,
 		PollDelay:    time.Millisecond,
-		Check: func(stage string) error {
-			if stage != "guest agent" {
-				t.Fatalf("stage: got %q want guest agent", stage)
-			}
-			if dialer.calls < 2 {
-				return nil
-			}
-			return checkErr
-		},
+		Watchers:     executor.NewGroup(process.Process()),
 	})
 	if !errors.Is(err, checkErr) {
-		t.Fatalf("check err: got %v want %v", err, checkErr)
+		t.Fatalf("watcher exit err: got %v want %v", err, checkErr)
+	}
+	if dialer.calls != 1 {
+		t.Fatalf("dialer calls: got %d want 1", dialer.calls)
 	}
 }
 
 func TestWaitForGuestAgentWrapsDialCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	cancelErr := errors.New("cancel wrapped")
-	_, err := WaitForGuestAgent(ctx, GuestAgentWait{
-		SocketWaiter: &fakeGuestAgentSocketWaiter{},
-		Dialer:       &fakeGuestAgentDialer{client: &fakeGuestAgentClient{}},
-		RetryDelay:   time.Millisecond,
-		PollDelay:    time.Millisecond,
-		Cancel: func(stage string, err error) error {
-			if stage != "guest agent" {
-				t.Fatalf("stage: got %q want guest agent", stage)
-			}
-			if !errors.Is(err, context.Canceled) {
-				t.Fatalf("cancel err: got %v want context canceled", err)
-			}
-			return cancelErr
-		},
-	})
-	if !errors.Is(err, cancelErr) {
-		t.Fatalf("cancel err: got %v want %v", err, cancelErr)
-	}
-}
-
-func TestWaitForGuestAgentDefaultsToStageWrappingDialCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := WaitForGuestAgent(ctx, GuestAgentWait{
@@ -146,12 +116,16 @@ type fakeGuestAgentDialer struct {
 	timeout    time.Duration
 	client     qga.Client
 	err        error
+	afterDial  func()
 }
 
 func (d *fakeGuestAgentDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qga.Client, error) {
 	d.calls++
 	d.socketPath = socketPath
 	d.timeout = timeout
+	if d.afterDial != nil {
+		d.afterDial()
+	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
