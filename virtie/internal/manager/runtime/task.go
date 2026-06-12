@@ -6,18 +6,18 @@ import (
 	"sync"
 )
 
-type Task struct {
+type task struct {
 	cancel context.CancelFunc
 	done   chan error
 	once   sync.Once
 	err    error
 }
 
-type TaskGroup struct {
-	tasks []*Task
+type taskGroup struct {
+	tasks []*task
 }
 
-func StartTask(ctx context.Context, fn func(context.Context) error) *Task {
+func startTask(ctx context.Context, fn func(context.Context) error) *task {
 	taskCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 
@@ -26,13 +26,13 @@ func StartTask(ctx context.Context, fn func(context.Context) error) *Task {
 		close(done)
 	}()
 
-	return &Task{
+	return &task{
 		cancel: cancel,
 		done:   done,
 	}
 }
 
-func (t *Task) Stop() error {
+func (t *task) Stop() error {
 	if t == nil {
 		return nil
 	}
@@ -44,14 +44,14 @@ func (t *Task) Stop() error {
 	return t.err
 }
 
-func (g *TaskGroup) Add(task *Task) {
+func (g *taskGroup) Add(task *task) {
 	if g == nil || task == nil {
 		return
 	}
 	g.tasks = append(g.tasks, task)
 }
 
-func (g *TaskGroup) Stop() error {
+func (g *taskGroup) Stop() error {
 	if g == nil {
 		return nil
 	}

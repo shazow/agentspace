@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// ExecWait configures guest command execution and polling.
 type ExecWait struct {
 	Timeout       time.Duration
 	PollDelay     time.Duration
@@ -17,7 +18,8 @@ type ExecWait struct {
 	CaptureOutput bool
 }
 
-func RunCommandStatus(ctx context.Context, client Client, wait ExecWait) (ExecStatus, error) {
+// RunCommandStatus starts a guest command and waits for its exit status.
+func RunCommandStatus(ctx context.Context, client ExecRunner, wait ExecWait) (ExecStatus, error) {
 	pid, err := client.Exec(wait.Timeout, wait.Path, wait.Args, wait.CaptureOutput)
 	if err != nil {
 		return ExecStatus{}, fmt.Errorf("%s %q: %w", wait.Name, wait.Subject, err)
@@ -52,6 +54,7 @@ func RunCommandStatus(ctx context.Context, client Client, wait ExecWait) (ExecSt
 	}
 }
 
+// ExecOutputSuffix formats decoded stdout and stderr for error messages.
 func ExecOutputSuffix(status ExecStatus) string {
 	stdout := DecodeExecData(status.OutData)
 	stderr := DecodeExecData(status.ErrData)
@@ -67,6 +70,7 @@ func ExecOutputSuffix(status ExecStatus) string {
 	}
 }
 
+// DecodeExecData decodes guest-agent base64 output, falling back to raw data.
 func DecodeExecData(data string) string {
 	if data == "" {
 		return ""

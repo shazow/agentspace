@@ -11,16 +11,16 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
 
-var ErrBalloonNotConfigured = errors.New("balloon device is not configured")
+var errBalloonNotConfigured = errors.New("balloon device is not configured")
 
-type BalloonQMP interface {
+type balloonQMP interface {
 	WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error
 }
 
-func Balloon(ctx context.Context, device *balloontypes.Device, qmp BalloonQMP, timeout time.Duration, req control.BalloonRequest) (control.BalloonResponse, error) {
+func balloon(ctx context.Context, device *balloontypes.Device, qmp balloonQMP, timeout time.Duration, req control.BalloonRequest) (control.BalloonResponse, error) {
 	_ = ctx
 	if device == nil {
-		return control.BalloonResponse{}, ErrBalloonNotConfigured
+		return control.BalloonResponse{}, errBalloonNotConfigured
 	}
 	var actual int64
 	if err := qmp.WithRaw(timeout, func(monitor *rawQMP.Monitor) error {

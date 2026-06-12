@@ -10,11 +10,11 @@ import (
 )
 
 func TestCloserRunsOnceAndTracksStoppedState(t *testing.T) {
-	state := NewState(control.RuntimeReady)
-	closer := NewCloser(state)
+	state := newState(control.RuntimeReady)
+	closer := newCloser(state)
 	calls := 0
 
-	if err := closer.Close(CloseActions{
+	if err := closer.Close(closeActions{
 		Cleanup: func() error {
 			calls++
 			if got := state.Current(); got != control.RuntimeStopping {
@@ -25,7 +25,7 @@ func TestCloserRunsOnceAndTracksStoppedState(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("first close: %v", err)
 	}
-	if err := closer.Close(CloseActions{
+	if err := closer.Close(closeActions{
 		Cleanup: func() error {
 			calls++
 			return errors.New("second close should not run")
@@ -43,24 +43,24 @@ func TestCloserRunsOnceAndTracksStoppedState(t *testing.T) {
 
 func TestCloserReturnsFirstCloseError(t *testing.T) {
 	wantErr := errors.New("close failed")
-	closer := NewCloser(NewState(control.RuntimeReady))
-	if err := closer.Close(CloseActions{Cleanup: func() error { return wantErr }}); !errors.Is(err, wantErr) {
+	closer := newCloser(newState(control.RuntimeReady))
+	if err := closer.Close(closeActions{Cleanup: func() error { return wantErr }}); !errors.Is(err, wantErr) {
 		t.Fatalf("close error: got %v want %v", err, wantErr)
 	}
-	if err := closer.Close(CloseActions{Cleanup: func() error { return nil }}); err != nil {
+	if err := closer.Close(closeActions{Cleanup: func() error { return nil }}); err != nil {
 		t.Fatalf("second close: %v", err)
 	}
 }
 
 func TestCloseActionsRunInShutdownOrder(t *testing.T) {
 	var calls []string
-	actions := CloseActions{
+	actions := closeActions{
 		WriteBackTimeout: time.Second,
 		WriteBack: func(context.Context) error {
 			calls = append(calls, "writeback")
 			return nil
 		},
-		ShutdownResources: ShutdownResources{
+		shutdownResources: shutdownResources{
 			Processes:     NewProcessSet(),
 			ShutdownDelay: time.Millisecond,
 			QMP: closeQMPFunc(func() error {
@@ -93,7 +93,7 @@ func TestCloseActionsRunInShutdownOrder(t *testing.T) {
 
 func TestCloseActionsSkipWriteBack(t *testing.T) {
 	called := false
-	actions := CloseActions{
+	actions := closeActions{
 		WriteBack: func(context.Context) error {
 			called = true
 			return nil

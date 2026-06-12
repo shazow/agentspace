@@ -3,74 +3,13 @@ package launch
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	backendfile "github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
-
-func PrepareFilesystem(plan *Plan, logger *slog.Logger) error {
-	if err := EnsureDirectories(plan.Manifest.ResolvedPersistenceDirectories()); err != nil {
-		return err
-	}
-	if err := EnsureParentDirectories(plan.RuntimeSocketCleanupFiles()); err != nil {
-		return err
-	}
-	if err := EnsureExistingSocketPaths(plan.ExternalVirtioFSSocketPaths); err != nil {
-		return err
-	}
-	if err := EnsureParentDirectories(plan.VolumeImagePaths); err != nil {
-		return err
-	}
-	if err := RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()); err != nil {
-		return err
-	}
-	if err := EnsureVolumeImages(plan.Volumes, logger); err != nil {
-		return err
-	}
-	return nil
-}
-
-func EnsureDirectories(directories []string) error {
-	for _, dir := range directories {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create directory %q: %w", dir, err)
-		}
-	}
-	return nil
-}
-
-func EnsureVolumeImages(volumes []manifest.Volume, logger *slog.Logger) error {
-	for _, volume := range volumes {
-		if !volume.AutoCreate {
-			continue
-		}
-
-		info, err := os.Stat(volume.ImagePath)
-		if err == nil {
-			if info.IsDir() {
-				return fmt.Errorf("volume image %q is a directory", volume.ImagePath)
-			}
-			continue
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("stat volume image %q: %w", volume.ImagePath, err)
-		}
-
-		if logger != nil {
-			logger.Info("creating volume image", "path", volume.ImagePath, "size_mib", volume.Size, "fs_type", volume.FSType)
-		}
-		if err := CreateVolumeImage(volume); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
 
 func CreateVolumeImage(volume manifest.Volume) error {
 	sizeBytes := volume.Size.Bytes()
@@ -124,36 +63,10 @@ func CreateVolumeImage(volume manifest.Volume) error {
 	return nil
 }
 
-func EnsureParentDirectories(paths []string) error {
-	for _, path := range paths {
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create directory %q: %w", dir, err)
-		}
-	}
-	return nil
-}
-
 func RemoveSocketPaths(paths []string) error {
 	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove socket %q: %w", path, err)
-		}
-	}
-	return nil
-}
-
-func EnsureExistingSocketPaths(paths []string) error {
-	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("external virtiofs socket %q does not exist", path)
-			}
-			return fmt.Errorf("stat external virtiofs socket %q: %w", path, err)
-		}
-		if info.Mode()&os.ModeSocket == 0 {
-			return fmt.Errorf("external virtiofs socket %q is not a socket", path)
 		}
 	}
 	return nil

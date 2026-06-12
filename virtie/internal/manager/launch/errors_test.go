@@ -10,7 +10,7 @@ import (
 
 func TestWrapStagePreservesStageAndCause(t *testing.T) {
 	cause := errors.New("failed")
-	err := WrapStage("vm startup", cause)
+	err := wrapStage("vm startup", cause)
 	if !errors.Is(err, cause) {
 		t.Fatalf("wrapped error does not preserve cause: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestWrapFixedStage(t *testing.T) {
 
 func TestWrapCommandError(t *testing.T) {
 	cause := errors.New("failed")
-	err := WrapCommandError("active session", "ssh", cause)
+	err := wrapCommandError("active session", "ssh", cause)
 	if !errors.Is(err, cause) {
 		t.Fatalf("wrapped error does not preserve cause: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestWrapCommandError(t *testing.T) {
 }
 
 func TestWrapCommandErrorNoopsWithoutError(t *testing.T) {
-	if err := WrapCommandError("active session", "ssh", nil); err != nil {
+	if err := wrapCommandError("active session", "ssh", nil); err != nil {
 		t.Fatalf("error: got %v want nil", err)
 	}
 }
@@ -96,7 +96,7 @@ func TestWrapHotplugErrorNoopsWithoutError(t *testing.T) {
 
 func TestFirstUnexpectedExitNoopsWithoutExitedProcess(t *testing.T) {
 	group := executor.NewGroup((&executortest.Process{OverrideName: "qemu"}).Process())
-	if err := FirstUnexpectedExit("vm startup", group); err != nil {
+	if err := firstUnexpectedExit("vm startup", group); err != nil {
 		t.Fatalf("unexpected exit: %v", err)
 	}
 }
@@ -108,7 +108,7 @@ func TestFirstUnexpectedExitWrapsCleanExit(t *testing.T) {
 	<-wrapped.Done()
 	group := executor.NewGroup(wrapped)
 
-	err := FirstUnexpectedExit("vm startup", group)
+	err := firstUnexpectedExit("vm startup", group)
 	var stageErr *StageError
 	if !errors.As(err, &stageErr) {
 		t.Fatalf("error type: got %T", err)
@@ -129,7 +129,7 @@ func TestFirstUnexpectedExitWrapsProcessError(t *testing.T) {
 	<-wrapped.Done()
 	group := executor.NewGroup(wrapped)
 
-	err := FirstUnexpectedExit("virtiofs startup", group)
+	err := firstUnexpectedExit("virtiofs startup", group)
 	if !errors.Is(err, waitErr) {
 		t.Fatalf("error cause: got %v want %v", err, waitErr)
 	}

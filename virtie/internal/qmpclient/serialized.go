@@ -12,6 +12,7 @@ type serializedClient struct {
 	mu     sync.Mutex
 }
 
+// Serialized wraps client so all QMP calls are executed serially.
 func Serialized(client Client) Client {
 	if client == nil {
 		return nil

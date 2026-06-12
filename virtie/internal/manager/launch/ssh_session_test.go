@@ -100,7 +100,7 @@ func TestRunSSHSessionWrapsCommandBuildError(t *testing.T) {
 	err := RunSSHSession(context.Background(), SSHSession{
 		Plan:   &Plan{Manifest: launchManifest, CID: 10},
 		Runner: &fakeSSHSessionRunner{},
-		WrapStage: func(stage string, err error) error {
+		wrapStage: func(stage string, err error) error {
 			if stage != "active session" {
 				t.Fatalf("stage: got %q want active session", stage)
 			}

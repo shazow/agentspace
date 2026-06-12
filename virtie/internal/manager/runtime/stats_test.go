@@ -46,7 +46,7 @@ func TestControlStats(t *testing.T) {
 	stats.MarkCompleted(started.Add(8 * time.Second))
 	stats.MarkSSHAttempt(started.Add(4 * time.Second))
 
-	got := ControlStats(stats)
+	got := controlStats(stats)
 	if got.StartedAt != started || got.BootStartedAt != started.Add(time.Second) {
 		t.Fatalf("unexpected timestamps: %#v", got)
 	}
@@ -67,7 +67,7 @@ func TestStatsFinalizerMarksCompletedAndWritesOutput(t *testing.T) {
 	if !strings.HasPrefix(got, "stats: ") || !strings.Contains(got, "total=") {
 		t.Fatalf("unexpected stats output: %q", got)
 	}
-	if ControlStats(stats).CompletedAt.IsZero() {
+	if controlStats(stats).CompletedAt.IsZero() {
 		t.Fatal("stats finalizer did not mark completion")
 	}
 }

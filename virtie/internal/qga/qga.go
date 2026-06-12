@@ -10,22 +10,51 @@ import (
 	"time"
 )
 
-type Client interface {
+// Pinger checks whether the guest agent is accepting commands.
+type Pinger interface {
 	Ping(timeout time.Duration) error
+}
+
+// FileWriter is the subset of guest-agent file operations needed to write a file.
+type FileWriter interface {
 	OpenFile(timeout time.Duration, path string) (int, error)
-	OpenFileRead(timeout time.Duration, path string) (int, error)
-	ReadFile(timeout time.Duration, handle int, count int) (string, bool, error)
 	WriteFile(timeout time.Duration, handle int, payloadBase64 string) error
 	CloseFile(timeout time.Duration, handle int) error
+}
+
+// FileReader is the subset of guest-agent file operations needed to read a file.
+type FileReader interface {
+	OpenFileRead(timeout time.Duration, path string) (int, error)
+	ReadFile(timeout time.Duration, handle int, count int) (string, bool, error)
+	CloseFile(timeout time.Duration, handle int) error
+}
+
+// ExecRunner starts a guest process and polls its exit status.
+type ExecRunner interface {
 	Exec(timeout time.Duration, path string, args []string, captureOutput bool) (int, error)
 	ExecStatus(timeout time.Duration, pid int) (ExecStatus, error)
+}
+
+// Disconnecter closes an open guest-agent connection.
+type Disconnecter interface {
 	Disconnect() error
 }
 
+// Client is a full guest-agent connection.
+type Client interface {
+	Pinger
+	FileWriter
+	FileReader
+	ExecRunner
+	Disconnecter
+}
+
+// Dialer opens guest-agent connections.
 type Dialer interface {
 	Dial(ctx context.Context, socketPath string, timeout time.Duration) (Client, error)
 }
 
+// SocketDialer opens guest-agent connections over Unix sockets.
 type SocketDialer struct{}
 
 type socketClient struct {
@@ -34,6 +63,7 @@ type socketClient struct {
 	mu      sync.Mutex
 }
 
+// ExecStatus is the guest-agent status response for an executed process.
 type ExecStatus struct {
 	Exited   bool
 	ExitCode int

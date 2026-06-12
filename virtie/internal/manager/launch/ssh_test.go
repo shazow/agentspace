@@ -26,7 +26,7 @@ func TestBuildSSHCommandBuildsInteractiveSession(t *testing.T) {
 		},
 	}
 
-	session, err := BuildSSHCommand(launchManifest, 10, []string{"bash", "-lc", "echo hi"})
+	session, err := buildSSHCommand(launchManifest, 10, []string{"bash", "-lc", "echo hi"})
 	if err != nil {
 		t.Fatalf("build ssh command: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestBuildSSHCommandShellQuotesRemoteCommand(t *testing.T) {
 		},
 	}
 
-	session, err := BuildSSHCommand(launchManifest, 10, []string{"printf", "%s\n", "it's $HOME", ""})
+	session, err := buildSSHCommand(launchManifest, 10, []string{"printf", "%s\n", "it's $HOME", ""})
 	if err != nil {
 		t.Fatalf("build ssh command: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestBuildSSHCommandShellQuotesRemoteCommand(t *testing.T) {
 		t.Fatalf("unexpected quoted remote command: got %q want %q", got, want)
 	}
 
-	configuredCommand, err := BuildSSHCommand(launchManifest, 10, []string{"tmux new-session -A -s codex \"npx @openai/codex --yolo\""})
+	configuredCommand, err := buildSSHCommand(launchManifest, 10, []string{"tmux new-session -A -s codex \"npx @openai/codex --yolo\""})
 	if err != nil {
 		t.Fatalf("build configured ssh command: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestBuildSSHCommandRendersManifestExecTemplates(t *testing.T) {
 		},
 	}
 
-	session, err := BuildSSHCommand(launchManifest, 10, nil)
+	session, err := buildSSHCommand(launchManifest, 10, nil)
 	if err != nil {
 		t.Fatalf("build ssh command: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestBuildSSHCommandRendersManifestExecTemplates(t *testing.T) {
 	if !containsString(commandArgs(session), "control-10") || !containsString(commandArgs(session), "HostName=agent@vsock/10") {
 		t.Fatalf("expected rendered ssh args, got %#v", commandArgs(session))
 	}
-	hint, err := BuildSSHCommandHint(launchManifest, 10)
+	hint, err := buildSSHCommandHint(launchManifest, 10)
 	if err != nil {
 		t.Fatalf("build ssh command hint: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestBuildSSHCommandHintReturnsTemplateError(t *testing.T) {
 		},
 	}
 
-	_, err := BuildSSHCommandHint(launchManifest, 10)
+	_, err := buildSSHCommandHint(launchManifest, 10)
 	if err == nil || !strings.Contains(err.Error(), `map has no entry for key "Missing"`) {
 		t.Fatalf("expected ssh hint template error, got %v", err)
 	}

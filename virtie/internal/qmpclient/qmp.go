@@ -20,24 +20,52 @@ const (
 	defaultQMPMigrationTimeout = 30 * time.Second
 )
 
-type Client interface {
+// RawRunner runs raw QMP monitor commands.
+type RawRunner interface {
 	WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error
 	RunRaw(timeout time.Duration, command string) error
+}
+
+// DeviceController removes QEMU devices and waits for completion.
+type DeviceController interface {
 	DeviceDelAndWait(timeout time.Duration, id string) error
+}
+
+// Lifecycle controls the VM run state.
+type Lifecycle interface {
 	Stop(timeout time.Duration) error
 	Cont(timeout time.Duration) error
 	QueryStatus(timeout time.Duration) (string, error)
+	Quit(timeout time.Duration) error
+}
+
+// MigrationController runs QMP migration commands and queries their status.
+type MigrationController interface {
 	MigrateToFile(timeout time.Duration, path string) error
 	MigrateIncoming(timeout time.Duration, path string) error
 	QueryMigrate(timeout time.Duration) (string, error)
-	Quit(timeout time.Duration) error
+}
+
+// Disconnecter closes an open QMP connection.
+type Disconnecter interface {
 	Disconnect() error
 }
 
+// Client is a full QMP monitor connection.
+type Client interface {
+	RawRunner
+	DeviceController
+	Lifecycle
+	MigrationController
+	Disconnecter
+}
+
+// Dialer opens QMP monitor connections.
 type Dialer interface {
 	Dial(ctx context.Context, socketPath string, timeout time.Duration) (Client, error)
 }
 
+// SocketMonitorDialer opens QMP monitor connections over Unix sockets.
 type SocketMonitorDialer struct{}
 
 type socketMonitorClient struct {

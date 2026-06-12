@@ -8,7 +8,7 @@ import (
 )
 
 func TestStateTracksCurrentValue(t *testing.T) {
-	state := NewState(control.RuntimeStarting)
+	state := newState(control.RuntimeStarting)
 	if got := state.Current(); got != control.RuntimeStarting {
 		t.Fatalf("initial state: got %q want %q", got, control.RuntimeStarting)
 	}
@@ -20,7 +20,7 @@ func TestStateTracksCurrentValue(t *testing.T) {
 }
 
 func TestStateSupportsConcurrentAccess(t *testing.T) {
-	state := NewState(control.RuntimeStarting)
+	state := newState(control.RuntimeStarting)
 	var wg sync.WaitGroup
 	for range 100 {
 		wg.Add(2)

@@ -34,7 +34,7 @@ type SSHSession struct {
 	WaitForRetry   func(context.Context, executor.Group) error
 	EnsureKey      func(*manifest.Manifest) (SSHAutoprovisionKey, error)
 	InstallKey     func(context.Context, *manifest.Manifest, SSHAutoprovisionKey, executor.Group) error
-	WrapStage      func(stage string, err error) error
+	wrapStage      func(stage string, err error) error
 	Now            func() time.Time
 }
 
@@ -55,7 +55,7 @@ func RunSSHSession(ctx context.Context, session SSHSession) error {
 		if session.MarkSSHAttempt != nil {
 			session.MarkSSHAttempt(attemptStarted)
 		}
-		cmd, err := BuildSSHCommandWithArgv(launchManifest, plan.CID, plan.RemoteCommand, argv)
+		cmd, err := buildSSHCommandWithArgv(launchManifest, plan.CID, plan.RemoteCommand, argv)
 		if err != nil {
 			return wrapSSHSessionStage(session, "active session", err)
 		}
@@ -126,8 +126,8 @@ func sshSessionNow(session SSHSession) time.Time {
 }
 
 func wrapSSHSessionStage(session SSHSession, stage string, err error) error {
-	if session.WrapStage != nil {
-		return session.WrapStage(stage, err)
+	if session.wrapStage != nil {
+		return session.wrapStage(stage, err)
 	}
-	return WrapStage(stage, err)
+	return wrapStage(stage, err)
 }

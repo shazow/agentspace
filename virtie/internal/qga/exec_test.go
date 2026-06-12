@@ -101,14 +101,6 @@ type execClient struct {
 	statusCalls int
 }
 
-func (c *execClient) Ping(time.Duration) error                        { return nil }
-func (c *execClient) OpenFile(time.Duration, string) (int, error)     { return 0, nil }
-func (c *execClient) OpenFileRead(time.Duration, string) (int, error) { return 0, nil }
-func (c *execClient) ReadFile(time.Duration, int, int) (string, bool, error) {
-	return "", false, nil
-}
-func (c *execClient) WriteFile(time.Duration, int, string) error { return nil }
-func (c *execClient) CloseFile(time.Duration, int) error         { return nil }
 func (c *execClient) Exec(_ time.Duration, path string, args []string, captureOutput bool) (int, error) {
 	c.execPath = path
 	c.execArgs = append([]string(nil), args...)

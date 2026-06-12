@@ -13,7 +13,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
-func GuestFilePayloadBase64(file manifest.ResolvedWriteFile) (string, error) {
+func guestFilePayloadBase64(file manifest.ResolvedWriteFile) (string, error) {
 	if file.Content.Kind == manifest.WriteFileContentText {
 		return base64.StdEncoding.EncodeToString([]byte(file.Content.Text)), nil
 	}
@@ -21,14 +21,14 @@ func GuestFilePayloadBase64(file manifest.ResolvedWriteFile) (string, error) {
 		return "", fmt.Errorf("guest file %q has no text or host path", file.GuestPath)
 	}
 
-	data, err := ReadHostFileForGuest(file)
+	data, err := readHostFileForGuest(file)
 	if err != nil {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-func ReadHostFileForGuest(file manifest.ResolvedWriteFile) ([]byte, error) {
+func readHostFileForGuest(file manifest.ResolvedWriteFile) ([]byte, error) {
 	if file.Content.Kind != manifest.WriteFileContentPath {
 		return nil, fmt.Errorf("guest file %q has no host path", file.GuestPath)
 	}
@@ -48,7 +48,7 @@ func ReadHostFileForGuest(file manifest.ResolvedWriteFile) ([]byte, error) {
 	return data, nil
 }
 
-func WriteBackHostPath(file manifest.ResolvedWriteFile) (string, error) {
+func writeBackHostPath(file manifest.ResolvedWriteFile) (string, error) {
 	if file.Content.Kind != manifest.WriteFileContentPath {
 		return "", fmt.Errorf("guest file %q has no host path", file.GuestPath)
 	}
@@ -135,14 +135,14 @@ type WorkspaceCWDMounter struct {
 	Mounted    func(source string, target string)
 }
 
-const WorkspaceCWDSource = "/mnt/cwd"
+const workspaceCWDSource = "/mnt/cwd"
 
 func WriteGuestFiles(ctx context.Context, files []manifest.ResolvedWriteFile, writer GuestFileWriter) error {
 	for _, file := range files {
 		if !file.Overwrite {
 			exists, err := writer.PathExists(ctx, file.GuestPath)
 			if err != nil {
-				return WrapStage("guest file write", err)
+				return wrapStage("guest file write", err)
 			}
 			if exists {
 				if writer.SkipExisting != nil {
@@ -151,24 +151,24 @@ func WriteGuestFiles(ctx context.Context, files []manifest.ResolvedWriteFile, wr
 				continue
 			}
 		}
-		payloadBase64, err := GuestFilePayloadBase64(file)
+		payloadBase64, err := guestFilePayloadBase64(file)
 		if err != nil {
-			return WrapStage("guest file write", err)
+			return wrapStage("guest file write", err)
 		}
 		if err := writer.InstallDirectory(ctx, file); err != nil {
-			return WrapStage("guest file write", err)
+			return wrapStage("guest file write", err)
 		}
 		if err := writer.WriteFile(ctx, file.GuestPath, payloadBase64); err != nil {
-			return WrapStage("guest file write", err)
+			return wrapStage("guest file write", err)
 		}
 		if file.Chown != "" {
 			if err := writer.Chown(ctx, file.GuestPath, file.Chown); err != nil {
-				return WrapStage("guest file write", err)
+				return wrapStage("guest file write", err)
 			}
 		}
 		if file.Mode != "" {
 			if err := writer.Chmod(ctx, file.GuestPath, file.Mode); err != nil {
-				return WrapStage("guest file write", err)
+				return wrapStage("guest file write", err)
 			}
 		}
 		if writer.Wrote != nil {
@@ -181,21 +181,21 @@ func WriteGuestFiles(ctx context.Context, files []manifest.ResolvedWriteFile, wr
 func MountWorkspaceCWD(ctx context.Context, launchManifest *manifest.Manifest, mounter WorkspaceCWDMounter) error {
 	baseDir := launchManifest.Workspace.GuestDir
 	if baseDir == "" {
-		return WrapStage("workspace cwd mount", fmt.Errorf("workspace.guest_dir is required when workspace.mount_cwd is true"))
+		return wrapStage("workspace cwd mount", fmt.Errorf("workspace.guest_dir is required when workspace.mount_cwd is true"))
 	}
 	name := filepath.Base(launchManifest.Paths.WorkingDir)
 	if name == "." || name == string(filepath.Separator) || name == "" {
-		return WrapStage("workspace cwd mount", fmt.Errorf("derive workspace cwd name from working directory %q", launchManifest.Paths.WorkingDir))
+		return wrapStage("workspace cwd mount", fmt.Errorf("derive workspace cwd name from working directory %q", launchManifest.Paths.WorkingDir))
 	}
 	target := path.Join(baseDir, name)
 	if err := mounter.InstallDir(ctx, target, []string{"-d", baseDir, target}); err != nil {
-		return WrapStage("workspace cwd mount", err)
+		return wrapStage("workspace cwd mount", err)
 	}
-	if err := mounter.MountBind(ctx, WorkspaceCWDSource, target, []string{"--bind", WorkspaceCWDSource, target}); err != nil {
-		return WrapStage("workspace cwd mount", err)
+	if err := mounter.MountBind(ctx, workspaceCWDSource, target, []string{"--bind", workspaceCWDSource, target}); err != nil {
+		return wrapStage("workspace cwd mount", err)
 	}
 	if mounter.Mounted != nil {
-		mounter.Mounted(WorkspaceCWDSource, target)
+		mounter.Mounted(workspaceCWDSource, target)
 	}
 	return nil
 }
@@ -214,14 +214,14 @@ func WriteBackGuestFiles(ctx context.Context, files []manifest.ResolvedWriteFile
 	for _, file := range files {
 		data, err := backer.ReadFile(ctx, file.GuestPath)
 		if err != nil {
-			return WrapStage("guest file write-back", err)
+			return wrapStage("guest file write-back", err)
 		}
-		hostPath, err := WriteBackHostPath(file)
+		hostPath, err := writeBackHostPath(file)
 		if err != nil {
-			return WrapStage("guest file write-back", err)
+			return wrapStage("guest file write-back", err)
 		}
 		if err := backer.WriteHostFile(hostPath, data); err != nil {
-			return WrapStage("guest file write-back", fmt.Errorf("write host file %q from guest path %q: %w", hostPath, file.GuestPath, err))
+			return wrapStage("guest file write-back", fmt.Errorf("write host file %q from guest path %q: %w", hostPath, file.GuestPath, err))
 		}
 		if backer.Wrote != nil {
 			backer.Wrote(file.GuestPath, hostPath)
@@ -260,14 +260,14 @@ func InstallGuestFileDirectory(ctx context.Context, installer GuestDirectoryInst
 
 	for i := len(missingDirs) - 1; i >= 0; i-- {
 		dir := missingDirs[i]
-		if err := installer.Install(ctx, dir, GuestInstallDirectoryArgs(dir, owner, mode)); err != nil {
+		if err := installer.Install(ctx, dir, guestInstallDirectoryArgs(dir, owner, mode)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func GuestInstallDirectoryArgs(guestDir string, owner string, mode string) []string {
+func guestInstallDirectoryArgs(guestDir string, owner string, mode string) []string {
 	args := []string{"-d"}
 	if owner != "" {
 		user, group, _ := strings.Cut(owner, ":")
@@ -279,12 +279,12 @@ func GuestInstallDirectoryArgs(guestDir string, owner string, mode string) []str
 		}
 	}
 	if mode != "" {
-		args = append(args, "-m", GuestDirectoryMode(mode))
+		args = append(args, "-m", guestDirectoryMode(mode))
 	}
 	return append(args, guestDir)
 }
 
-func GuestDirectoryMode(mode string) string {
+func guestDirectoryMode(mode string) string {
 	prefix := ""
 	digits := mode
 	if strings.HasPrefix(mode, "0") {

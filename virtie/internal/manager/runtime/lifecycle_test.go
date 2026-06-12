@@ -18,11 +18,11 @@ func (r fakeSuspendRequester) RequestAndWait(context.Context) error {
 }
 
 func TestMarkReadyAndStatus(t *testing.T) {
-	state := NewState(control.RuntimeStarting)
-	MarkReady(state)
+	state := newState(control.RuntimeStarting)
+	markReady(state)
 	stats := NewStats(time.Now())
 	stats.MarkBootStarted(time.Now().Add(time.Second))
-	got := Status(state, 7, control.StatusPaths{ControlSocket: "/tmp/virtie.sock"}, stats)
+	got := status(state, 7, control.StatusPaths{ControlSocket: "/tmp/virtie.sock"}, stats)
 	if got.State != control.RuntimeReady || got.CID != 7 || got.Paths.ControlSocket != "/tmp/virtie.sock" {
 		t.Fatalf("status: %#v", got)
 	}
@@ -32,8 +32,8 @@ func TestMarkReadyAndStatus(t *testing.T) {
 }
 
 func TestQueueSuspendTransitionsState(t *testing.T) {
-	state := NewState(control.RuntimeReady)
-	if err := QueueSuspend(context.Background(), state, fakeSuspendRequester{}, func(error) bool { return false }); err != nil {
+	state := newState(control.RuntimeReady)
+	if err := queueSuspend(context.Background(), state, fakeSuspendRequester{}, func(error) bool { return false }); err != nil {
 		t.Fatalf("queue suspend: %v", err)
 	}
 	if got := state.Current(); got != control.RuntimeSuspended {
@@ -43,8 +43,8 @@ func TestQueueSuspendTransitionsState(t *testing.T) {
 
 func TestQueueSuspendAllowsSavedSuspendExit(t *testing.T) {
 	savedErr := errors.New("saved suspend")
-	state := NewState(control.RuntimeReady)
-	err := QueueSuspend(context.Background(), state, fakeSuspendRequester{err: savedErr}, func(err error) bool {
+	state := newState(control.RuntimeReady)
+	err := queueSuspend(context.Background(), state, fakeSuspendRequester{err: savedErr}, func(err error) bool {
 		return errors.Is(err, savedErr)
 	})
 	if err != nil {
@@ -57,8 +57,8 @@ func TestQueueSuspendAllowsSavedSuspendExit(t *testing.T) {
 
 func TestQueueSuspendPropagatesUnexpectedError(t *testing.T) {
 	suspendErr := errors.New("failed")
-	state := NewState(control.RuntimeReady)
-	err := QueueSuspend(context.Background(), state, fakeSuspendRequester{err: suspendErr}, func(error) bool {
+	state := newState(control.RuntimeReady)
+	err := queueSuspend(context.Background(), state, fakeSuspendRequester{err: suspendErr}, func(error) bool {
 		return false
 	})
 	if !errors.Is(err, suspendErr) {

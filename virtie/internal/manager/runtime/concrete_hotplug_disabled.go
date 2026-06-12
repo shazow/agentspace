@@ -9,5 +9,5 @@ import (
 )
 
 func (r *Runtime) Hotplug(ctx context.Context, req control.HotplugRequest) (control.HotplugResponse, error) {
-	return control.HotplugResponse{}, UnsupportedHotplug()
+	return control.HotplugResponse{}, unsupportedHotplug()
 }

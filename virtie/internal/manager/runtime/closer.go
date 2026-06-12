@@ -9,19 +9,19 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
 
-type Disconnecter interface {
+type disconnecter interface {
 	Disconnect() error
 }
 
-type ShutdownResources struct {
+type shutdownResources struct {
 	Processes     *ProcessSet
 	ShutdownDelay time.Duration
-	QMP           Disconnecter
+	QMP           disconnecter
 	Stats         func()
 }
 
-type CloseActions struct {
-	ShutdownResources
+type closeActions struct {
+	shutdownResources
 	WriteBack        func(context.Context) error
 	WriteBackTimeout time.Duration
 	SkipWriteBack    bool
@@ -29,16 +29,16 @@ type CloseActions struct {
 	Cleanup          func() error
 }
 
-type Closer struct {
+type closer struct {
 	once  sync.Once
-	state *State
+	state *state
 }
 
-func NewCloser(state *State) *Closer {
-	return &Closer{state: state}
+func newCloser(state *state) *closer {
+	return &closer{state: state}
 }
 
-func (c *Closer) Close(actions CloseActions) error {
+func (c *closer) Close(actions closeActions) error {
 	var err error
 	c.once.Do(func() {
 		if c.state != nil {
@@ -52,7 +52,7 @@ func (c *Closer) Close(actions CloseActions) error {
 	return err
 }
 
-func (a CloseActions) Run() error {
+func (a closeActions) Run() error {
 	var err error
 	if a.WriteBack != nil && !a.SkipWriteBack {
 		writeBackCtx, cancelWriteBack := context.WithTimeout(context.Background(), a.WriteBackTimeout)

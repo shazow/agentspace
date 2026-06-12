@@ -6,10 +6,12 @@ import (
 	"syscall"
 )
 
+// FailedPrecondition wraps err as an RPC failed-precondition error.
 func FailedPrecondition(err error) error {
 	return &RPCError{Code: ErrFailedPrecondition, Message: err.Error()}
 }
 
+// IsSocketUnavailable reports whether err means no control socket is reachable.
 func IsSocketUnavailable(err error) bool {
 	if err == nil {
 		return false
@@ -17,6 +19,7 @@ func IsSocketUnavailable(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
 }
 
+// IsUnsupported reports whether err is an unsupported-capability RPC error.
 func IsUnsupported(err error) bool {
 	var rpcErr *RPCError
 	return errors.As(err, &rpcErr) && rpcErr.Code == ErrUnsupported

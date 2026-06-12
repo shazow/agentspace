@@ -7,28 +7,28 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
 
-var ErrSuspendNotReady = errors.New("suspend handler is not ready")
+var errSuspendNotReady = errors.New("suspend handler is not ready")
 
-type SuspendRequester interface {
+type suspendRequester interface {
 	RequestAndWait(context.Context) error
 }
 
-func MarkReady(state *State) {
+func markReady(state *state) {
 	state.Set(control.RuntimeReady)
 }
 
-func Status(state *State, cid int, paths control.StatusPaths, stats *Stats) control.StatusResponse {
+func status(state *state, cid int, paths control.StatusPaths, stats *Stats) control.StatusResponse {
 	return control.StatusResponse{
 		State: state.Current(),
 		CID:   cid,
 		Paths: paths,
-		Stats: ControlStats(stats),
+		Stats: controlStats(stats),
 	}
 }
 
-func QueueSuspend(ctx context.Context, state *State, requester SuspendRequester, savedSuspendExit func(error) bool) error {
+func queueSuspend(ctx context.Context, state *state, requester suspendRequester, savedSuspendExit func(error) bool) error {
 	if requester == nil {
-		return ErrSuspendNotReady
+		return errSuspendNotReady
 	}
 	state.Set(control.RuntimeSuspending)
 	err := requester.RequestAndWait(ctx)

@@ -115,7 +115,7 @@ func (s *Stats) String() string {
 	return strings.Join(fields, " ")
 }
 
-func ControlStats(stats *Stats) control.RuntimeStats {
+func controlStats(stats *Stats) control.RuntimeStats {
 	if stats == nil {
 		return control.RuntimeStats{}
 	}

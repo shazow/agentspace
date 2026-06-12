@@ -49,14 +49,14 @@ func WaitForSSHReady(ctx context.Context, wait SSHReadyWait) error {
 	}
 
 	if wait.Dialer == nil {
-		return WrapStage(stage, fmt.Errorf("ssh readiness dialer is not configured"))
+		return wrapStage(stage, fmt.Errorf("ssh readiness dialer is not configured"))
 	}
 	reader, err := wait.Dialer.Dial(readyCtx, wait.SocketPath, wait.Timeout)
 	if err != nil {
 		if readyCtx.Err() != nil {
 			return wrapSSHReadyWait(stage, readyCtx.Err())
 		}
-		return WrapStage(stage, fmt.Errorf("connect ssh readiness socket %q: %w", wait.SocketPath, err))
+		return wrapStage(stage, fmt.Errorf("connect ssh readiness socket %q: %w", wait.SocketPath, err))
 	}
 	defer reader.Close()
 
@@ -76,11 +76,11 @@ func WaitForSSHReady(ctx context.Context, wait SSHReadyWait) error {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				return WrapStage(stage, err)
+				return wrapStage(stage, err)
 			}
 			return nil
 		case <-ticker.C:
-			if err := FirstUnexpectedExit(stage, wait.Watchers); err != nil {
+			if err := firstUnexpectedExit(stage, wait.Watchers); err != nil {
 				return err
 			}
 		case <-readyCtx.Done():
@@ -90,5 +90,5 @@ func WaitForSSHReady(ctx context.Context, wait SSHReadyWait) error {
 }
 
 func wrapSSHReadyWait(stage string, err error) error {
-	return WrapStage(stage, fmt.Errorf("wait for ssh readiness: %w", err))
+	return wrapStage(stage, fmt.Errorf("wait for ssh readiness: %w", err))
 }

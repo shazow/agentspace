@@ -10,7 +10,6 @@ import (
 	"time"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
-	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
@@ -110,17 +109,17 @@ func (f *fakeOptionalFeature) AppendQEMUArgs(
 	return append(args, "-device", f.appendMarker), nil
 }
 
-func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, qmpClient qmpclient.Client) *runtimepkg.Task {
+func (f *fakeOptionalFeature) StartTask(ctx context.Context, runtime optionalFeatureRuntime, manifest *manifest.Manifest, qmpClient qmpclient.Client) func(context.Context) error {
 	if f.runner != nil {
 		f.runner.mu.Lock()
 		f.startedAfterSSHSession = f.runner.interactiveStarts
 		f.runner.mu.Unlock()
 	}
-	return runtimepkg.StartTask(ctx, func(taskCtx context.Context) error {
+	return func(taskCtx context.Context) error {
 		<-taskCtx.Done()
 		f.stoppedAt = time.Now()
 		return nil
-	})
+	}
 }
 
 func setOptionalFeaturesForTest(t *testing.T, features ...optionalFeature) {

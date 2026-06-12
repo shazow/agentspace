@@ -23,7 +23,7 @@ func TestGuestFilePayloadRejectsHostSymlinkWhenFollowLinksFalse(t *testing.T) {
 		t.Fatalf("create symlink fixture: %v", err)
 	}
 
-	_, err := GuestFilePayloadBase64(manifest.ResolvedWriteFile{
+	_, err := guestFilePayloadBase64(manifest.ResolvedWriteFile{
 		GuestPath:   "/etc/from-link",
 		Content:     manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: linkPath},
 		FollowLinks: false,
@@ -32,7 +32,7 @@ func TestGuestFilePayloadRejectsHostSymlinkWhenFollowLinksFalse(t *testing.T) {
 		t.Fatalf("expected followLinks symlink error, got %v", err)
 	}
 
-	payload, err := GuestFilePayloadBase64(manifest.ResolvedWriteFile{
+	payload, err := guestFilePayloadBase64(manifest.ResolvedWriteFile{
 		GuestPath:   "/etc/from-link",
 		Content:     manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: linkPath},
 		FollowLinks: true,
@@ -85,7 +85,7 @@ func TestGuestInstallDirectoryArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := GuestInstallDirectoryArgs("/etc/virtie", tt.chown, tt.mode); !reflect.DeepEqual(got, tt.expected) {
+			if got := guestInstallDirectoryArgs("/etc/virtie", tt.chown, tt.mode); !reflect.DeepEqual(got, tt.expected) {
 				t.Fatalf("unexpected install args: got %#v want %#v", got, tt.expected)
 			}
 		})
@@ -518,7 +518,7 @@ func TestWriteBackHostPathFollowsHostSymlinkWhenEnabled(t *testing.T) {
 		t.Fatalf("create symlink fixture: %v", err)
 	}
 
-	got, err := WriteBackHostPath(manifest.ResolvedWriteFile{
+	got, err := writeBackHostPath(manifest.ResolvedWriteFile{
 		GuestPath:   "/var/lib/virtie/host",
 		Content:     manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: linkPath},
 		FollowLinks: true,

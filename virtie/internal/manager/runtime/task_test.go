@@ -10,7 +10,7 @@ import (
 func TestTaskStopCancelsAndReturnsErrorOnce(t *testing.T) {
 	wantErr := errors.New("stopped")
 	calls := 0
-	task := StartTask(context.Background(), func(ctx context.Context) error {
+	task := startTask(context.Background(), func(ctx context.Context) error {
 		<-ctx.Done()
 		calls++
 		return wantErr
@@ -29,13 +29,13 @@ func TestTaskStopCancelsAndReturnsErrorOnce(t *testing.T) {
 
 func TestTaskGroupStopsInReverseOrder(t *testing.T) {
 	var got []string
-	var group TaskGroup
-	group.Add(StartTask(context.Background(), func(ctx context.Context) error {
+	var group taskGroup
+	group.Add(startTask(context.Background(), func(ctx context.Context) error {
 		<-ctx.Done()
 		got = append(got, "first")
 		return nil
 	}))
-	group.Add(StartTask(context.Background(), func(ctx context.Context) error {
+	group.Add(startTask(context.Background(), func(ctx context.Context) error {
 		<-ctx.Done()
 		got = append(got, "second")
 		return nil
