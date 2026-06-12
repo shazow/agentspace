@@ -26,17 +26,6 @@ func TestBalloonRequiresConfiguredDevice(t *testing.T) {
 	}
 }
 
-func TestControlBalloonMapsMissingDeviceToFailedPrecondition(t *testing.T) {
-	_, err := ControlBalloon(context.Background(), nil, fakeBalloonQMP{}, time.Second, control.BalloonRequest{})
-	var rpcErr *control.RPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("error type: got %T", err)
-	}
-	if rpcErr.Code != control.ErrFailedPrecondition {
-		t.Fatalf("code: got %s want %s", rpcErr.Code, control.ErrFailedPrecondition)
-	}
-}
-
 func TestBalloonPropagatesQMPError(t *testing.T) {
 	qmpErr := errors.New("qmp failed")
 	_, err := Balloon(context.Background(), &balloontypes.Device{}, fakeBalloonQMP{err: qmpErr}, time.Second, control.BalloonRequest{})

@@ -30,18 +30,12 @@ const (
 	WaitVM   = launch.WaitVM
 )
 
-type LaunchSpec = launch.Spec
-type Plan = launch.Plan
-type RuntimePaths = launch.RuntimePaths
-type Config = launch.Config
-type Runtime = runtimepkg.Runtime
-
 type Launcher struct {
 	manager *manager
 }
 
-func DefaultConfig() Config {
-	return Config{
+func DefaultConfig() launch.Config {
+	return launch.Config{
 		Locker:              &fileLocker{},
 		VSockCIDChecker:     newHostVSockCIDChecker(),
 		Runner:              &executor.Runner{},
@@ -61,7 +55,7 @@ func DefaultConfig() Config {
 	}
 }
 
-func NewLauncher(configs ...Config) *Launcher {
+func NewLauncher(configs ...launch.Config) *Launcher {
 	config := DefaultConfig()
 	if len(configs) > 0 {
 		config = launch.MergeConfig(config, configs[0])
@@ -69,7 +63,7 @@ func NewLauncher(configs ...Config) *Launcher {
 	return &Launcher{manager: newManagerFromConfig(config)}
 }
 
-func (l *Launcher) Plan(ctx context.Context, spec LaunchSpec) (*Plan, error) {
+func (l *Launcher) Plan(ctx context.Context, spec launch.Spec) (*launch.Plan, error) {
 	_ = ctx
 	if l == nil || l.manager == nil {
 		l = NewLauncher()
@@ -77,7 +71,7 @@ func (l *Launcher) Plan(ctx context.Context, spec LaunchSpec) (*Plan, error) {
 	return l.manager.planLaunch(spec)
 }
 
-func (l *Launcher) Start(ctx context.Context, plan *Plan) (*Runtime, error) {
+func (l *Launcher) Start(ctx context.Context, plan *launch.Plan) (*runtimepkg.Runtime, error) {
 	if l == nil || l.manager == nil {
 		l = NewLauncher()
 	}

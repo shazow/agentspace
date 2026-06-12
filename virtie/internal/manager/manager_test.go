@@ -105,7 +105,7 @@ func TestManagerPlanLaunchResolvesRuntimeInputs(t *testing.T) {
 
 	remoteCommand := []string{"uname", "-a"}
 	manager := &manager{}
-	plan, err := manager.planLaunch(LaunchSpec{Manifest: cfg, RemoteCommand: remoteCommand, Options: LaunchOptions{Resume: ResumeModeNo, SSH: true}})
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, RemoteCommand: remoteCommand, Options: LaunchOptions{Resume: ResumeModeNo, SSH: true}})
 	if err != nil {
 		t.Fatalf("plan launch: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestLauncherPlanUsesDefaultConfig(t *testing.T) {
 	cfg := validManifest(tmpDir)
 	remoteCommand := []string{"hostname"}
 
-	plan, err := NewLauncher(DefaultConfig()).Plan(context.Background(), LaunchSpec{
+	plan, err := NewLauncher(DefaultConfig()).Plan(context.Background(), launch.Spec{
 		Manifest:      cfg,
 		RemoteCommand: remoteCommand,
 		Options:       LaunchOptions{Resume: ResumeModeNo, SSH: true},
@@ -799,7 +799,7 @@ func TestLauncherStartAndRuntimeWaitWithoutSSH(t *testing.T) {
 	runner := &launchRunner{}
 	qmpClient := &fakeQMPClient{}
 	var logOutput bytes.Buffer
-	launcher := NewLauncher(Config{
+	launcher := NewLauncher(launch.Config{
 		Locker:            &fileLocker{},
 		Runner:            runner,
 		SocketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
@@ -812,7 +812,7 @@ func TestLauncherStartAndRuntimeWaitWithoutSSH(t *testing.T) {
 		QMPQuitTimeout:    time.Millisecond,
 	})
 
-	plan, err := launcher.Plan(context.Background(), LaunchSpec{
+	plan, err := launcher.Plan(context.Background(), launch.Spec{
 		Manifest: cfg,
 		Options:  LaunchOptions{Resume: ResumeModeNo, SSH: false},
 	})
@@ -2452,7 +2452,7 @@ func TestManagerLaunchControlSuspendWaitsForGuestProvisioning(t *testing.T) {
 	defer cancelRPC()
 	rpcDone := make(chan error, 1)
 	go func() {
-		resp, err := control.Dial(controlSocketPath).Suspend(rpcCtx, SuspendRequest{})
+		resp, err := control.Dial(controlSocketPath).Suspend(rpcCtx, control.SuspendRequest{})
 		if err == nil && !resp.Saved {
 			err = errors.New("suspend response was not saved")
 		}
@@ -2875,13 +2875,13 @@ type testSuspendControlHandler struct {
 	onSuspend func() error
 }
 
-func (h *testSuspendControlHandler) Suspend(context.Context, SuspendRequest) (SuspendResponse, error) {
+func (h *testSuspendControlHandler) Suspend(context.Context, control.SuspendRequest) (control.SuspendResponse, error) {
 	if h.onSuspend != nil {
 		if err := h.onSuspend(); err != nil {
-			return SuspendResponse{}, err
+			return control.SuspendResponse{}, err
 		}
 	}
-	return SuspendResponse{Saved: true, VMStatePath: "/tmp/vm-state"}, nil
+	return control.SuspendResponse{Saved: true, VMStatePath: "/tmp/vm-state"}, nil
 }
 
 func TestManagerSuspendControlSocketWaitsForLaunchExit(t *testing.T) {

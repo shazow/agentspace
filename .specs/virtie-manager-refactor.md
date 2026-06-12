@@ -59,9 +59,10 @@ abstractions and their ownership boundaries.
 - `Launcher`, `DefaultConfig`, and `LaunchWithOptions` remain the CLI-facing
   entrypoints. They now compose launch planning, runtime startup, foreground
   wait, and cleanup instead of owning every lifecycle detail inline.
-- Type aliases in `launcher.go` and `control_rpc.go` preserve the historical
-  manager package surface for callers while the implementation lives in
-  `manager/launch`, `manager/runtime`, and `manager/control`.
+- `launcher.go` keeps only the small CLI-facing convenience aliases for
+  `ResumeMode`, `LaunchOptions`, and `WaitMode`. Launch plans, launcher config,
+  runtime paths, runtime objects, and control protocol types are used directly
+  from `manager/launch`, `manager/runtime`, and `manager/control`.
 - The remaining private `manager` code primarily adapts manifest data, concrete
   QEMU/QMP/QGA dependencies, notification commands, lock files, signal
   delivery, and compatibility fallbacks into the package-owned abstractions.
@@ -83,7 +84,7 @@ abstractions and their ownership boundaries.
 - `Lifecycle`, `SuspendCoordinator`, `EventWait`, `ProcessWait`, and
   `LifecycleProcessWait` provide the shared event path for local signals, RPC
   suspend requests, info requests, foreground process exits, and cancellation.
-- `RunStarter`, `StartQEMU`, `RuntimeStartup`, `StartRuntimeProcesses`, and
+- `StartRuns`, `StartQEMU`, `RuntimeStartup`, `StartRuntimeProcesses`, and
   `FinalizeRuntimeStartup` own startup sequencing through run commands, QEMU,
   QMP readiness, shutdown hooks, and boot stats.
 - `AsyncWait`, `SocketWait`, `QMPWait`, `GuestAgentWait`, and `SSHReadyWait`
@@ -92,18 +93,17 @@ abstractions and their ownership boundaries.
 - `RuntimeRestore` and `RuntimeSuspendSave` orchestrate QMP restore/save with
   suspend metadata and notifications, while `qmpclient` owns the protocol-level
   migration loops.
-- `RuntimeActivation` sequences ready-state marking, control socket startup,
-  queued suspend handling, guest provisioning, and write-back enablement.
+- Ready-state marking, foreground/close hook configuration, control socket
+  startup, queued suspend handling, guest provisioning, and write-back
+  enablement now happen explicitly in `manager.startWithPlan`.
 - `ForegroundWait`, `SSHSession`, `SSHAutoprovisionKey`, and related SSH command
   builders own SSH/headless foreground wait selection, retry behavior,
   autoprovisioning, process supervision, and command hints.
-- `GuestProvision`, `GuestFileWriter`, `GuestFileWriteBacker`,
-  `GuestDirectoryInstaller`, and `WorkspaceCWDMounter` own guest-file payloads,
-  directory creation policy, workspace CWD mounting, write-back filtering, and
-  host write-back helpers.
-- `NotificationSink`, `NotifierFactory`, `SelectNotifier`,
-  `NotifyRuntimeResume`, and `NotifyRuntimeSuspend` keep lifecycle notification
-  payload construction outside the concrete manager.
+- `GuestFileWriter`, `GuestFileWriteBacker`, `GuestDirectoryInstaller`, and
+  `WorkspaceCWDMounter` own guest-file payloads, directory creation policy,
+  workspace CWD mounting, write-back filtering, and host write-back helpers.
+- `NotificationSink`, `NotifyRuntimeResume`, and `NotifyRuntimeSuspend` keep
+  lifecycle notification payload construction outside the concrete manager.
 - `StageError`, `CommandError`, `WrapStage`, `WrapCommandError`,
   `WrapHotplugError`, and `FirstUnexpectedExit` centralize launch-stage error
   classification and wrapping.
@@ -118,26 +118,25 @@ abstractions and their ownership boundaries.
 - `State` owns runtime state transitions (`starting`, `ready`, `suspending`,
   `suspended`, `stopping`, `stopped`) used by status, suspend, wait, and close
   paths.
-- `ControlServer` and `StartControl` wire the concrete runtime into the typed
-  `virtie.sock` server and keep server shutdown under runtime cleanup.
-- `Closer`, `CloseActions`, `CloseHooks`, `CloseHookActions`, and
-  `CloseHookConfig` define idempotent runtime teardown ordering: write-back,
-  control shutdown, process teardown, QMP disconnect, cleanup, stats
-  finalization, and output formatting.
-- `StartupFailureConfig`, `StartupFailureActions`, and startup failure helpers
-  share cleanup ordering for failures before a full runtime exists.
+- `StartControl` wires the concrete runtime into the typed `virtie.sock` server
+  and stores the returned `*control.Server` directly on `Runtime` for cleanup.
+- `Closer`, `CloseActions`, and `CloseHooks` define idempotent runtime teardown
+  ordering: write-back, control shutdown, process teardown, QMP disconnect,
+  cleanup, stats finalization, and output formatting.
+- `StartupFailureActions` and startup failure helpers share cleanup ordering
+  for failures before a full runtime exists.
 - `Stats` and control-plane conversion helpers track launch timing and format
   status/runtime output.
-- `SavedSuspendState` and `WriteBackState` coordinate saved-suspend exits and
+- Private `atomic.Bool` fields/locals coordinate saved-suspend exits and
   write-back-on-exit gating across foreground wait, suspend save, close hooks,
   and startup failure cleanup.
-- `ForegroundWaitOperation`, `ControlWaitForeground`, `SuspendOperation`,
-  `ControlSuspend`, `GuestInfo`, `InfoCollector`, `ControlInfo`,
-  `BalloonQMP`, `ControlBalloon`, and hotplug adapters implement typed runtime
-  capabilities over narrow dependencies.
-- `HotplugRuntime`, `HotplugStarter`, `HotplugSocketWaiter`, `HotplugGuest`, and
-  `HotplugQMP` adapt the owned runtime resources into `internal/hotplug` while
-  preserving build-tagged unsupported responses.
+- Concrete `Runtime` methods perform typed control response construction and
+  failed-precondition mapping directly for wait, suspend, info, balloon, and
+  hotplug. `GuestInfo`, `BalloonQMP`, and hotplug adapters remain as real
+  protocol/domain boundaries.
+- `HotplugStarter`, `HotplugSocketWaiter`, `HotplugGuest`, and `HotplugQMP`
+  adapt the owned runtime resources into `internal/hotplug` while preserving
+  build-tagged unsupported responses.
 
 ### `virtie/internal/manager/control`
 
@@ -334,12 +333,10 @@ are layered on top.
   are useful in tests. Reconsider later if no caller outside manager tests
   needs partial launch lifecycle access.
 
-  Code weight: low. The raw wrappers are about 14 non-test LOC. A practical
-  cleanup that collapses the public partial-lifecycle split and removes now
-  unused facade aliases would likely shed about 25-35 LOC. Removing the
-  broader `Launcher` facade entirely would be closer to 40-55 LOC, but that
-  also gives up the configurable launcher shape rather than just `Plan` and
-  `Start`.
+  Code weight: low. The stale facade aliases are already gone, so the
+  remaining practical cleanup would be collapsing the public partial-lifecycle
+  split itself. Removing the broader `Launcher` facade entirely would give up
+  the configurable launcher shape rather than just `Plan` and `Start`.
 
 - `launch.Config`, `MergeConfig`, and the dependency interfaces it owns.
 
@@ -389,178 +386,139 @@ are layered on top.
 
 - `launch.ForegroundWait`.
 
-  This is more defensible than `RuntimeActivation` because SSH/headless
-  behavior and restored-state cleanup are branching foreground policy. Still,
-  the `ForegroundRuntime` and `ForegroundProcesses` interfaces are very narrow
-  and only exist to decouple tests from concrete runtime/process types.
+  This remains defensible because SSH/headless behavior and restored-state
+  cleanup are branching foreground policy. Still, the `ForegroundRuntime` and
+  `ForegroundProcesses` interfaces are very narrow and only exist to decouple
+  tests from concrete runtime/process types.
 
   Code weight: medium. Full removal and inlining into
   `manager.waitForLaunchForeground` would likely shed about 45-55 net non-test
   LOC. Improvement-only cleanup, mostly removing the narrow
   `ForegroundRuntime` / `ForegroundProcesses` interfaces while keeping the
-  abstraction, would save only about 5-10 LOC. If the adjacent
-  `runtime.ForegroundWaitOperation` cleanup is bundled, add roughly 15-20 LOC
-  of possible savings.
+  abstraction, would save only about 5-10 LOC. The adjacent
+  `runtime.ForegroundWaitOperation` wrapper has already been removed, so the
+  remaining question is limited to the launch foreground abstraction itself.
 
-- `runtime.ControlInfo`, `ControlBalloon`, `ControlSuspend`,
-  `ControlWaitForeground`, and `runtime.Hotplug`.
+- `runtime.CloseHooks` and `Runtime.SetCloseHooks`.
 
-  These provide nice isolated tests for response construction and
-  failed-precondition mapping, but most are thin wrappers over concrete
-  runtime methods. Keep them only where they prevent repeated error mapping;
-  otherwise let `Runtime` methods call the underlying domain helpers directly.
+  The write-back gating and joined cleanup behavior are now assembled directly
+  by `manager.startWithPlan`. `CloseHooks` remains as a small callback bag so
+  the concrete runtime does not need to know manager-owned guest write-back,
+  lock cleanup, or stats output details. Full removal only makes sense if
+  runtime construction is reworked further.
 
-  Code weight: low to medium. The practical cleanup is about 25-35 net
-  non-test LOC by removing the named `Control*`/`Hotplug` wrappers and inlining
-  small response/error mapping into concrete `Runtime` methods. A broader
-  collapse of helper-only structs/interfaces around info, suspend, foreground
-  wait, and balloon could reach 80-120 LOC, but hotplug QMP/start/socket/guest
-  adapters should stay unless the build-tag layout changes.
-
-- `runtime.CloseHooks`, `CloseHookActions`, `CloseHookConfig`, and
-  `ConfiguredCloseHooks`.
-
-  The write-back gating and joined cleanup behavior are useful. The two-level
-  "actions" vs "config" shape is probably more than the code needs.
-
-  Code weight: low to medium. Collapsing `CloseHookActions`/`NewCloseHooks`
-  and one of `CloseHookConfig` / `ConfiguredCloseHooks`, while keeping a small
-  `CloseHooks` callback bag, is estimated at 15-30 net non-test LOC. Full
-  removal of the hook type and `Runtime.SetCloseHooks` would be around 30-45
-  LOC, but only makes sense if runtime construction is already being reworked.
-
-- `runtime.StartupFailureActions`, `StartupFailureConfig`,
-  `ConfiguredStartupFailureActions`, and `CleanupConfiguredStartError`.
+- `runtime.StartupFailureActions`.
 
   Centralized startup cleanup is valuable. The configured/action split may be
-  unnecessary unless there are multiple real constructors.
+  gone; `manager.startWithPlan` builds `StartupFailureActions` directly. Full
+  removal of `startup_failure.go` and inlining equivalent cleanup into the
+  launch defer could net about 70-85 LOC, but would push fragile cleanup
+  ordering back into the main launch path.
 
-  Code weight: low to medium. Removing the configured layer
-  (`StartupFailureConfig`, `ConfiguredStartupFailureActions`, and
-  `CleanupConfiguredStartError`) and building `StartupFailureActions` directly
-  in `manager.startWithPlan` would shed about 20-25 non-test LOC. Full removal
-  of `startup_failure.go` and inlining equivalent cleanup into the launch
-  defer could net about 70-85 LOC, but would push fragile cleanup ordering back
-  into the main launch path.
-
-- Tiny capability interfaces such as `SuspendRequester` and `HotplugRuntime`.
+- Tiny capability interfaces such as `SuspendRequester`.
 
   These follow Go's "accept small interfaces" style and can protect package
   boundaries. Keep them only where a second production implementation exists
   or where the interface is the clearest adapter to another domain package.
 
-  Code weight: low. The strict payoff is about 10-15 non-test LOC, mostly from
-  removing `runtime.HotplugRuntime` and inlining attach/detach response
-  construction into `Runtime.Hotplug`. `SuspendRequester` saves almost nothing
-  by itself, roughly 0-3 LOC, and is only worth touching as part of a broader
-  suspend/control wrapper collapse. Adjacent hotplug adapter interfaces could
-  simplify another 10-15 LOC in `runtime`, but repo-wide savings may be near
-  zero unless build-tag boundaries change.
+  Code weight: low. `runtime.HotplugRuntime` has been removed and
+  attach/detach response construction now lives in `Runtime.Hotplug`.
+  `SuspendRequester` saves almost nothing by itself, roughly 0-3 LOC, and is
+  only worth touching as part of a broader lifecycle cleanup.
 
-### 3. Obviously Overcomplicating And Safe To Undo
+### 3. Completed Safe-Abstraction Cleanup
 
-These can be collapsed without losing the refactor's safety properties. Most
-are internal-only, single-call-site, or leftover migration compatibility
+These were collapsed without losing the refactor's safety properties. Most
+were internal-only, single-call-site, or leftover migration compatibility
 facades.
 
 - Broad manager facade aliases in `manager/control_rpc.go`.
 
-  No production caller currently needs these control aliases. Internal tests
-  and manager code should import `manager/control` directly for
-  `StatusRequest`, `Router`, `Client`, `RPCError`, and related protocol types.
-  The current alias set makes it look like `manager` still owns the control
-  protocol after that ownership moved.
+  Removed. Internal tests and manager code import `manager/control` directly
+  for `StatusRequest`, `Router`, `Client`, `RPCError`, and related protocol
+  types. Transport tests now live in `manager/control`; manager keeps only a
+  small test helper for workflow tests that need a real control socket.
 
 - Most manager facade aliases in `manager/launcher.go` other than
   `LaunchOptions`, `ResumeMode`, and perhaps `WaitMode`.
 
-  `Plan`, `RuntimePaths`, `Config`, and `Runtime` are internal package types.
-  Aliasing them through `manager` preserved migration call sites but now blurs
-  ownership. Tests can import `manager/launch` or `manager/runtime` directly
-  where they need those concrete types.
+  Removed. `Plan`, `RuntimePaths`, `Config`, and `Runtime` are used directly
+  from `manager/launch` or `manager/runtime`.
 
 - `launch.RunStarter`.
 
-  `StartRuns` contains useful behavior, but the `RunStarter` struct is a
-  single-use bundle for runner/logger/shutdown delay. Passing those values
-  directly, or making them fields on a broader launcher dependency, would be
-  clearer.
+  Removed. `StartRuns` keeps the useful run-command behavior and now accepts
+  runner, logger, shutdown delay, CID, and manifest directly.
 
 - `launch.NotifierFactory` and `SelectNotifier`.
 
-  This is a one-branch dependency-selection helper. Inline it in
-  `manager.planLaunch` and keep `NotificationSink` plus the concrete notifier.
+  Removed. `manager.planLaunch` performs the direct configured-notifier or
+  manifest-notifier selection. `NotificationSink` and notification payload
+  helpers remain.
 
 - `launch.RuntimeActivation`.
 
-  Unless more phase policy is added, inline the activation sequence back into
-  `manager.startWithPlan`. The current abstraction mostly hides ordering
-  behind callback names and makes the launch path harder to read.
+  Removed. The activation sequence is explicit in `manager.startWithPlan`:
+  mark ready, configure foreground wait and close hooks, start control socket,
+  drain queued suspend, provision guest files, wait for SSH readiness, then
+  enable write-back.
 
 - `launch.GuestProvision`.
 
-  Keep `WriteGuestFiles`, `WaitForSSHReady`, and stats markers, but collapse
-  the two-callback `ProvisionGuest` wrapper into the activation/startup code.
-  It is safe because there is one production call site and the behavior is
-  straightforward.
+  Removed. Guest file writes, SSH-readiness waits, and stats markers are now
+  part of the explicit startup sequence. Guest-file payload, directory,
+  workspace mount, and write-back helpers remain in `launch`.
 
 - `runtimeInfoCollector` plus `runtime.InfoCollector`.
 
-  `Runtime.Info` can call the configured `collectInfo` function directly and
-  map errors to `control.FailedPrecondition`. The extra adapter object is only
-  there to satisfy a tiny local interface.
+  Removed. `Runtime.Info` calls the configured `collectInfo` function directly
+  and maps errors to `control.FailedPrecondition`.
 
 - `runtime.ForegroundWaitOperation` and `runtime.ForegroundWait`.
 
-  The saved-suspend marking behavior is useful, but the separate operation
-  struct/function pair is not. Keep the behavior inside `Runtime.Wait`.
+  Removed. Saved-suspend marking now happens inside `Runtime.Wait`.
 
 - `runtime.CloseHookActions` and one of `CloseHookConfig` /
   `ConfiguredCloseHooks`.
 
-  There should be one close-hook construction path, not an "actions" layer and
-  a "configured" layer. Collapse to a single helper or assemble `CloseActions`
-  directly in `Runtime.Close`.
+  Removed. Manager assembles `CloseHooks` directly; `JoinedCleanup` and
+  `StatsFinalizer` remain as small reusable helpers.
 
 - `runtime.ConfiguredStartupFailureActions` and
   `CleanupConfiguredStartError`.
 
-  Keep `StartupFailureActions.Run` and the distinction between "runtime was
-  started" and "pre-runtime failure." Collapse the configured helper into
-  `manager.startWithPlan`; it exists for one production call site.
+  Removed. Manager builds `StartupFailureActions` directly and still preserves
+  the distinction between "runtime was started" and "pre-runtime failure."
 
 - `runtime.ControlServer`.
 
-  Store `*control.Server` or an `interface{ Close() error }` directly on
-  `Runtime`, and keep `StartControl` as the factory. This removes a wrapper
-  type without changing control socket behavior.
+  Removed. `Runtime` stores `*control.Server` directly, and `StartControl`
+  returns `*control.Server`.
 
 - Single-use stats/process interfaces that only serve tests:
   `RuntimeStartupProcessSet`, `RuntimeStartupStats`, `ForegroundRuntime`,
   `ForegroundProcesses`, `SSHSessionStats`, and `SSHSessionProcesses`.
 
-  Prefer concrete `*runtime.ProcessSet`, `*runtime.Stats`, or simple function
-  callbacks unless a second production implementation appears. The tests can
-  use real lightweight instances; they do not need every dependency abstracted.
+  Still present. Prefer concrete `*runtime.ProcessSet`, `*runtime.Stats`, or
+  simple function callbacks unless a second production implementation appears.
+  The tests can use real lightweight instances; they do not need every
+  dependency abstracted.
 
 - Separate `WriteBackState` and `SavedSuspendState` types if their only owner
   remains `Runtime`.
 
-  Collapse them into private runtime fields guarded by one mutex, or one small
-  lifecycle state struct. Their behavior is only boolean gating, so standalone
-  public-ish types add more names than clarity.
+  Removed. Runtime saved-suspend tracking and manager write-back gating now
+  use private `atomic.Bool` fields/locals.
 
-### Suggested Cleanup Order
+### Cleanup Status
 
-1. Remove stale facade aliases first. This changes names, not behavior, and
-   clarifies ownership for future edits.
-2. Inline `RuntimeActivation`, `GuestProvision`, `RunStarter`, and notifier
-   selection. These are low-risk because they have one production call path.
-3. Collapse duplicate runtime configuration layers for close hooks and startup
-   failure cleanup while keeping the tested ordering.
-4. Revisit the wait helper stack last. It has the highest behavioral risk
-   because it handles cancellation, foreground events, and unexpected exits.
-   Simplify only after keeping equivalent lifecycle tests in place.
+1. Stale facade aliases are removed.
+2. `RuntimeActivation`, `GuestProvision`, `RunStarter`, and notifier selection
+   are inlined.
+3. Duplicate runtime configuration layers for close hooks and startup failure
+   cleanup are collapsed.
+4. The broader wait helper stack remains the main cleanup pressure because it
+   handles cancellation, foreground events, and unexpected exits.
 
 ## Landed Control Flow
 
@@ -884,7 +842,7 @@ The existing package-level functions can remain thin wrappers:
 ```go
 func LaunchWithOptions(ctx context.Context, m *manifest.Manifest, remote []string, opts LaunchOptions) error {
 	launcher := NewLauncher(DefaultConfig())
-	plan, err := launcher.Plan(ctx, LaunchSpec{Manifest: m, RemoteCommand: remote, Options: opts})
+	plan, err := launcher.Plan(ctx, launch.Spec{Manifest: m, RemoteCommand: remote, Options: opts})
 	if err != nil {
 		return err
 	}
@@ -931,11 +889,11 @@ implementation packages should avoid importing the facade package.
   guest install sequencing now live there.
   Foreground SSH-vs-headless orchestration and optional-feature startup
   sequencing have moved there too.
-  Guest provisioning, guest-agent socket wait/retry-dial sequencing,
+  Guest-agent socket wait/retry-dial sequencing,
   SSH-readiness checkpoint sequencing, SSH-readiness token wait sequencing, and
   default startup wait wrapping/check policy, and default foreground SSH
-  session wrapping also live there. Runtime activation sequencing lives there
-  as well.
+  session wrapping also live there. Runtime activation and guest-provisioning
+  sequencing are now explicit in `manager.startWithPlan`.
   Host-side guest-file payload and write-back path helpers now live there.
   Guest-file directory install argument policy and default guest-file stage
   wrapping have moved there too.
@@ -944,24 +902,23 @@ implementation packages should avoid importing the facade package.
   `Launcher`, default concrete dependencies, and CLI exit-code adaptation
   remain in the `manager` facade; generic stage-error and command-error
   construction now lives in `launch` and manager call sites use those launch
-  error types directly. Unexpected-process-exit wrapping, notifier selection,
-  async readiness, socket wait mechanics, and the major startup sequencing
-  phases now live in `launch`.
+  error types directly. Unexpected-process-exit wrapping, async readiness,
+  socket wait mechanics, and the major startup sequencing phases now live in
+  `launch`; notifier selection is direct manager startup policy.
 - `virtie/internal/manager/runtime` (landed): managed task cancellation,
   `ProcessSet`, close hook wiring, runtime stats, control-server lifecycle
   wiring, runtime state tracking, idempotent close coordination, close action
-  ordering, ready/status/suspend transition policy, suspend response
-  construction, foreground wait/Info/Suspend/Balloon failed-precondition
-  adaptation, balloon/hotplug control dispatch, and unsupported hotplug
-  response construction have landed. Pre-runtime startup failure cleanup and
-  cleanup assembly, write-back-on-exit state, close-hook write-back gating,
-  cleanup joining, and stats finalizer construction also live there now.
+  ordering, ready/status/suspend transition policy, concrete
+  wait/Info/Suspend/Balloon failed-precondition adaptation, balloon/hotplug
+  control dispatch, and unsupported hotplug response construction have landed.
+  Pre-runtime startup failure cleanup, cleanup joining, and stats finalizer
+  construction also live there now.
   Concrete runtime
   logger/QMP timeout, foreground wait, info collection, and hotplug adapter
   dependencies are stored directly on `Runtime`; the concrete runtime no
   longer stores a manager back-reference or stale lifecycle adapter fields.
   The concrete launch-owned runtime now lives in this package, with
-  `manager.Runtime` retained as a facade alias. Manager still supplies
+  manager callers using `runtime.Runtime` directly. Manager still supplies
   concrete close, foreground, provisioning, and guest adapters.
 - `virtie/internal/manager/control` (landed): `virtie.sock` request/response types,
   typed client, server, router, wire envelopes, error codes, compatibility
@@ -1127,7 +1084,7 @@ future integration points.
 
 ```go
 launcher := manager.NewLauncher(manager.DefaultConfig())
-plan, err := launcher.Plan(ctx, manager.LaunchSpec{
+plan, err := launcher.Plan(ctx, launch.Spec{
 	Manifest:      cfg,
 	RemoteCommand: []string{"uname", "-a"},
 	Options:       manager.LaunchOptions{Resume: manager.ResumeModeAuto, SSH: true},
@@ -1150,8 +1107,8 @@ construct request structs and receive response structs; it should not pass raw
 method names.
 
 ```go
-client := manager.Dial(cfg.ResolvedControlSocketPath())
-status, err := client.Status(ctx, manager.StatusRequest{})
+client := control.Dial(cfg.ResolvedControlSocketPath())
+status, err := client.Status(ctx, control.StatusRequest{})
 if err != nil {
 	return err
 }
@@ -1160,8 +1117,8 @@ fmt.Fprintf(stdout, "%s cid=%d\n", status.State, status.CID)
 ```
 
 ```go
-client := manager.Dial(cfg.ResolvedControlSocketPath())
-_, err := client.Hotplug(ctx, manager.HotplugRequest{
+client := control.Dial(cfg.ResolvedControlSocketPath())
+_, err := client.Hotplug(ctx, control.HotplugRequest{
 	ID:     id,
 	Detach: detach,
 })
@@ -1169,8 +1126,8 @@ return err
 ```
 
 ```go
-client := manager.Dial(cfg.ResolvedControlSocketPath())
-resp, err := client.Suspend(ctx, manager.SuspendRequest{})
+client := control.Dial(cfg.ResolvedControlSocketPath())
+resp, err := client.Suspend(ctx, control.SuspendRequest{})
 if err != nil {
 	return err
 }
@@ -1184,7 +1141,7 @@ handlers. For example, `SIGUSR1` should become a local shortcut for `Info`.
 
 ```go
 case syscall.SIGUSR1:
-	info, err := runtime.Info(ctx, manager.InfoRequest{})
+	info, err := runtime.Info(ctx, control.InfoRequest{})
 	if err != nil {
 		logger.Info("guest info failed", "err", err)
 		continue
@@ -1199,16 +1156,16 @@ sockets unless the transport itself is under test.
 
 ```go
 type fakeHandler struct {
-	hotplug manager.HotplugRequest
+	hotplug control.HotplugRequest
 }
 
-func (h *fakeHandler) Status(context.Context, manager.StatusRequest) (manager.StatusResponse, error) {
-	return manager.StatusResponse{State: manager.RuntimeReady, CID: 7}, nil
+func (h *fakeHandler) Status(context.Context, control.StatusRequest) (control.StatusResponse, error) {
+	return control.StatusResponse{State: control.RuntimeReady, CID: 7}, nil
 }
 
-func (h *fakeHandler) Hotplug(ctx context.Context, req manager.HotplugRequest) (manager.HotplugResponse, error) {
+func (h *fakeHandler) Hotplug(ctx context.Context, req control.HotplugRequest) (control.HotplugResponse, error) {
 	h.hotplug = req
-	return manager.HotplugResponse{ID: req.ID, Detach: req.Detach}, nil
+	return control.HotplugResponse{ID: req.ID, Detach: req.Detach}, nil
 }
 ```
 
@@ -1378,7 +1335,7 @@ readiness, and managed virtiofs sockets:
 
 1. Extract `Plan`, `RuntimePaths`, and preflight resolution from
    `launchWithOptions`. `Plan` and `RuntimePaths` have landed under
-   `manager/launch` with facade aliases. Lifecycle coordination has also
+   `manager/launch`; the old facade aliases have been removed. Lifecycle coordination has also
    moved there, along with suspend-state and launch PID helpers/validation. Preflight
    resume policy, resolved plan construction, wait-mode selection, and
    configuration merging have moved there too, as has foreground lifecycle

@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
@@ -114,9 +115,10 @@ func (m *manager) planLaunch(spec launch.Spec) (*launch.Plan, error) {
 	if err != nil {
 		return nil, &launch.StageError{Stage: "restore", Err: err}
 	}
-	notifier := launch.SelectNotifier(cfg, m.notifier, func(cfg *manifest.Manifest) launch.NotificationSink {
-		return newCommandNotifier(cfg, m.logger)
-	})
+	notifier := m.notifier
+	if notifier == nil {
+		notifier = newCommandNotifier(cfg, m.logger)
+	}
 	plan, err := launch.BuildPlan(spec, resumeState, notifier)
 	if err != nil {
 		return nil, &launch.StageError{Stage: "preflight", Err: err}
@@ -140,7 +142,7 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *launch.Plan) (err er
 	return err
 }
 
-func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime *Runtime, err error) {
+func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime *runtimepkg.Runtime, err error) {
 	stats := runtimepkg.NewStats(time.Now())
 	manifest := plan.Manifest
 
@@ -175,28 +177,25 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 
 	processes := runtimepkg.NewProcessSet()
 	var qmpClient qmpclient.Client
-	writeBackOnExit := runtimepkg.NewWriteBackState()
+	var writeBackOnExit atomic.Bool
 	defer func() {
 		if err != nil {
 			var startedRuntime runtimepkg.StartedRuntime
 			if runtime != nil {
 				startedRuntime = runtime
 			}
-			err = runtimepkg.CleanupConfiguredStartError(
+			err = runtimepkg.CleanupStartError(
 				err,
 				startedRuntime,
-				runtimepkg.StartupFailureConfig{
+				runtimepkg.StartupFailureActions{
 					Processes:     processes,
 					ShutdownDelay: m.shutdownDelay,
 					LockCleanup:   cleanupRuntime,
 					QMP:           qmpClient,
-					SocketCleanup: []func() error{
-						func() error {
-							return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
-						},
-					},
-					Stats:       stats,
-					StatsOutput: m.outputWriter(),
+					SocketCleanup: runtimepkg.JoinedCleanup(func() error {
+						return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
+					}),
+					Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
 				},
 				isSavedSuspendExit,
 			)
@@ -211,58 +210,58 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 		if err := m.restoreLaunchRuntime(launchCtx, plan, qmpClient); err != nil {
 			return nil, err
 		}
-		writeBackOnExit.Enable()
+		writeBackOnExit.Store(true)
 	}
 	suspendHandler := newLaunchSuspendHandler(m, plan.Manifest, plan.Paths.QMPSocket, qmpClient, plan.CID, plan.Notifier, func() bool {
-		return writeBackOnExit.Enabled()
+		return writeBackOnExit.Load()
 	})
-	if err := launch.ActivateRuntime(launchCtx, launch.RuntimeActivation{
-		Lifecycle: lifecycle,
-		MarkReady: runtime.SetReady,
-		Configure: func() {
-			runtime.SetForegroundWait(plan, func(ctx context.Context, waitPlan *launch.Plan) error {
-				return m.waitForLaunchForeground(ctx, waitPlan, stats, runtime, qmpClient, lifecycle, suspendHandler, processes)
-			})
-			runtime.SetCloseHooks(runtimepkg.ConfiguredCloseHooks(runtimepkg.CloseHookConfig{
-				WriteBackState: writeBackOnExit,
-				WriteBack: func(ctx context.Context) error {
-					return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
-				},
-				Cleanup: []func() error{
-					func() error {
-						return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
-					},
-					cleanupRuntime,
-				},
-				Stats:       stats,
-				StatsOutput: m.outputWriter(),
-			}))
+	runtime.SetReady()
+	runtime.SetForegroundWait(plan, func(ctx context.Context, waitPlan *launch.Plan) error {
+		return m.waitForLaunchForeground(ctx, waitPlan, stats, runtime, qmpClient, lifecycle, suspendHandler, processes)
+	})
+	runtime.SetCloseHooks(runtimepkg.CloseHooks{
+		WriteBack: func(ctx context.Context) error {
+			if !writeBackOnExit.Load() {
+				return nil
+			}
+			return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
 		},
-		StartControl: runtime.StartControl,
-		WrapControl:  launch.WrapFixedStage("control startup"),
-		HandleSuspend: func(ctx context.Context, coordinator *launch.SuspendCoordinator) error {
-			return handleSuspendRequest(ctx, coordinator, suspendHandler)
-		},
-		Provision: launch.GuestProvision{
-			Plan:  plan,
-			Stats: stats,
-			WriteFiles: func(ctx context.Context) error {
-				return m.writeGuestFiles(ctx, plan.Manifest, stats, processes.Watchers())
+		Cleanup: runtimepkg.JoinedCleanup(
+			func() error {
+				return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
 			},
-			WaitSSHReady: func(ctx context.Context, socketPath string) error {
-				m.logger.Info("waiting for ssh readiness")
-				return m.waitForSSHReady(ctx, socketPath, processes.Watchers())
-			},
-		},
-		EnableWriteBack: writeBackOnExit.Enable,
+			cleanupRuntime,
+		),
+		Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
+	})
+	if _, err := runtime.StartControl(launchCtx); err != nil {
+		return nil, launch.WrapFixedStage("control startup")(err)
+	}
+	if err := launch.HandleQueuedSuspend(launchCtx, lifecycle, func(ctx context.Context, coordinator *launch.SuspendCoordinator) error {
+		return handleSuspendRequest(ctx, coordinator, suspendHandler)
 	}); err != nil {
 		return nil, err
+	}
+	if plan.ResumeState == nil {
+		if err := m.writeGuestFiles(launchCtx, plan.Manifest, stats, processes.Watchers()); err != nil {
+			return nil, err
+		}
+		stats.MarkFilesReady(time.Now())
+
+		if plan.Paths.SSHReadySocket != "" {
+			m.logger.Info("waiting for ssh readiness")
+			if err := m.waitForSSHReady(launchCtx, plan.Paths.SSHReadySocket, processes.Watchers()); err != nil {
+				return nil, err
+			}
+		}
+		stats.MarkSSHReady(time.Now())
+		writeBackOnExit.Store(true)
 	}
 
 	return runtime, nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, stats *runtimepkg.Stats, lifecycle *launch.Lifecycle, processes *runtimepkg.ProcessSet) (*Runtime, qmpclient.Client, error) {
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, stats *runtimepkg.Stats, lifecycle *launch.Lifecycle, processes *runtimepkg.ProcessSet) (*runtimepkg.Runtime, qmpclient.Client, error) {
 	started, err := launch.StartRuntimeProcesses(ctx, launch.RuntimeStartup{
 		Plan:           plan,
 		Processes:      processes,
@@ -336,7 +335,7 @@ func (m *manager) waitForLaunchForeground(
 	ctx context.Context,
 	plan *launch.Plan,
 	stats *runtimepkg.Stats,
-	runtime *Runtime,
+	runtime *runtimepkg.Runtime,
 	qmpClient qmpclient.Client,
 	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
@@ -369,11 +368,7 @@ func (m *manager) startManagedProcess(cmd *exec.Cmd) (*executor.Process, error) 
 }
 
 func (m *manager) startRuns(cid int, manifest *manifest.Manifest) (executor.Group, error) {
-	runs, err := launch.StartRuns(launch.RunStarter{
-		Runner:        m.runner,
-		Logger:        m.logger,
-		ShutdownDelay: m.shutdownDelay,
-	}, cid, manifest)
+	runs, err := launch.StartRuns(m.runner, m.logger, m.shutdownDelay, cid, manifest)
 	if err != nil {
 		return executor.Group{}, &launch.StageError{Stage: "run startup", Err: err}
 	}

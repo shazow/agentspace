@@ -54,14 +54,14 @@ func TestStartupFailureActionsJoinErrors(t *testing.T) {
 	}
 }
 
-func TestConfiguredStartupFailureActionsJoinsSocketCleanupAndFinalizesStats(t *testing.T) {
+func TestStartupFailureActionsJoinsSocketCleanupAndFinalizesStats(t *testing.T) {
 	socketErr := errors.New("socket cleanup failed")
 	var output bytes.Buffer
 	stats := NewStats(time.Now().Add(-time.Second))
 	var socketCalls int
 
-	actions := ConfiguredStartupFailureActions(StartupFailureConfig{
-		SocketCleanup: []func() error{
+	actions := StartupFailureActions{
+		SocketCleanup: JoinedCleanup(
 			func() error {
 				socketCalls++
 				return socketErr
@@ -70,10 +70,9 @@ func TestConfiguredStartupFailureActionsJoinsSocketCleanupAndFinalizesStats(t *t
 				socketCalls++
 				return nil
 			},
-		},
-		Stats:       stats,
-		StatsOutput: &output,
-	})
+		),
+		Stats: StatsFinalizer(stats, &output),
+	}
 
 	if err := actions.Run(); !errors.Is(err, socketErr) {
 		t.Fatalf("startup failure error: got %v want %v", err, socketErr)
@@ -129,30 +128,6 @@ func TestCleanupStartErrorRunsStartupFailureWithoutStartedRuntime(t *testing.T) 
 	}
 	if cleanupCalls != 1 {
 		t.Fatalf("cleanup calls: got %d want 1", cleanupCalls)
-	}
-}
-
-func TestCleanupConfiguredStartErrorBuildsStartupFailureActions(t *testing.T) {
-	cause := errors.New("startup failed")
-	socketErr := errors.New("socket cleanup failed")
-	var output bytes.Buffer
-	stats := NewStats(time.Now().Add(-time.Second))
-
-	err := CleanupConfiguredStartError(cause, nil, StartupFailureConfig{
-		SocketCleanup: []func() error{
-			func() error { return socketErr },
-		},
-		Stats:       stats,
-		StatsOutput: &output,
-	}, nil)
-	if !errors.Is(err, cause) || !errors.Is(err, socketErr) {
-		t.Fatalf("cleanup error: got %v want cause and socket errors", err)
-	}
-	if ControlStats(stats).CompletedAt.IsZero() {
-		t.Fatal("stats were not finalized")
-	}
-	if !strings.Contains(output.String(), "total=") {
-		t.Fatalf("stats output missing runtime: %q", output.String())
 	}
 }
 

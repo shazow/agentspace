@@ -11,11 +11,6 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
-type HotplugRuntime interface {
-	Attach(context.Context, string) error
-	Detach(context.Context, string) error
-}
-
 type HotplugStarter interface {
 	Start(context.Context, *exec.Cmd) (*executor.Process, error)
 	Stop(*executor.Process) error
@@ -47,19 +42,6 @@ func (q HotplugQMP) DeviceDel(ctx context.Context, id string) error {
 		return err
 	}
 	return q.Client.DeviceDelAndWait(q.Timeout, id)
-}
-
-func Hotplug(ctx context.Context, runtime HotplugRuntime, req control.HotplugRequest) (control.HotplugResponse, error) {
-	if req.Detach {
-		if err := runtime.Detach(ctx, req.ID); err != nil {
-			return control.HotplugResponse{}, err
-		}
-		return control.HotplugResponse{ID: req.ID, Detach: true}, nil
-	}
-	if err := runtime.Attach(ctx, req.ID); err != nil {
-		return control.HotplugResponse{}, err
-	}
-	return control.HotplugResponse{ID: req.ID}, nil
 }
 
 func UnsupportedHotplug() error {

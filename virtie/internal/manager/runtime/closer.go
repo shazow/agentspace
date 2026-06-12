@@ -17,7 +17,7 @@ type CloseActions struct {
 	WriteBack        func(context.Context) error
 	WriteBackTimeout time.Duration
 	SkipWriteBack    bool
-	Control          *ControlServer
+	Control          *control.Server
 	Processes        *ProcessSet
 	ShutdownDelay    time.Duration
 	QMP              Disconnecter
@@ -55,7 +55,9 @@ func (a CloseActions) Run() error {
 		err = errors.Join(err, a.WriteBack(writeBackCtx))
 		cancelWriteBack()
 	}
-	err = errors.Join(err, a.Control.Close())
+	if a.Control != nil {
+		err = errors.Join(err, a.Control.Close())
+	}
 	if a.Processes != nil {
 		err = errors.Join(err, a.Processes.Close(a.ShutdownDelay))
 	}

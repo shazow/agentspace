@@ -40,11 +40,3 @@ func Balloon(ctx context.Context, device *balloontypes.Device, qmp BalloonQMP, t
 	}
 	return control.BalloonResponse{ActualBytes: actual, TargetBytes: req.TargetBytes}, nil
 }
-
-func ControlBalloon(ctx context.Context, device *balloontypes.Device, qmp BalloonQMP, timeout time.Duration, req control.BalloonRequest) (control.BalloonResponse, error) {
-	resp, err := Balloon(ctx, device, qmp, timeout, req)
-	if errors.Is(err, ErrBalloonNotConfigured) {
-		return control.BalloonResponse{}, control.FailedPrecondition(err)
-	}
-	return resp, err
-}

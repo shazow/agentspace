@@ -18,7 +18,7 @@ func TestStartRunsStartsResolvedRunCommands(t *testing.T) {
 	cfg := runManifest(tmpDir)
 	runner := &recordingRunRunner{}
 
-	group, err := StartRuns(RunStarter{Runner: runner, ShutdownDelay: time.Millisecond}, 7, cfg)
+	group, err := StartRuns(runner, nil, time.Millisecond, 7, cfg)
 	if err != nil {
 		t.Fatalf("start runs: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestStartRunsStopsStartedProcessesOnFailure(t *testing.T) {
 	cfg.Run = append(cfg.Run, manifest.Run{Exec: []string{"/bin/second"}})
 	runner := &recordingRunRunner{failAt: 1, err: errors.New("start second failed")}
 
-	if _, err := StartRuns(RunStarter{Runner: runner, ShutdownDelay: time.Millisecond}, 7, cfg); err == nil || !errors.Is(err, runner.err) {
+	if _, err := StartRuns(runner, nil, time.Millisecond, 7, cfg); err == nil || !errors.Is(err, runner.err) {
 		t.Fatalf("expected start failure, got %v", err)
 	}
 	if len(runner.processes) == 0 {
