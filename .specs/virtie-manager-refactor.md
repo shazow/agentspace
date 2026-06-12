@@ -48,388 +48,137 @@ Acceptance criteria:
 - [x] New tests cover typed RPC transport, socket permissions, status,
   suspend, hotplug, balloon, and info calls.
 
-## Progress
+## Implementation Inventory
 
-- [x] Identified the current manager responsibilities and the need for a
-  launch-owned control plane.
-- [x] Chose `virtie.sock` as a control RPC socket rather than a full supervisor
-  or first-version interactive stream transport.
-- [x] Chose typed Go client and handler methods instead of exposing raw method
-  strings to callers.
-- [x] Extract planning, runtime ownership, and process grouping from the
-  current launch path.
-- [x] Move status and info behavior onto the core runtime interface, and move
-  suspend, hotplug, and balloon behavior onto optional runtime capability
-  interfaces.
-- [x] Add the typed control socket server and client.
-- [x] Route CLI control commands through `virtie.sock` with compatibility
-  fallbacks.
-- [x] Started the post-mortem corrective phase by extracting a resolved
-  launch plan and lifecycle coordinator inside `manager` before any subpackage
-  split.
-- [x] Introduced `Launcher`, `DefaultConfig`, `LaunchSpec`, and `Plan` as real
-  manager package types while preserving the existing package-level launch
-  entrypoints; `ProcessSet` has since moved fully under
-  `virtie/internal/manager/runtime`.
-- [x] Moved launch process and QMP teardown ownership into idempotent
-  `Runtime.Close`, with pre-runtime startup failures still cleaned up by the
-  launch path.
-- [x] Extracted foreground waiting into a named launch helper covering both
-  interactive SSH sessions and headless VM waits.
-- [x] Added `Launcher.Start`, `Runtime.Wait`, and `WaitMode`, with
-  `LaunchWithOptions` now following the planned `Plan -> Start -> Wait ->
-  Close` structure.
-- [x] Split the typed control socket transport into
-  `virtie/internal/manager/control`, with `manager` package aliases preserving
-  the existing facade during the migration.
-- [x] Split the QMP protocol client into `virtie/internal/qmpclient`, with
-  `manager` package aliases preserving the current runtime interfaces.
-- [x] Split the QGA protocol client into `virtie/internal/qga`, leaving guest
-  provisioning orchestration in `manager`.
-- [x] Split launch value types into `virtie/internal/manager/launch`,
-  including `Plan`, launch options, wait mode, runtime paths, suspend state,
-  notifier interface, and plan-owned socket cleanup.
-- [x] Move the serialized QMP wrapper into `virtie/internal/qmpclient`, so the
-  launch-owned runtime depends on a serialized client rather than owning the
-  synchronization adapter itself.
-- [x] Split managed task cancellation into `virtie/internal/manager/runtime`.
-- [x] Remove manager-local managed-task aliases from optional feature call
-  sites, so optional feature startup uses `virtie/internal/manager/runtime`
-  task types directly.
-- [x] Remove manager-local runtime constructor aliases, so manager startup and
-  runtime tests construct process sets and launch stats through
-  `virtie/internal/manager/runtime` directly.
-- [x] Remove the manager-local launch-stats alias, so runtime-facing manager
-  signatures use `virtie/internal/manager/runtime.Stats` directly.
-- [x] Move `ProcessSet` into `virtie/internal/manager/runtime`, leaving
-  optional feature discovery in `manager` and passing the resulting task group
-  into the runtime process set.
-- [x] Remove the manager-local `ProcessSet` alias, so concrete runtime setup
-  uses `virtie/internal/manager/runtime.ProcessSet` directly.
-- [x] Split the launch lifecycle coordinator into
-  `virtie/internal/manager/launch`, so local signals and RPC suspend requests
-  share one package-owned event path.
-- [x] Move runtime close hook wiring into `virtie/internal/manager/runtime`,
-  leaving the concrete `Runtime.Close` implementation in `manager`.
-- [x] Remove the manager-local close-hook alias, so concrete runtime close
-  configuration is typed directly against `virtie/internal/manager/runtime`.
-- [x] Move launch/runtime stats into `virtie/internal/manager/runtime`, with a
-  package helper for converting stats into control-plane `RuntimeStats`.
-- [x] Move suspend-state, VM-state, launch PID, and launch lock validation
-  helpers into `virtie/internal/manager/launch`, with manager aliases
-  preserving existing command and test call sites.
-- [x] Move launch PID validation, stale-process classification, and launch-pid
-  stage wrapping into `virtie/internal/manager/launch`.
-- [x] Move suspend fallback PID-removal and saved-state polling, including
-  launch-signal and qmp-suspend stage wrapping, into
-  `virtie/internal/manager/launch`.
-- [x] Remove manager-local suspend-state and launch-PID compatibility aliases,
-  so manager code and tests call the launch-owned helpers directly.
-- [x] Move resume-mode normalization and saved-state resolution policy into
-  `virtie/internal/manager/launch`, leaving manager responsible only for
-  stage-specific error wrapping.
-- [x] Move resolved `Plan` construction into `virtie/internal/manager/launch`,
-  with manager retaining notifier selection and stage-specific error wrapping.
-- [x] Move foreground wait-mode selection onto launch options in
-  `virtie/internal/manager/launch`.
-- [x] Move launcher `Config` and dependency interfaces into
-  `virtie/internal/manager/launch`, leaving manager responsible for default
-  concrete implementations.
-- [x] Move foreground lifecycle event waiting into
-  `virtie/internal/manager/launch`, with manager supplying suspend, info,
-  unexpected-exit, and cancellation callbacks.
-- [x] Move launch signal-channel construction and cleanup into
-  `virtie/internal/manager/launch`, so manager startup passes only its
-  configured signal channel and cancel callback.
-- [x] Remove manager-local lifecycle and suspend-coordinator aliases, so
-  manager code and tests use the launch package lifecycle types directly.
-- [x] Remove manager-local launch dependency interface aliases, so manager
-  concrete dependency fields and adapters use the launch package interfaces
-  directly.
-- [x] Remove manager-local notifier and PID signaler aliases, so remaining
-  internal call sites use launch package interfaces directly.
-- [x] Move startup queued-suspend handling into
-  `virtie/internal/manager/launch`, with manager supplying the concrete
-  suspend handler callback.
-- [x] Move plan-owned filesystem preflight into
-  `virtie/internal/manager/launch`, leaving manager responsible for
-  stage-specific wrapping. Manager call sites now use the launch package
-  helpers directly instead of local compatibility wrappers.
-- [x] Move launch run-process startup into
-  `virtie/internal/manager/launch`, leaving manager responsible for
-  stage-specific error wrapping and process-set ownership.
-- [x] Move QEMU process startup into `virtie/internal/manager/launch`, leaving
-  manager responsible for boot stats, stage wrapping, and process-set
-  ownership.
-- [x] Move runtime process/QMP startup sequencing into
-  `virtie/internal/manager/launch`, leaving manager responsible for concrete
-  runtime construction and callback adapters.
-- [x] Move async startup/readiness waiting into
-  `virtie/internal/manager/launch`, with manager supplying unexpected-exit and
-  stage-wrapping callbacks.
-- [x] Move generic socket async-wait composition into
-  `virtie/internal/manager/launch`, removing the manager-owned generic async
-  stage helper.
-- [x] Move VSock CID selection and saved-CID validation into
-  `virtie/internal/manager/launch`, with manager supplying the configured host
-  CID checker.
-- [x] Move locked launch plan finalization into
-  `virtie/internal/manager/launch`, with manager supplying the configured host
-  CID checker, QEMU command builder, and stage wrapping.
-- [x] Move post-lock plan setup sequencing into
-  `virtie/internal/manager/launch`, so CID/QEMU finalization, CID logging,
-  filesystem preparation, and launch-lock cleanup-on-failure run as one
-  package-owned phase.
-- [x] Move pre-runtime launch lock/PID setup and cleanup into
-  `virtie/internal/manager/launch`, with manager supplying the configured
-  locker and retaining stage wrapping.
-- [x] Move restored suspend-state cleanup into
-  `virtie/internal/manager/launch`, leaving manager responsible for restore
-  stage wrapping.
-- [x] Move runtime resume notification state and payload construction into
-  `virtie/internal/manager/launch`, leaving manager responsible for invoking
-  the helper after QMP restore succeeds.
-- [x] Move runtime suspend notification state and payload construction into
-  `virtie/internal/manager/launch`, leaving manager responsible for invoking
-  the helper after QMP suspend save succeeds.
-- [x] Move QMP migration polling into `virtie/internal/qmpclient`, with
-  manager supplying lifecycle-specific timeouts and stage wrapping.
-- [x] Move QMP dial retry mechanics into `virtie/internal/qmpclient`, with
-  manager supplying startup exit checks, timeouts, and stage wrapping.
-- [x] Move QGA dial retry and ping-readiness mechanics into
-  `virtie/internal/qga`, with manager supplying startup exit checks,
-  timeouts, and stage wrapping.
-- [x] Move QGA file transfer primitives into `virtie/internal/qga`, leaving
-  manager responsible for manifest write/write-back policy and stage wrapping.
-- [x] Move QGA guest-exec polling and output formatting into
-  `virtie/internal/qga`, leaving manager responsible for choosing guest
-  commands and interpreting exit status policy.
-- [x] Move guest process-list parsing and formatting into
-  `virtie/internal/qga`, leaving manager info collection responsible for
-  dialing QGA and selecting the `ps` command.
-- [x] Move QMP restore sequencing into `virtie/internal/qmpclient`, with
-  manager retaining stage wrapping.
-- [x] Move runtime restore orchestration into
-  `virtie/internal/manager/launch`, leaving manager responsible for QMP
-  timeout policy and stage wrapping.
-- [x] Move QMP suspend save sequencing into `virtie/internal/qmpclient`, with
-  manager retaining stage wrapping.
-- [x] Move runtime suspend save orchestration into
-  `virtie/internal/manager/launch`, leaving manager responsible for QMP
-  timeout policy and stage wrapping.
-- [x] Move runtime control-server start/close wiring into
-  `virtie/internal/manager/runtime`, with the concrete manager `Runtime`
-  passing itself as the typed control handler.
-- [x] Move runtime state tracking into `virtie/internal/manager/runtime`,
-  leaving manager responsible for deciding when lifecycle transitions happen.
-- [x] Move runtime idempotent close coordination into
-  `virtie/internal/manager/runtime`, leaving manager responsible for supplying
-  concrete cleanup hooks.
-- [x] Move runtime close action ordering into
-  `virtie/internal/manager/runtime`, so write-back, control shutdown, process
-  teardown, QMP disconnect, cleanup, and stats finalization run through one
-  package-owned sequence.
-- [x] Move pre-runtime startup failure cleanup ordering into
-  `virtie/internal/manager/runtime`, so process teardown, launch-lock cleanup,
-  QMP disconnect, socket cleanup, and stats finalization share package-owned
-  cleanup sequencing.
-- [x] Move runtime stats finalization and output formatting into
-  `virtie/internal/manager/runtime`, leaving manager responsible for supplying
-  the output writer.
-- [x] Move runtime write-back-on-exit state into
-  `virtie/internal/manager/runtime`, so restore/provisioning, suspend-save,
-  and close-hook callbacks share an explicit runtime-owned state holder.
-- [x] Move runtime saved-suspend close state into
-  `virtie/internal/manager/runtime`, so foreground wait, startup failure
-  cleanup, and close write-back skipping share package-owned state.
-- [x] Move foreground wait saved-suspend result handling into
-  `virtie/internal/manager/runtime`, leaving manager responsible for supplying
-  the concrete foreground wait callback.
-- [x] Move close-hook write-back gating into
-  `virtie/internal/manager/runtime`, leaving manager responsible for supplying
-  concrete write-back, cleanup, and stats callbacks.
-- [x] Move runtime ready/status/suspend transition policy and suspend response
-  construction into
-  `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
-  responsible for wiring paths, manifest state, and launch suspend adapters.
-- [x] Move runtime balloon control sequencing into
-  `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
-  responsible for supplying the owned QMP client, timeout, and
-  failed-precondition adaptation.
-- [x] Move runtime hotplug attach/detach dispatch into
-  `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
-  responsible for constructing the hotplug engine adapters.
-- [x] Move hotplug attach/detach stage classification into
-  `virtie/internal/manager/launch`, leaving manager hotplug call sites to
-  invoke the shared wrapper.
-- [x] Move runtime hotplug unsupported-response construction into
-  `virtie/internal/manager/runtime`, leaving build-tagged manager files as
-  thin capability adapters.
-- [x] Move concrete runtime logger and QMP timeout dependencies onto the
-  concrete `Runtime`, reducing manager back-references from control startup,
-  close write-back timeout, balloon control, and hotplug QMP adapters.
-- [x] Move concrete runtime foreground wait dependency onto the concrete
-  `Runtime`, reducing manager back-references from `Runtime.Wait` while
-  manager still supplies the concrete foreground callback.
-- [x] Move concrete runtime info collection dependency onto the concrete
-  `Runtime`, reducing manager back-references from `Runtime.Info` while
-  manager still supplies the concrete QGA-backed collector.
-- [x] Move concrete runtime hotplug adapter dependencies onto the concrete
-  `Runtime`, reducing manager back-references from runtime hotplug control
-  while manager still supplies concrete host/guest adapters.
-- [x] Move the concrete hotplug QMP adapter into
-  `virtie/internal/manager/runtime`, and make direct hotplug fallback retain
-  its connected QMP client explicitly for cleanup instead of type-asserting a
-  manager-local adapter.
-- [x] Move runtime hotplug dependency interfaces into
-  `virtie/internal/manager/runtime`, leaving manager to provide concrete
-  process, socket, and guest command adapters.
-- [x] Move concrete runtime dependency configuration into
-  `virtie/internal/manager/runtime`, leaving manager to populate the runtime
-  package-owned constructor contract.
-- [x] Move the concrete runtime constructor input shape into
-  `virtie/internal/manager/runtime`, so manager builds a runtime-owned config
-  instead of passing a manager-shaped parameter list.
-- [x] Move the concrete launch-owned `Runtime` implementation into
-  `virtie/internal/manager/runtime`, leaving `manager.Runtime` as a facade
-  alias for CLI-facing callers.
-- [x] Split the exported manager launcher facade into its own file, leaving
-  `manager.go` focused on internal orchestration and concrete adapter wiring.
-- [x] Make the concrete manager `Runtime` use `manager/launch` and
-  `manager/control` types directly instead of manager facade aliases,
-  reducing blockers for eventually moving the concrete runtime under
-  `virtie/internal/manager/runtime`.
-- [x] Make private manager launch orchestration signatures use
-  `manager/launch` types directly, leaving launch type aliases only at the
-  exported facade boundary.
-- [x] Inject saved-suspend exit classification into the concrete `Runtime`,
-  so runtime wait/suspend behavior no longer references the manager-local
-  saved-suspend sentinel directly.
-- [x] Remove the concrete `Runtime` back-reference to `manager`, leaving
-  manager-owned behavior supplied through explicit runtime dependencies and
-  callbacks.
-- [x] Remove launch lifecycle and suspend-handler storage from the concrete
-  `Runtime`, leaving foreground wait configured through the minimal plan and
-  callback dependency it actually needs.
-- [x] Move runtime info response construction into
-  `virtie/internal/manager/runtime`, leaving the concrete manager `Runtime`
-  responsible for collecting guest data.
-- [x] Move runtime foreground wait, Info, Suspend, and Balloon
-  failed-precondition adaptation into `virtie/internal/manager/runtime`,
-  leaving the concrete manager `Runtime` responsible for supplying concrete
-  wait callbacks, collectors, requesters, and devices.
-- [x] Move concrete runtime close-hook assembly into
-  `virtie/internal/manager/runtime`, leaving manager responsible for supplying
-  concrete write-back, cleanup, stats, and output dependencies.
-- [x] Move pre-runtime startup-failure cleanup assembly into
-  `virtie/internal/manager/runtime`, leaving manager responsible for supplying
-  concrete process, lock, socket, QMP, stats, and output dependencies.
-- [x] Move startup-error cleanup branching into
-  `virtie/internal/manager/runtime`, so manager supplies concrete cleanup
-  actions while runtime policy decides between started-runtime close and
-  pre-runtime startup-failure cleanup.
-- [x] Move configured startup-failure error handling into
-  `virtie/internal/manager/runtime`, so manager no longer combines cleanup
-  action assembly with saved-suspend classification inline.
-- [x] Move control-plane failed-precondition and compatibility error helpers
-  into `virtie/internal/manager/control`, with manager facade aliases
-  preserving migration call sites.
-- [x] Remove private manager control-helper aliases from command paths, so
-  manager internals use the control package helpers directly while exported
-  facade aliases remain for compatibility.
-- [x] Move SSH retry logging into `virtie/internal/sshtools`, so manager
-  foreground-session retry behavior depends on reusable SSH classification
-  helpers instead of package-local logging state.
-- [x] Move combined QMP readiness and retry-dial sequencing into
-  `virtie/internal/manager/launch`, with manager supplying concrete socket
-  waiting and QMP dialer.
-- [x] Move manifest-backed SSH command and hint construction into
-  `virtie/internal/manager/launch`, leaving manager foreground wait code to
-  start and supervise the resulting process.
-- [x] Move foreground process lifecycle wait mechanics into
-  `virtie/internal/manager/launch`, with manager retaining suspend/info
-  callbacks.
-- [x] Move foreground lifecycle suspend/info/unexpected-exit wait adapter into
-  `virtie/internal/manager/launch`, with manager supplying only concrete
-  suspend and guest-info actions.
-- [x] Move foreground SSH session retry/autoprovision loop into
-  `virtie/internal/manager/launch`, with manager supplying process runner,
-  lifecycle waits, stats, and guest-key install hooks.
-- [x] Move SSH autoprovision authorized-key guest install sequencing and stage
-  wrapping into `virtie/internal/manager/launch`, with manager supplying
-  concrete QGA command callbacks.
-- [x] Move foreground SSH-vs-headless orchestration into
-  `virtie/internal/manager/launch`, with manager supplying optional-feature
-  startup and concrete wait callbacks.
-- [x] Move foreground optional-feature startup sequencing into
-  `virtie/internal/manager/launch`, leaving manager responsible for starting
-  concrete optional feature tasks.
-- [x] Move explicit foreground wait-mode plan overrides into
-  `virtie/internal/manager/launch`, leaving manager runtime wait code to call
-  the launch helper before invoking concrete foreground callbacks.
-- [x] Move guest provisioning and SSH-readiness startup checkpoint sequencing
-  into `virtie/internal/manager/launch`, with manager supplying concrete QGA
-  writes and SSH-ready waits.
-- [x] Move SSH-readiness token wait sequencing into
-  `virtie/internal/manager/launch`, with manager supplying concrete socket
-  waiting, readiness dialing, and timeout policy.
-- [x] Move guest-agent socket wait and retry-dial sequencing into
-  `virtie/internal/manager/launch`, with manager supplying concrete QGA
-  dialer and timeout policy.
-- [x] Remove manager-local concrete QMP/QGA socket-dialer aliases, so default
-  and fallback manager dependencies instantiate `qmpclient` and `qga`
-  dialers directly.
-- [x] Remove manager-local QMP/QGA dialer interface aliases, so manager
-  configuration fields use `qmpclient.Dialer` and `qga.Dialer` directly.
-- [x] Remove the manager-local guest exec status alias, so QGA command helpers
-  and tests use `qga.ExecStatus` directly.
-- [x] Remove the manager-local guest-agent client alias, so QGA helper
-  signatures and tests use `qga.Client` directly.
-- [x] Remove the manager-local QMP client alias, so runtime, hotplug,
-  optional-feature, suspend, and test seams use `qmpclient.Client` directly.
-- [x] Allow manager call sites to supply operation-specific guest-agent wait
-  stages while keeping wait wrapping in `virtie/internal/manager/launch`.
-- [x] Move default startup wait stage wrapping and process-exit checks into
-  `virtie/internal/manager/launch` for socket, QMP, QGA, and SSH-readiness
-  waits.
-- [x] Move default foreground SSH session stage wrapping into
-  `virtie/internal/manager/launch`, leaving manager to supply concrete SSH
-  callbacks.
-- [x] Move runtime activation sequencing into
-  `virtie/internal/manager/launch`, so ready-state marking, concrete runtime
-  configuration callbacks, control startup, queued suspend handling, guest
-  provisioning, and write-back enabling run as one package-owned phase.
-- [x] Move host-side guest-file payload and write-back path helpers into
-  `virtie/internal/manager/launch`, leaving manager responsible for QGA
-  guest-write orchestration and stage wrapping.
-- [x] Move guest-file directory install argument policy into
-  `virtie/internal/manager/launch`, keeping manager responsible for running
-  the resulting guest command.
-- [x] Move guest-file parent-directory creation flow into
-  `virtie/internal/manager/launch`, keeping manager responsible only for QGA
-  existence checks and command execution.
-- [x] Move manifest-backed guest-file write orchestration into
-  `virtie/internal/manager/launch`, with manager supplying QGA-backed file
-  operations and logging callbacks.
-- [x] Move guest-file write-back filtering and host-write orchestration into
-  `virtie/internal/manager/launch`, with manager supplying QGA reads, host
-  write implementation, and logging callbacks.
-- [x] Move workspace CWD guest-mount target derivation and command sequencing
-  into `virtie/internal/manager/launch`, with manager supplying QGA command
-  execution and logging callbacks.
-- [x] Move default guest-file write, write-back, and workspace CWD mount stage
-  wrapping into `virtie/internal/manager/launch`.
-- [x] Move notifier selection policy into
-  `virtie/internal/manager/launch`, leaving manager responsible for
-  constructing the concrete manifest-backed command notifier.
-- [x] Move generic launch stage-error and command-error construction into
-  `virtie/internal/manager/launch`, leaving manager responsible for
-  CLI exit-code adaptation and remaining stage-specific wrapping.
-- [x] Remove manager-local stage-error and command-error aliases, so manager
-  call sites use launch package error types directly.
-- [x] Move launch unexpected-process-exit detection and wrapping into
-  `virtie/internal/manager/launch`, leaving manager call sites to supply
-  concrete process groups.
+The refactor has landed as a set of smaller package-owned abstractions rather
+than one manager-local launch path. This inventory is the current map of those
+abstractions and their ownership boundaries.
+
+### `virtie/internal/manager` Facade
+
+- `Launcher`, `DefaultConfig`, and `LaunchWithOptions` remain the CLI-facing
+  entrypoints. They now compose launch planning, runtime startup, foreground
+  wait, and cleanup instead of owning every lifecycle detail inline.
+- Type aliases in `launcher.go` and `control_rpc.go` preserve the historical
+  manager package surface for callers while the implementation lives in
+  `manager/launch`, `manager/runtime`, and `manager/control`.
+- The remaining private `manager` code primarily adapts manifest data, concrete
+  QEMU/QMP/QGA dependencies, notification commands, lock files, signal
+  delivery, and compatibility fallbacks into the package-owned abstractions.
+
+### `virtie/internal/manager/launch`
+
+- `Spec`, `Options`, `ResumeMode`, `WaitMode`, `RuntimePaths`, `SuspendState`,
+  and `Plan` describe resolved launch inputs, runtime socket paths, resume
+  metadata, and plan-owned cleanup.
+- `BuildPlan`, `ResolveResumeState`, `AcquireCID`, `FinalizeLockedPlan`, and
+  `SetupLockedPlan` own pre-runtime planning: resume policy, CID selection,
+  QEMU command finalization, filesystem preparation, and lock-scoped cleanup.
+- `Config` and its narrow dependency interfaces (`Runner`, `Locker`,
+  `SocketWaiter`, `VSockCIDChecker`, `PIDSignaler`, `SSHReadyDialer`) define the
+  concrete services manager supplies to launch orchestration.
+- `RuntimeLock`, launch PID helpers, stale-process classification, VM state
+  path helpers, and saved-state polling centralize process ownership and
+  suspend fallback behavior.
+- `Lifecycle`, `SuspendCoordinator`, `EventWait`, `ProcessWait`, and
+  `LifecycleProcessWait` provide the shared event path for local signals, RPC
+  suspend requests, info requests, foreground process exits, and cancellation.
+- `RunStarter`, `StartQEMU`, `RuntimeStartup`, `StartRuntimeProcesses`, and
+  `FinalizeRuntimeStartup` own startup sequencing through run commands, QEMU,
+  QMP readiness, shutdown hooks, and boot stats.
+- `AsyncWait`, `SocketWait`, `QMPWait`, `GuestAgentWait`, and `SSHReadyWait`
+  package socket waiting, retry dialing, readiness checks, cancellation, and
+  stage wrapping for QMP, QGA, virtiofs, and SSH readiness.
+- `RuntimeRestore` and `RuntimeSuspendSave` orchestrate QMP restore/save with
+  suspend metadata and notifications, while `qmpclient` owns the protocol-level
+  migration loops.
+- `RuntimeActivation` sequences ready-state marking, control socket startup,
+  queued suspend handling, guest provisioning, and write-back enablement.
+- `ForegroundWait`, `SSHSession`, `SSHAutoprovisionKey`, and related SSH command
+  builders own SSH/headless foreground wait selection, retry behavior,
+  autoprovisioning, process supervision, and command hints.
+- `GuestProvision`, `GuestFileWriter`, `GuestFileWriteBacker`,
+  `GuestDirectoryInstaller`, and `WorkspaceCWDMounter` own guest-file payloads,
+  directory creation policy, workspace CWD mounting, write-back filtering, and
+  host write-back helpers.
+- `NotificationSink`, `NotifierFactory`, `SelectNotifier`,
+  `NotifyRuntimeResume`, and `NotifyRuntimeSuspend` keep lifecycle notification
+  payload construction outside the concrete manager.
+- `StageError`, `CommandError`, `WrapStage`, `WrapCommandError`,
+  `WrapHotplugError`, and `FirstUnexpectedExit` centralize launch-stage error
+  classification and wrapping.
+
+### `virtie/internal/manager/runtime`
+
+- `RuntimeConfig`, `Dependencies`, and `Runtime` define the launch-owned runtime
+  object. The constructor serializes the supplied QMP client and stores explicit
+  dependencies instead of retaining a back-reference to `manager`.
+- `ProcessSet`, `Task`, and `TaskGroup` own QEMU, helper processes, optional
+  feature tasks, watcher groups, and cancellation.
+- `State` owns runtime state transitions (`starting`, `ready`, `suspending`,
+  `suspended`, `stopping`, `stopped`) used by status, suspend, wait, and close
+  paths.
+- `ControlServer` and `StartControl` wire the concrete runtime into the typed
+  `virtie.sock` server and keep server shutdown under runtime cleanup.
+- `Closer`, `CloseActions`, `CloseHooks`, `CloseHookActions`, and
+  `CloseHookConfig` define idempotent runtime teardown ordering: write-back,
+  control shutdown, process teardown, QMP disconnect, cleanup, stats
+  finalization, and output formatting.
+- `StartupFailureConfig`, `StartupFailureActions`, and startup failure helpers
+  share cleanup ordering for failures before a full runtime exists.
+- `Stats` and control-plane conversion helpers track launch timing and format
+  status/runtime output.
+- `SavedSuspendState` and `WriteBackState` coordinate saved-suspend exits and
+  write-back-on-exit gating across foreground wait, suspend save, close hooks,
+  and startup failure cleanup.
+- `ForegroundWaitOperation`, `ControlWaitForeground`, `SuspendOperation`,
+  `ControlSuspend`, `GuestInfo`, `InfoCollector`, `ControlInfo`,
+  `BalloonQMP`, `ControlBalloon`, and hotplug adapters implement typed runtime
+  capabilities over narrow dependencies.
+- `HotplugRuntime`, `HotplugStarter`, `HotplugSocketWaiter`, `HotplugGuest`, and
+  `HotplugQMP` adapt the owned runtime resources into `internal/hotplug` while
+  preserving build-tagged unsupported responses.
+
+### `virtie/internal/manager/control`
+
+- `RuntimeState`, request/response structs, `RuntimeStats`, `StatusPaths`,
+  `ErrorCode`, and `RPCError` define the typed JSON-over-Unix-socket control
+  protocol.
+- `RuntimeCore`, `RuntimeSuspend`, `RuntimeHotplug`, and `RuntimeBalloon` are
+  the capability interfaces registered by the control router.
+- `Router`, `NewRouter`, and `NewRuntimeRouter` map typed methods to runtime
+  capabilities and return typed unsupported/failed-precondition errors instead
+  of exposing method strings to manager callers.
+- `Listen`, `Serve`, `ListenAndServe`, `Server`, `Dial`, and `Client` implement
+  the transport lifecycle and typed client calls for status, info, suspend,
+  hotplug, and balloon.
+- `FailedPrecondition`, `IsSocketUnavailable`, and `IsUnsupported` centralize
+  compatibility decisions for CLI fallbacks.
+
+### `virtie/internal/qmpclient`
+
+- `Client`, `Dialer`, and `SocketMonitorDialer` isolate QMP protocol access from
+  manager/runtime orchestration.
+- `Serialized` wraps any QMP client so launch-owned runtime operations, hotplug,
+  balloon control, suspend save, restore, and shutdown do not interleave unsafe
+  QMP command sequences.
+- `DialRetry` and `DialWithRetry` own retry/cancellation mechanics for QMP
+  startup connection attempts.
+- `MigrationWait`, `RestoreWait`, `SaveWait`, `WaitForMigration`,
+  `RestoreFromFile`, and `SaveToFile` own protocol-level migration polling,
+  restore, and suspend-save sequencing.
+
+### `virtie/internal/qga`
+
+- `Client`, `Dialer`, `SocketDialer`, and `ExecStatus` isolate QGA socket and
+  command protocol access from manager orchestration.
+- `DialRetry` and `DialWithRetry` own QGA retry and ping-readiness mechanics.
+- `WriteFile` and `ReadFile` provide close-safe guest file transfer primitives.
+- `ExecWait`, `RunCommandStatus`, `ExecOutputSuffix`, and `DecodeExecData` own
+  guest-exec polling and output formatting.
+- `Process`, `ParseProcesses`, `FormatProcesses`, and
+  `FormatProcessListExecData` own guest process-list parsing and display
+  formatting used by runtime info.
 
 ## Landed Control Flow
 
