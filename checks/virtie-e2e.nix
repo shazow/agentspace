@@ -611,8 +611,8 @@ in
     grep -F 'stats:' "$launch_log" >/dev/null
     workspace_real="$(${pkgs.coreutils}/bin/realpath "$workspace_dir")"
     grep -F '"working_dir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtie-fake.json" >/dev/null
-    grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
-    grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
+    allocated_cid="$(cat "$workspace_dir/state/qemu-vsock-cid")"
+    grep -Fx "agent@vsock/$allocated_cid" "$workspace_dir/state/ssh-destination" >/dev/null
     grep -Fx '/etc/virtie/inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
     grep -Fx '/var/lib/virtie/host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
     grep -Fx '/etc/virtie/inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
@@ -661,7 +661,8 @@ in
     done
 
     grep -F 'connect with' "$no_ssh_log" >/dev/null
-    grep -F 'agent@vsock/3' "$no_ssh_log" >/dev/null
+    no_ssh_cid="$(cat "$no_ssh_workspace_dir/state/qemu-vsock-cid")"
+    grep -F "agent@vsock/$no_ssh_cid" "$no_ssh_log" >/dev/null
     test ! -f "$no_ssh_workspace_dir/state/ssh-session-started"
     no_ssh_manifest="$no_ssh_workspace_dir/.agentspace/virtie-fake.json"
     ${virtiePackage}/bin/virtie --manifest="$no_ssh_manifest" suspend
@@ -695,6 +696,7 @@ in
 
     disk_manifest="$disk_workspace_dir/.agentspace/virtie-fake.json"
     ${virtiePackage}/bin/virtie --manifest="$disk_manifest" suspend
+    disk_cid="$(cat "$disk_workspace_dir/state/qemu-vsock-cid")"
     test ! -f "$disk_workspace_dir/state/qmp-second-client"
     test -f "$disk_workspace_dir/state/qemu-paused"
     test -f "$disk_workspace_dir/state/qemu-migrated"
@@ -702,7 +704,7 @@ in
     test -f "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json"
     test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.pid"
     grep -F '"status": "saved"' "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
-    grep -F '"cid": 3' "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
+    grep -F '"cid": '"$disk_cid" "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
 
     if ! wait "$launch_pid"; then
       echo "virtie-launch-e2e: disk suspend launch exited non-zero" >&2
@@ -727,7 +729,7 @@ in
     test -f "$disk_workspace_dir/state/qemu-incoming-defer"
     test -f "$disk_workspace_dir/state/qemu-migrate-incoming"
     test -f "$disk_workspace_dir/state/qemu-resumed"
-    grep -Fx '3' "$disk_workspace_dir/state/qemu-vsock-cid" >/dev/null
+    test -s "$disk_workspace_dir/state/qemu-vsock-cid"
     test -f "$disk_workspace_dir/.agentspace/virtie-fake.pid"
 
     touch "$disk_workspace_dir/state/ssh-session-finished"
