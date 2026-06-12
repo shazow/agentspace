@@ -11,7 +11,7 @@ import (
 )
 
 func (r *Runtime) Hotplug(ctx context.Context, req control.HotplugRequest) (control.HotplugResponse, error) {
-	runtime := hotplug.Runtime{
+	hotplugRuntime := hotplug.Runtime{
 		StateDir: r.manifest.ResolvedPersistenceStateDir(),
 		WorkDir:  r.manifest.Paths.WorkingDir,
 		Devices:  r.manifest.Hotplug,
@@ -20,9 +20,14 @@ func (r *Runtime) Hotplug(ctx context.Context, req control.HotplugRequest) (cont
 		QMP:      HotplugQMP{Client: r.qmp, Timeout: r.qmpTimeout},
 		Guest:    r.hotplugGuest,
 	}
-	resp, err := Hotplug(ctx, runtime, req)
-	if err != nil {
+	if req.Detach {
+		if err := hotplugRuntime.Detach(ctx, req.ID); err != nil {
+			return control.HotplugResponse{}, launch.WrapHotplugError(err)
+		}
+		return control.HotplugResponse{ID: req.ID, Detach: true}, nil
+	}
+	if err := hotplugRuntime.Attach(ctx, req.ID); err != nil {
 		return control.HotplugResponse{}, launch.WrapHotplugError(err)
 	}
-	return resp, nil
+	return control.HotplugResponse{ID: req.ID}, nil
 }

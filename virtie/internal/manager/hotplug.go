@@ -37,7 +37,7 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 	}
 	controlSocketPath, err := launchManifest.ResolvedControlSocketPath()
 	if err == nil && controlSocketPath != "" {
-		_, err := controlpkg.Dial(controlSocketPath).Hotplug(ctx, HotplugRequest{ID: id, Detach: options.Detach})
+		_, err := controlpkg.Dial(controlSocketPath).Hotplug(ctx, controlpkg.HotplugRequest{ID: id, Detach: options.Detach})
 		if err == nil {
 			return nil
 		}

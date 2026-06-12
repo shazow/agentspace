@@ -68,36 +68,3 @@ func TestQueueSuspendPropagatesUnexpectedError(t *testing.T) {
 		t.Fatalf("state: got %s want %s", got, control.RuntimeSuspending)
 	}
 }
-
-func TestSuspendReturnsSavedResponse(t *testing.T) {
-	state := NewState(control.RuntimeReady)
-	resp, err := Suspend(context.Background(), SuspendOperation{
-		State:       state,
-		Requester:   fakeSuspendRequester{},
-		VMStatePath: "/tmp/vmstate",
-	})
-	if err != nil {
-		t.Fatalf("suspend: %v", err)
-	}
-	if !resp.Saved || resp.VMStatePath != "/tmp/vmstate" {
-		t.Fatalf("response: %#v", resp)
-	}
-}
-
-func TestSuspendReturnsNotReadyError(t *testing.T) {
-	_, err := Suspend(context.Background(), SuspendOperation{State: NewState(control.RuntimeReady)})
-	if !errors.Is(err, ErrSuspendNotReady) {
-		t.Fatalf("error: got %v want %v", err, ErrSuspendNotReady)
-	}
-}
-
-func TestControlSuspendMapsNotReadyToFailedPrecondition(t *testing.T) {
-	_, err := ControlSuspend(context.Background(), SuspendOperation{State: NewState(control.RuntimeReady)})
-	var rpcErr *control.RPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("error type: got %T", err)
-	}
-	if rpcErr.Code != control.ErrFailedPrecondition {
-		t.Fatalf("code: got %s want %s", rpcErr.Code, control.ErrFailedPrecondition)
-	}
-}

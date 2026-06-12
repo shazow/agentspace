@@ -2,8 +2,9 @@ package runtime
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
@@ -29,7 +30,7 @@ type Runtime struct {
 	logger           *slog.Logger
 	savedSuspendExit func(error) bool
 	closeHooks       CloseHooks
-	savedSuspend     *SavedSuspendState
+	savedSuspend     atomic.Bool
 	watchers         executor.Group
 	hotplugStart     HotplugStarter
 	hotplugSockets   HotplugSocketWaiter
@@ -37,7 +38,7 @@ type Runtime struct {
 
 	state   *State
 	closer  *Closer
-	control *ControlServer
+	control *control.Server
 }
 
 func New(config RuntimeConfig) *Runtime {
@@ -57,7 +58,6 @@ func New(config RuntimeConfig) *Runtime {
 		hotplugStart:     deps.HotplugStart,
 		hotplugSockets:   deps.HotplugSockets,
 		hotplugGuest:     deps.HotplugGuest,
-		savedSuspend:     NewSavedSuspendState(),
 		state:            state,
 		closer:           NewCloser(state),
 	}
@@ -68,7 +68,7 @@ func (r *Runtime) SetReady() {
 }
 
 func (r *Runtime) MarkSavedSuspend() {
-	r.savedSuspend.MarkSaved()
+	r.savedSuspend.Store(true)
 }
 
 func (r *Runtime) SetWatchers(watchers executor.Group) {
@@ -93,17 +93,19 @@ func (r *Runtime) QMP() qmpclient.Client {
 	return r.qmp
 }
 
-func (r *Runtime) StartControl(ctx context.Context) error {
+func (r *Runtime) StartControl(ctx context.Context) (*control.Server, error) {
 	controlServer, err := StartControl(ctx, r.paths.ControlSocket, r, r.logger)
-	r.control = controlServer
-	return err
+	if err == nil {
+		r.control = controlServer
+	}
+	return controlServer, err
 }
 
 func (r *Runtime) Close() error {
 	return r.closer.Close(CloseActions{
 		WriteBack:        r.closeHooks.WriteBack,
 		WriteBackTimeout: r.qmpTimeout,
-		SkipWriteBack:    r.savedSuspend.Saved(),
+		SkipWriteBack:    r.savedSuspend.Load(),
 		Control:          r.control,
 		Processes:        r.processes,
 		ShutdownDelay:    r.shutdownDelay,
@@ -115,18 +117,14 @@ func (r *Runtime) Close() error {
 
 func (r *Runtime) Wait(ctx context.Context, mode launch.WaitMode) error {
 	if r.plan == nil || r.processes == nil || r.waitForeground == nil {
-		return ControlWaitForeground(ctx, ForegroundWaitOperation{})
+		return control.FailedPrecondition(ErrForegroundWaitNotConfigured)
 	}
 	plan := launch.PlanForWaitMode(r.plan, mode)
-	return ControlWaitForeground(ctx, ForegroundWaitOperation{
-		SavedSuspend: r.savedSuspend,
-		Wait: func(ctx context.Context) error {
-			return r.waitForeground(ctx, plan)
-		},
-		SavedSuspendExit: func(err error) bool {
-			return r.isSavedSuspendExit(err)
-		},
-	})
+	err := r.waitForeground(ctx, plan)
+	if err != nil && r.isSavedSuspendExit(err) {
+		r.MarkSavedSuspend()
+	}
+	return err
 }
 
 func (r *Runtime) Status(ctx context.Context, req control.StatusRequest) (control.StatusResponse, error) {
@@ -140,33 +138,36 @@ func (r *Runtime) Status(ctx context.Context, req control.StatusRequest) (contro
 }
 
 func (r *Runtime) Info(ctx context.Context, req control.InfoRequest) (control.InfoResponse, error) {
-	return ControlInfo(ctx, runtimeInfoCollector{runtime: r})
-}
-
-type runtimeInfoCollector struct {
-	runtime *Runtime
-}
-
-func (c runtimeInfoCollector) CollectInfo(ctx context.Context) (GuestInfo, error) {
-	if c.runtime.collectInfo == nil {
-		return GuestInfo{}, fmt.Errorf("runtime info collector is not configured")
+	if r.collectInfo == nil {
+		return control.InfoResponse{}, control.FailedPrecondition(errors.New("runtime info collector is not configured"))
 	}
-	return c.runtime.collectInfo(ctx, c.runtime.paths.GuestAgentSocket, c.runtime.watchers)
+	info, err := r.collectInfo(ctx, r.paths.GuestAgentSocket, r.watchers)
+	if err != nil {
+		return control.InfoResponse{}, control.FailedPrecondition(err)
+	}
+	return control.InfoResponse{ProcessList: info.ProcessList}, nil
 }
 
 func (r *Runtime) Suspend(ctx context.Context, req control.SuspendRequest) (control.SuspendResponse, error) {
-	return ControlSuspend(ctx, SuspendOperation{
-		State:       r.state,
-		Requester:   r.suspendRequests,
-		VMStatePath: launch.VMStatePath(r.manifest),
-		SavedSuspendExit: func(err error) bool {
-			return r.isSavedSuspendExit(err)
-		},
-	})
+	if r.suspendRequests == nil {
+		return control.SuspendResponse{}, control.FailedPrecondition(ErrSuspendNotReady)
+	}
+	err := QueueSuspend(ctx, r.state, r.suspendRequests, r.isSavedSuspendExit)
+	if errors.Is(err, ErrSuspendNotReady) {
+		return control.SuspendResponse{}, control.FailedPrecondition(err)
+	}
+	if err != nil {
+		return control.SuspendResponse{}, err
+	}
+	return control.SuspendResponse{Saved: true, VMStatePath: launch.VMStatePath(r.manifest)}, nil
 }
 
 func (r *Runtime) Balloon(ctx context.Context, req control.BalloonRequest) (control.BalloonResponse, error) {
-	return ControlBalloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
+	resp, err := Balloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
+	if errors.Is(err, ErrBalloonNotConfigured) {
+		return control.BalloonResponse{}, control.FailedPrecondition(err)
+	}
+	return resp, err
 }
 
 func (r *Runtime) isSavedSuspendExit(err error) bool {

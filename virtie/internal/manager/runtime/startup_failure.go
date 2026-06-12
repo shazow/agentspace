@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"errors"
-	"io"
 	"time"
 )
 
@@ -20,27 +19,6 @@ type StartupFailureActions struct {
 	Stats         func()
 }
 
-type StartupFailureConfig struct {
-	Processes     *ProcessSet
-	ShutdownDelay time.Duration
-	LockCleanup   func() error
-	QMP           Disconnecter
-	SocketCleanup []func() error
-	Stats         *Stats
-	StatsOutput   io.Writer
-}
-
-func ConfiguredStartupFailureActions(config StartupFailureConfig) StartupFailureActions {
-	return StartupFailureActions{
-		Processes:     config.Processes,
-		ShutdownDelay: config.ShutdownDelay,
-		LockCleanup:   config.LockCleanup,
-		QMP:           config.QMP,
-		SocketCleanup: JoinedCleanup(config.SocketCleanup...),
-		Stats:         StatsFinalizer(config.Stats, config.StatsOutput),
-	}
-}
-
 func CleanupStartError(cause error, started StartedRuntime, startup StartupFailureActions, savedSuspendExit func(error) bool) error {
 	if cause == nil {
 		return nil
@@ -52,10 +30,6 @@ func CleanupStartError(cause error, started StartedRuntime, startup StartupFailu
 		return errors.Join(cause, started.Close())
 	}
 	return errors.Join(cause, startup.Run())
-}
-
-func CleanupConfiguredStartError(cause error, started StartedRuntime, config StartupFailureConfig, savedSuspendExit func(error) bool) error {
-	return CleanupStartError(cause, started, ConfiguredStartupFailureActions(config), savedSuspendExit)
 }
 
 func (a StartupFailureActions) Run() error {

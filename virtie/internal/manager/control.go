@@ -22,7 +22,7 @@ func Suspend(ctx context.Context, manifest *manifest.Manifest) error {
 func (m *manager) suspend(ctx context.Context, manifest *manifest.Manifest) error {
 	controlSocketPath, err := manifest.ResolvedControlSocketPath()
 	if err == nil && controlSocketPath != "" {
-		resp, err := controlpkg.Dial(controlSocketPath).Suspend(ctx, SuspendRequest{})
+		resp, err := controlpkg.Dial(controlSocketPath).Suspend(ctx, controlpkg.SuspendRequest{})
 		if err == nil {
 			if resp.Saved {
 				timeout := m.effectiveSuspendSignalTimeout(manifest)

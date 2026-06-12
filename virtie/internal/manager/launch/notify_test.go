@@ -21,39 +21,6 @@ func (n *recordingNotifier) Notify(_ context.Context, state string, message stri
 	n.calls = append(n.calls, notifyCall{state: state, message: message, values: values})
 }
 
-func TestSelectNotifierPrefersConfiguredNotifier(t *testing.T) {
-	configured := &recordingNotifier{}
-	factoryNotifier := &recordingNotifier{}
-	got := SelectNotifier(&manifest.Manifest{}, configured, func(*manifest.Manifest) NotificationSink {
-		return factoryNotifier
-	})
-	if got != configured {
-		t.Fatalf("notifier: got %#v want configured notifier", got)
-	}
-}
-
-func TestSelectNotifierBuildsManifestNotifier(t *testing.T) {
-	factoryNotifier := &recordingNotifier{}
-	var factoryManifest *manifest.Manifest
-	cfg := &manifest.Manifest{}
-	got := SelectNotifier(cfg, nil, func(manifest *manifest.Manifest) NotificationSink {
-		factoryManifest = manifest
-		return factoryNotifier
-	})
-	if got != factoryNotifier {
-		t.Fatalf("notifier: got %#v want factory notifier", got)
-	}
-	if factoryManifest != cfg {
-		t.Fatalf("factory manifest: got %#v want %#v", factoryManifest, cfg)
-	}
-}
-
-func TestSelectNotifierNoopsWithoutConfiguredNotifierOrFactory(t *testing.T) {
-	if got := SelectNotifier(&manifest.Manifest{}, nil, nil); got != nil {
-		t.Fatalf("notifier: got %#v want nil", got)
-	}
-}
-
 func TestNotifyRuntimeResume(t *testing.T) {
 	notifier := &recordingNotifier{}
 	plan := &Plan{
