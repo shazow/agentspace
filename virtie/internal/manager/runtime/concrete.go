@@ -36,14 +36,14 @@ type Runtime struct {
 	hotplugSockets   HotplugSocketWaiter
 	hotplugGuest     HotplugGuest
 
-	state   *State
-	closer  *Closer
+	state   *state
+	closer  *closer
 	control *control.Server
 }
 
 func New(config RuntimeConfig) *Runtime {
 	deps := config.Dependencies
-	state := NewState(control.RuntimeStarting)
+	state := newState(control.RuntimeStarting)
 	return &Runtime{
 		manifest:         config.Manifest,
 		paths:            config.Paths,
@@ -64,12 +64,12 @@ func New(config RuntimeConfig) *Runtime {
 		hotplugSockets:   deps.HotplugSockets,
 		hotplugGuest:     deps.HotplugGuest,
 		state:            state,
-		closer:           NewCloser(state),
+		closer:           newCloser(state),
 	}
 }
 
 func (r *Runtime) SetReady() {
-	MarkReady(r.state)
+	markReady(r.state)
 }
 
 func (r *Runtime) MarkSavedSuspend() {
@@ -93,8 +93,8 @@ func (r *Runtime) StartControl(ctx context.Context) (*control.Server, error) {
 }
 
 func (r *Runtime) Close() error {
-	return r.closer.Close(CloseActions{
-		ShutdownResources: ShutdownResources{
+	return r.closer.Close(closeActions{
+		shutdownResources: shutdownResources{
 			Processes:     r.processes,
 			ShutdownDelay: r.shutdownDelay,
 			QMP:           r.qmp,
@@ -110,7 +110,7 @@ func (r *Runtime) Close() error {
 
 func (r *Runtime) Wait(ctx context.Context, mode launch.WaitMode) error {
 	if r.plan == nil || r.processes == nil || r.waitForeground == nil {
-		return control.FailedPrecondition(ErrForegroundWaitNotConfigured)
+		return control.FailedPrecondition(errForegroundWaitNotConfigured)
 	}
 	plan := launch.PlanForWaitMode(r.plan, mode)
 	err := r.waitForeground(ctx, plan)
@@ -122,7 +122,7 @@ func (r *Runtime) Wait(ctx context.Context, mode launch.WaitMode) error {
 
 func (r *Runtime) Status(ctx context.Context, req control.StatusRequest) (control.StatusResponse, error) {
 	_ = ctx
-	return Status(r.state, r.cid, control.StatusPaths{
+	return status(r.state, r.cid, control.StatusPaths{
 		ControlSocket:    r.paths.ControlSocket,
 		QMPSocket:        r.paths.QMPSocket,
 		GuestAgentSocket: r.paths.GuestAgentSocket,
@@ -143,10 +143,10 @@ func (r *Runtime) Info(ctx context.Context, req control.InfoRequest) (control.In
 
 func (r *Runtime) Suspend(ctx context.Context, req control.SuspendRequest) (control.SuspendResponse, error) {
 	if r.suspendRequests == nil {
-		return control.SuspendResponse{}, control.FailedPrecondition(ErrSuspendNotReady)
+		return control.SuspendResponse{}, control.FailedPrecondition(errSuspendNotReady)
 	}
-	err := QueueSuspend(ctx, r.state, r.suspendRequests, r.isSavedSuspendExit)
-	if errors.Is(err, ErrSuspendNotReady) {
+	err := queueSuspend(ctx, r.state, r.suspendRequests, r.isSavedSuspendExit)
+	if errors.Is(err, errSuspendNotReady) {
 		return control.SuspendResponse{}, control.FailedPrecondition(err)
 	}
 	if err != nil {
@@ -156,8 +156,8 @@ func (r *Runtime) Suspend(ctx context.Context, req control.SuspendRequest) (cont
 }
 
 func (r *Runtime) Balloon(ctx context.Context, req control.BalloonRequest) (control.BalloonResponse, error) {
-	resp, err := Balloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
-	if errors.Is(err, ErrBalloonNotConfigured) {
+	resp, err := balloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
+	if errors.Is(err, errBalloonNotConfigured) {
 		return control.BalloonResponse{}, control.FailedPrecondition(err)
 	}
 	return resp, err

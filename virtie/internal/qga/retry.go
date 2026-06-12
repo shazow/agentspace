@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// DialRetry configures guest-agent dial retry behavior.
 type DialRetry struct {
 	SocketPath     string
 	ConnectTimeout time.Duration
@@ -14,6 +15,7 @@ type DialRetry struct {
 	Check          func() error
 }
 
+// DialWithRetry dials until a guest-agent client connects and responds to ping.
 func DialWithRetry(ctx context.Context, dialer Dialer, retry DialRetry) (Client, error) {
 	if dialer == nil {
 		return nil, fmt.Errorf("guest agent dialer is not configured")

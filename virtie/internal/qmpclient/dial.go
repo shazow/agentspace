@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// DialRetry configures QMP dial retry behavior.
 type DialRetry struct {
 	SocketPath string
 	Timeout    time.Duration
@@ -13,6 +14,7 @@ type DialRetry struct {
 	Check      func() error
 }
 
+// DialWithRetry dials until a QMP client connects or ctx is canceled.
 func DialWithRetry(ctx context.Context, dialer Dialer, retry DialRetry) (Client, error) {
 	if dialer == nil {
 		return nil, fmt.Errorf("qmp dialer is not configured")

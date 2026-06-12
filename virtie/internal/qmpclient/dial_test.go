@@ -8,7 +8,7 @@ import (
 )
 
 func TestDialWithRetryReturnsClientAfterRetry(t *testing.T) {
-	want := &migrationClient{}
+	want := &dialClient{}
 	dialer := &retryDialer{failures: 1, client: want}
 	client, err := DialWithRetry(context.Background(), dialer, DialRetry{
 		SocketPath: "qmp.sock",
@@ -62,6 +62,10 @@ type retryDialer struct {
 	client     Client
 	err        error
 	afterDial  func()
+}
+
+type dialClient struct {
+	Client
 }
 
 func (d *retryDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (Client, error) {

@@ -38,15 +38,15 @@ func WaitForSockets(ctx context.Context, wait SocketWait) error {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				return WrapStage(wait.Stage, err)
+				return wrapStage(wait.Stage, err)
 			}
 			return nil
 		case <-ticker.C:
-			if err := FirstUnexpectedExit(wait.Stage, wait.Watchers); err != nil {
+			if err := firstUnexpectedExit(wait.Stage, wait.Watchers); err != nil {
 				return err
 			}
 		case <-ctx.Done():
-			return WrapStage(wait.Stage, ctx.Err())
+			return wrapStage(wait.Stage, ctx.Err())
 		}
 	}
 }

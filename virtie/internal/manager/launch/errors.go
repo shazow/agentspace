@@ -40,17 +40,17 @@ func (e *StageError) Unwrap() error {
 	return e.Err
 }
 
-func WrapStage(stage string, err error) error {
+func wrapStage(stage string, err error) error {
 	return &StageError{Stage: stage, Err: err}
 }
 
 func WrapFixedStage(stage string) func(error) error {
 	return func(err error) error {
-		return WrapStage(stage, err)
+		return wrapStage(stage, err)
 	}
 }
 
-func WrapCommandError(stage string, command string, err error) error {
+func wrapCommandError(stage string, command string, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -80,23 +80,23 @@ func WrapHotplugError(err error) error {
 	message := err.Error()
 	switch {
 	case strings.Contains(message, "guest command"):
-		return WrapStage("hotplug guest", err)
+		return wrapStage("hotplug guest", err)
 	case strings.Contains(message, "qmp"), strings.Contains(message, "device_del"), strings.Contains(message, "chardev"), strings.Contains(message, "netdev"), strings.Contains(message, "blockdev"):
-		return WrapStage("hotplug qmp", err)
+		return wrapStage("hotplug qmp", err)
 	case strings.Contains(message, "state"):
-		return WrapStage("hotplug state", err)
+		return wrapStage("hotplug state", err)
 	default:
-		return WrapStage("hotplug", err)
+		return wrapStage("hotplug", err)
 	}
 }
 
-func FirstUnexpectedExit(stage string, watchers executor.Group) error {
+func firstUnexpectedExit(stage string, watchers executor.Group) error {
 	process, err, ok := watchers.FirstExit()
 	if !ok {
 		return nil
 	}
 	if err == nil {
-		return WrapStage(stage, fmt.Errorf("%s exited unexpectedly", process.Name()))
+		return wrapStage(stage, fmt.Errorf("%s exited unexpectedly", process.Name()))
 	}
-	return WrapCommandError(stage, process.Name(), err)
+	return wrapCommandError(stage, process.Name(), err)
 }

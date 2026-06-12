@@ -11,7 +11,7 @@ import (
 )
 
 func TestUnsupportedHotplug(t *testing.T) {
-	err := UnsupportedHotplug()
+	err := unsupportedHotplug()
 	var rpcErr *control.RPCError
 	if !errors.As(err, &rpcErr) {
 		t.Fatalf("error type: got %T", err)

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 type ProcessSet struct {
 	group    executor.Group
 	qemu     *executor.Process
-	features TaskGroup
+	features taskGroup
 }
 
 func NewProcessSet() *ProcessSet {
@@ -48,7 +49,11 @@ func (p *ProcessSet) VMWatchers() executor.Group {
 	return watchers
 }
 
-func (p *ProcessSet) SetFeatures(features TaskGroup) {
+func (p *ProcessSet) StartFeatures(ctx context.Context, tasks ...func(context.Context) error) {
+	var features taskGroup
+	for _, task := range tasks {
+		features.Add(startTask(ctx, task))
+	}
 	p.features = features
 }
 

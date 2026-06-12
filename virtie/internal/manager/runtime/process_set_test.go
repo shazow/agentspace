@@ -38,13 +38,11 @@ func TestProcessSetCloseStopsFeaturesBeforeProcesses(t *testing.T) {
 	})
 	processes.Add(process)
 
-	var features TaskGroup
-	features.Add(StartTask(context.Background(), func(ctx context.Context) error {
+	processes.StartFeatures(context.Background(), func(ctx context.Context) error {
 		<-ctx.Done()
 		order = append(order, "feature")
 		return nil
-	}))
-	processes.SetFeatures(features)
+	})
 
 	if err := processes.Close(0); err != nil {
 		t.Fatalf("close process set: %v", err)

@@ -92,7 +92,7 @@ func TestLaunchPIDRoundTripAndLockValidation(t *testing.T) {
 	if err := os.WriteFile(lockPath, []byte("12345\n"), 0o644); err != nil {
 		t.Fatalf("write lock: %v", err)
 	}
-	if err := ValidateLaunchLock(cfg, 12345); err == nil || !strings.Contains(err.Error(), "not held") {
+	if err := validateLaunchLock(cfg, 12345); err == nil || !strings.Contains(err.Error(), "not held") {
 		t.Fatalf("expected stale lock error, got %v", err)
 	}
 

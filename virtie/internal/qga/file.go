@@ -7,9 +7,11 @@ import (
 	"time"
 )
 
+// DefaultFileReadChunkSize is the default guest-agent file read chunk size.
 const DefaultFileReadChunkSize = 1024 * 1024
 
-func WriteFile(client Client, timeout time.Duration, guestPath string, payloadBase64 string) error {
+// WriteFile writes a base64 payload to guestPath through client.
+func WriteFile(client FileWriter, timeout time.Duration, guestPath string, payloadBase64 string) error {
 	handle, err := client.OpenFile(timeout, guestPath)
 	if err != nil {
 		return err
@@ -26,7 +28,8 @@ func WriteFile(client Client, timeout time.Duration, guestPath string, payloadBa
 	return closeErr
 }
 
-func ReadFile(client Client, timeout time.Duration, guestPath string, chunkSize int) ([]byte, error) {
+// ReadFile reads guestPath through client and decodes the base64 chunks.
+func ReadFile(client FileReader, timeout time.Duration, guestPath string, chunkSize int) ([]byte, error) {
 	if chunkSize <= 0 {
 		chunkSize = DefaultFileReadChunkSize
 	}

@@ -46,12 +46,12 @@ func WaitForGuestAgent(ctx context.Context, wait GuestAgentWait) (qga.Client, er
 		CommandTimeout: wait.CommandTimeout,
 		RetryDelay:     wait.RetryDelay,
 		Check: func() error {
-			return FirstUnexpectedExit(stage, wait.Watchers)
+			return firstUnexpectedExit(stage, wait.Watchers)
 		},
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, WrapStage(stage, err)
+			return nil, wrapStage(stage, err)
 		}
 		return nil, err
 	}

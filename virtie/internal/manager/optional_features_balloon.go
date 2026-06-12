@@ -7,7 +7,6 @@ import (
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
-	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
@@ -32,14 +31,10 @@ func (balloonFeature) StartTask(
 	runtime optionalFeatureRuntime,
 	manifest *manifest.Manifest,
 	qmpClient qmpclient.Client,
-) *runtimepkg.Task {
+) func(context.Context) error {
 	if manifest == nil || qmpClient == nil {
 		return nil
 	}
 
-	task := balloon.ControllerTask(runtime.qmpTimeout, qmpClient, manifest.QEMU.Devices.Balloon, runtime.notifier)
-	if task == nil {
-		return nil
-	}
-	return runtimepkg.StartTask(ctx, task)
+	return balloon.ControllerTask(runtime.qmpTimeout, qmpClient, manifest.QEMU.Devices.Balloon, runtime.notifier)
 }

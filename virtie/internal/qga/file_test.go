@@ -85,7 +85,6 @@ type fileClient struct {
 	closedHandle int
 }
 
-func (c *fileClient) Ping(time.Duration) error                        { return nil }
 func (c *fileClient) OpenFile(time.Duration, string) (int, error)     { return c.openHandle, nil }
 func (c *fileClient) OpenFileRead(time.Duration, string) (int, error) { return c.openHandle, nil }
 func (c *fileClient) ReadFile(time.Duration, int, int) (string, bool, error) {
@@ -102,6 +101,3 @@ func (c *fileClient) CloseFile(_ time.Duration, handle int) error {
 	c.closedHandle = handle
 	return c.closeErr
 }
-func (c *fileClient) Exec(time.Duration, string, []string, bool) (int, error) { return 0, nil }
-func (c *fileClient) ExecStatus(time.Duration, int) (ExecStatus, error)       { return ExecStatus{}, nil }
-func (c *fileClient) Disconnect() error                                       { return nil }

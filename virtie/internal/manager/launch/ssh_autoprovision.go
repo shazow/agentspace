@@ -20,13 +20,13 @@ type SSHAuthorizedKeyInstaller struct {
 func InstallSSHAuthorizedKey(ctx context.Context, launchManifest *manifest.Manifest, key SSHAutoprovisionKey, installer SSHAuthorizedKeyInstaller) error {
 	plan := sshtools.NewAuthorizedKeysInstallPlan(launchManifest.SSH.User, key.AuthorizedKey)
 	if err := installer.InstallDirectory(ctx, plan.AuthorizedKeysPath, plan.Owner, "0700"); err != nil {
-		return WrapStage("ssh autoprovision", err)
+		return wrapStage("ssh autoprovision", err)
 	}
 	if err := installer.Chown(ctx, plan.SSHDir, plan.Owner); err != nil {
-		return WrapStage("ssh autoprovision", err)
+		return wrapStage("ssh autoprovision", err)
 	}
 	if err := installer.Chmod(ctx, plan.SSHDir, "0700"); err != nil {
-		return WrapStage("ssh autoprovision", err)
+		return wrapStage("ssh autoprovision", err)
 	}
 
 	tempFile := manifest.ResolvedWriteFile{
@@ -38,26 +38,26 @@ func InstallSSHAuthorizedKey(ctx context.Context, launchManifest *manifest.Manif
 			Text: plan.TempKeyText,
 		},
 	}
-	payloadBase64, err := GuestFilePayloadBase64(tempFile)
+	payloadBase64, err := guestFilePayloadBase64(tempFile)
 	if err != nil {
-		return WrapStage("ssh autoprovision", err)
+		return wrapStage("ssh autoprovision", err)
 	}
 	if err := installer.WriteFile(ctx, plan.TempKeyPath, payloadBase64); err != nil {
-		return WrapStage("ssh autoprovision", err)
+		return wrapStage("ssh autoprovision", err)
 	}
 	if err := installer.Chmod(ctx, plan.TempKeyPath, plan.TempKeyMode); err != nil {
-		return WrapStage("ssh autoprovision", err)
+		return wrapStage("ssh autoprovision", err)
 	}
 
 	command := plan.AppendCommand(GuestShellPath)
 	if err := installer.RunCommand(ctx, command.Name, command.Path, command.Args, command.InputPath); err != nil {
-		return WrapStage("ssh autoprovision", err)
+		return wrapStage("ssh autoprovision", err)
 	}
 	if err := installer.Chown(ctx, plan.AuthorizedKeysPath, plan.Owner); err != nil {
-		return WrapStage("ssh autoprovision", err)
+		return wrapStage("ssh autoprovision", err)
 	}
 	if err := installer.Chmod(ctx, plan.AuthorizedKeysPath, "0600"); err != nil {
-		return WrapStage("ssh autoprovision", err)
+		return wrapStage("ssh autoprovision", err)
 	}
 	return nil
 }

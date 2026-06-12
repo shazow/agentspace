@@ -44,6 +44,6 @@ func (q HotplugQMP) DeviceDel(ctx context.Context, id string) error {
 	return q.Client.DeviceDelAndWait(q.Timeout, id)
 }
 
-func UnsupportedHotplug() error {
+func unsupportedHotplug() error {
 	return &control.RPCError{Code: control.ErrUnsupported, Message: "hotplug support is not built into this virtie binary"}
 }

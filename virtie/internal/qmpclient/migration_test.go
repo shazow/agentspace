@@ -136,7 +136,6 @@ func TestSaveToFileRejectsInvalidVMStatus(t *testing.T) {
 }
 
 type migrationClient struct {
-	Client
 	statuses           []string
 	vmStatus           string
 	err                error

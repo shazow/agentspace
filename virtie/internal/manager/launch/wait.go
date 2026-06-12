@@ -7,7 +7,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
-type WaitProcess interface {
+type waitProcess interface {
 	Done() <-chan struct{}
 	Wait() error
 	Name() string
@@ -15,7 +15,7 @@ type WaitProcess interface {
 
 type LifecycleProcessWait struct {
 	Stage     string
-	Process   WaitProcess
+	Process   waitProcess
 	Delay     time.Duration
 	Lifecycle *Lifecycle
 	Watchers  executor.Group
@@ -51,7 +51,7 @@ func WaitForLifecycleProcess(ctx context.Context, wait LifecycleProcessWait) err
 				return nil
 			}
 			if err := wait.Process.Wait(); err != nil {
-				return WrapCommandError(wait.Stage, wait.Process.Name(), err)
+				return wrapCommandError(wait.Stage, wait.Process.Name(), err)
 			}
 			return nil
 		case <-delayDone:
@@ -65,11 +65,11 @@ func WaitForLifecycleProcess(ctx context.Context, wait LifecycleProcessWait) err
 				wait.Info(ctx)
 			}
 		case <-ticker.C:
-			if err := FirstUnexpectedExit(wait.Stage, wait.Watchers); err != nil {
+			if err := firstUnexpectedExit(wait.Stage, wait.Watchers); err != nil {
 				return err
 			}
 		case <-ctx.Done():
-			return WrapStage(wait.Stage, ctx.Err())
+			return wrapStage(wait.Stage, ctx.Err())
 		}
 	}
 }

@@ -147,7 +147,7 @@ func RemoveLaunchPID(manifest *manifest.Manifest, pid int) error {
 	return nil
 }
 
-func ValidateLaunchLock(manifest *manifest.Manifest, pid int) error {
+func validateLaunchLock(manifest *manifest.Manifest, pid int) error {
 	path := manifest.ResolvedLockPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -187,19 +187,19 @@ func ResolveLaunchPID(manifest *manifest.Manifest, signaler PIDSignaler) (int, e
 
 	pid, err := ReadLaunchPID(manifest)
 	if err != nil {
-		return 0, WrapStage("launch pid", err)
+		return 0, wrapStage("launch pid", err)
 	}
 
 	if signaler != nil {
 		if err := signaler.Exists(pid); err != nil {
 			if IsNoProcess(err) {
-				return 0, WrapStage("launch pid", fmt.Errorf("stale launch pid %d from %q: process does not exist", pid, LaunchPIDPath(manifest)))
+				return 0, wrapStage("launch pid", fmt.Errorf("stale launch pid %d from %q: process does not exist", pid, LaunchPIDPath(manifest)))
 			}
-			return 0, WrapStage("launch pid", fmt.Errorf("check launch pid %d from %q: %w", pid, LaunchPIDPath(manifest), err))
+			return 0, wrapStage("launch pid", fmt.Errorf("check launch pid %d from %q: %w", pid, LaunchPIDPath(manifest), err))
 		}
 	}
-	if err := ValidateLaunchLock(manifest, pid); err != nil {
-		return 0, WrapStage("launch pid", err)
+	if err := validateLaunchLock(manifest, pid); err != nil {
+		return 0, wrapStage("launch pid", err)
 	}
 	return pid, nil
 }
@@ -216,7 +216,7 @@ func WaitForLaunchExited(ctx context.Context, manifest *manifest.Manifest, timeo
 		}
 		return false, err
 	}, fmt.Sprintf("launch pid %q was not removed", LaunchPIDPath(manifest))); err != nil {
-		return WrapStage("launch signal", err)
+		return wrapStage("launch signal", err)
 	}
 	return nil
 }
@@ -232,7 +232,7 @@ func WaitForSavedSuspendState(ctx context.Context, manifest *manifest.Manifest, 
 		}
 		return state.Status == "saved", nil
 	}, fmt.Sprintf("saved suspend state %q was not written", SuspendStatePath(manifest))); err != nil {
-		return WrapStage("qmp suspend", err)
+		return wrapStage("qmp suspend", err)
 	}
 	return nil
 }

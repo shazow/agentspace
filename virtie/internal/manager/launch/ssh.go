@@ -9,11 +9,11 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/sshtools"
 )
 
-func BuildSSHCommand(launchManifest *manifest.Manifest, cid int, remoteCommand []string) (*exec.Cmd, error) {
-	return BuildSSHCommandWithArgv(launchManifest, cid, remoteCommand, launchManifest.SSH.Argv)
+func buildSSHCommand(launchManifest *manifest.Manifest, cid int, remoteCommand []string) (*exec.Cmd, error) {
+	return buildSSHCommandWithArgv(launchManifest, cid, remoteCommand, launchManifest.SSH.Argv)
 }
 
-func BuildSSHCommandWithArgv(launchManifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) (*exec.Cmd, error) {
+func buildSSHCommandWithArgv(launchManifest *manifest.Manifest, cid int, remoteCommand []string, argv []string) (*exec.Cmd, error) {
 	renderer, err := manifest.NewTemplateRenderer(manifest.SSHTemplateProvider{
 		CID:         cid,
 		User:        launchManifest.SSH.User,
@@ -38,7 +38,7 @@ func BuildSSHCommandWithArgv(launchManifest *manifest.Manifest, cid int, remoteC
 	return cmd, nil
 }
 
-func BuildSSHCommandHint(launchManifest *manifest.Manifest, cid int) (string, error) {
+func buildSSHCommandHint(launchManifest *manifest.Manifest, cid int) (string, error) {
 	renderer, err := manifest.NewTemplateRenderer(manifest.SSHTemplateProvider{
 		CID:         cid,
 		User:        launchManifest.SSH.User,
