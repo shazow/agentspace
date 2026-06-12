@@ -180,6 +180,388 @@ abstractions and their ownership boundaries.
   `FormatProcessListExecData` own guest process-list parsing and display
   formatting used by runtime info.
 
+## Abstraction Audit
+
+This audit separates valuable behavior from abstraction shape. Some helpers
+below are worth keeping as behavior but not necessarily as their current
+callback-heavy operation structs.
+
+Evaluation criteria:
+
+- Keep abstractions that protect a real boundary: process ownership, external
+  protocol shape, socket lifecycle, QMP serialization, guest-agent protocol,
+  filesystem state, or compatibility fallback semantics.
+- Keep abstractions that gather domain policy which is hard to test safely
+  through the full VM lifecycle.
+- Question abstractions that mostly pass callbacks through one call site, hide
+  linear launch flow, or exist only to make unit tests independent from nearby
+  concrete types.
+- Undo abstractions that duplicate another layer, preserve obsolete migration
+  compatibility, or wrap a single field/action without improving ownership.
+
+### 1. Smallest Subset Obviously Worth Keeping
+
+These are the abstractions that are carrying clear weight. Removing them would
+either reintroduce unsafe resource ownership, make compatibility behavior
+stringly typed again, or push protocol/state policy back into the manager
+orchestration path.
+
+- `virtie/internal/manager/control`: keep the typed `virtie.sock` protocol:
+  request/response structs, `RuntimeState`, `RuntimeStats`, `RPCError`,
+  `Router`, `Server`, and `Client`.
+
+  Why: this is the external control contract. It prevents other `virtie`
+  processes from contending for QMP, gives CLI fallbacks typed errors to
+  inspect, and keeps method strings inside the transport package.
+
+- `control.RuntimeCore`, `RuntimeSuspend`, `RuntimeHotplug`, and
+  `RuntimeBalloon`: keep the capability split.
+
+  Why: optional capabilities are real. Hotplug and balloon are build/config
+  dependent, while status and info are core control-plane operations. This
+  split lets unsupported calls return explicit `unsupported` errors.
+
+- `virtie/internal/qmpclient`: keep `Client`, `Dialer`,
+  `SocketMonitorDialer`, `Serialized`, retry dialing, and migration helpers.
+
+  Why: this is a true protocol boundary. `Serialized` is especially important
+  because suspend, hotplug, balloon, restore, and shutdown all share one owned
+  QMP connection and must not interleave unsafe command sequences.
+
+- `virtie/internal/qga`: keep `Client`, `Dialer`, `SocketDialer`,
+  `ExecStatus`, retry dialing, file transfer helpers, guest-exec polling, and
+  process-list parsing/formatting.
+
+  Why: QGA details are protocol-level behavior, not launch orchestration.
+  Close-safe file transfer, ping readiness, exec polling, and output decoding
+  are independently testable and would make `manager` much harder to read if
+  inlined.
+
+- `launch.Plan`, `Spec`, `Options`, `WaitMode`, `RuntimePaths`, and
+  `SuspendState`: keep the value-oriented launch plan and state values.
+
+  Why: this was the main corrective extraction. It stops startup from
+  repeatedly rediscovering manifest facts, gives tests a concrete resolved
+  launch object, and makes cleanup/socket ownership explicit.
+
+- `launch.BuildPlan`, resume-state resolution, CID acquisition, locked-plan
+  setup, filesystem preflight, and QEMU command finalization.
+
+  Why: these functions own pre-runtime invariants and failure cleanup. They
+  are a good package boundary even if some parameter structs around them can be
+  simplified later.
+
+- Launch PID, lock, suspend-state, saved-state polling, and stale-process
+  helpers in `manager/launch`.
+
+  Why: startup and compatibility suspend both depend on the same filesystem
+  and process invariants. Centralizing them avoids two subtly different
+  interpretations of "is this launch process still alive?"
+
+- `launch.Lifecycle` and `launch.SuspendCoordinator`: keep the shared event
+  path for local signals and RPC suspend requests.
+
+  Why: suspend is a lifecycle event, not just an RPC method. The coordinator
+  is what lets an external suspend request queue through foreground launch
+  handling and wait for the launch-owned save/exit path.
+
+- `runtime.Runtime`: keep the launch-owned runtime as the long-lived owner of
+  QMP, process state, stats, control socket, suspend queue, and runtime
+  lifecycle transitions.
+
+  Why: this is the core safety boundary introduced by the refactor. It removes
+  the previous direct-QMP contention problem and gives control methods a
+  concrete owned object to operate through.
+
+- `runtime.ProcessSet`, `Task`, and `TaskGroup`: keep process/task ownership.
+
+  Why: QEMU, run commands, foreground SSH, and optional feature tasks need
+  ordered shutdown and watcher snapshots. This is a cohesive state holder, not
+  incidental indirection.
+
+- `runtime.State` and `runtime.Stats`: keep runtime state and launch timing as
+  package-owned data.
+
+  Why: status reporting, close transitions, suspend transitions, and CLI
+  output all need consistent state/stat formatting. These are small, but they
+  are central and have multiple real consumers.
+
+- `runtime.Closer` / close ordering and startup-failure cleanup behavior:
+  keep the idempotent teardown behavior and explicit cleanup order.
+
+  Why: write-back, control shutdown, process teardown, QMP disconnect, socket
+  cleanup, lock cleanup, and stats finalization are fragile if scattered. The
+  exact wrapper shape is debatable, but the policy should stay centralized.
+
+- `launch.SaveRuntimeSuspend` and `launch.RestoreRuntime`: keep suspend/restore
+  orchestration around QMP migration helpers.
+
+  Why: they bind protocol operations to metadata, stale-state removal, and
+  notifications. That is lifecycle policy, not raw QMP behavior.
+
+- `launch.WriteGuestFiles`, `WriteBackGuestFiles`,
+  `InstallGuestFileDirectory`, `MountWorkspaceCWD`, and host read/write-back
+  helpers.
+
+  Why: guest-file behavior contains enough policy to justify isolation:
+  symlink handling, overwrite semantics, parent directory creation,
+  ownership/mode translation, atomic host write-back, and workspace mount
+  command construction.
+
+- `launch.RunSSHSession`, SSH command builders, and SSH autoprovision helpers.
+
+  Why: retry classification, delayed stderr reveal, autoprovisioning, identity
+  switching, stats, and foreground process ownership are cohesive SSH-session
+  policy. Keeping this out of `manager.go` is worth it.
+
+- Pre-existing `internal/executor`, `internal/hotplug`, `internal/balloon`,
+  `internal/readiness`, and `internal/sshtools`: keep them as separate domain
+  packages.
+
+  Why: these packages already own nontrivial process, hotplug, memory
+  controller, token-readiness, and SSH failure-classification behavior. The
+  manager/runtime refactor should adapt to them, not absorb them.
+
+### 2. On The Fence
+
+These abstractions may be worth keeping, but the current shape is not
+obviously the simplest one. They deserve cleanup pressure before more features
+are layered on top.
+
+- `manager.Launcher.Plan` and `manager.Launcher.Start`.
+
+  Keep for now because they make `Plan -> Start -> Wait -> Close` explicit and
+  are useful in tests. Reconsider later if no caller outside manager tests
+  needs partial launch lifecycle access.
+
+  Code weight: low. The raw wrappers are about 14 non-test LOC. A practical
+  cleanup that collapses the public partial-lifecycle split and removes now
+  unused facade aliases would likely shed about 25-35 LOC. Removing the
+  broader `Launcher` facade entirely would be closer to 40-55 LOC, but that
+  also gives up the configurable launcher shape rather than just `Plan` and
+  `Start`.
+
+- `launch.Config`, `MergeConfig`, and the dependency interfaces it owns.
+
+  The injection seam is useful for tests and for avoiding globals, but it may
+  belong in `manager` rather than `manager/launch`. Today the config type mixes
+  launch-level dependencies with manager-specific defaults and timeouts.
+
+  Code weight: medium if improved, high only if deleted. Rehoming config to
+  `manager`, making merge/defaulting private, and collapsing mirrored manager
+  fields would likely shed or simplify about 45-70 non-test LOC while keeping
+  `NewLauncher(Config{...})` as the test seam. Full removal of config-based
+  dependency injection could net about 130-180 LOC, but it would force broad
+  test rewrites and direct default wiring.
+
+- Generic async/process wait stack: `AsyncWait`, `SocketWait`, `EventWait`,
+  `ProcessWait`, `LifecycleProcessWait`, and the QMP/QGA/SSH-ready wait
+  structs.
+
+  These reduce duplicated cancellation, watcher checks, stage wrapping, and
+  socket readiness behavior. The downside is a callback-heavy mini-framework
+  for a small number of call sites. Keep the tested behavior, but consider
+  collapsing some layers into clearer functions such as "wait for socket while
+  checking watchers" and "wait for process/lifecycle event."
+
+  Code weight: very high. A full simplification of the stack is estimated at
+  roughly 250-330 net non-test LOC. A less aggressive cleanup that keeps named
+  wait helpers but collapses callback structs/layers is still around 140-210
+  LOC. The most promising increments are replacing `AsyncWait`/`SocketWait`
+  with one concrete socket-wait helper (50-80 LOC), collapsing
+  `EventWait`/`ProcessWait`/`LifecycleProcessWait` into one lifecycle/process
+  wait path (70-110 LOC), and removing `QMPWait`/`GuestAgentWait` structs in
+  favor of direct functions or manager methods (80-110 LOC combined).
+
+- `launch.RuntimeStartup` and `StartRuntimeProcesses`.
+
+  This owns a meaningful startup sequence, but the struct mostly carries
+  callbacks supplied by `manager.startLaunchRuntime`. It may remain justified
+  if startup phases keep growing; otherwise a method on a concrete launch
+  starter would be easier to follow.
+
+  Code weight: medium. Full removal by inlining the sequence into
+  `manager.startLaunchRuntime`, while keeping reusable helpers such as
+  `StartRuns`, `StartQEMU`, `WaitForSockets`, and `WaitForQMP`, would likely
+  shed about 50-70 net non-test LOC. Improvement-only cleanup while keeping
+  the helper is closer to 10-20 LOC. Folding adjacent
+  `FinalizeRuntimeStartup` into the caller could add another 10-20 LOC.
+
+- `launch.ForegroundWait`.
+
+  This is more defensible than `RuntimeActivation` because SSH/headless
+  behavior and restored-state cleanup are branching foreground policy. Still,
+  the `ForegroundRuntime` and `ForegroundProcesses` interfaces are very narrow
+  and only exist to decouple tests from concrete runtime/process types.
+
+  Code weight: medium. Full removal and inlining into
+  `manager.waitForLaunchForeground` would likely shed about 45-55 net non-test
+  LOC. Improvement-only cleanup, mostly removing the narrow
+  `ForegroundRuntime` / `ForegroundProcesses` interfaces while keeping the
+  abstraction, would save only about 5-10 LOC. If the adjacent
+  `runtime.ForegroundWaitOperation` cleanup is bundled, add roughly 15-20 LOC
+  of possible savings.
+
+- `runtime.ControlInfo`, `ControlBalloon`, `ControlSuspend`,
+  `ControlWaitForeground`, and `runtime.Hotplug`.
+
+  These provide nice isolated tests for response construction and
+  failed-precondition mapping, but most are thin wrappers over concrete
+  runtime methods. Keep them only where they prevent repeated error mapping;
+  otherwise let `Runtime` methods call the underlying domain helpers directly.
+
+  Code weight: low to medium. The practical cleanup is about 25-35 net
+  non-test LOC by removing the named `Control*`/`Hotplug` wrappers and inlining
+  small response/error mapping into concrete `Runtime` methods. A broader
+  collapse of helper-only structs/interfaces around info, suspend, foreground
+  wait, and balloon could reach 80-120 LOC, but hotplug QMP/start/socket/guest
+  adapters should stay unless the build-tag layout changes.
+
+- `runtime.CloseHooks`, `CloseHookActions`, `CloseHookConfig`, and
+  `ConfiguredCloseHooks`.
+
+  The write-back gating and joined cleanup behavior are useful. The two-level
+  "actions" vs "config" shape is probably more than the code needs.
+
+  Code weight: low to medium. Collapsing `CloseHookActions`/`NewCloseHooks`
+  and one of `CloseHookConfig` / `ConfiguredCloseHooks`, while keeping a small
+  `CloseHooks` callback bag, is estimated at 15-30 net non-test LOC. Full
+  removal of the hook type and `Runtime.SetCloseHooks` would be around 30-45
+  LOC, but only makes sense if runtime construction is already being reworked.
+
+- `runtime.StartupFailureActions`, `StartupFailureConfig`,
+  `ConfiguredStartupFailureActions`, and `CleanupConfiguredStartError`.
+
+  Centralized startup cleanup is valuable. The configured/action split may be
+  unnecessary unless there are multiple real constructors.
+
+  Code weight: low to medium. Removing the configured layer
+  (`StartupFailureConfig`, `ConfiguredStartupFailureActions`, and
+  `CleanupConfiguredStartError`) and building `StartupFailureActions` directly
+  in `manager.startWithPlan` would shed about 20-25 non-test LOC. Full removal
+  of `startup_failure.go` and inlining equivalent cleanup into the launch
+  defer could net about 70-85 LOC, but would push fragile cleanup ordering back
+  into the main launch path.
+
+- Tiny capability interfaces such as `SuspendRequester` and `HotplugRuntime`.
+
+  These follow Go's "accept small interfaces" style and can protect package
+  boundaries. Keep them only where a second production implementation exists
+  or where the interface is the clearest adapter to another domain package.
+
+  Code weight: low. The strict payoff is about 10-15 non-test LOC, mostly from
+  removing `runtime.HotplugRuntime` and inlining attach/detach response
+  construction into `Runtime.Hotplug`. `SuspendRequester` saves almost nothing
+  by itself, roughly 0-3 LOC, and is only worth touching as part of a broader
+  suspend/control wrapper collapse. Adjacent hotplug adapter interfaces could
+  simplify another 10-15 LOC in `runtime`, but repo-wide savings may be near
+  zero unless build-tag boundaries change.
+
+### 3. Obviously Overcomplicating And Safe To Undo
+
+These can be collapsed without losing the refactor's safety properties. Most
+are internal-only, single-call-site, or leftover migration compatibility
+facades.
+
+- Broad manager facade aliases in `manager/control_rpc.go`.
+
+  No production caller currently needs these control aliases. Internal tests
+  and manager code should import `manager/control` directly for
+  `StatusRequest`, `Router`, `Client`, `RPCError`, and related protocol types.
+  The current alias set makes it look like `manager` still owns the control
+  protocol after that ownership moved.
+
+- Most manager facade aliases in `manager/launcher.go` other than
+  `LaunchOptions`, `ResumeMode`, and perhaps `WaitMode`.
+
+  `Plan`, `RuntimePaths`, `Config`, and `Runtime` are internal package types.
+  Aliasing them through `manager` preserved migration call sites but now blurs
+  ownership. Tests can import `manager/launch` or `manager/runtime` directly
+  where they need those concrete types.
+
+- `launch.RunStarter`.
+
+  `StartRuns` contains useful behavior, but the `RunStarter` struct is a
+  single-use bundle for runner/logger/shutdown delay. Passing those values
+  directly, or making them fields on a broader launcher dependency, would be
+  clearer.
+
+- `launch.NotifierFactory` and `SelectNotifier`.
+
+  This is a one-branch dependency-selection helper. Inline it in
+  `manager.planLaunch` and keep `NotificationSink` plus the concrete notifier.
+
+- `launch.RuntimeActivation`.
+
+  Unless more phase policy is added, inline the activation sequence back into
+  `manager.startWithPlan`. The current abstraction mostly hides ordering
+  behind callback names and makes the launch path harder to read.
+
+- `launch.GuestProvision`.
+
+  Keep `WriteGuestFiles`, `WaitForSSHReady`, and stats markers, but collapse
+  the two-callback `ProvisionGuest` wrapper into the activation/startup code.
+  It is safe because there is one production call site and the behavior is
+  straightforward.
+
+- `runtimeInfoCollector` plus `runtime.InfoCollector`.
+
+  `Runtime.Info` can call the configured `collectInfo` function directly and
+  map errors to `control.FailedPrecondition`. The extra adapter object is only
+  there to satisfy a tiny local interface.
+
+- `runtime.ForegroundWaitOperation` and `runtime.ForegroundWait`.
+
+  The saved-suspend marking behavior is useful, but the separate operation
+  struct/function pair is not. Keep the behavior inside `Runtime.Wait`.
+
+- `runtime.CloseHookActions` and one of `CloseHookConfig` /
+  `ConfiguredCloseHooks`.
+
+  There should be one close-hook construction path, not an "actions" layer and
+  a "configured" layer. Collapse to a single helper or assemble `CloseActions`
+  directly in `Runtime.Close`.
+
+- `runtime.ConfiguredStartupFailureActions` and
+  `CleanupConfiguredStartError`.
+
+  Keep `StartupFailureActions.Run` and the distinction between "runtime was
+  started" and "pre-runtime failure." Collapse the configured helper into
+  `manager.startWithPlan`; it exists for one production call site.
+
+- `runtime.ControlServer`.
+
+  Store `*control.Server` or an `interface{ Close() error }` directly on
+  `Runtime`, and keep `StartControl` as the factory. This removes a wrapper
+  type without changing control socket behavior.
+
+- Single-use stats/process interfaces that only serve tests:
+  `RuntimeStartupProcessSet`, `RuntimeStartupStats`, `ForegroundRuntime`,
+  `ForegroundProcesses`, `SSHSessionStats`, and `SSHSessionProcesses`.
+
+  Prefer concrete `*runtime.ProcessSet`, `*runtime.Stats`, or simple function
+  callbacks unless a second production implementation appears. The tests can
+  use real lightweight instances; they do not need every dependency abstracted.
+
+- Separate `WriteBackState` and `SavedSuspendState` types if their only owner
+  remains `Runtime`.
+
+  Collapse them into private runtime fields guarded by one mutex, or one small
+  lifecycle state struct. Their behavior is only boolean gating, so standalone
+  public-ish types add more names than clarity.
+
+### Suggested Cleanup Order
+
+1. Remove stale facade aliases first. This changes names, not behavior, and
+   clarifies ownership for future edits.
+2. Inline `RuntimeActivation`, `GuestProvision`, `RunStarter`, and notifier
+   selection. These are low-risk because they have one production call path.
+3. Collapse duplicate runtime configuration layers for close hooks and startup
+   failure cleanup while keeping the tested ordering.
+4. Revisit the wait helper stack last. It has the highest behavioral risk
+   because it handles cancellation, foreground events, and unexpected exits.
+   Simplify only after keeping equivalent lifecycle tests in place.
+
 ## Landed Control Flow
 
 The current migration phase keeps `launchWithOptions` as the orchestration
@@ -253,6 +635,10 @@ flowchart TD
 ```
 
 ## Post-Mortem Follow-Up Plan
+
+Historical note: this plan describes the corrective sequence that produced the
+current inventory. The abstraction audit above supersedes it for cleanup
+priorities.
 
 The control socket landed before the launch phases were extracted. That kept
 the implementation shippable, but it also made lifecycle boundaries implicit
