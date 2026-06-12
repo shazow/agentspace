@@ -20,7 +20,11 @@ func StartControl(ctx context.Context, socketPath string, handler any, logger *s
 		_ = listener.Close()
 		return nil, err
 	}
-	server := &control.Server{Handler: router, Logger: logger}
+	server, err := control.NewServer(router)
+	if err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
 	go func() {
 		if err := server.Serve(listener); err != nil && ctx.Err() == nil && logger != nil {
 			logger.Info("control socket stopped", "err", err)

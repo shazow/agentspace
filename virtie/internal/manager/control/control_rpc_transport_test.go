@@ -181,7 +181,10 @@ func startTestControlServerAt(t *testing.T, path string, runtime any) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	server := &Server{Handler: router}
+	server, err := NewServer(router)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
 	done := make(chan error, 1)
 	go func() {
 		done <- server.Serve(listener)

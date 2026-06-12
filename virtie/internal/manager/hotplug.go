@@ -13,6 +13,7 @@ import (
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
+	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
 	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
@@ -156,13 +157,13 @@ func (g managerHotplugGuest) Run(ctx context.Context, command []string) error {
 }
 
 func hotplugStatePath(launchManifest *manifest.Manifest, id string) (string, error) {
-	return hotplug.StatePath(launchManifest.ResolvedPersistenceStateDir(), id)
+	return hotplugtypes.StatePath(launchManifest.ResolvedPersistenceStateDir(), id)
 }
 
-func writeHotplugState(path string, state hotplug.State) error {
-	return hotplug.WriteState(path, state)
+func writeHotplugState(path string, state hotplugtypes.State) error {
+	return hotplugtypes.WriteState(path, state)
 }
 
-func readHotplugState(path string) (hotplug.State, error) {
-	return hotplug.ReadState(path)
+func readHotplugState(path string) (hotplugtypes.State, error) {
+	return hotplugtypes.ReadState(path)
 }
