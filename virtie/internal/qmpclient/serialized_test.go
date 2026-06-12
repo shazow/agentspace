@@ -40,6 +40,17 @@ func TestSerializedClientSerializesCalls(t *testing.T) {
 	}
 }
 
+func TestSerializedClientIsIdempotent(t *testing.T) {
+	client := &fakeSerializedClient{release: make(chan struct{})}
+	serialized := Serialized(client)
+	if got := Serialized(serialized); got != serialized {
+		t.Fatalf("serialized client was wrapped again: got %#v want %#v", got, serialized)
+	}
+	if got := Serialized(nil); got != nil {
+		t.Fatalf("nil client: got %#v want nil", got)
+	}
+}
+
 type fakeSerializedClient struct {
 	mu      sync.Mutex
 	active  bool

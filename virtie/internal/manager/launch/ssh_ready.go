@@ -20,9 +20,6 @@ type SSHReadyWait struct {
 	SocketWaiter SocketWaiter
 	Dialer       SSHReadyDialer
 	Watchers     executor.Group
-
-	Check func(stage string) error
-	Wrap  func(stage string, err error) error
 }
 
 func WaitForSSHReady(ctx context.Context, wait SSHReadyWait) error {
@@ -34,16 +31,6 @@ func WaitForSSHReady(ctx context.Context, wait SSHReadyWait) error {
 	if token == "" {
 		token = SSHReadyToken
 	}
-	wrap := wait.Wrap
-	if wrap == nil {
-		wrap = WrapStage
-	}
-	check := wait.Check
-	if check == nil {
-		check = func(stage string) error {
-			return FirstUnexpectedExit(stage, wait.Watchers)
-		}
-	}
 
 	readyCtx, cancel := context.WithTimeout(ctx, wait.Timeout)
 	defer cancel()
@@ -53,25 +40,23 @@ func WaitForSSHReady(ctx context.Context, wait SSHReadyWait) error {
 		SocketPaths:  []string{wait.SocketPath},
 		SocketWaiter: wait.SocketWaiter,
 		PollDelay:    wait.PollDelay,
-		Check:        check,
-		Result:       wrap,
-		Cancel:       wrap,
+		Watchers:     wait.Watchers,
 	}); err != nil {
 		if readyCtx.Err() != nil {
-			return wrapSSHReadyWait(stage, readyCtx.Err(), wrap)
+			return wrapSSHReadyWait(stage, readyCtx.Err())
 		}
 		return err
 	}
 
 	if wait.Dialer == nil {
-		return wrap(stage, fmt.Errorf("ssh readiness dialer is not configured"))
+		return WrapStage(stage, fmt.Errorf("ssh readiness dialer is not configured"))
 	}
 	reader, err := wait.Dialer.Dial(readyCtx, wait.SocketPath, wait.Timeout)
 	if err != nil {
 		if readyCtx.Err() != nil {
-			return wrapSSHReadyWait(stage, readyCtx.Err(), wrap)
+			return wrapSSHReadyWait(stage, readyCtx.Err())
 		}
-		return wrap(stage, fmt.Errorf("connect ssh readiness socket %q: %w", wait.SocketPath, err))
+		return WrapStage(stage, fmt.Errorf("connect ssh readiness socket %q: %w", wait.SocketPath, err))
 	}
 	defer reader.Close()
 
@@ -91,19 +76,19 @@ func WaitForSSHReady(ctx context.Context, wait SSHReadyWait) error {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				return wrap(stage, err)
+				return WrapStage(stage, err)
 			}
 			return nil
 		case <-ticker.C:
-			if err := check(stage); err != nil {
+			if err := FirstUnexpectedExit(stage, wait.Watchers); err != nil {
 				return err
 			}
 		case <-readyCtx.Done():
-			return wrapSSHReadyWait(stage, readyCtx.Err(), wrap)
+			return wrapSSHReadyWait(stage, readyCtx.Err())
 		}
 	}
 }
 
-func wrapSSHReadyWait(stage string, err error, wrap func(stage string, err error) error) error {
-	return wrap(stage, fmt.Errorf("wait for ssh readiness: %w", err))
+func wrapSSHReadyWait(stage string, err error) error {
+	return WrapStage(stage, fmt.Errorf("wait for ssh readiness: %w", err))
 }

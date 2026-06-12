@@ -1,4 +1,4 @@
-package launch
+package manager
 
 import (
 	"log/slog"
@@ -16,7 +16,7 @@ func TestMergeConfigOverridesSetFieldsOnly(t *testing.T) {
 		SSHRetryDelay: time.Minute,
 	}
 
-	got := MergeConfig(base, override)
+	got := mergeConfig(base, override)
 	if got.Logger != base.Logger {
 		t.Fatal("expected nil logger override to preserve base logger")
 	}

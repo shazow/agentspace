@@ -19,10 +19,6 @@ type QMPWait struct {
 	RetryDelay     time.Duration
 	PollDelay      time.Duration
 	Watchers       executor.Group
-
-	Check  func(stage string) error
-	Result func(stage string, err error) error
-	Cancel func(stage string, err error) error
 }
 
 func WaitForQMP(ctx context.Context, wait QMPWait) (qmpclient.Client, error) {
@@ -33,29 +29,12 @@ func WaitForQMP(ctx context.Context, wait QMPWait) (qmpclient.Client, error) {
 	if wait.SocketWaiter == nil {
 		return nil, fmt.Errorf("qmp socket waiter is not configured")
 	}
-	check := wait.Check
-	if check == nil {
-		check = func(stage string) error {
-			return FirstUnexpectedExit(stage, wait.Watchers)
-		}
-	}
-	result := wait.Result
-	if result == nil {
-		result = WrapStage
-	}
-	cancel := wait.Cancel
-	if cancel == nil {
-		cancel = WrapStage
-	}
-	if err := WaitForAsync(ctx, AsyncWait{
-		Stage:     stage,
-		PollDelay: wait.PollDelay,
-		Wait: func(waitCtx context.Context) error {
-			return wait.SocketWaiter.Wait(waitCtx, []string{wait.SocketPath})
-		},
-		Check:  check,
-		Result: result,
-		Cancel: cancel,
+	if err := WaitForSockets(ctx, SocketWait{
+		Stage:        stage,
+		SocketPaths:  []string{wait.SocketPath},
+		SocketWaiter: wait.SocketWaiter,
+		PollDelay:    wait.PollDelay,
+		Watchers:     wait.Watchers,
 	}); err != nil {
 		return nil, err
 	}
@@ -65,12 +44,12 @@ func WaitForQMP(ctx context.Context, wait QMPWait) (qmpclient.Client, error) {
 		Timeout:    wait.ConnectTimeout,
 		RetryDelay: wait.RetryDelay,
 		Check: func() error {
-			return check(stage)
+			return FirstUnexpectedExit(stage, wait.Watchers)
 		},
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, cancel(stage, err)
+			return nil, WrapStage(stage, err)
 		}
 		return nil, err
 	}

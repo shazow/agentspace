@@ -34,8 +34,8 @@ type Launcher struct {
 	manager *manager
 }
 
-func DefaultConfig() launch.Config {
-	return launch.Config{
+func DefaultConfig() Config {
+	return Config{
 		Locker:              &fileLocker{},
 		VSockCIDChecker:     newHostVSockCIDChecker(),
 		Runner:              &executor.Runner{},
@@ -55,10 +55,10 @@ func DefaultConfig() launch.Config {
 	}
 }
 
-func NewLauncher(configs ...launch.Config) *Launcher {
+func NewLauncher(configs ...Config) *Launcher {
 	config := DefaultConfig()
 	if len(configs) > 0 {
-		config = launch.MergeConfig(config, configs[0])
+		config = mergeConfig(config, configs[0])
 	}
 	return &Launcher{manager: newManagerFromConfig(config)}
 }

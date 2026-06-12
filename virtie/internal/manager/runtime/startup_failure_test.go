@@ -11,20 +11,22 @@ import (
 func TestStartupFailureActionsRunInCleanupOrder(t *testing.T) {
 	var calls []string
 	actions := StartupFailureActions{
+		ShutdownResources: ShutdownResources{
+			QMP: closeQMPFunc(func() error {
+				calls = append(calls, "qmp")
+				return nil
+			}),
+			Stats: func() {
+				calls = append(calls, "stats")
+			},
+		},
 		LockCleanup: func() error {
 			calls = append(calls, "lock")
 			return nil
 		},
-		QMP: closeQMPFunc(func() error {
-			calls = append(calls, "qmp")
-			return nil
-		}),
 		SocketCleanup: func() error {
 			calls = append(calls, "sockets")
 			return nil
-		},
-		Stats: func() {
-			calls = append(calls, "stats")
 		},
 	}
 
@@ -46,8 +48,10 @@ func TestStartupFailureActionsJoinErrors(t *testing.T) {
 	lockErr := errors.New("lock cleanup failed")
 	qmpErr := errors.New("qmp disconnect failed")
 	err := (StartupFailureActions{
+		ShutdownResources: ShutdownResources{
+			QMP: closeQMPFunc(func() error { return qmpErr }),
+		},
 		LockCleanup: func() error { return lockErr },
-		QMP:         closeQMPFunc(func() error { return qmpErr }),
 	}).Run()
 	if !errors.Is(err, lockErr) || !errors.Is(err, qmpErr) {
 		t.Fatalf("joined error: got %v want lock and qmp errors", err)
@@ -61,6 +65,9 @@ func TestStartupFailureActionsJoinsSocketCleanupAndFinalizesStats(t *testing.T) 
 	var socketCalls int
 
 	actions := StartupFailureActions{
+		ShutdownResources: ShutdownResources{
+			Stats: StatsFinalizer(stats, &output),
+		},
 		SocketCleanup: JoinedCleanup(
 			func() error {
 				socketCalls++
@@ -71,7 +78,6 @@ func TestStartupFailureActionsJoinsSocketCleanupAndFinalizesStats(t *testing.T) 
 				return nil
 			},
 		),
-		Stats: StatsFinalizer(stats, &output),
 	}
 
 	if err := actions.Run(); !errors.Is(err, socketErr) {

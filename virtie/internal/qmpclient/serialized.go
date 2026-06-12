@@ -13,6 +13,12 @@ type serializedClient struct {
 }
 
 func Serialized(client Client) Client {
+	if client == nil {
+		return nil
+	}
+	if _, ok := client.(*serializedClient); ok {
+		return client
+	}
 	return &serializedClient{client: client}
 }
 

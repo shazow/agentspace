@@ -9,22 +9,14 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/executor"
 )
 
-type ForegroundRuntime interface {
-	SetWatchers(executor.Group)
-}
-
-type ForegroundProcesses interface {
-	QEMU() *executor.Process
-	VMWatchers() executor.Group
-}
-
 type ForegroundWait struct {
-	Plan      *Plan
-	Runtime   ForegroundRuntime
-	Processes ForegroundProcesses
-	Logger    *slog.Logger
-	Output    io.Writer
+	Plan   *Plan
+	QEMU   *executor.Process
+	Logger *slog.Logger
+	Output io.Writer
 
+	SetWatchers    func(executor.Group)
+	VMWatchers     func() executor.Group
 	StartFeatures  func(context.Context)
 	RunSSH         func(context.Context) error
 	WaitVM         func(context.Context, *executor.Process, executor.Group) error
@@ -60,7 +52,12 @@ func WaitForeground(ctx context.Context, wait ForegroundWait) error {
 	} else if hint != "" && wait.Output != nil {
 		fmt.Fprintf(wait.Output, "connect with: %s\n", hint)
 	}
-	vmWatchers := wait.Processes.VMWatchers()
-	wait.Runtime.SetWatchers(vmWatchers)
-	return wait.WaitVM(ctx, wait.Processes.QEMU(), vmWatchers)
+	vmWatchers := executor.Group{}
+	if wait.VMWatchers != nil {
+		vmWatchers = wait.VMWatchers()
+	}
+	if wait.SetWatchers != nil {
+		wait.SetWatchers(vmWatchers)
+	}
+	return wait.WaitVM(ctx, wait.QEMU, vmWatchers)
 }

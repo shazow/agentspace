@@ -19,9 +19,7 @@ func TestWaitForegroundRunsSSHAndRemovesRestoredState(t *testing.T) {
 	var removed bool
 
 	err := WaitForeground(context.Background(), ForegroundWait{
-		Plan:      plan,
-		Runtime:   &fakeForegroundRuntime{},
-		Processes: &fakeForegroundProcesses{},
+		Plan: plan,
 		RunSSH: func(context.Context) error {
 			ranSSH = true
 			return nil
@@ -48,9 +46,7 @@ func TestWaitForegroundStartsFeaturesBeforeSSH(t *testing.T) {
 	var events []string
 
 	err := WaitForeground(context.Background(), ForegroundWait{
-		Plan:      plan,
-		Runtime:   &fakeForegroundRuntime{},
-		Processes: &fakeForegroundProcesses{},
+		Plan: plan,
 		StartFeatures: func(context.Context) {
 			events = append(events, "features")
 		},
@@ -69,16 +65,17 @@ func TestWaitForegroundStartsFeaturesBeforeSSH(t *testing.T) {
 
 func TestWaitForegroundHeadlessPrintsHintAndWaitsVM(t *testing.T) {
 	plan := testForegroundPlan()
-	runtime := &fakeForegroundRuntime{}
-	processes := &fakeForegroundProcesses{qemu: (&executortest.Process{OverrideName: "qemu"}).Process()}
+	runtime := &recordingForegroundWatchers{}
+	processes := &foregroundProcessFixture{qemu: (&executortest.Process{OverrideName: "qemu"}).Process()}
 	var output bytes.Buffer
 	var waited bool
 
 	err := WaitForeground(context.Background(), ForegroundWait{
-		Plan:      plan,
-		Runtime:   runtime,
-		Processes: processes,
-		Output:    &output,
+		Plan:        plan,
+		QEMU:        processes.qemu,
+		Output:      &output,
+		SetWatchers: runtime.SetWatchers,
+		VMWatchers:  processes.VMWatchers,
 		WaitVM: func(ctx context.Context, qemu *executor.Process, watchers executor.Group) error {
 			waited = true
 			if qemu != processes.qemu {
@@ -111,13 +108,13 @@ func TestWaitForegroundHeadlessPrintsHintAndWaitsVM(t *testing.T) {
 func TestWaitForegroundHeadlessRemovesRestoredStateBeforeVMWait(t *testing.T) {
 	plan := testForegroundPlan()
 	plan.ResumeState = &SuspendState{VMStatePath: "state"}
-	processes := &fakeForegroundProcesses{qemu: (&executortest.Process{OverrideName: "qemu"}).Process()}
+	processes := &foregroundProcessFixture{qemu: (&executortest.Process{OverrideName: "qemu"}).Process()}
 	order := []string{}
 
 	err := WaitForeground(context.Background(), ForegroundWait{
-		Plan:      plan,
-		Runtime:   &fakeForegroundRuntime{},
-		Processes: processes,
+		Plan:       plan,
+		QEMU:       processes.qemu,
+		VMWatchers: processes.VMWatchers,
 		WaitVM: func(context.Context, *executor.Process, executor.Group) error {
 			order = append(order, "wait")
 			return nil
@@ -147,22 +144,18 @@ func testForegroundPlan() *Plan {
 	}
 }
 
-type fakeForegroundRuntime struct {
+type recordingForegroundWatchers struct {
 	watchers executor.Group
 }
 
-func (r *fakeForegroundRuntime) SetWatchers(watchers executor.Group) {
+func (r *recordingForegroundWatchers) SetWatchers(watchers executor.Group) {
 	r.watchers = watchers
 }
 
-type fakeForegroundProcesses struct {
+type foregroundProcessFixture struct {
 	qemu *executor.Process
 }
 
-func (p *fakeForegroundProcesses) QEMU() *executor.Process {
-	return p.qemu
-}
-
-func (p *fakeForegroundProcesses) VMWatchers() executor.Group {
+func (p *foregroundProcessFixture) VMWatchers() executor.Group {
 	return executor.NewGroup((&executortest.Process{OverrideName: "run"}).Process())
 }

@@ -60,18 +60,20 @@ func TestCloseActionsRunInShutdownOrder(t *testing.T) {
 			calls = append(calls, "writeback")
 			return nil
 		},
-		Processes:     NewProcessSet(),
-		ShutdownDelay: time.Millisecond,
-		QMP: closeQMPFunc(func() error {
-			calls = append(calls, "qmp")
-			return nil
-		}),
+		ShutdownResources: ShutdownResources{
+			Processes:     NewProcessSet(),
+			ShutdownDelay: time.Millisecond,
+			QMP: closeQMPFunc(func() error {
+				calls = append(calls, "qmp")
+				return nil
+			}),
+			Stats: func() {
+				calls = append(calls, "stats")
+			},
+		},
 		Cleanup: func() error {
 			calls = append(calls, "cleanup")
 			return nil
-		},
-		Stats: func() {
-			calls = append(calls, "stats")
 		},
 	}
 
