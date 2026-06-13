@@ -74,7 +74,7 @@ launch process, while other `virtie` commands talk to that process through
 
 ### `virtie/internal/manager/runtime`
 
-- Owns the long-lived `Runtime` object for QMP, process state, stats, control
+- Owns the long-lived `Core` object for QMP, process state, stats, control
   server, suspend queue, foreground wait, close hooks, runtime state, and typed
   control methods.
 - `RuntimeConfig` constructs a usable runtime with the required plan,
@@ -86,8 +86,9 @@ launch process, while other `virtie` commands talk to that process through
 - `State` and `Stats` provide consistent status and timing output.
 - `Closer`, `CloseActions`, `StartupFailureActions`, and
   `ShutdownResources` keep teardown ordering idempotent and testable.
-- Concrete control methods map runtime state, info, suspend, balloon, and
-  hotplug behavior into typed `manager/control` responses.
+- Concrete control methods map runtime state, info, suspend, and balloon
+  behavior into typed `manager/control` responses. Hotplug is registered from
+  the manager/control periphery so the feature remains removable.
 
 ### `virtie/internal/manager/control`
 
@@ -122,7 +123,7 @@ launch process, while other `virtie` commands talk to that process through
    starts QEMU, waits for QMP, serializes QMP, and installs QMP shutdown.
 4. Restore runs before runtime construction when a saved suspend state is
    present.
-5. `runtime.Runtime` is constructed with process ownership, QMP, suspend
+5. `runtime.Core` is constructed with process ownership, QMP, suspend
    queue, foreground wait, close hooks, stats, and info collection.
 6. Runtime state is marked ready, the control server starts, queued suspend is
    drained, guest files are provisioned, SSH readiness is observed, and
