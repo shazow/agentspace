@@ -19,7 +19,7 @@ type hotplugDevice interface {
 	ID() string
 }
 
-type Runtime struct {
+type Runner struct {
 	StateDir string
 	WorkDir  string
 	Devices  []hotplugtypes.Device
@@ -48,7 +48,7 @@ type GuestRunner interface {
 	Run(ctx context.Context, command []string) error
 }
 
-func (r Runtime) Attach(ctx context.Context, id string) error {
+func (r Runner) Attach(ctx context.Context, id string) error {
 	registry, err := r.hotplugRegistry(ctx)
 	if err != nil {
 		return err
@@ -60,7 +60,7 @@ func (r Runtime) Attach(ctx context.Context, id string) error {
 	return hotplug.Attach()
 }
 
-func (r Runtime) Detach(ctx context.Context, id string) error {
+func (r Runner) Detach(ctx context.Context, id string) error {
 	registry, err := r.hotplugRegistry(ctx)
 	if err != nil {
 		return err
@@ -74,7 +74,7 @@ func (r Runtime) Detach(ctx context.Context, id string) error {
 
 type hotplugRegistry map[string]hotplugDevice
 
-func (r Runtime) hotplugRegistry(ctx context.Context) (hotplugRegistry, error) {
+func (r Runner) hotplugRegistry(ctx context.Context) (hotplugRegistry, error) {
 	registry := make(hotplugRegistry, len(r.Devices))
 	for i, device := range r.Devices {
 		hotplug, err := r.hotplug(ctx, device, i)
@@ -88,7 +88,7 @@ func (r Runtime) hotplugRegistry(ctx context.Context) (hotplugRegistry, error) {
 	return registry, nil
 }
 
-func (r Runtime) hotplug(ctx context.Context, device hotplugtypes.Device, index int) (hotplugDevice, error) {
+func (r Runner) hotplug(ctx context.Context, device hotplugtypes.Device, index int) (hotplugDevice, error) {
 	base := hotplugBase{
 		ctx:     ctx,
 		runtime: &r,
@@ -127,7 +127,7 @@ func (r hotplugRegistry) lookup(id string) (hotplugDevice, error) {
 
 type hotplugBase struct {
 	ctx     context.Context
-	runtime *Runtime
+	runtime *Runner
 	id      string
 	kind    hotplugtypes.Kind
 	bus     string
@@ -287,7 +287,7 @@ func (h hotplugBlock) device() hotplugtypes.Device {
 	return hotplugtypes.Device{Kind: hotplugtypes.KindBlock, ID: h.id, Block: h.Block}
 }
 
-func (r Runtime) attachVirtioFSHost(ctx context.Context, device hotplugtypes.Device) (*executor.Process, error) {
+func (r Runner) attachVirtioFSHost(ctx context.Context, device hotplugtypes.Device) (*executor.Process, error) {
 	fs := device.VirtioFS
 	if r.Start == nil {
 		return nil, fmt.Errorf("hotplug process starter is not configured")
@@ -308,27 +308,27 @@ func (r Runtime) attachVirtioFSHost(ctx context.Context, device hotplugtypes.Dev
 	return proc, nil
 }
 
-func (r Runtime) attachGuest(ctx context.Context, device hotplugtypes.Device) error {
+func (r Runner) attachGuest(ctx context.Context, device hotplugtypes.Device) error {
 	if device.Kind != hotplugtypes.KindVirtioFS || device.VirtioFS.Target == "" {
 		return nil
 	}
 	return r.Guest.Run(ctx, []string{"/run/current-system/sw/bin/mount", "-t", "virtiofs", device.ID, device.VirtioFS.Target})
 }
 
-func (r Runtime) detachGuest(ctx context.Context, device hotplugtypes.Device) error {
+func (r Runner) detachGuest(ctx context.Context, device hotplugtypes.Device) error {
 	if device.Kind != hotplugtypes.KindVirtioFS || device.VirtioFS.Target == "" {
 		return nil
 	}
 	return r.Guest.Run(ctx, []string{"/run/current-system/sw/bin/umount", device.VirtioFS.Target})
 }
 
-func (r Runtime) rollbackHost(proc *executor.Process) {
+func (r Runner) rollbackHost(proc *executor.Process) {
 	if proc != nil && r.Start != nil {
 		_ = r.Start.Stop(proc)
 	}
 }
 
-func (r Runtime) terminatePID(pid int) error {
+func (r Runner) terminatePID(pid int) error {
 	if r.Start != nil {
 		return r.Start.SignalPIDGroup(pid, syscall.SIGTERM)
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 type managerHotplugFeature struct {
-	runner hotplug.Runtime
+	runner hotplug.Runner
 }
 
 func (f managerHotplugFeature) Hotplug(ctx context.Context, req controlpkg.HotplugRequest) (controlpkg.HotplugResponse, error) {
@@ -31,8 +31,8 @@ func (m *manager) hotplugFeature(launchManifest *manifest.Manifest, client qmpcl
 	return managerHotplugFeature{runner: m.hotplugRunner(launchManifest, client)}
 }
 
-func (m *manager) hotplugRunner(launchManifest *manifest.Manifest, client qmpclient.Client) hotplug.Runtime {
-	return hotplug.Runtime{
+func (m *manager) hotplugRunner(launchManifest *manifest.Manifest, client qmpclient.Client) hotplug.Runner {
+	return hotplug.Runner{
 		StateDir: launchManifest.ResolvedPersistenceStateDir(),
 		WorkDir:  launchManifest.Paths.WorkingDir,
 		Devices:  launchManifest.Hotplug,

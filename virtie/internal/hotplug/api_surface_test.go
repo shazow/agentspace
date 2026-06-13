@@ -31,6 +31,7 @@ func TestHotplugPackageDoesNotReExportDataTypes(t *testing.T) {
 		"WriteState":          {},
 		"ReadState":           {},
 		"DefaultVirtioFSArgs": {},
+		"Runtime":             {},
 	}
 
 	for name := range exportedDecls(t) {
