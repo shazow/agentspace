@@ -1535,8 +1535,8 @@ func TestLaunchSuspendHandlerWritesBackGuestFilesBeforeSuspend(t *testing.T) {
 		return true
 	})
 
-	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
-		t.Fatalf("suspend returned %v, want errSavedSuspendExit", err)
+	if err := handler.saveAndExit(context.Background()); !errors.Is(err, launch.ErrSavedSuspendExit) {
+		t.Fatalf("suspend returned %v, want launch.ErrSavedSuspendExit", err)
 	}
 
 	data, err := os.ReadFile(hostPath)
@@ -2837,11 +2837,11 @@ func TestLaunchSuspendHandlerSaveAndExitIsIdempotent(t *testing.T) {
 	}
 	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7, nil, nil)
 
-	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
-		t.Fatalf("first suspend returned %v, want errSavedSuspendExit", err)
+	if err := handler.saveAndExit(context.Background()); !errors.Is(err, launch.ErrSavedSuspendExit) {
+		t.Fatalf("first suspend returned %v, want launch.ErrSavedSuspendExit", err)
 	}
-	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
-		t.Fatalf("second suspend returned %v, want errSavedSuspendExit", err)
+	if err := handler.saveAndExit(context.Background()); !errors.Is(err, launch.ErrSavedSuspendExit) {
+		t.Fatalf("second suspend returned %v, want launch.ErrSavedSuspendExit", err)
 	}
 
 	qmpClient.mu.Lock()
@@ -3344,7 +3344,7 @@ func TestManagerLaunchResumeCancellationDuringActiveSessionIsNotSuspend(t *testi
 	if err == nil {
 		t.Fatal("expected resume cancellation error")
 	}
-	if errors.Is(err, errSavedSuspendExit) {
+	if launch.IsSavedSuspendExit(err) {
 		t.Fatalf("cancellation was misreported as suspend: %v", err)
 	}
 	if qmpClient.migrateCalls != 0 {

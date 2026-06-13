@@ -41,12 +41,6 @@ const (
 	sshRetryOutputRevealDelay = 250 * time.Millisecond
 )
 
-var errSavedSuspendExit = errors.New("saved suspend requested")
-
-func isSavedSuspendExit(err error) bool {
-	return errors.Is(err, errSavedSuspendExit)
-}
-
 func launchStatsCloseHook(stats *launch.Stats, output io.Writer) func() {
 	return func() {
 		if stats == nil {
@@ -147,14 +141,14 @@ func (m *manager) planLaunch(spec launch.Spec) (*launch.Plan, error) {
 func (m *manager) launchWithPlan(ctx context.Context, plan *launch.Plan) (err error) {
 	runtime, err := m.startWithPlan(ctx, plan)
 	if err != nil {
-		if errors.Is(err, errSavedSuspendExit) {
+		if launch.IsSavedSuspendExit(err) {
 			return nil
 		}
 		return err
 	}
 	defer joinDeferredError(&err, runtime.Close)
 	err = runtime.Wait(ctx, plan.Options.WaitMode())
-	if errors.Is(err, errSavedSuspendExit) {
+	if launch.IsSavedSuspendExit(err) {
 		return nil
 	}
 	return err
@@ -272,7 +266,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 	defer func() {
 		if err != nil {
 			if runtime != nil {
-				if isSavedSuspendExit(err) {
+				if launch.IsSavedSuspendExit(err) {
 					runtime.MarkSavedSuspend()
 				}
 				err = errors.Join(err, runtime.Close())
@@ -310,7 +304,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 	runtimeDeps := runtimepkg.Dependencies{
 		QMPTimeout:       m.effectiveQMPCommandTimeout(),
 		Logger:           m.logger,
-		SavedSuspendExit: isSavedSuspendExit,
+		SavedSuspendExit: launch.IsSavedSuspendExit,
 		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
 			info, err := m.collectGuestInfo(ctx, socketPath, watchers)
 			if err != nil {
@@ -643,7 +637,7 @@ func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 			h.err = err
 			return
 		}
-		h.err = errSavedSuspendExit
+		h.err = launch.ErrSavedSuspendExit
 	})
 	return h.err
 }
