@@ -19,7 +19,7 @@ type Core struct {
 	plan             *launch.Plan
 	paths            launch.RuntimePaths
 	cid              int
-	stats            *Stats
+	stats            *launch.Stats
 	qmp              qmpclient.Client
 	suspendRequests  *launch.SuspendCoordinator
 	waitForeground   func(context.Context, *launch.Plan) error

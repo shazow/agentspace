@@ -47,6 +47,18 @@ func isSavedSuspendExit(err error) bool {
 	return errors.Is(err, errSavedSuspendExit)
 }
 
+func launchStatsCloseHook(stats *launch.Stats, output io.Writer) func() {
+	return func() {
+		if stats == nil {
+			return
+		}
+		stats.Timer(launch.TimerCompleted, time.Now())
+		if output != nil {
+			fmt.Fprintf(output, "stats: %s\n", stats)
+		}
+	}
+}
+
 type manager struct {
 	locker              launch.Locker
 	vsockCIDChecker     launch.VSockCIDChecker
@@ -149,7 +161,7 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *launch.Plan) (err er
 }
 
 func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime *runtimepkg.Core, err error) {
-	stats := runtimepkg.NewStats(time.Now())
+	stats := launch.NewStats(time.Now())
 	manifest := plan.Manifest
 
 	launchCtx, cancelLaunch := context.WithCancel(ctx)
@@ -276,7 +288,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 				cleanupErr = errors.Join(cleanupErr, qmpClient.Disconnect())
 			}
 			cleanupErr = errors.Join(cleanupErr, launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()))
-			runtimepkg.StatsFinalizer(stats, m.outputWriter())()
+			launchStatsCloseHook(stats, m.outputWriter())()
 			err = errors.Join(err, cleanupErr)
 		}
 	}()
@@ -333,7 +345,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 				},
 				cleanupRuntime,
 			),
-			Stats: runtimepkg.StatsFinalizer(stats, m.outputWriter()),
+			Stats: launchStatsCloseHook(stats, m.outputWriter()),
 		},
 		Dependencies: runtimeDeps,
 	})
@@ -352,7 +364,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 		if err := m.writeGuestFiles(launchCtx, plan.Manifest, stats, processes.Watchers()); err != nil {
 			return nil, err
 		}
-		stats.MarkFilesReady(time.Now())
+		stats.Timer(launch.TimerFilesReady, time.Now())
 
 		if plan.Paths.SSHReadySocket != "" {
 			m.logger.Info("waiting for ssh readiness")
@@ -360,14 +372,14 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 				return nil, err
 			}
 		}
-		stats.MarkSSHReady(time.Now())
+		stats.Timer(launch.TimerSSHReady, time.Now())
 		writeBackOnExit.Store(true)
 	}
 
 	return runtime, nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, stats *runtimepkg.Stats, processes *runtimepkg.ProcessSet) (qmpclient.Client, error) {
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, stats *launch.Stats, processes *runtimepkg.ProcessSet) (qmpclient.Client, error) {
 	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
 	if err != nil {
 		return nil, err
@@ -381,7 +393,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, sta
 		}
 	}
 
-	stats.MarkBootStarted(time.Now())
+	stats.Timer(launch.TimerBootStarted, time.Now())
 	if m.runner == nil {
 		return nil, launch.WrapFixedStage("vm startup")(fmt.Errorf("qemu runner is not configured"))
 	}
@@ -404,7 +416,7 @@ func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, sta
 		return nil, err
 	}
 	client := qmpclient.Serialized(qmp)
-	stats.MarkQMPReady(time.Now())
+	stats.Timer(launch.TimerQMPReady, time.Now())
 	qemu.SetShutdown(func() error {
 		return client.Quit(m.effectiveQMPQuitTimeout())
 	})
@@ -439,7 +451,7 @@ func removeRestoredSuspendState(plan *launch.Plan) error {
 func (m *manager) waitForLaunchForeground(
 	ctx context.Context,
 	plan *launch.Plan,
-	stats *runtimepkg.Stats,
+	stats *launch.Stats,
 	runtime *runtimepkg.Core,
 	qmpClient qmpclient.Client,
 	lifecycle *launch.Lifecycle,
@@ -639,7 +651,7 @@ func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
 func (m *manager) runSSHSession(
 	ctx context.Context,
 	plan *launch.Plan,
-	stats *runtimepkg.Stats,
+	stats *launch.Stats,
 	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
 	processes *runtimepkg.ProcessSet,
@@ -653,8 +665,12 @@ func (m *manager) runSSHSession(
 		AddProcesses:           processes.Add,
 		RemoveProcess:          processes.Remove,
 		Watchers:               processes.Watchers,
-		MarkSSHAttempt:         stats.MarkSSHAttempt,
-		MarkSSHStarted:         stats.MarkSSHStarted,
+		MarkSSHAttempt: func(t time.Time) {
+			stats.Timer(launch.TimerSSHAttempt, t)
+		},
+		MarkSSHStarted: func(t time.Time) {
+			stats.Timer(launch.TimerSSHStarted, t)
+		},
 		Wait: func(ctx context.Context, session *executor.Process, watchers executor.Group) error {
 			return m.waitForSession(ctx, session, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
 		},

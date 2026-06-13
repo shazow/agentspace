@@ -16,7 +16,7 @@ type RuntimeConfig struct {
 	Plan            *launch.Plan
 	Paths           launch.RuntimePaths
 	CID             int
-	Stats           *Stats
+	Stats           *launch.Stats
 	QMP             qmpclient.Client
 	SuspendRequests *launch.SuspendCoordinator
 	Processes       *ProcessSet

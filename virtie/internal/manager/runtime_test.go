@@ -20,9 +20,9 @@ func TestRuntimeStatusAndBalloonUseOwnedQMP(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.QEMU.Devices.Balloon = &balloontypes.Device{ID: "balloon0", Transport: "pci"}
-	stats := runtimepkg.NewStats(time.Now())
-	stats.MarkBootStarted(time.Now())
-	stats.MarkQMPReady(time.Now())
+	stats := launch.NewStats(time.Now())
+	stats.Timer(launch.TimerBootStarted, time.Now())
+	stats.Timer(launch.TimerQMPReady, time.Now())
 	qmp := (&fakeQMPClient{queryBalloonActualBytes: 640 * testMiB}).withDefaultBalloonPath("/machine/peripheral/balloon0")
 	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
@@ -67,7 +67,7 @@ func TestRuntimeBalloonMapsMissingDeviceToFailedPrecondition(t *testing.T) {
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
 		CID:          9,
-		Stats:        runtimepkg.NewStats(time.Now()),
+		Stats:        launch.NewStats(time.Now()),
 		QMP:          &fakeQMPClient{},
 		Dependencies: runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
 	})
@@ -94,7 +94,7 @@ func TestRuntimeSuspendQueuesAndWaitsForLaunchLoop(t *testing.T) {
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
 		CID:             9,
-		Stats:           runtimepkg.NewStats(time.Now()),
+		Stats:           launch.NewStats(time.Now()),
 		QMP:             qmp,
 		SuspendRequests: coordinator,
 		Dependencies: runtimepkg.Dependencies{
@@ -152,7 +152,7 @@ func TestRuntimeSuspendMapsMissingCoordinatorToFailedPrecondition(t *testing.T) 
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
 		CID:          9,
-		Stats:        runtimepkg.NewStats(time.Now()),
+		Stats:        launch.NewStats(time.Now()),
 		QMP:          &fakeQMPClient{},
 		Dependencies: runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
 	})
@@ -179,7 +179,7 @@ func TestRuntimeStartControlServesStatus(t *testing.T) {
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
 		CID:          11,
-		Stats:        runtimepkg.NewStats(time.Now()),
+		Stats:        launch.NewStats(time.Now()),
 		QMP:          &fakeQMPClient{},
 		Dependencies: runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
 	})
@@ -215,7 +215,7 @@ func TestRuntimeWaitUsesConfiguredForegroundCallback(t *testing.T) {
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
 		CID:           11,
-		Stats:         runtimepkg.NewStats(time.Now()),
+		Stats:         launch.NewStats(time.Now()),
 		QMP:           &fakeQMPClient{},
 		Processes:     processes,
 		ShutdownDelay: time.Millisecond,
@@ -246,7 +246,7 @@ func TestRuntimeWaitMapsMissingForegroundToFailedPrecondition(t *testing.T) {
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
 		CID:          11,
-		Stats:        runtimepkg.NewStats(time.Now()),
+		Stats:        launch.NewStats(time.Now()),
 		QMP:          &fakeQMPClient{},
 		Dependencies: runtimepkg.Dependencies{QMPTimeout: time.Second, Logger: slog.New(slog.DiscardHandler)},
 	})
@@ -275,7 +275,7 @@ func TestRuntimeSavedSuspendWaitSkipsCloseWriteBack(t *testing.T) {
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
 		CID:           11,
-		Stats:         runtimepkg.NewStats(time.Now()),
+		Stats:         launch.NewStats(time.Now()),
 		QMP:           qmp,
 		Processes:     processes,
 		ShutdownDelay: time.Millisecond,
@@ -318,7 +318,7 @@ func TestRuntimeInfoUsesConfiguredCollector(t *testing.T) {
 			SSHReadySocket:   filepath.Join(tmpDir, "ssh-ready.sock"),
 		},
 		CID:   11,
-		Stats: runtimepkg.NewStats(time.Now()),
+		Stats: launch.NewStats(time.Now()),
 		QMP:   &fakeQMPClient{},
 		Dependencies: runtimepkg.Dependencies{
 			QMPTimeout: time.Second,
@@ -359,7 +359,7 @@ func TestRuntimeInfoMapsCollectorErrorToFailedPrecondition(t *testing.T) {
 			GuestAgentSocket: filepath.Join(tmpDir, "qga.sock"),
 		},
 		CID:   11,
-		Stats: runtimepkg.NewStats(time.Now()),
+		Stats: launch.NewStats(time.Now()),
 		QMP:   &fakeQMPClient{},
 		Dependencies: runtimepkg.Dependencies{
 			QMPTimeout: time.Second,
@@ -394,7 +394,7 @@ func TestRuntimeCloseStopsProcessesAndDisconnectsQMPOnce(t *testing.T) {
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
 		},
 		CID:           11,
-		Stats:         runtimepkg.NewStats(time.Now()),
+		Stats:         launch.NewStats(time.Now()),
 		QMP:           qmp,
 		Processes:     processes,
 		ShutdownDelay: time.Millisecond,

@@ -7,12 +7,11 @@ import (
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
-	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
 )
 
-func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *runtimepkg.Stats, watchers executor.Group) error {
+func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.Manifest, stats *launch.Stats, watchers executor.Group) error {
 	files := launchManifest.ResolvedWriteFiles()
 	mountCWD := launchManifest.Workspace.MountCWD
 	if len(files) == 0 && !mountCWD {
@@ -30,7 +29,7 @@ func (m *manager) writeGuestFiles(ctx context.Context, launchManifest *manifest.
 		return err
 	}
 	if stats != nil {
-		stats.MarkGuestAgentReady(time.Now())
+		stats.Timer(launch.TimerGuestAgentReady, time.Now())
 	}
 	defer client.Disconnect()
 
