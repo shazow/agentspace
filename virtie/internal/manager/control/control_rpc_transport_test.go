@@ -118,6 +118,37 @@ func TestControlRouterUnsupportedCapability(t *testing.T) {
 	}
 }
 
+func TestControlRouterRequiresExplicitHotplugRegistration(t *testing.T) {
+	handler := &fakeControlHandler{}
+	router, err := NewRouter(handler)
+	if err != nil {
+		t.Fatalf("router: %v", err)
+	}
+	serverPath := filepath.Join(t.TempDir(), "virtie.sock")
+	startTestControlRouterAt(t, serverPath, router)
+
+	_, err = Dial(serverPath).Hotplug(context.Background(), HotplugRequest{ID: "disk0"})
+	var rpcErr *RPCError
+	if err == nil || !errors.As(err, &rpcErr) || rpcErr.Code != ErrUnsupported {
+		t.Fatalf("expected unregistered hotplug to be unsupported, got %v", err)
+	}
+
+	router, err = NewRouter(handler, WithHotplug(handler))
+	if err != nil {
+		t.Fatalf("router with hotplug: %v", err)
+	}
+	registeredPath := filepath.Join(t.TempDir(), "virtie.sock")
+	startTestControlRouterAt(t, registeredPath, router)
+
+	resp, err := Dial(registeredPath).Hotplug(context.Background(), HotplugRequest{ID: "disk0", Detach: true})
+	if err != nil {
+		t.Fatalf("registered hotplug: %v", err)
+	}
+	if resp.ID != "disk0" || !resp.Detach {
+		t.Fatalf("unexpected hotplug response: %#v", resp)
+	}
+}
+
 func TestControlInvalidJSONAndUnknownMethod(t *testing.T) {
 	path := startTestControlServer(t, &fakeControlHandler{})
 	conn, err := net.Dial("unix", path)
@@ -164,16 +195,31 @@ func TestControlInvalidJSONAndUnknownMethod(t *testing.T) {
 func startTestControlServer(t *testing.T, runtime any) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "virtie.sock")
-	startTestControlServerAt(t, path, runtime)
-	return path
-}
 
-func startTestControlServerAt(t *testing.T, path string, runtime any) {
-	t.Helper()
-	router, err := NewRuntimeRouter(runtime)
+	core, ok := runtime.(RuntimeCore)
+	if !ok {
+		t.Fatalf("runtime core handler is required")
+	}
+	options := []RouterOption{}
+	if suspend, ok := runtime.(RuntimeSuspend); ok {
+		options = append(options, WithSuspend(suspend))
+	}
+	if hotplug, ok := runtime.(RuntimeHotplug); ok {
+		options = append(options, WithHotplug(hotplug))
+	}
+	if balloon, ok := runtime.(RuntimeBalloon); ok {
+		options = append(options, WithBalloon(balloon))
+	}
+	router, err := NewRouter(core, options...)
 	if err != nil {
 		t.Fatalf("router: %v", err)
 	}
+	startTestControlRouterAt(t, path, router)
+	return path
+}
+
+func startTestControlRouterAt(t *testing.T, path string, router *Router) {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("create control socket directory: %v", err)
 	}
