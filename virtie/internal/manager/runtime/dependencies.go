@@ -19,7 +19,7 @@ type RuntimeConfig struct {
 	Stats           *launch.Stats
 	QMP             qmpclient.Client
 	SuspendRequests *launch.SuspendCoordinator
-	Processes       *ProcessSet
+	Processes       *launch.ProcessSet
 	ShutdownDelay   time.Duration
 	WaitForeground  func(context.Context, *launch.Plan) error
 	CloseHooks      CloseHooks

@@ -266,7 +266,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 		}
 	}
 
-	processes := runtimepkg.NewProcessSet()
+	processes := launch.NewProcessSet()
 	var qmpClient qmpclient.Client
 	var writeBackOnExit atomic.Bool
 	defer func() {
@@ -379,7 +379,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 	return runtime, nil
 }
 
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, stats *launch.Stats, processes *runtimepkg.ProcessSet) (qmpclient.Client, error) {
+func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, stats *launch.Stats, processes *launch.ProcessSet) (qmpclient.Client, error) {
 	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
 	if err != nil {
 		return nil, err
@@ -456,7 +456,7 @@ func (m *manager) waitForLaunchForeground(
 	qmpClient qmpclient.Client,
 	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
-	processes *runtimepkg.ProcessSet,
+	processes *launch.ProcessSet,
 ) error {
 	if task := balloon.ControllerTask(m.effectiveQMPCommandTimeout(), qmpClient, plan.Manifest.QEMU.Devices.Balloon, plan.Notifier); task != nil {
 		processes.StartTasks(ctx, task)
@@ -654,7 +654,7 @@ func (m *manager) runSSHSession(
 	stats *launch.Stats,
 	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
-	processes *runtimepkg.ProcessSet,
+	processes *launch.ProcessSet,
 ) error {
 	return launch.RunSSHSession(ctx, launch.SSHSession{
 		Plan:                   plan,
