@@ -25,7 +25,7 @@ type Runtime struct {
 	Devices  []hotplugtypes.Device
 	Start    ProcessStarter
 	Sockets  SocketWaiter
-	QMP      QMPClient
+	QMP      DeviceQMP
 	Guest    GuestRunner
 }
 
@@ -39,9 +39,9 @@ type SocketWaiter interface {
 	Wait(ctx context.Context, stage string, socketPaths []string, process *executor.Process) error
 }
 
-type QMPClient interface {
-	Run(ctx context.Context, command string) error
-	DeviceDel(ctx context.Context, id string) error
+type DeviceQMP interface {
+	AttachDevice(context.Context, hotplugtypes.Device, string) (func(context.Context), error)
+	DetachDevice(context.Context, hotplugtypes.Device) error
 }
 
 type GuestRunner interface {
@@ -163,18 +163,22 @@ func (h hotplugBase) attach(device hotplugtypes.Device, attachHost func() (*exec
 	if proc != nil {
 		state.PID = proc.PID()
 	}
-	if err := h.runtime.attachQMP(h.ctx, device, h.bus); err != nil {
+	rollbackQMP, err := h.runtime.QMP.AttachDevice(h.ctx, device, h.bus)
+	if err != nil {
 		detachHost(proc)
 		return err
 	}
+	if rollbackQMP == nil {
+		rollbackQMP = func(context.Context) {}
+	}
 	if err := h.runtime.attachGuest(h.ctx, device); err != nil {
-		_ = h.runtime.detachQMP(h.ctx, device)
+		rollbackQMP(h.ctx)
 		detachHost(proc)
 		return err
 	}
 	if err := hotplugtypes.WriteState(statePath, state); err != nil {
 		_ = h.runtime.detachGuest(h.ctx, device)
-		_ = h.runtime.detachQMP(h.ctx, device)
+		rollbackQMP(h.ctx)
 		detachHost(proc)
 		return err
 	}
@@ -200,7 +204,7 @@ func (h hotplugBase) detach(device hotplugtypes.Device, cleanup func(hotplugtype
 	if err := h.runtime.detachGuest(h.ctx, device); err != nil {
 		return err
 	}
-	if err := h.runtime.detachQMP(h.ctx, device); err != nil {
+	if err := h.runtime.QMP.DetachDevice(h.ctx, device); err != nil {
 		return err
 	}
 	if cleanup != nil {
@@ -302,39 +306,6 @@ func (r Runtime) attachVirtioFSHost(ctx context.Context, device hotplugtypes.Dev
 		}
 	}
 	return proc, nil
-}
-
-func (r Runtime) attachQMP(ctx context.Context, device hotplugtypes.Device, bus string) error {
-	commands := attachCommands(device, bus)
-	for i, command := range commands {
-		if err := r.QMP.Run(ctx, command); err != nil {
-			r.rollbackAttachQMP(ctx, device, i)
-			return err
-		}
-	}
-	return nil
-}
-
-func (r Runtime) rollbackAttachQMP(ctx context.Context, device hotplugtypes.Device, successful int) {
-	if successful == 0 {
-		return
-	}
-	for _, command := range rollbackAttachCommands(device, successful) {
-		_ = r.QMP.Run(ctx, command)
-	}
-}
-
-func (r Runtime) detachQMP(ctx context.Context, device hotplugtypes.Device) error {
-	deviceID := qemuDeviceID(device.ID)
-	if err := r.QMP.DeviceDel(ctx, deviceID); err != nil {
-		return err
-	}
-	for _, command := range detachPostDeviceDelCommands(device) {
-		if err := r.QMP.Run(ctx, command); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (r Runtime) attachGuest(ctx context.Context, device hotplugtypes.Device) error {
