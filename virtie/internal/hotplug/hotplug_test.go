@@ -47,7 +47,7 @@ func TestQMPDeviceAdapterAttachStopsBeforeNextCommandWhenContextCanceled(t *test
 	if rollback != nil {
 		t.Fatal("expected no rollback function")
 	}
-	if got, want := client.events, []string{"run:chardev-add"}; !reflect.DeepEqual(got, want) {
+	if got, want := client.events, []string{"run:chardev-add", "run:chardev-remove"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %#v want %#v", got, want)
 	}
 }
@@ -64,16 +64,16 @@ func TestQMPDeviceAdapterDetachWaitsBeforeCleanup(t *testing.T) {
 	}
 }
 
-func TestQMPDeviceAdapterDetachStopsBeforeCleanupWhenContextCanceled(t *testing.T) {
+func TestQMPDeviceAdapterDetachFinishesCleanupAfterDeviceDelCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	client := &fakeQMPClient{afterDeviceDel: cancel}
 	adapter := QMPDeviceAdapter{Client: client, Timeout: time.Second}
 
 	err := adapter.DetachDevice(ctx, testVirtioFSDevice(t.TempDir()))
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("detach error: got %v want context canceled", err)
+	if err != nil {
+		t.Fatalf("detach device: %v", err)
 	}
-	if got, want := client.events, []string{"device_del:dev-cache"}; !reflect.DeepEqual(got, want) {
+	if got, want := client.events, []string{"device_del:dev-cache", "run:chardev-remove"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %#v want %#v", got, want)
 	}
 }
@@ -161,6 +161,27 @@ func TestVirtioFSDetachWaitsForDeviceDeletedBeforeChardevRemove(t *testing.T) {
 	}
 	if got, want := qmp.events, []string{"device_del:dev-cache", "run:chardev-remove"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("events: got %#v want %#v", got, want)
+	}
+}
+
+func TestVirtioFSDetachCompletesCleanupAfterDeviceDelCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	runtime, _, qmp, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
+	qmp.afterDeviceDel = cancel
+	statePath := filepath.Join(tmpDir, "state", "hotplug", "cache.json")
+	if err := hotplugtypes.WriteState(statePath, hotplugtypes.State{ID: "cache", Kind: hotplugtypes.KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	if err := runtime.Detach(ctx, "cache"); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	if got, want := qmp.events, []string{"device_del:dev-cache", "run:chardev-remove"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: got %#v want %#v", got, want)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected hotplug state file removed, got %v", err)
 	}
 }
 

@@ -23,6 +23,7 @@ func (a QMPDeviceAdapter) AttachDevice(ctx context.Context, device hotplugtypes.
 	successful := 0
 	for _, command := range attachCommands(device, bus) {
 		if err := ctx.Err(); err != nil {
+			a.rollbackAttach(ctx, device, successful)
 			return nil, err
 		}
 		if err := a.Client.RunRaw(a.Timeout, command); err != nil {
@@ -45,9 +46,6 @@ func (a QMPDeviceAdapter) DetachDevice(ctx context.Context, device hotplugtypes.
 		return err
 	}
 	for _, command := range detachPostDeviceDelCommands(device) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		if err := a.Client.RunRaw(a.Timeout, command); err != nil {
 			return err
 		}
@@ -56,11 +54,12 @@ func (a QMPDeviceAdapter) DetachDevice(ctx context.Context, device hotplugtypes.
 }
 
 func (a QMPDeviceAdapter) rollbackAttach(ctx context.Context, device hotplugtypes.Device, successful int) {
-	if ctx.Err() != nil || successful == 0 {
+	if successful == 0 {
 		return
 	}
+	cleanupCtx := context.WithoutCancel(ctx)
 	if successful == len(attachCommands(device, "")) {
-		_ = a.DetachDevice(ctx, device)
+		_ = a.DetachDevice(cleanupCtx, device)
 		return
 	}
 	for _, command := range rollbackAttachCommands(device, successful) {
