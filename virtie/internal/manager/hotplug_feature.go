@@ -1,0 +1,44 @@
+package manager
+
+import (
+	"context"
+
+	"github.com/shazow/agentspace/virtie/internal/hotplug"
+	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
+	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
+)
+
+type managerHotplugFeature struct {
+	runner hotplug.Runtime
+}
+
+func (f managerHotplugFeature) Hotplug(ctx context.Context, req controlpkg.HotplugRequest) (controlpkg.HotplugResponse, error) {
+	if req.Detach {
+		if err := f.runner.Detach(ctx, req.ID); err != nil {
+			return controlpkg.HotplugResponse{}, launch.WrapHotplugError(err)
+		}
+		return controlpkg.HotplugResponse{ID: req.ID, Detach: true}, nil
+	}
+	if err := f.runner.Attach(ctx, req.ID); err != nil {
+		return controlpkg.HotplugResponse{}, launch.WrapHotplugError(err)
+	}
+	return controlpkg.HotplugResponse{ID: req.ID}, nil
+}
+
+func (m *manager) hotplugFeature(launchManifest *manifest.Manifest, client qmpclient.Client) managerHotplugFeature {
+	return managerHotplugFeature{runner: m.hotplugRunner(launchManifest, client)}
+}
+
+func (m *manager) hotplugRunner(launchManifest *manifest.Manifest, client qmpclient.Client) hotplug.Runtime {
+	return hotplug.Runtime{
+		StateDir: launchManifest.ResolvedPersistenceStateDir(),
+		WorkDir:  launchManifest.Paths.WorkingDir,
+		Devices:  launchManifest.Hotplug,
+		Start:    managerHotplugStarter{m: m},
+		Sockets:  managerHotplugSocketWaiter{m: m},
+		QMP:      hotplug.QMPDeviceAdapter{Client: client, Timeout: m.effectiveQMPCommandTimeout()},
+		Guest:    managerHotplugGuest{m: m, manifest: launchManifest},
+	}
+}

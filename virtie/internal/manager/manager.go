@@ -25,6 +25,7 @@ import (
 
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
@@ -298,9 +299,6 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 		QMPTimeout:       m.effectiveQMPCommandTimeout(),
 		Logger:           m.logger,
 		SavedSuspendExit: isSavedSuspendExit,
-		HotplugStart:     managerHotplugStarter{m: m},
-		HotplugSockets:   managerHotplugSocketWaiter{m: m},
-		HotplugGuest:     managerHotplugGuest{m: m, manifest: plan.Manifest},
 		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
 			info, err := m.collectGuestInfo(ctx, socketPath, watchers)
 			if err != nil {
@@ -341,7 +339,8 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 	})
 	qmpClient = runtime.QMP()
 	runtime.SetReady()
-	if _, err := runtime.StartControl(launchCtx); err != nil {
+	hotplugFeature := m.hotplugFeature(plan.Manifest, qmpClient)
+	if _, err := runtime.StartControl(launchCtx, controlpkg.WithHotplug(hotplugFeature)); err != nil {
 		return nil, launch.WrapFixedStage("control startup")(err)
 	}
 	if err := launch.HandleQueuedSuspend(launchCtx, lifecycle, func(ctx context.Context, coordinator *launch.SuspendCoordinator) error {

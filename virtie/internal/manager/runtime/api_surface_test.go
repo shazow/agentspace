@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -42,6 +43,16 @@ func TestRuntimePackageDoesNotExportConstructionAndTeardownInternals(t *testing.
 	for name := range exportedDecls(t) {
 		if _, ok := banned[name]; ok {
 			t.Fatalf("runtime should not export construction/teardown helper %s", name)
+		}
+	}
+}
+
+func TestRuntimeDependenciesDoNotNameHotplug(t *testing.T) {
+	depsType := reflect.TypeOf(Dependencies{})
+	for i := 0; i < depsType.NumField(); i++ {
+		field := depsType.Field(i)
+		if strings.Contains(strings.ToLower(field.Name), "hotplug") {
+			t.Fatalf("runtime dependency %s embeds hotplug feature policy in runtime core", field.Name)
 		}
 	}
 }

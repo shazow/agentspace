@@ -31,7 +31,4 @@ type Dependencies struct {
 	Logger           *slog.Logger
 	SavedSuspendExit func(error) bool
 	CollectInfo      func(context.Context, string, executor.Group) (GuestInfo, error)
-	HotplugStart     HotplugStarter
-	HotplugSockets   HotplugSocketWaiter
-	HotplugGuest     HotplugGuest
 }

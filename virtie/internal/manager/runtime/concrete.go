@@ -32,9 +32,6 @@ type Runtime struct {
 	closeHooks       CloseHooks
 	savedSuspend     atomic.Bool
 	watchers         executor.Group
-	hotplugStart     HotplugStarter
-	hotplugSockets   HotplugSocketWaiter
-	hotplugGuest     HotplugGuest
 
 	state   *state
 	closer  *closer
@@ -60,9 +57,6 @@ func New(config RuntimeConfig) *Runtime {
 		processes:        config.Processes,
 		shutdownDelay:    config.ShutdownDelay,
 		closeHooks:       config.CloseHooks,
-		hotplugStart:     deps.HotplugStart,
-		hotplugSockets:   deps.HotplugSockets,
-		hotplugGuest:     deps.HotplugGuest,
 		state:            state,
 		closer:           newCloser(state),
 	}
@@ -84,8 +78,17 @@ func (r *Runtime) QMP() qmpclient.Client {
 	return r.qmp
 }
 
-func (r *Runtime) StartControl(ctx context.Context) (*control.Server, error) {
-	controlServer, err := StartControl(ctx, r.paths.ControlSocket, r, r.logger)
+func (r *Runtime) StartControl(ctx context.Context, options ...control.RouterOption) (*control.Server, error) {
+	routerOptions := []control.RouterOption{
+		control.WithSuspend(r),
+		control.WithBalloon(r),
+	}
+	routerOptions = append(routerOptions, options...)
+	router, err := control.NewRouter(r, routerOptions...)
+	if err != nil {
+		return nil, err
+	}
+	controlServer, err := StartControl(ctx, r.paths.ControlSocket, router, r.logger)
 	if err == nil {
 		r.control = controlServer
 	}
