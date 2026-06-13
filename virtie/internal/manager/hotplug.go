@@ -60,11 +60,11 @@ func (m *manager) directHotplugFeature(ctx context.Context, launchManifest *mani
 	return m.hotplugFeature(launchManifest, client), client, nil
 }
 
-type managerHotplugStarter struct {
+type managedProcessStarter struct {
 	m *manager
 }
 
-func (s managerHotplugStarter) Start(ctx context.Context, cmd *exec.Cmd) (*executor.Process, error) {
+func (s managedProcessStarter) Start(ctx context.Context, cmd *exec.Cmd) (*executor.Process, error) {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	proc, err := s.m.startManagedProcess(cmd)
@@ -74,34 +74,34 @@ func (s managerHotplugStarter) Start(ctx context.Context, cmd *exec.Cmd) (*execu
 	return proc, nil
 }
 
-func (s managerHotplugStarter) Stop(process *executor.Process) error {
+func (s managedProcessStarter) Stop(process *executor.Process) error {
 	if process == nil {
 		return nil
 	}
 	return process.Stop(s.m.shutdownDelay)
 }
 
-func (s managerHotplugStarter) SignalPIDGroup(pid int, signal syscall.Signal) error {
+func (s managedProcessStarter) SignalPIDGroup(pid int, signal syscall.Signal) error {
 	return executor.SignalProcessGroup(pid, signal)
 }
 
-type managerHotplugSocketWaiter struct {
+type socketReadinessWaiter struct {
 	m *manager
 }
 
-func (w managerHotplugSocketWaiter) Wait(ctx context.Context, stage string, socketPaths []string, process *executor.Process) error {
+func (w socketReadinessWaiter) Wait(ctx context.Context, stage string, socketPaths []string, process *executor.Process) error {
 	if process != nil {
 		return w.m.waitForSockets(ctx, stage, socketPaths, executor.NewGroup(process))
 	}
 	return w.m.waitForSockets(ctx, stage, socketPaths, executor.Group{})
 }
 
-type managerHotplugGuest struct {
+type guestCommandRunner struct {
 	m        *manager
 	manifest *manifest.Manifest
 }
 
-func (g managerHotplugGuest) Run(ctx context.Context, command []string) error {
+func (g guestCommandRunner) Run(ctx context.Context, command []string) error {
 	if len(command) == 0 {
 		return nil
 	}

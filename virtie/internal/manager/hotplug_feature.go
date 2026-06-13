@@ -36,9 +36,9 @@ func (m *manager) hotplugRunner(launchManifest *manifest.Manifest, client qmpcli
 		StateDir: launchManifest.ResolvedPersistenceStateDir(),
 		WorkDir:  launchManifest.Paths.WorkingDir,
 		Devices:  launchManifest.Hotplug,
-		Start:    managerHotplugStarter{m: m},
-		Sockets:  managerHotplugSocketWaiter{m: m},
+		Start:    managedProcessStarter{m: m},
+		Sockets:  socketReadinessWaiter{m: m},
 		QMP:      hotplug.QMPDeviceAdapter{Client: client, Timeout: m.effectiveQMPCommandTimeout()},
-		Guest:    managerHotplugGuest{m: m, manifest: launchManifest},
+		Guest:    guestCommandRunner{m: m, manifest: launchManifest},
 	}
 }
