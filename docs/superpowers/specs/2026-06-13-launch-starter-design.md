@@ -184,12 +184,15 @@ directly after stats move into `launch`.
 
 Move launch timing stats from `manager/runtime` into `manager/launch`.
 
-Stats use one timer Interface rather than many phase-specific methods:
+Stats use one timer Interface rather than many phase-specific methods. The
+stored timings are map-backed so adding a new startup timer does not require a
+new struct field and getter:
 
 ```go
 type TimerEvent string
 
 const (
+	TimerStarted         TimerEvent = "started"
 	TimerBootStarted     TimerEvent = "boot_started"
 	TimerQMPReady        TimerEvent = "qmp_ready"
 	TimerGuestAgentReady TimerEvent = "guest_agent_ready"
@@ -201,22 +204,20 @@ const (
 )
 
 type Stats struct {
-	started         time.Time
-	bootStarted     time.Time
-	qmpReady        time.Time
-	guestAgentReady time.Time
-	filesReady      time.Time
-	sshReady        time.Time
-	firstSSHAttempt time.Time
-	sshStarted      time.Time
-	completed       time.Time
-	sshAttempts     int
+	timers map[TimerEvent]time.Time
+	counts map[TimerEvent]int
 }
 
 func NewStats(started time.Time) *Stats
 func (s *Stats) Timer(event TimerEvent, t time.Time)
+func (s *Stats) Get(event TimerEvent) time.Time
+func (s *Stats) Count(event TimerEvent) int
 func (s *Stats) Finalizer(output io.Writer) func()
 ```
+
+`NewStats` records `TimerStarted` immediately. For ordinary events, `Timer`
+sets `timers[event] = t`. For `TimerSSHAttempt`, `Timer` increments the count
+and records only the first attempt time in the timers map.
 
 `runtime.Core` can continue to expose control status stats by consuming
 `*launch.Stats` through `RuntimeConfig`. The formatting and control response
