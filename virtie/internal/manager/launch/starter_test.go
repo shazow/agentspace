@@ -106,6 +106,22 @@ func TestStarterRuntimeNewFailureCleansAcquiredResources(t *testing.T) {
 	}
 }
 
+func TestStarterPrepareFailureBeforeSocketCleanupSkipsSocketCleanup(t *testing.T) {
+	plan := testStarterPlan(t)
+	host := &fakeStarterHost{
+		prepareErr: errors.New("external virtiofs socket missing"),
+	}
+	starter := Starter{Host: host, Runtime: &fakeStarterRuntime{}}
+
+	_, err := starter.Start(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected start error")
+	}
+	if hasStarterEvent(host.events, "remove-sockets") {
+		t.Fatalf("socket cleanup ran before prepare completed: %#v", host.events)
+	}
+}
+
 func TestStarterRejectsNilProviderResults(t *testing.T) {
 	tests := []struct {
 		name    string

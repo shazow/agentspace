@@ -60,6 +60,152 @@ func newTestLaunchLifecycle() *launch.Lifecycle {
 	return launch.NewLifecycle(nil, func() {}, func() {})
 }
 
+func TestManagerLaunchProvidersSatisfyLaunchStarterInterfaces(t *testing.T) {
+	var _ launch.Host = launchHost{}
+	var _ launch.Runtime = launchRuntime{}
+}
+
+func TestLaunchHostPrepareRuntimeStateExternalVirtioFSFailureKeepsRuntimeSockets(t *testing.T) {
+	tmpDir := t.TempDir()
+	manager := newLaunchProviderTestManager(nil)
+	cfg := validProviderLaunchManifest(tmpDir)
+	cfg.QEMU.Devices.VirtioFS = []manifest.QEMUVirtioFSShare{
+		{
+			ID:         "fs0",
+			SocketPath: filepath.Join(tmpDir, "missing-external.sock"),
+			Tag:        "workspace",
+			Transport:  "pci",
+		},
+	}
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, Options: launch.Options{SSH: false}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
+	for _, path := range plan.RuntimeSocketCleanupFiles() {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create socket parent: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("stale socket placeholder"), 0o644); err != nil {
+			t.Fatalf("write socket placeholder: %v", err)
+		}
+	}
+
+	_, err = (launch.Starter{
+		Host:    launchHost{manager: manager},
+		Runtime: launchRuntime{manager: manager},
+	}).Start(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected external virtiofs failure")
+	}
+	if !strings.Contains(err.Error(), "external virtiofs socket") {
+		t.Fatalf("error: got %v want external virtiofs socket failure", err)
+	}
+	for _, path := range plan.RuntimeSocketCleanupFiles() {
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("runtime socket cleanup path %q was removed: %v", path, statErr)
+		}
+	}
+}
+
+func TestLaunchHostStartQEMUNilRunnerWrapsOnceThroughStarter(t *testing.T) {
+	tmpDir := t.TempDir()
+	manager := newLaunchProviderTestManager(nil)
+	cfg := validProviderLaunchManifest(tmpDir)
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, Options: launch.Options{SSH: false}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
+
+	_, err = (launch.Starter{
+		Host:    launchHost{manager: manager},
+		Runtime: launchRuntime{manager: manager},
+	}).Start(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected nil runner failure")
+	}
+	if got, want := strings.Count(err.Error(), "vm startup:"), 1; got != want {
+		t.Fatalf("vm startup wrapping count: got %d want %d in %q", got, want, err.Error())
+	}
+	if !strings.Contains(err.Error(), "qemu runner is not configured") {
+		t.Fatalf("error: got %v want qemu runner is not configured", err)
+	}
+}
+
+func TestLaunchRuntimeNewMapsWaitAndCloseHooks(t *testing.T) {
+	manager := newLaunchProviderTestManager(&launchRunner{})
+	qmp := &fakeQMPClient{}
+	var waitCalled bool
+	var writeBackCalled bool
+	var cleanupCalled bool
+	var statsCalled bool
+
+	result, err := (launchRuntime{manager: manager}).New(launch.RuntimeSpec{
+		Manifest:        validProviderLaunchManifest(t.TempDir()),
+		Plan:            &launch.Plan{},
+		QMP:             qmp,
+		SuspendRequests: launch.NewSuspendCoordinator(),
+		Processes:       launch.NewProcessSet(),
+		WaitForeground: func(context.Context, *launch.Plan) error {
+			waitCalled = true
+			return nil
+		},
+		WriteBack: func(context.Context) error {
+			writeBackCalled = true
+			return nil
+		},
+		Cleanup: func() error {
+			cleanupCalled = true
+			return nil
+		},
+		CloseStats: func() {
+			statsCalled = true
+		},
+	})
+	if err != nil {
+		t.Fatalf("runtime new: %v", err)
+	}
+	if result.Runtime == nil {
+		t.Fatal("runtime new returned nil runtime")
+	}
+	if err := result.Runtime.Wait(context.Background(), launch.WaitVM); err != nil {
+		t.Fatalf("runtime wait: %v", err)
+	}
+	if !waitCalled {
+		t.Fatal("wait foreground hook was not mapped")
+	}
+	if err := result.Runtime.Close(); err != nil {
+		t.Fatalf("runtime close: %v", err)
+	}
+	if !writeBackCalled || !cleanupCalled || !statsCalled {
+		t.Fatalf("close hooks: writeBack=%t cleanup=%t stats=%t", writeBackCalled, cleanupCalled, statsCalled)
+	}
+	if got, want := qmp.disconnectCalls, 1; got != want {
+		t.Fatalf("qmp disconnect calls: got %d want %d", got, want)
+	}
+}
+
+func newLaunchProviderTestManager(runner launch.Runner) *manager {
+	return &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		logger:            slog.New(slog.DiscardHandler),
+		shutdownDelay:     time.Millisecond,
+		qmpConnectTimeout: time.Second,
+	}
+}
+
+func validProviderLaunchManifest(workingDir string) *manifest.Manifest {
+	cfg := validManifest(workingDir)
+	cfg.Paths.LockPath = filepath.Join(workingDir, "virtie.lock")
+	cfg.Run = nil
+	cfg.CleanupFiles = nil
+	cfg.Volumes = nil
+	cfg.QEMU.Devices.VirtioFS = nil
+	cfg.QEMU.Devices.Block = nil
+	cfg.QEMU.SSHReady.SocketPath = ""
+	return cfg
+}
+
 func TestManifestValidate(t *testing.T) {
 	emptyManifest := &manifest.Manifest{}
 	if err := emptyManifest.Validate(); err == nil {

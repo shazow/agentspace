@@ -161,6 +161,7 @@ func (s Starter) Start(ctx context.Context, plan *Plan) (started StartedRuntime,
 	processes := NewProcessSet()
 	var qmp qmpclient.Client
 	writeBackOnExit := false
+	socketCleanupReached := false
 	cleanupRuntime := func() error { return runtimeLock.Cleanup() }
 	defer func() {
 		if err == nil {
@@ -180,7 +181,9 @@ func (s Starter) Start(ctx context.Context, plan *Plan) (started StartedRuntime,
 		if qmp != nil {
 			cleanupErr = errors.Join(cleanupErr, qmp.Disconnect())
 		}
-		cleanupErr = errors.Join(cleanupErr, s.Host.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()))
+		if socketCleanupReached {
+			cleanupErr = errors.Join(cleanupErr, s.Host.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()))
+		}
 		finalizeStats(stats, s.Host.StatsOutput())()
 		err = errors.Join(err, cleanupErr)
 	}()
@@ -201,6 +204,7 @@ func (s Starter) Start(ctx context.Context, plan *Plan) (started StartedRuntime,
 	if err := s.Host.PrepareRuntimeState(plan); err != nil {
 		return nil, &StageError{Stage: "preflight", Err: err}
 	}
+	socketCleanupReached = true
 
 	runProcesses, err := s.Host.StartRuns(plan.CID, plan.Manifest)
 	if err != nil {
