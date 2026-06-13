@@ -4,6 +4,27 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-06-13: virtie optional feature build tags removed
+
+### Who Is Affected
+
+- Developers or wrapper scripts that pass virtie's former optional feature
+  build tags to `go test` or `go build`.
+
+### What Changed
+
+Virtie no longer has compile-time variants that remove hotplug or balloon
+support. Hotplug and balloon are always built as normal runtime capabilities.
+
+### Migration Steps
+
+Remove those optional feature tags from build and test commands. Use the normal
+test matrix:
+
+```bash
+go test ./...
+```
+
 ## 2026-06-02: virtie shared flags are available across commands
 
 ### Who Is Affected

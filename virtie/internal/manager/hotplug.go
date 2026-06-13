@@ -1,5 +1,3 @@
-//go:build !virtie_no_hotplug
-
 package manager
 
 import (
@@ -13,7 +11,6 @@ import (
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
-	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
 	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
@@ -22,23 +19,17 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
-type HotplugOptions struct {
-	Detach bool
+func Hotplug(ctx context.Context, manifest *manifest.Manifest, id string, detach bool) error {
+	return newManager().hotplug(ctx, manifest, id, detach)
 }
 
-const hotplugBuiltIn = true
-
-func Hotplug(ctx context.Context, manifest *manifest.Manifest, id string, options HotplugOptions) error {
-	return newManager().hotplug(ctx, manifest, id, options)
-}
-
-func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest, id string, options HotplugOptions) error {
+func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest, id string, detach bool) error {
 	if err := launchManifest.Validate(); err != nil {
 		return &launch.StageError{Stage: "preflight", Err: err}
 	}
 	controlSocketPath, err := launchManifest.ResolvedControlSocketPath()
 	if err == nil && controlSocketPath != "" {
-		_, err := controlpkg.Dial(controlSocketPath).Hotplug(ctx, controlpkg.HotplugRequest{ID: id, Detach: options.Detach})
+		_, err := controlpkg.Dial(controlSocketPath).Hotplug(ctx, controlpkg.HotplugRequest{ID: id, Detach: detach})
 		if err == nil {
 			return nil
 		}
@@ -51,7 +42,7 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 		return &launch.StageError{Stage: "hotplug", Err: err}
 	}
 	defer client.Disconnect()
-	if options.Detach {
+	if detach {
 		if err := runtime.Detach(ctx, id); err != nil {
 			return launch.WrapHotplugError(err)
 		}
@@ -81,12 +72,6 @@ func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.M
 		QMP:      runtimepkg.HotplugQMP{Client: client, Timeout: m.effectiveQMPCommandTimeout()},
 		Guest:    managerHotplugGuest{m: m, manifest: launchManifest},
 	}, client, nil
-}
-
-func configureRuntimeHotplugDependencies(deps *runtimepkg.Dependencies, m *manager, launchManifest *manifest.Manifest) {
-	deps.HotplugStart = managerHotplugStarter{m: m}
-	deps.HotplugSockets = managerHotplugSocketWaiter{m: m}
-	deps.HotplugGuest = managerHotplugGuest{m: m, manifest: launchManifest}
 }
 
 type managerHotplugStarter struct {
@@ -154,16 +139,4 @@ func (g managerHotplugGuest) Run(ctx context.Context, command []string) error {
 		return fmt.Errorf("guest command %q exited with status %d%s", strings.Join(command, " "), status.ExitCode, qga.ExecOutputSuffix(status))
 	}
 	return nil
-}
-
-func hotplugStatePath(launchManifest *manifest.Manifest, id string) (string, error) {
-	return hotplugtypes.StatePath(launchManifest.ResolvedPersistenceStateDir(), id)
-}
-
-func writeHotplugState(path string, state hotplugtypes.State) error {
-	return hotplugtypes.WriteState(path, state)
-}
-
-func readHotplugState(path string) (hotplugtypes.State, error) {
-	return hotplugtypes.ReadState(path)
 }

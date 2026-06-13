@@ -7,19 +7,7 @@ import (
 	"time"
 
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
-	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
-
-func TestUnsupportedHotplug(t *testing.T) {
-	err := unsupportedHotplug()
-	var rpcErr *control.RPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("error type: got %T", err)
-	}
-	if rpcErr.Code != control.ErrUnsupported {
-		t.Fatalf("code: got %s want %s", rpcErr.Code, control.ErrUnsupported)
-	}
-}
 
 func TestHotplugQMPRunsRawCommand(t *testing.T) {
 	client := &fakeHotplugQMPClient{}

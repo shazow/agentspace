@@ -9,9 +9,9 @@ import (
 )
 
 type ProcessSet struct {
-	group    executor.Group
-	qemu     *executor.Process
-	features taskGroup
+	group executor.Group
+	qemu  *executor.Process
+	tasks taskGroup
 }
 
 func NewProcessSet() *ProcessSet {
@@ -49,14 +49,14 @@ func (p *ProcessSet) VMWatchers() executor.Group {
 	return watchers
 }
 
-func (p *ProcessSet) StartFeatures(ctx context.Context, tasks ...func(context.Context) error) {
-	var features taskGroup
+func (p *ProcessSet) StartTasks(ctx context.Context, tasks ...func(context.Context) error) {
+	var started taskGroup
 	for _, task := range tasks {
-		features.Add(startTask(ctx, task))
+		started.Add(startTask(ctx, task))
 	}
-	p.features = features
+	p.tasks = started
 }
 
 func (p *ProcessSet) Close(delay time.Duration) error {
-	return errors.Join(p.features.Stop(), p.group.StopAll(delay))
+	return errors.Join(p.tasks.Stop(), p.group.StopAll(delay))
 }
