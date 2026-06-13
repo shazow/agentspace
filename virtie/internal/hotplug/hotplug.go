@@ -201,10 +201,15 @@ func (h hotplugBase) detach(device hotplugtypes.Device, cleanup func(hotplugtype
 		return fmt.Errorf("hotplug state %q is kind %q, not current manifest kind %q", statePath, state.Kind, h.kind)
 	}
 
+	guestUnmounted := device.Kind == hotplugtypes.KindVirtioFS && device.VirtioFS.Target != ""
 	if err := h.runner.detachGuest(h.ctx, device); err != nil {
 		return err
 	}
-	if err := h.runner.QMP.DetachDevice(h.ctx, device); err != nil {
+	cleanupCtx := h.ctx
+	if guestUnmounted {
+		cleanupCtx = context.WithoutCancel(h.ctx)
+	}
+	if err := h.runner.QMP.DetachDevice(cleanupCtx, device); err != nil {
 		return err
 	}
 	if cleanup != nil {

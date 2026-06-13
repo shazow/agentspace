@@ -6,14 +6,13 @@ Deepen virtie's hotplug module so attach and detach are transaction-level operat
 
 ## Current Friction
 
-Hotplug behavior is split across shallow modules:
+Before this work, hotplug behavior was split across shallow modules:
 
-- `virtie/internal/manager/hotplug.go` assembles a hotplug transaction runner for direct fallback.
-- `virtie/internal/manager/runtime/concrete_hotplug.go` assembles the same runner for control-socket handling.
-- `virtie/internal/hotplug/hotplug.go` owns most sequencing, but its QMP interface is raw JSON plus `DeviceDel`.
-- Guest mount commands, QEMU device IDs, rollback order, state files, and process cleanup are visible across seams.
+- Direct fallback and control-socket handling assembled equivalent runners in separate places.
+- The hotplug QMP seam exposed low-level command details to callers.
+- Guest mount commands, QEMU device IDs, rollback order, state files, and process cleanup were visible across seams.
 
-The result is low locality: changing hotplug QMP behavior, guest mount behavior, or adapter wiring requires reading manager, runtime, hotplug, and qmpclient code together.
+The implemented shape keeps the direct fallback and control handler on one manager-side assembly path, keeps runtime core unaware of hotplug, and keeps QMP command construction inside the hotplug package's typed adapter.
 
 ## Design
 
@@ -28,14 +27,14 @@ The commandline surface remains unchanged:
 - It still falls back to a direct QMP path when the socket is unavailable or unsupported.
 - Attach and detach behavior, stage wrapping, and error presentation remain compatible.
 
-Internal package interfaces can change:
+Internal package interfaces changed to support that shape:
 
-- The exported hotplug transaction runner shape can be replaced or reduced.
-- `runtime.HotplugQMP` can disappear.
-- The hotplug QMP seam should stop exposing raw JSON commands to callers.
-- `runtime.Dependencies` should stop carrying hotplug-named dependencies.
-- Core control routing should avoid hard-coded hotplug knowledge where a generic handler registration is practical.
-- Tests can move from duplicated manager/runtime coverage toward transaction-level coverage.
+- The exported hotplug transaction runner shape was reduced to `hotplug.Runner`.
+- `runtime.HotplugQMP` disappeared.
+- The hotplug QMP seam no longer exposes raw JSON commands to callers.
+- `runtime.Dependencies` stopped carrying hotplug-named dependencies.
+- Core control routing avoids hard-coded hotplug handling through explicit handler registration.
+- Tests moved from duplicated manager/runtime coverage toward transaction-level coverage.
 
 ## Module Shape
 
