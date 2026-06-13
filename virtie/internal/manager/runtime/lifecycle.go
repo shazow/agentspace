@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 )
 
 var errSuspendNotReady = errors.New("suspend handler is not ready")
@@ -17,12 +18,12 @@ func markReady(state *state) {
 	state.Set(control.RuntimeReady)
 }
 
-func status(state *state, cid int, paths control.StatusPaths, stats *Stats) control.StatusResponse {
+func status(state *state, cid int, paths control.StatusPaths, stats *launch.Stats) control.StatusResponse {
 	return control.StatusResponse{
 		State: state.Current(),
 		CID:   cid,
 		Paths: paths,
-		Stats: controlStats(stats),
+		Stats: launch.ControlStats(stats),
 	}
 }
 
