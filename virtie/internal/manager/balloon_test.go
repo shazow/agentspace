@@ -1,5 +1,3 @@
-//go:build !virtie_no_balloon
-
 package manager
 
 import (
@@ -15,7 +13,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/balloontypes"
 )
 
-func TestBuildQEMUCommandAppendsBalloonFeatureArgs(t *testing.T) {
+func TestBuildQEMUCommandAppendsBalloonArgs(t *testing.T) {
 	manifest := validManifestWithBalloon("/tmp/work")
 	manifest.QEMU.Devices.Balloon.DeflateOnOOM = true
 	manifest.QEMU.Devices.Balloon.FreePageReporting = true

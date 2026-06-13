@@ -81,8 +81,8 @@ launch process, while other `virtie` commands talk to that process through
   processes, foreground wait, close hooks, QMP client, suspend coordinator, and
   dependencies. Startup lifecycle actions such as `SetReady` and
   `StartControl` remain explicit.
-- `ProcessSet`, `Task`, and `TaskGroup` own QEMU, helper processes, optional
-  feature tasks, watcher snapshots, cancellation, and ordered shutdown.
+- `ProcessSet`, `Task`, and `TaskGroup` own QEMU, helper processes,
+  foreground tasks, watcher snapshots, cancellation, and ordered shutdown.
 - `State` and `Stats` provide consistent status and timing output.
 - `Closer`, `CloseActions`, `StartupFailureActions`, and
   `ShutdownResources` keep teardown ordering idempotent and testable.
@@ -123,13 +123,13 @@ launch process, while other `virtie` commands talk to that process through
 4. Restore runs before runtime construction when a saved suspend state is
    present.
 5. `runtime.Runtime` is constructed with process ownership, QMP, suspend
-   queue, foreground wait, close hooks, stats, info collection, and optional
-   feature adapters.
+   queue, foreground wait, close hooks, stats, and info collection.
 6. Runtime state is marked ready, the control server starts, queued suspend is
    drained, guest files are provisioned, SSH readiness is observed, and
    write-back-on-exit is enabled.
-7. Foreground wait starts optional feature tasks, then either runs the SSH
-   foreground session or prints an SSH hint and waits for the VM.
+7. Foreground wait starts the balloon controller task when configured, then
+   either runs the SSH foreground session or prints an SSH hint and waits for
+   the VM.
 8. Runtime close performs write-back when enabled, control shutdown, process
    teardown, QMP disconnect, socket and lock cleanup, and stats finalization.
 

@@ -4,7 +4,7 @@
 // volume images, starts the supporting host processes, waits for QMP readiness,
 // and then either hands control to the interactive SSH session or keeps the VM
 // lifecycle in the foreground for out-of-band SSH. Teardown also
-// lives here: optional feature tasks stop first, then any active session and
+// lives here: balloon controller tasks stop first, then any active session and
 // helper daemons are shut down, and QEMU is asked to exit through QMP before
 // any forced process cleanup is used.
 package manager
@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
@@ -297,6 +298,9 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 		QMPTimeout:       m.effectiveQMPCommandTimeout(),
 		Logger:           m.logger,
 		SavedSuspendExit: isSavedSuspendExit,
+		HotplugStart:     managerHotplugStarter{m: m},
+		HotplugSockets:   managerHotplugSocketWaiter{m: m},
+		HotplugGuest:     managerHotplugGuest{m: m, manifest: plan.Manifest},
 		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
 			info, err := m.collectGuestInfo(ctx, socketPath, watchers)
 			if err != nil {
@@ -305,7 +309,6 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime
 			return runtimepkg.GuestInfo{ProcessList: info.ProcessList}, nil
 		},
 	}
-	configureRuntimeHotplugDependencies(&runtimeDeps, m, plan.Manifest)
 	runtime = runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest:        plan.Manifest,
 		Plan:            plan,
@@ -444,10 +447,9 @@ func (m *manager) waitForLaunchForeground(
 	suspendHandler *launchSuspendHandler,
 	processes *runtimepkg.ProcessSet,
 ) error {
-	processes.StartFeatures(ctx, startOptionalFeatureTasks(ctx, optionalFeatureRuntime{
-		qmpTimeout: m.effectiveQMPCommandTimeout(),
-		notifier:   plan.Notifier,
-	}, plan.Manifest, qmpClient)...)
+	if task := balloon.ControllerTask(m.effectiveQMPCommandTimeout(), qmpClient, plan.Manifest.QEMU.Devices.Balloon, plan.Notifier); task != nil {
+		processes.StartTasks(ctx, task)
+	}
 
 	if plan.Options.SSH && len(plan.Manifest.SSH.Argv) > 0 {
 		if err := m.runSSHSession(ctx, plan, stats, lifecycle, suspendHandler, processes); err != nil {

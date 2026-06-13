@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/jessevdk/go-flags"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/manager"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -41,13 +42,13 @@ func (c *launchCommand) Execute(args []string) error {
 	discardLogger := slog.New(slog.DiscardHandler)
 	manifestLogger := discardLogger
 	manager.SetLogger(discardLogger)
-	manager.SetBalloonLogger(discardLogger)
+	balloon.SetLogger(discardLogger)
 	if len(c.options.Verbose) > 0 {
 		manifestLogger = baseLogger.With("package", "manifest")
 		manager.SetLogger(baseLogger.With("package", "manager"))
 	}
 	if len(c.options.Verbose) > 1 {
-		manager.SetBalloonLogger(baseLogger.With("package", "balloon"))
+		balloon.SetLogger(baseLogger.With("package", "balloon"))
 	}
 
 	manifest, err := loadLaunchManifest(c.options.Manifest, manifestLogger)
@@ -105,7 +106,7 @@ func (c *hotplugCommand) Execute(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	return manager.Hotplug(ctx, manifest, c.Args.ID, manager.HotplugOptions{Detach: c.Detach})
+	return manager.Hotplug(ctx, manifest, c.Args.ID, c.Detach)
 }
 
 func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {

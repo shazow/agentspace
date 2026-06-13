@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
-	"github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
@@ -42,8 +41,4 @@ func (q HotplugQMP) DeviceDel(ctx context.Context, id string) error {
 		return err
 	}
 	return q.Client.DeviceDelAndWait(q.Timeout, id)
-}
-
-func unsupportedHotplug() error {
-	return &control.RPCError{Code: control.ErrUnsupported, Message: "hotplug support is not built into this virtie binary"}
 }

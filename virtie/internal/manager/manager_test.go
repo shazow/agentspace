@@ -269,7 +269,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("expected qemu args to contain ssh readiness port: %v", runner.qemuArgs())
 	}
 	if containsString(runner.qemuArgs(), "balloon") {
-		t.Fatalf("expected qemu args to omit optional feature devices when disabled: %v", runner.qemuArgs())
+		t.Fatalf("expected qemu args to omit balloon device when not configured: %v", runner.qemuArgs())
 	}
 
 	if got := runner.qemuEnv(); len(got) != 0 {
@@ -3551,9 +3551,6 @@ func TestBuildQEMUCommandAddsPCIEHotplugPorts(t *testing.T) {
 }
 
 func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
-	if !hotplugBuiltIn {
-		t.Skip("hotplug implementation is not built")
-	}
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Persistence.StateDir = ".virtie"
@@ -3586,7 +3583,7 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 		qmpRetryDelay:     time.Millisecond,
 	}
 
-	if err := manager.hotplug(context.Background(), cfg, "cache", HotplugOptions{}); err != nil {
+	if err := manager.hotplug(context.Background(), cfg, "cache", false); err != nil {
 		t.Fatalf("attach hotplug: %v", err)
 	}
 
@@ -3605,7 +3602,7 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	if len(guestClient.execs) != 1 || guestClient.execs[0].path != "/run/current-system/sw/bin/mount" || !reflect.DeepEqual(guestClient.execs[0].args, []string{"-t", "virtiofs", "cache", "/mnt/cache"}) {
 		t.Fatalf("unexpected guest execs: %#v", guestClient.execs)
 	}
-	state, err := readHotplugState(filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json"))
+	state, err := hotplugtypes.ReadState(filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json"))
 	if err != nil {
 		t.Fatalf("read hotplug state: %v", err)
 	}
@@ -3615,9 +3612,6 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 }
 
 func TestManagerHotplugFallsBackWhenControlSocketUnsupported(t *testing.T) {
-	if !hotplugBuiltIn {
-		t.Skip("hotplug implementation is not built")
-	}
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Persistence.StateDir = ".virtie"
@@ -3655,7 +3649,7 @@ func TestManagerHotplugFallsBackWhenControlSocketUnsupported(t *testing.T) {
 		qmpRetryDelay:     time.Millisecond,
 	}
 
-	if err := manager.hotplug(context.Background(), cfg, "cache", HotplugOptions{}); err != nil {
+	if err := manager.hotplug(context.Background(), cfg, "cache", false); err != nil {
 		t.Fatalf("attach hotplug with unsupported control socket: %v", err)
 	}
 
@@ -3671,9 +3665,6 @@ func TestManagerHotplugFallsBackWhenControlSocketUnsupported(t *testing.T) {
 }
 
 func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
-	if !hotplugBuiltIn {
-		t.Skip("hotplug implementation is not built")
-	}
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Persistence.StateDir = ".virtie"
@@ -3693,7 +3684,7 @@ func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
 		},
 	}
 	statePath := filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json")
-	if err := writeHotplugState(statePath, hotplugtypes.State{ID: "cache", Kind: hotplugtypes.KindVirtioFS, Bus: "pcie.hotplug.0"}); err != nil {
+	if err := hotplugtypes.WriteState(statePath, hotplugtypes.State{ID: "cache", Kind: hotplugtypes.KindVirtioFS, Bus: "pcie.hotplug.0"}); err != nil {
 		t.Fatalf("write hotplug state: %v", err)
 	}
 
@@ -3708,7 +3699,7 @@ func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
 		qmpRetryDelay:     time.Millisecond,
 	}
 
-	if err := manager.hotplug(context.Background(), cfg, "cache", HotplugOptions{Detach: true}); err != nil {
+	if err := manager.hotplug(context.Background(), cfg, "cache", true); err != nil {
 		t.Fatalf("detach hotplug: %v", err)
 	}
 	if len(guestClient.execs) != 1 || guestClient.execs[0].path != "/run/current-system/sw/bin/umount" {

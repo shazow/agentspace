@@ -1,10 +1,7 @@
-//go:build !virtie_no_hotplug
-
 package hotplug
 
 import (
 	"go/ast"
-	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
@@ -50,16 +47,8 @@ func exportedDecls(t *testing.T) map[string]struct{} {
 		t.Fatal("locate test file")
 	}
 	dir := filepath.Dir(file)
-	buildContext := build.Default
 	files, err := parser.ParseDir(token.NewFileSet(), dir, func(info os.FileInfo) bool {
-		if !strings.HasSuffix(info.Name(), ".go") || strings.HasSuffix(info.Name(), "_test.go") {
-			return false
-		}
-		matched, err := buildContext.MatchFile(dir, info.Name())
-		if err != nil {
-			t.Fatalf("match build tags for %s: %v", info.Name(), err)
-		}
-		return matched
+		return strings.HasSuffix(info.Name(), ".go") && !strings.HasSuffix(info.Name(), "_test.go")
 	}, 0)
 	if err != nil {
 		t.Fatalf("parse package: %v", err)

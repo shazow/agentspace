@@ -28,7 +28,7 @@ func TestProcessSetWatchersAndVMWatchers(t *testing.T) {
 	}
 }
 
-func TestProcessSetCloseStopsFeaturesBeforeProcesses(t *testing.T) {
+func TestProcessSetCloseStopsTasksBeforeProcesses(t *testing.T) {
 	var order []string
 	processes := NewProcessSet()
 	process := (&executortest.Process{}).Process()
@@ -38,16 +38,16 @@ func TestProcessSetCloseStopsFeaturesBeforeProcesses(t *testing.T) {
 	})
 	processes.Add(process)
 
-	processes.StartFeatures(context.Background(), func(ctx context.Context) error {
+	processes.StartTasks(context.Background(), func(ctx context.Context) error {
 		<-ctx.Done()
-		order = append(order, "feature")
+		order = append(order, "task")
 		return nil
 	})
 
 	if err := processes.Close(0); err != nil {
 		t.Fatalf("close process set: %v", err)
 	}
-	if got, want := order, []string{"feature", "process"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	if got, want := order, []string{"task", "process"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("unexpected close order: got %#v want %#v", got, want)
 	}
 }

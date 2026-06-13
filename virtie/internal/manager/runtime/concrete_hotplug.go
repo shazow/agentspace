@@ -1,5 +1,3 @@
-//go:build !virtie_no_hotplug
-
 package runtime
 
 import (
