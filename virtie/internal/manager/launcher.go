@@ -71,7 +71,7 @@ func (l *Launcher) Plan(ctx context.Context, spec launch.Spec) (*launch.Plan, er
 	return l.manager.planLaunch(spec)
 }
 
-func (l *Launcher) Start(ctx context.Context, plan *launch.Plan) (*runtimepkg.Runtime, error) {
+func (l *Launcher) Start(ctx context.Context, plan *launch.Plan) (*runtimepkg.Core, error) {
 	if l == nil || l.manager == nil {
 		l = NewLauncher()
 	}
