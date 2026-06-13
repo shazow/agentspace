@@ -625,7 +625,7 @@ type DeviceQMP interface {
 }
 ```
 
-Change the runtime field:
+Change the runner's QMP field:
 
 ```go
 	QMP      DeviceQMP
@@ -634,7 +634,7 @@ Change the runtime field:
 Replace `attachQMP`, `rollbackAttachQMP`, and `detachQMP` usage in `hotplugBase.attach`:
 
 ```go
-	rollbackQMP, err := h.runtime.QMP.AttachDevice(h.ctx, device, h.bus)
+	rollbackQMP, err := h.runner.QMP.AttachDevice(h.ctx, device, h.bus)
 	if err != nil {
 		detachHost(proc)
 		return err
@@ -642,13 +642,13 @@ Replace `attachQMP`, `rollbackAttachQMP`, and `detachQMP` usage in `hotplugBase.
 	if rollbackQMP == nil {
 		rollbackQMP = func(context.Context) {}
 	}
-	if err := h.runtime.attachGuest(h.ctx, device); err != nil {
+	if err := h.runner.attachGuest(h.ctx, device); err != nil {
 		rollbackQMP(h.ctx)
 		detachHost(proc)
 		return err
 	}
 	if err := hotplugtypes.WriteState(statePath, state); err != nil {
-		_ = h.runtime.detachGuest(h.ctx, device)
+		_ = h.runner.detachGuest(h.ctx, device)
 		rollbackQMP(h.ctx)
 		detachHost(proc)
 		return err
@@ -658,7 +658,7 @@ Replace `attachQMP`, `rollbackAttachQMP`, and `detachQMP` usage in `hotplugBase.
 Replace QMP detach in `hotplugBase.detach`:
 
 ```go
-	if err := h.runtime.QMP.DetachDevice(h.ctx, device); err != nil {
+	if err := h.runner.QMP.DetachDevice(h.ctx, device); err != nil {
 		return err
 	}
 ```
@@ -666,18 +666,18 @@ Replace QMP detach in `hotplugBase.detach`:
 Delete these methods from `hotplug.go` after all callers are gone:
 
 ```go
-func (r Runtime) attachQMP(ctx context.Context, device hotplugtypes.Device, bus string) error
-func (r Runtime) rollbackAttachQMP(ctx context.Context, device hotplugtypes.Device, successful int)
-func (r Runtime) detachQMP(ctx context.Context, device hotplugtypes.Device) error
+func (r Runner) attachQMP(ctx context.Context, device hotplugtypes.Device, bus string) error
+func (r Runner) rollbackAttachQMP(ctx context.Context, device hotplugtypes.Device, successful int)
+func (r Runner) detachQMP(ctx context.Context, device hotplugtypes.Device) error
 ```
 
 - [ ] **Step 5: Update transaction tests to use typed QMP**
 
-In `testRuntimeDevices`, initialize QMP with the typed adapter:
+In `testRunnerDevices`, initialize QMP with the typed adapter:
 
 ```go
 	client := &fakeQMPClient{}
-	return Runtime{
+	return Runner{
 		StateDir: filepath.Join(tmpDir, "state"),
 		WorkDir:  tmpDir,
 		Devices:  devices,
@@ -798,7 +798,7 @@ import (
 )
 
 type managerHotplugFeature struct {
-	runner hotplug.Runtime
+	runner hotplug.Runner
 }
 
 func (f managerHotplugFeature) Hotplug(ctx context.Context, req controlpkg.HotplugRequest) (controlpkg.HotplugResponse, error) {
@@ -818,8 +818,8 @@ func (m *manager) hotplugFeature(launchManifest *manifest.Manifest, client qmpcl
 	return managerHotplugFeature{runner: m.hotplugRunner(launchManifest, client)}
 }
 
-func (m *manager) hotplugRunner(launchManifest *manifest.Manifest, client qmpclient.Client) hotplug.Runtime {
-	return hotplug.Runtime{
+func (m *manager) hotplugRunner(launchManifest *manifest.Manifest, client qmpclient.Client) hotplug.Runner {
+	return hotplug.Runner{
 		StateDir: launchManifest.ResolvedPersistenceStateDir(),
 		WorkDir:  launchManifest.Paths.WorkingDir,
 		Devices:  launchManifest.Hotplug,
@@ -831,7 +831,7 @@ func (m *manager) hotplugRunner(launchManifest *manifest.Manifest, client qmpcli
 }
 ```
 
-This uses the current `hotplug.Runtime` name. If Task 5 renames it to `Runner`, update this file during Task 5.
+This uses the current `hotplug.Runner` name after Task 5.
 
 - [ ] **Step 4: Register hotplug only when starting runtime control**
 
@@ -980,26 +980,13 @@ Rename all method receivers from `Runtime` to `Runner`.
 
 In `virtie/internal/hotplug/hotplug_test.go`, update helper return types and literals from `Runtime` to `Runner`.
 
-In `virtie/internal/manager/hotplug_feature.go`, update:
-
-```go
-	runner hotplug.Runtime
-```
-
-to:
+In `virtie/internal/manager/hotplug_feature.go`, confirm the manager feature uses the renamed runner shape:
 
 ```go
 	runner hotplug.Runner
 ```
 
-and update:
-
-```go
-func (m *manager) hotplugRunner(launchManifest *manifest.Manifest, client qmpclient.Client) hotplug.Runtime {
-	return hotplug.Runtime{
-```
-
-to:
+and confirm the assembly helper returns the renamed runner type:
 
 ```go
 func (m *manager) hotplugRunner(launchManifest *manifest.Manifest, client qmpclient.Client) hotplug.Runner {

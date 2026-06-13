@@ -80,7 +80,7 @@ func TestQMPDeviceAdapterDetachFinishesCleanupAfterDeviceDelCancellation(t *test
 
 func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, starter, qmp, guest := testRuntime(tmpDir, hotplugtypes.Device{
+	runner, starter, qmp, guest := testRunner(tmpDir, hotplugtypes.Device{
 		Kind: hotplugtypes.KindVirtioFS,
 		ID:   "cache",
 		VirtioFS: hotplugtypes.VirtioFS{
@@ -92,7 +92,7 @@ func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
 		},
 	})
 
-	if err := runtime.Attach(context.Background(), "cache"); err != nil {
+	if err := runner.Attach(context.Background(), "cache"); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	if got, want := starter.starts, []string{"virtiofsd"}; !reflect.DeepEqual(got, want) {
@@ -115,10 +115,10 @@ func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
 
 func TestVirtioFSAttachQMPFailureRollsBackHost(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, starter, qmp, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
+	runner, starter, qmp, _ := testRunner(tmpDir, testVirtioFSDevice(tmpDir))
 	qmp.errAt = 2
 
-	if err := runtime.Attach(context.Background(), "cache"); err == nil {
+	if err := runner.Attach(context.Background(), "cache"); err == nil {
 		t.Fatal("expected attach failure")
 	}
 	if got, want := starter.stopped, []int{100}; !reflect.DeepEqual(got, want) {
@@ -134,10 +134,10 @@ func TestVirtioFSAttachQMPFailureRollsBackHost(t *testing.T) {
 
 func TestVirtioFSAttachGuestFailureRollsBackQMPAndHost(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, starter, qmp, guest := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
+	runner, starter, qmp, guest := testRunner(tmpDir, testVirtioFSDevice(tmpDir))
 	guest.err = errors.New("mount failed")
 
-	if err := runtime.Attach(context.Background(), "cache"); err == nil {
+	if err := runner.Attach(context.Background(), "cache"); err == nil {
 		t.Fatal("expected attach failure")
 	}
 	if got, want := qmp.deviceDels, []string{"dev-cache"}; !reflect.DeepEqual(got, want) {
@@ -150,13 +150,13 @@ func TestVirtioFSAttachGuestFailureRollsBackQMPAndHost(t *testing.T) {
 
 func TestVirtioFSDetachWaitsForDeviceDeletedBeforeChardevRemove(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, qmp, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
+	runner, _, qmp, _ := testRunner(tmpDir, testVirtioFSDevice(tmpDir))
 	statePath := filepath.Join(tmpDir, "state", "hotplug", "cache.json")
 	if err := hotplugtypes.WriteState(statePath, hotplugtypes.State{ID: "cache", Kind: hotplugtypes.KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
 
-	if err := runtime.Detach(context.Background(), "cache"); err != nil {
+	if err := runner.Detach(context.Background(), "cache"); err != nil {
 		t.Fatalf("detach: %v", err)
 	}
 	if got, want := qmp.events, []string{"device_del:dev-cache", "run:chardev-remove"}; !reflect.DeepEqual(got, want) {
@@ -167,14 +167,14 @@ func TestVirtioFSDetachWaitsForDeviceDeletedBeforeChardevRemove(t *testing.T) {
 func TestVirtioFSDetachCompletesCleanupAfterDeviceDelCancellation(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
-	runtime, _, qmp, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
+	runner, _, qmp, _ := testRunner(tmpDir, testVirtioFSDevice(tmpDir))
 	qmp.afterDeviceDel = cancel
 	statePath := filepath.Join(tmpDir, "state", "hotplug", "cache.json")
 	if err := hotplugtypes.WriteState(statePath, hotplugtypes.State{ID: "cache", Kind: hotplugtypes.KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
 
-	if err := runtime.Detach(ctx, "cache"); err != nil {
+	if err := runner.Detach(ctx, "cache"); err != nil {
 		t.Fatalf("detach: %v", err)
 	}
 	if got, want := qmp.events, []string{"device_del:dev-cache", "run:chardev-remove"}; !reflect.DeepEqual(got, want) {
@@ -187,7 +187,7 @@ func TestVirtioFSDetachCompletesCleanupAfterDeviceDelCancellation(t *testing.T) 
 
 func TestNetAttachDetachCommands(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, qmp, _ := testRuntime(tmpDir, hotplugtypes.Device{
+	runner, _, qmp, _ := testRunner(tmpDir, hotplugtypes.Device{
 		Kind: hotplugtypes.KindNet,
 		ID:   "vpn",
 		Net: hotplugtypes.Net{
@@ -197,10 +197,10 @@ func TestNetAttachDetachCommands(t *testing.T) {
 		},
 	})
 
-	if err := runtime.Attach(context.Background(), "vpn"); err != nil {
+	if err := runner.Attach(context.Background(), "vpn"); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	if err := runtime.Detach(context.Background(), "vpn"); err != nil {
+	if err := runner.Detach(context.Background(), "vpn"); err != nil {
 		t.Fatalf("detach: %v", err)
 	}
 	joined := strings.Join(qmp.commands, "\n")
@@ -216,7 +216,7 @@ func TestNetAttachDetachCommands(t *testing.T) {
 
 func TestDetachRejectsStateKindMismatchBeforeCleanup(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, qmp, _ := testRuntime(tmpDir, hotplugtypes.Device{
+	runner, _, qmp, _ := testRunner(tmpDir, hotplugtypes.Device{
 		Kind: hotplugtypes.KindNet,
 		ID:   "cache",
 		Net:  hotplugtypes.Net{Backend: "user", MAC: "02:02:00:00:00:10"},
@@ -226,7 +226,7 @@ func TestDetachRejectsStateKindMismatchBeforeCleanup(t *testing.T) {
 		t.Fatalf("write state: %v", err)
 	}
 
-	err := runtime.Detach(context.Background(), "cache")
+	err := runner.Detach(context.Background(), "cache")
 	if err == nil || !strings.Contains(err.Error(), `kind "virtiofs", not current manifest kind "net"`) {
 		t.Fatalf("expected kind mismatch error, got %v", err)
 	}
@@ -240,7 +240,7 @@ func TestDetachRejectsStateKindMismatchBeforeCleanup(t *testing.T) {
 
 func TestBlockAttachDetachCommands(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, qmp, _ := testRuntime(tmpDir, hotplugtypes.Device{
+	runner, _, qmp, _ := testRunner(tmpDir, hotplugtypes.Device{
 		Kind: hotplugtypes.KindBlock,
 		ID:   "data",
 		Block: hotplugtypes.Block{
@@ -250,10 +250,10 @@ func TestBlockAttachDetachCommands(t *testing.T) {
 		},
 	})
 
-	if err := runtime.Attach(context.Background(), "data"); err != nil {
+	if err := runner.Attach(context.Background(), "data"); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	if err := runtime.Detach(context.Background(), "data"); err != nil {
+	if err := runner.Detach(context.Background(), "data"); err != nil {
 		t.Fatalf("detach: %v", err)
 	}
 	joined := strings.Join(qmp.commands, "\n")
@@ -285,9 +285,9 @@ func TestHotplugRegistryKeysByInterfaceID(t *testing.T) {
 
 func TestHotplugRegistryMissingID(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, _, _ := testRuntime(tmpDir, testVirtioFSDevice(tmpDir))
+	runner, _, _, _ := testRunner(tmpDir, testVirtioFSDevice(tmpDir))
 
-	err := runtime.Attach(context.Background(), "missing")
+	err := runner.Attach(context.Background(), "missing")
 	if err == nil || !strings.Contains(err.Error(), `manifest.hotplug id "missing" not found`) {
 		t.Fatalf("expected missing id error, got %v", err)
 	}
@@ -295,7 +295,7 @@ func TestHotplugRegistryMissingID(t *testing.T) {
 
 func TestHotplugRegistryRejectsDuplicateIDs(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, _, _ := testRuntimeDevices(tmpDir, []hotplugtypes.Device{
+	runner, _, _, _ := testRunnerDevices(tmpDir, []hotplugtypes.Device{
 		testVirtioFSDevice(tmpDir),
 		{
 			Kind: hotplugtypes.KindNet,
@@ -304,7 +304,7 @@ func TestHotplugRegistryRejectsDuplicateIDs(t *testing.T) {
 		},
 	})
 
-	err := runtime.Attach(context.Background(), "cache")
+	err := runner.Attach(context.Background(), "cache")
 	if err == nil || !strings.Contains(err.Error(), `manifest.hotplug id "cache" is duplicated`) {
 		t.Fatalf("expected duplicate id error, got %v", err)
 	}
@@ -312,22 +312,22 @@ func TestHotplugRegistryRejectsDuplicateIDs(t *testing.T) {
 
 func TestHotplugRegistryRejectsUnsupportedKind(t *testing.T) {
 	tmpDir := t.TempDir()
-	runtime, _, _, _ := testRuntimeDevices(tmpDir, []hotplugtypes.Device{
+	runner, _, _, _ := testRunnerDevices(tmpDir, []hotplugtypes.Device{
 		testVirtioFSDevice(tmpDir),
 		{Kind: hotplugtypes.Kind("unsupported"), ID: "bad"},
 	})
 
-	err := runtime.Attach(context.Background(), "cache")
+	err := runner.Attach(context.Background(), "cache")
 	if err == nil || !strings.Contains(err.Error(), `manifest.hotplug id "bad" has unsupported kind "unsupported"`) {
 		t.Fatalf("expected unsupported kind error, got %v", err)
 	}
 }
 
-func testRuntime(tmpDir string, device hotplugtypes.Device) (Runner, *fakeStarter, *fakeQMPClient, *fakeGuest) {
-	return testRuntimeDevices(tmpDir, []hotplugtypes.Device{device})
+func testRunner(tmpDir string, device hotplugtypes.Device) (Runner, *fakeStarter, *fakeQMPClient, *fakeGuest) {
+	return testRunnerDevices(tmpDir, []hotplugtypes.Device{device})
 }
 
-func testRuntimeDevices(tmpDir string, devices []hotplugtypes.Device) (Runner, *fakeStarter, *fakeQMPClient, *fakeGuest) {
+func testRunnerDevices(tmpDir string, devices []hotplugtypes.Device) (Runner, *fakeStarter, *fakeQMPClient, *fakeGuest) {
 	starter := &fakeStarter{}
 	client := &fakeQMPClient{}
 	guest := &fakeGuest{}
