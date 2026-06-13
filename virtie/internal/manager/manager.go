@@ -19,13 +19,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
-	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
@@ -40,18 +38,6 @@ const (
 	defaultMigrationPollDelay = 100 * time.Millisecond
 	sshRetryOutputRevealDelay = 250 * time.Millisecond
 )
-
-func launchStatsCloseHook(stats *launch.Stats, output io.Writer) func() {
-	return func() {
-		if stats == nil {
-			return
-		}
-		stats.Timer(launch.TimerCompleted, time.Now())
-		if output != nil {
-			fmt.Fprintf(output, "stats: %s\n", stats)
-		}
-	}
-}
 
 type manager struct {
 	locker              launch.Locker
@@ -155,266 +141,19 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *launch.Plan) (err er
 }
 
 func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime *runtimepkg.Core, err error) {
-	stats := launch.NewStats(time.Now())
-	manifest := plan.Manifest
-
-	launchCtx, cancelLaunch := context.WithCancel(ctx)
-	lifecycle := launch.NewSignalLifecycle(m.signals, cancelLaunch)
-
-	runtimeLock, err := launch.AcquireRuntimeLock(launch.RuntimeLockSpec{
-		Manifest:    manifest,
-		ResumeState: plan.ResumeState,
-		Locker:      m.locker,
-		Lifecycle:   lifecycle,
-		Cancel:      cancelLaunch,
-		PID:         os.Getpid(),
-	})
-	if err != nil {
-		return nil, &launch.StageError{Stage: "preflight", Err: err}
-	}
-
-	cleanupRuntime := func() error {
-		return runtimeLock.Cleanup()
-	}
-
-	cid, err := launch.AcquireCID(manifest, plan.ResumeState, m.vsockCIDChecker)
-	if err != nil {
-		_ = cleanupRuntime()
-		return nil, &launch.StageError{Stage: "preflight", Err: err}
-	}
-	qemuCmd, err := buildQEMUCommand(manifest, cid, plan.ResumeState != nil)
-	if err != nil {
-		_ = cleanupRuntime()
-		return nil, &launch.StageError{Stage: "preflight", Err: err}
-	}
-	plan.CID = cid
-	plan.QEMUCommand = qemuCmd
-	if m.logger != nil {
-		if plan.ResumeState != nil {
-			m.logger.Info("restoring saved vsock cid", "cid", plan.CID)
-		} else {
-			m.logger.Info("allocated vsock cid", "cid", plan.CID)
-		}
-	}
-
-	for _, dir := range manifest.ResolvedPersistenceDirectories() {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			_ = cleanupRuntime()
-			return nil, &launch.StageError{Stage: "preflight", Err: fmt.Errorf("create directory %q: %w", dir, err)}
-		}
-	}
-	for _, path := range plan.RuntimeSocketCleanupFiles() {
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			_ = cleanupRuntime()
-			return nil, &launch.StageError{Stage: "preflight", Err: fmt.Errorf("create directory %q: %w", dir, err)}
-		}
-	}
-	for _, path := range plan.ExternalVirtioFSSocketPaths {
-		info, err := os.Stat(path)
-		if err != nil {
-			_ = cleanupRuntime()
-			if errors.Is(err, os.ErrNotExist) {
-				return nil, &launch.StageError{Stage: "preflight", Err: fmt.Errorf("external virtiofs socket %q does not exist", path)}
-			}
-			return nil, &launch.StageError{Stage: "preflight", Err: fmt.Errorf("stat external virtiofs socket %q: %w", path, err)}
-		}
-		if info.Mode()&os.ModeSocket == 0 {
-			_ = cleanupRuntime()
-			return nil, &launch.StageError{Stage: "preflight", Err: fmt.Errorf("external virtiofs socket %q is not a socket", path)}
-		}
-	}
-	for _, path := range plan.VolumeImagePaths {
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			_ = cleanupRuntime()
-			return nil, &launch.StageError{Stage: "preflight", Err: fmt.Errorf("create directory %q: %w", dir, err)}
-		}
-	}
-	if err := launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()); err != nil {
-		_ = cleanupRuntime()
-		return nil, &launch.StageError{Stage: "preflight", Err: err}
-	}
-	for _, volume := range plan.Volumes {
-		if !volume.AutoCreate {
-			continue
-		}
-		info, err := os.Stat(volume.ImagePath)
-		if err == nil {
-			if info.IsDir() {
-				_ = cleanupRuntime()
-				return nil, &launch.StageError{Stage: "preflight", Err: fmt.Errorf("volume image %q is a directory", volume.ImagePath)}
-			}
-			continue
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			_ = cleanupRuntime()
-			return nil, &launch.StageError{Stage: "preflight", Err: fmt.Errorf("stat volume image %q: %w", volume.ImagePath, err)}
-		}
-		if m.logger != nil {
-			m.logger.Info("creating volume image", "path", volume.ImagePath, "size_mib", volume.Size, "fs_type", volume.FSType)
-		}
-		if err := launch.CreateVolumeImage(volume); err != nil {
-			_ = cleanupRuntime()
-			return nil, &launch.StageError{Stage: "preflight", Err: err}
-		}
-	}
-
-	processes := launch.NewProcessSet()
-	var qmpClient qmpclient.Client
-	var writeBackOnExit atomic.Bool
-	defer func() {
-		if err != nil {
-			if runtime != nil {
-				if launch.IsSavedSuspendExit(err) {
-					runtime.MarkSavedSuspend()
-				}
-				err = errors.Join(err, runtime.Close())
-				return
-			}
-
-			var cleanupErr error
-			if processes != nil {
-				cleanupErr = errors.Join(cleanupErr, processes.Close(m.shutdownDelay))
-			}
-			cleanupErr = errors.Join(cleanupErr, cleanupRuntime())
-			if qmpClient != nil {
-				cleanupErr = errors.Join(cleanupErr, qmpClient.Disconnect())
-			}
-			cleanupErr = errors.Join(cleanupErr, launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()))
-			launchStatsCloseHook(stats, m.outputWriter())()
-			err = errors.Join(err, cleanupErr)
-		}
-	}()
-
-	qmpClient, err = m.startLaunchRuntime(launchCtx, plan, stats, processes)
+	started, err := launch.Starter{
+		Host:    launchHost{manager: m},
+		Runtime: launchRuntime{manager: m},
+	}.Start(ctx, plan)
 	if err != nil {
 		return nil, err
 	}
-	if plan.ResumeState != nil {
-		if err := m.restoreLaunchRuntime(launchCtx, plan, qmpClient); err != nil {
-			return nil, err
-		}
-		writeBackOnExit.Store(true)
+	core, ok := started.(*runtimepkg.Core)
+	if !ok {
+		_ = started.Close()
+		return nil, &launch.StageError{Stage: "preflight", Err: fmt.Errorf("launch starter returned %T, not *runtime.Core", started)}
 	}
-	suspendHandler := newLaunchSuspendHandler(m, plan.Manifest, plan.Paths.QMPSocket, qmpClient, plan.CID, plan.Notifier, func() bool {
-		return writeBackOnExit.Load()
-	})
-
-	runtimeDeps := runtimepkg.Dependencies{
-		QMPTimeout:       m.effectiveQMPCommandTimeout(),
-		Logger:           m.logger,
-		SavedSuspendExit: launch.IsSavedSuspendExit,
-		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (runtimepkg.GuestInfo, error) {
-			info, err := m.collectGuestInfo(ctx, socketPath, watchers)
-			if err != nil {
-				return runtimepkg.GuestInfo{}, err
-			}
-			return runtimepkg.GuestInfo{ProcessList: info.ProcessList}, nil
-		},
-	}
-	runtime = runtimepkg.New(runtimepkg.RuntimeConfig{
-		Manifest:        plan.Manifest,
-		Plan:            plan,
-		Paths:           plan.Paths,
-		CID:             plan.CID,
-		Stats:           stats,
-		QMP:             qmpClient,
-		SuspendRequests: lifecycle.Suspend(),
-		Processes:       processes,
-		ShutdownDelay:   m.shutdownDelay,
-		WaitForeground: func(ctx context.Context, waitPlan *launch.Plan) error {
-			return m.waitForLaunchForeground(ctx, waitPlan, stats, runtime, qmpClient, lifecycle, launchSuspendHandlerAdapter{handler: suspendHandler}, processes)
-		},
-		CloseHooks: runtimepkg.CloseHooks{
-			WriteBack: func(ctx context.Context) error {
-				if !writeBackOnExit.Load() {
-					return nil
-				}
-				return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
-			},
-			Cleanup: runtimepkg.JoinedCleanup(
-				func() error {
-					return launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles())
-				},
-				cleanupRuntime,
-			),
-			Stats: launchStatsCloseHook(stats, m.outputWriter()),
-		},
-		Dependencies: runtimeDeps,
-	})
-	qmpClient = runtime.QMP()
-	runtime.SetReady()
-	hotplugFeature := m.hotplugFeature(plan.Manifest, qmpClient)
-	if _, err := runtime.StartControl(launchCtx, controlpkg.WithHotplug(hotplugFeature)); err != nil {
-		return nil, launch.WrapFixedStage("control startup")(err)
-	}
-	if err := launch.HandleQueuedSuspend(launchCtx, lifecycle, func(ctx context.Context, coordinator *launch.SuspendCoordinator) error {
-		return handleSuspendRequest(ctx, coordinator, suspendHandler)
-	}); err != nil {
-		return nil, err
-	}
-	if plan.ResumeState == nil {
-		if err := m.writeGuestFiles(launchCtx, plan.Manifest, stats, processes.Watchers()); err != nil {
-			return nil, err
-		}
-		stats.Timer(launch.TimerFilesReady, time.Now())
-
-		if plan.Paths.SSHReadySocket != "" {
-			m.logger.Info("waiting for ssh readiness")
-			if err := m.waitForSSHReady(launchCtx, plan.Paths.SSHReadySocket, processes.Watchers()); err != nil {
-				return nil, err
-			}
-		}
-		stats.Timer(launch.TimerSSHReady, time.Now())
-		writeBackOnExit.Store(true)
-	}
-
-	return runtime, nil
-}
-
-func (m *manager) startLaunchRuntime(ctx context.Context, plan *launch.Plan, stats *launch.Stats, processes *launch.ProcessSet) (qmpclient.Client, error) {
-	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
-	if err != nil {
-		return nil, err
-	}
-	processes.AddGroup(runProcesses)
-
-	if len(plan.VirtioFSSocketPaths) > 0 {
-		m.logger.Info("waiting for virtiofs sockets")
-		if err := m.waitForSockets(ctx, "virtiofs startup", plan.VirtioFSSocketPaths, processes.Watchers()); err != nil {
-			return nil, err
-		}
-	}
-
-	stats.Timer(launch.TimerBootStarted, time.Now())
-	if m.runner == nil {
-		return nil, launch.WrapFixedStage("vm startup")(fmt.Errorf("qemu runner is not configured"))
-	}
-	if m.logger != nil {
-		if plan.ResumeState != nil {
-			m.logger.Info("starting qemu for restore")
-		} else {
-			m.logger.Info("starting qemu")
-		}
-	}
-	qemu, err := m.runner.Start(plan.QEMUCommand)
-	if err != nil {
-		return nil, launch.WrapFixedStage("vm startup")(err)
-	}
-	processes.SetQEMU(qemu)
-
-	m.logger.Info("waiting for qmp readiness")
-	qmp, err := m.waitForQMP(ctx, plan.Paths.QMPSocket, processes.Watchers())
-	if err != nil {
-		return nil, err
-	}
-	client := qmpclient.Serialized(qmp)
-	stats.Timer(launch.TimerQMPReady, time.Now())
-	qemu.SetShutdown(func() error {
-		return client.Quit(m.effectiveQMPQuitTimeout())
-	})
-	return client, nil
+	return core, nil
 }
 
 func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *launch.Plan, client qmpclient.Client) error {

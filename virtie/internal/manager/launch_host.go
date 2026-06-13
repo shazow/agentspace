@@ -150,6 +150,9 @@ func (h launchHost) WriteBackGuestFiles(ctx context.Context, plan *launch.Plan, 
 }
 
 func (h launchHost) WaitForSSHReady(ctx context.Context, socketPath string, watchers executor.Group) error {
+	if h.manager.logger != nil {
+		h.manager.logger.Info("waiting for ssh readiness")
+	}
 	return h.manager.waitForSSHReady(ctx, socketPath, watchers)
 }
 
