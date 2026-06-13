@@ -21,13 +21,12 @@ func TestRunSSHSessionRetriesTransientFailure(t *testing.T) {
 	}
 
 	err := RunSSHSession(context.Background(), SSHSession{
-		Plan:           &Plan{Manifest: launchManifest, CID: 10},
-		Runner:         runner,
-		AddProcesses:   processes.Add,
-		RemoveProcess:  processes.Remove,
-		Watchers:       processes.Watchers,
-		MarkSSHAttempt: stats.MarkSSHAttempt,
-		MarkSSHStarted: stats.MarkSSHStarted,
+		Plan:          &Plan{Manifest: launchManifest, CID: 10},
+		Runner:        runner,
+		AddProcesses:  processes.Add,
+		RemoveProcess: processes.Remove,
+		Watchers:      processes.Watchers,
+		RecordTimer:   stats.Timer,
 		Wait: func(ctx context.Context, process *executor.Process, watchers executor.Group) error {
 			return process.Wait()
 		},
@@ -176,12 +175,12 @@ type recordingSSHStats struct {
 	times    []time.Time
 }
 
-func (s *recordingSSHStats) MarkSSHAttempt(t time.Time) {
-	s.attempts++
-	s.times = append(s.times, t)
-}
-
-func (s *recordingSSHStats) MarkSSHStarted(t time.Time) {
-	s.started++
+func (s *recordingSSHStats) Timer(event TimerEvent, t time.Time) {
+	switch event {
+	case TimerSSHAttempt:
+		s.attempts++
+	case TimerSSHStarted:
+		s.started++
+	}
 	s.times = append(s.times, t)
 }
