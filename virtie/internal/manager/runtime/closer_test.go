@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 )
 
 func TestCloserRunsOnceAndTracksStoppedState(t *testing.T) {
@@ -61,7 +62,7 @@ func TestCloseActionsRunInShutdownOrder(t *testing.T) {
 			return nil
 		},
 		shutdownResources: shutdownResources{
-			Processes:     NewProcessSet(),
+			Processes:     launch.NewProcessSet(),
 			ShutdownDelay: time.Millisecond,
 			QMP: closeQMPFunc(func() error {
 				calls = append(calls, "qmp")
