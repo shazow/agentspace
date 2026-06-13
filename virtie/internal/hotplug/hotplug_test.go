@@ -11,11 +11,43 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
+
+	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
 )
+
+func TestQMPDeviceAdapterAttachesVirtioFSWithoutCallerRawJSON(t *testing.T) {
+	client := &fakeQMPClient{}
+	adapter := QMPDeviceAdapter{Client: client, Timeout: time.Second}
+	device := testVirtioFSDevice(t.TempDir())
+
+	rollback, err := adapter.AttachDevice(context.Background(), device, "pcie.hotplug.0")
+	if err != nil {
+		t.Fatalf("attach device: %v", err)
+	}
+	if rollback == nil {
+		t.Fatal("expected rollback function")
+	}
+	if got, want := client.events, []string{"run:chardev-add", "run:device_add"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: got %#v want %#v", got, want)
+	}
+}
+
+func TestQMPDeviceAdapterDetachWaitsBeforeCleanup(t *testing.T) {
+	client := &fakeQMPClient{}
+	adapter := QMPDeviceAdapter{Client: client, Timeout: time.Second}
+
+	if err := adapter.DetachDevice(context.Background(), testVirtioFSDevice(t.TempDir())); err != nil {
+		t.Fatalf("detach device: %v", err)
+	}
+	if got, want := client.events, []string{"device_del:dev-cache", "run:chardev-remove"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: got %#v want %#v", got, want)
+	}
+}
 
 func TestVirtioFSAttachSuccessWritesState(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -241,13 +273,13 @@ func TestHotplugRegistryRejectsUnsupportedKind(t *testing.T) {
 	}
 }
 
-func testRuntime(tmpDir string, device hotplugtypes.Device) (Runtime, *fakeStarter, *fakeQMP, *fakeGuest) {
+func testRuntime(tmpDir string, device hotplugtypes.Device) (Runtime, *fakeStarter, *fakeQMPClient, *fakeGuest) {
 	return testRuntimeDevices(tmpDir, []hotplugtypes.Device{device})
 }
 
-func testRuntimeDevices(tmpDir string, devices []hotplugtypes.Device) (Runtime, *fakeStarter, *fakeQMP, *fakeGuest) {
+func testRuntimeDevices(tmpDir string, devices []hotplugtypes.Device) (Runtime, *fakeStarter, *fakeQMPClient, *fakeGuest) {
 	starter := &fakeStarter{}
-	qmp := &fakeQMP{}
+	client := &fakeQMPClient{}
 	guest := &fakeGuest{}
 	return Runtime{
 		StateDir: filepath.Join(tmpDir, "state"),
@@ -255,9 +287,9 @@ func testRuntimeDevices(tmpDir string, devices []hotplugtypes.Device) (Runtime, 
 		Devices:  devices,
 		Start:    starter,
 		Sockets:  fakeSockets{},
-		QMP:      qmp,
+		QMP:      QMPDeviceAdapter{Client: client, Timeout: time.Second},
 		Guest:    guest,
-	}, starter, qmp, guest
+	}, starter, client, guest
 }
 
 func testVirtioFSDevice(tmpDir string) hotplugtypes.Device {
@@ -311,14 +343,18 @@ func (fakeSockets) Wait(ctx context.Context, stage string, socketPaths []string,
 	return nil
 }
 
-type fakeQMP struct {
+type fakeQMPClient struct {
 	commands   []string
 	deviceDels []string
 	events     []string
 	errAt      int
 }
 
-func (q *fakeQMP) Run(ctx context.Context, command string) error {
+func (q *fakeQMPClient) WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error {
+	return errors.New("unexpected raw qmp monitor callback")
+}
+
+func (q *fakeQMPClient) RunRaw(timeout time.Duration, command string) error {
 	q.commands = append(q.commands, command)
 	var message struct {
 		Execute string `json:"execute"`
@@ -331,7 +367,7 @@ func (q *fakeQMP) Run(ctx context.Context, command string) error {
 	return nil
 }
 
-func (q *fakeQMP) DeviceDel(ctx context.Context, id string) error {
+func (q *fakeQMPClient) DeviceDelAndWait(timeout time.Duration, id string) error {
 	q.deviceDels = append(q.deviceDels, id)
 	q.events = append(q.events, "device_del:"+id)
 	return nil

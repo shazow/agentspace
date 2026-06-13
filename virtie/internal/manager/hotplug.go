@@ -10,10 +10,8 @@ import (
 	"syscall"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
-	"github.com/shazow/agentspace/virtie/internal/hotplug"
 	controlpkg "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
-	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
@@ -37,41 +35,29 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 			return &launch.StageError{Stage: "control hotplug", Err: err}
 		}
 	}
-	runtime, client, err := m.hotplugRuntime(ctx, launchManifest)
+	feature, client, err := m.directHotplugFeature(ctx, launchManifest)
 	if err != nil {
 		return &launch.StageError{Stage: "hotplug", Err: err}
 	}
 	defer client.Disconnect()
 	if detach {
-		if err := runtime.Detach(ctx, id); err != nil {
-			return launch.WrapHotplugError(err)
-		}
-		return nil
+		_, err := feature.Hotplug(ctx, controlpkg.HotplugRequest{ID: id, Detach: true})
+		return err
 	}
-	if err := runtime.Attach(ctx, id); err != nil {
-		return launch.WrapHotplugError(err)
-	}
-	return nil
+	_, err = feature.Hotplug(ctx, controlpkg.HotplugRequest{ID: id})
+	return err
 }
 
-func (m *manager) hotplugRuntime(ctx context.Context, launchManifest *manifest.Manifest) (hotplug.Runtime, qmpclient.Client, error) {
+func (m *manager) directHotplugFeature(ctx context.Context, launchManifest *manifest.Manifest) (managerHotplugFeature, qmpclient.Client, error) {
 	socketPath, err := launchManifest.ResolvedQMPSocketPath()
 	if err != nil {
-		return hotplug.Runtime{}, nil, err
+		return managerHotplugFeature{}, nil, err
 	}
 	client, err := m.waitForQMP(ctx, socketPath, executor.Group{})
 	if err != nil {
-		return hotplug.Runtime{}, nil, err
+		return managerHotplugFeature{}, nil, err
 	}
-	return hotplug.Runtime{
-		StateDir: launchManifest.ResolvedPersistenceStateDir(),
-		WorkDir:  launchManifest.Paths.WorkingDir,
-		Devices:  launchManifest.Hotplug,
-		Start:    managerHotplugStarter{m: m},
-		Sockets:  managerHotplugSocketWaiter{m: m},
-		QMP:      runtimepkg.HotplugQMP{Client: client, Timeout: m.effectiveQMPCommandTimeout()},
-		Guest:    managerHotplugGuest{m: m, manifest: launchManifest},
-	}, client, nil
+	return m.hotplugFeature(launchManifest, client), client, nil
 }
 
 type managerHotplugStarter struct {

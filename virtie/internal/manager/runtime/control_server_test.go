@@ -10,7 +10,12 @@ import (
 
 func TestStartControlServesRuntimeHandler(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "virtie.sock")
-	server, err := StartControl(context.Background(), socketPath, fakeRuntimeHandler{}, nil)
+	handler := fakeRuntimeHandler{}
+	router, err := control.NewRouter(handler)
+	if err != nil {
+		t.Fatalf("router: %v", err)
+	}
+	server, err := StartControl(context.Background(), socketPath, router, nil)
 	if err != nil {
 		t.Fatalf("start control: %v", err)
 	}
@@ -26,7 +31,11 @@ func TestStartControlServesRuntimeHandler(t *testing.T) {
 }
 
 func TestStartControlEmptySocketPath(t *testing.T) {
-	server, err := StartControl(context.Background(), "", fakeRuntimeHandler{}, nil)
+	router, err := control.NewRouter(fakeRuntimeHandler{})
+	if err != nil {
+		t.Fatalf("router: %v", err)
+	}
+	server, err := StartControl(context.Background(), "", router, nil)
 	if err != nil {
 		t.Fatalf("empty start control: %v", err)
 	}

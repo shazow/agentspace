@@ -3611,6 +3611,51 @@ func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
 	}
 }
 
+func TestLaunchRuntimeRegistersHotplugAtControlPeriphery(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
+	cfg.QEMU.Hotplug.PCIEPorts = 1
+	cfg.Hotplug = []hotplugtypes.Device{
+		{
+			Kind: hotplugtypes.KindNet,
+			ID:   "vpn",
+			Net:  hotplugtypes.Net{Backend: "user", MAC: "02:02:00:00:00:10"},
+		},
+	}
+
+	runner := &launchRunner{}
+	qmp := &fakeQMPClient{}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		qmpDialer:         &fakeQMPDialer{client: qmp},
+		socketWaiter:      &fakeSocketWaiter{},
+		logger:            slog.New(slog.DiscardHandler),
+		qmpConnectTimeout: time.Second,
+		qmpRetryDelay:     time.Millisecond,
+	}
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, Options: LaunchOptions{Resume: ResumeModeNo, SSH: false}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
+
+	runtime, err := manager.startWithPlan(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("start runtime: %v", err)
+	}
+	defer runtime.Close()
+
+	_, err = control.Dial(plan.Paths.ControlSocket).Hotplug(context.Background(), control.HotplugRequest{ID: "vpn"})
+	if err != nil {
+		t.Fatalf("control hotplug: %v", err)
+	}
+	if got := strings.Join(qmp.rawCommands, "\n"); !strings.Contains(got, `"execute":"netdev_add"`) {
+		t.Fatalf("expected netdev_add command, got %#v", qmp.rawCommands)
+	}
+}
+
 func TestManagerHotplugFallsBackWhenControlSocketUnsupported(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
