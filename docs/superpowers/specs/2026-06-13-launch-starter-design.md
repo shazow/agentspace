@@ -3,40 +3,43 @@
 ## Purpose
 
 Deepen virtie's launch startup path so the transition from a planned launch to a
-started runtime is owned by one Module with a small Interface. The consumer CLI
-and manifest contracts stay unchanged. Internal Go entrypoints may break where
-that improves locality around startup ordering, readiness, and cleanup.
+started runtime is owned by `launch.Starter` with small `Host` and `Runtime`
+interfaces. The consumer CLI and manifest contracts stayed unchanged. Internal
+Go entrypoints were allowed to move where that improved locality around startup
+ordering, readiness, and cleanup.
 
-## Current Friction
+## Implemented Topology
 
-`manager.startWithPlan` still owns most of launch startup:
+`manager.startWithPlan` now delegates planned-launch startup to
+`launch.Starter`:
 
-- Runtime lock acquisition and launch PID cleanup.
-- VSock CID acquisition and QEMU command finalization.
-- Persistence directory creation, runtime socket cleanup, external socket
-  validation, and volume image creation.
-- Run command startup, virtiofs socket waits, QEMU startup, QMP readiness,
-  QMP serialization, and QMP shutdown hook installation.
-- Restore from saved suspend state.
-- Runtime construction, control server startup, queued suspend draining, guest
-  file provisioning, SSH readiness, and write-back enablement.
-- Startup-failure cleanup across processes, QMP, sockets, lock state, and
-  launch stats.
+- `launch.Starter` owns runtime lock acquisition, launch PID cleanup, VSock CID
+  acquisition, QEMU command finalization, runtime state preparation, process
+  startup, readiness timing, restore, runtime construction, control startup,
+  queued suspend draining, guest provisioning, SSH readiness, write-back
+  enablement, and startup-failure cleanup.
+- `manager.launchHost` owns concrete host effects behind `launch.Host`.
+- `manager.launchRuntime` owns runtime construction, suspend handling, and
+  foreground wait construction behind `launch.Runtime`.
+- `launch.Stats`, `launch.TimerEvent`, and `launch.ProcessSet` live with
+  startup because readiness timing and started process ownership are startup
+  concerns.
 
-The Interface is shallow: tests and maintainers must understand the entire
-startup Implementation to reason about small ordering changes. Helper functions
-exist, but the important invariant is the ordered composition of those helpers,
-not any single helper in isolation.
+The important invariant is the ordered composition of startup helpers. Starter
+tests now exercise that composition directly instead of reaching through the
+manager's concrete wiring.
 
-## Goals
+## Goals Delivered
 
-- Add `launch.Starter` as the deep Module for planned-launch startup.
-- Keep concrete host effects in a small `launch.Host` Interface.
-- Keep runtime-specific construction behind a small `launch.Runtime` Interface.
-- Move launch timing stats into the `launch` package.
-- Preserve current user-visible CLI, manifest, stage error, readiness, restore,
+- Added `launch.Starter` as the deep module for planned-launch startup.
+- Kept concrete host effects in the small `launch.Host` interface.
+- Kept runtime-specific construction behind the small `launch.Runtime`
+  interface.
+- Moved launch timing stats and process ownership helpers into the `launch`
+  package.
+- Preserved user-visible CLI, manifest, stage error, readiness, restore,
   suspend, hotplug, balloon, and cleanup behavior.
-- Keep hotplug removable by registering optional hotplug control handling from
+- Kept hotplug removable by registering optional hotplug control handling from
   manager-owned runtime construction, not from runtime core startup internals.
 
 ## Non-Goals
@@ -51,7 +54,7 @@ not any single helper in isolation.
 
 ## Module Shape
 
-The `launch` package owns the startup orchestration:
+The `launch` package owns startup orchestration:
 
 ```go
 type Starter struct {
@@ -77,7 +80,7 @@ func (s Starter) Start(ctx context.Context, plan *Plan) (StartedRuntime, error)
 - Startup failure cleanup.
 - Launch stats timing and finalization.
 
-`manager.startWithPlan` becomes wiring:
+`manager.startWithPlan` is wiring:
 
 ```go
 starter := launch.Starter{
@@ -148,7 +151,7 @@ type Host interface {
 }
 ```
 
-The Interface stays host-effect oriented. It should not include runtime control
+The interface stays host-effect oriented. It does not include runtime control
 policy, hotplug policy, foreground wait policy, or stats formatting.
 
 ## Runtime Interface
@@ -178,7 +181,7 @@ type RuntimeResult struct {
 }
 ```
 
-`StartedRuntime` is package-local to launch and satisfied by `runtime.Core`:
+`StartedRuntime` is satisfied by `runtime.Core`:
 
 ```go
 type StartedRuntime interface {
@@ -194,13 +197,13 @@ type StartedRuntime interface {
 
 `launch.Runtime` does not own stats creation, stats finalization, write-back
 construction, or saved-suspend classification. `Starter` owns launch timing
-directly after stats move into `launch`.
+directly in `launch`.
 
 ## Stats
 
-Move launch timing stats from `manager/runtime` into `manager/launch`.
-Move process ownership helpers from `manager/runtime` into `manager/launch` so
-`Starter` can own started process cleanup without importing runtime internals.
+Launch timing stats and process ownership helpers live in `manager/launch` so
+`Starter` can own readiness timing and started process cleanup without importing
+runtime internals.
 
 Stats use one timer Interface rather than many phase-specific methods. The
 stored timings are map-backed so adding a new startup timer does not require a
@@ -234,7 +237,7 @@ func (s *Stats) String() string
 `NewStats` records `TimerStarted` immediately. For ordinary events, `Timer`
 sets `timers[event] = t`. For `TimerSSHAttempt`, `Timer` increments the count
 and records only the first attempt time in the timers map. `String` formats the
-same launch stats summary currently printed by `runtimepkg.Stats.String`.
+same launch stats summary that the launch close hook prints.
 
 Stats finalization is not a `Stats` method. The runtime close hook records
 `TimerCompleted` and writes the summary when output is configured:
@@ -253,12 +256,9 @@ func finalizeStats(stats *Stats, output io.Writer) func() {
 }
 ```
 
-`runtime.Core` can continue to expose control status stats by consuming
-`*launch.Stats` through `RuntimeConfig`. The formatting and control response
-mapping can move with the stats type, or remain as thin runtime helpers during
-the first migration. Runtime helpers should not require exported timer getters;
-if structured control stats need package-private timer access, put that mapping
-beside `Stats` in `launch`.
+`runtime.Core` exposes control status stats by consuming `*launch.Stats` through
+`RuntimeConfig`. Structured control stats are mapped by `launch.ControlStats`,
+beside `Stats`, so runtime does not need exported timer getters.
 
 ## Data Flow
 
@@ -281,7 +281,7 @@ Startup flow after the refactor:
 11. `Starter` drains queued suspend requests.
 12. For fresh launches, `Starter` writes guest files, waits SSH readiness when
     configured, records readiness timers, and enables write-back.
-13. `Starter` returns the started runtime to `launchWithPlan`, which continues
+13. `Starter` returns the started runtime to `manager.startWithPlan`, which continues
     to call `runtime.Wait` and defer `runtime.Close`.
 
 ## Error And Cleanup Behavior
@@ -308,9 +308,9 @@ Startup-failure cleanup remains ordered and idempotent:
 3. If the failure is the saved-suspend exit sentinel after runtime construction,
    mark the runtime as saved suspend before closing so write-back is skipped.
 
-## Testing Strategy
+## Testing Outcomes
 
-Move startup ordering tests toward `launch.Starter`:
+Startup ordering tests moved toward `launch.Starter`:
 
 - Runtime lock cleanup happens on preflight and startup failure.
 - CID/QEMU command finalization occurs before runtime state preparation.
@@ -327,7 +327,7 @@ Move startup ordering tests toward `launch.Starter`:
 - Startup failure cleanup stops processes, disconnects QMP, removes sockets,
   releases runtime lock, and finalizes stats.
 
-Keep manager integration tests for concrete wiring:
+Manager integration tests still cover concrete wiring:
 
 - CLI/manifest behavior remains compatible.
 - QEMU command construction remains compatible.
@@ -337,11 +337,11 @@ Keep manager integration tests for concrete wiring:
 
 ## Migration Notes
 
-- Internal tests that call `manager.startWithPlan` can move to `launch.Starter`
-  tests where they only assert startup ordering or cleanup.
-- `Launcher.Plan` and `Launcher.Start` may become private or be removed if no
-  production caller needs partial lifecycle control.
-- `runtimepkg.Stats` references migrate to `launch.Stats`. Compatibility helper
-  functions can remain temporarily in `runtime` only if they reduce review risk.
-- The public CLI and manifest do not need a `MIGRATION.md` entry because the
+- Internal tests that only assert startup ordering or cleanup now belong in
+  `launch.Starter` tests.
+- `Launcher.Plan` and `Launcher.Start` remain internal partial-lifecycle
+  entrypoints for now and can be reconsidered separately.
+- Stats and process ownership references use `launch.Stats` and
+  `launch.ProcessSet`.
+- The public CLI and manifest did not need a `MIGRATION.md` entry because the
   consumer contract is unchanged.
