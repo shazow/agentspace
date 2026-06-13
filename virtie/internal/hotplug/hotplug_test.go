@@ -323,15 +323,15 @@ func TestHotplugRegistryRejectsUnsupportedKind(t *testing.T) {
 	}
 }
 
-func testRuntime(tmpDir string, device hotplugtypes.Device) (Runtime, *fakeStarter, *fakeQMPClient, *fakeGuest) {
+func testRuntime(tmpDir string, device hotplugtypes.Device) (Runner, *fakeStarter, *fakeQMPClient, *fakeGuest) {
 	return testRuntimeDevices(tmpDir, []hotplugtypes.Device{device})
 }
 
-func testRuntimeDevices(tmpDir string, devices []hotplugtypes.Device) (Runtime, *fakeStarter, *fakeQMPClient, *fakeGuest) {
+func testRuntimeDevices(tmpDir string, devices []hotplugtypes.Device) (Runner, *fakeStarter, *fakeQMPClient, *fakeGuest) {
 	starter := &fakeStarter{}
 	client := &fakeQMPClient{}
 	guest := &fakeGuest{}
-	return Runtime{
+	return Runner{
 		StateDir: filepath.Join(tmpDir, "state"),
 		WorkDir:  tmpDir,
 		Devices:  devices,
