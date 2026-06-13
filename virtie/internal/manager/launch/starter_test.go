@@ -15,6 +15,7 @@ import (
 
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
@@ -62,6 +63,45 @@ func TestStarterFreshLaunchOrdersStartupAndReadiness(t *testing.T) {
 	}
 }
 
+func TestStarterStartupFailureCleansProcessesQMPAndSockets(t *testing.T) {
+	plan := testStarterPlan(t)
+	host := &fakeStarterHost{
+		waitQMPErr: errors.New("qmp failed"),
+	}
+	host.qemuProcess = &executortest.Process{
+		OverrideName: "qemu",
+		OnSignal: func(os.Signal) {
+			host.event("qemu-signal")
+		},
+	}
+	starter := Starter{Host: host, Runtime: &fakeStarterRuntime{events: &host.events}}
+
+	_, err := starter.Start(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected start error")
+	}
+	if !strings.Contains(err.Error(), "qmp failed") {
+		t.Fatalf("error: got %v want containing qmp failed", err)
+	}
+	if !host.qmp.(*fakeStarterQMP).disconnected {
+		t.Fatal("qmp client was not disconnected")
+	}
+	for _, event := range []string{"start-runs", "start-qemu", "wait-qmp", "qemu-signal", "remove-sockets"} {
+		if !hasStarterEvent(host.events, event) {
+			t.Fatalf("missing event %q in %#v", event, host.events)
+		}
+	}
+	waitQMPIndex := starterEventIndex(host.events, "wait-qmp")
+	qemuCleanupIndex := starterEventIndex(host.events, "qemu-signal")
+	socketCleanupIndex := starterEventIndex(host.events, "remove-sockets")
+	if qemuCleanupIndex <= waitQMPIndex {
+		t.Fatalf("qemu cleanup ran before qmp failure: %#v", host.events)
+	}
+	if socketCleanupIndex <= waitQMPIndex {
+		t.Fatalf("socket cleanup ran before qmp failure: %#v", host.events)
+	}
+}
+
 func TestStarterRuntimeNewFailureCleansAcquiredResources(t *testing.T) {
 	plan := testStarterPlan(t)
 	plan.Manifest.Persistence.StateDir = t.TempDir()
@@ -103,6 +143,56 @@ func TestStarterRuntimeNewFailureCleansAcquiredResources(t *testing.T) {
 	}
 	if _, statErr := os.Stat(LaunchPIDPath(plan.Manifest)); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("launch pid cleanup: got %v want not exist", statErr)
+	}
+}
+
+func TestStarterRestoresBeforeRuntimeConstruction(t *testing.T) {
+	plan := testStarterPlan(t)
+	plan.ResumeState = &SuspendState{VMStatePath: "vm.state", CID: 7}
+	host := &fakeStarterHost{}
+	runtimeProvider := &fakeStarterRuntime{events: &host.events}
+	starter := Starter{Host: host, Runtime: runtimeProvider}
+
+	_, err := starter.Start(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	restoreIndex := starterEventIndex(host.events, "restore")
+	runtimeNewIndex := starterEventIndex(host.events, "runtime-new")
+	if restoreIndex == -1 || runtimeNewIndex == -1 {
+		t.Fatalf("missing restore/runtime-new events: %#v", host.events)
+	}
+	if restoreIndex >= runtimeNewIndex {
+		t.Fatalf("restore ran after runtime construction: %#v", host.events)
+	}
+	if hasStarterEvent(host.events, "write-guest-files") {
+		t.Fatalf("restore launch provisioned fresh guest files: %#v", host.events)
+	}
+	if !host.qemuRestore {
+		t.Fatalf("qemu command was not built in restore mode: %#v", host.events)
+	}
+}
+
+func TestStarterDrainsQueuedSuspendBeforeGuestProvisioning(t *testing.T) {
+	plan := testStarterPlan(t)
+	host := &fakeStarterHost{}
+	runtimeProvider := &fakeStarterRuntime{
+		events:       &host.events,
+		queueSuspend: true,
+		suspendErr:   ErrSavedSuspendExit,
+	}
+	starter := Starter{Host: host, Runtime: runtimeProvider}
+
+	_, err := starter.Start(context.Background(), plan)
+	if !errors.Is(err, ErrSavedSuspendExit) {
+		t.Fatalf("start error: got %v want %v", err, ErrSavedSuspendExit)
+	}
+	suspendIndex := starterEventIndex(host.events, "runtime-suspend-handle")
+	if suspendIndex == -1 {
+		t.Fatalf("missing suspend event: %#v", host.events)
+	}
+	if hasStarterEvent(host.events, "write-guest-files") {
+		t.Fatalf("queued suspend still provisioned fresh guest files: %#v", host.events)
 	}
 }
 
@@ -197,6 +287,8 @@ type fakeStarterHost struct {
 	prepareErr        error
 	startRunsErr      error
 	waitQMPErr        error
+	qemuProcess       *executortest.Process
+	qemuRestore       bool
 }
 
 func (h *fakeStarterHost) event(name string) {
@@ -227,8 +319,9 @@ func (h *fakeStarterHost) AcquireCID(*manifest.Manifest, *SuspendState) (int, er
 	return 7, nil
 }
 
-func (h *fakeStarterHost) BuildQEMUCommand(*manifest.Manifest, int, bool) (*exec.Cmd, error) {
+func (h *fakeStarterHost) BuildQEMUCommand(_ *manifest.Manifest, _ int, restore bool) (*exec.Cmd, error) {
 	h.event("qemu-command")
+	h.qemuRestore = restore
 	return exec.Command("qemu-system-x86_64"), nil
 }
 
@@ -249,6 +342,9 @@ func (h *fakeStarterHost) StartRuns(int, *manifest.Manifest) (executor.Group, er
 
 func (h *fakeStarterHost) StartQEMU(*exec.Cmd) (*executor.Process, error) {
 	h.event("start-qemu")
+	if h.qemuProcess != nil {
+		return h.qemuProcess.Process(), nil
+	}
 	return executor.Wrap(nil), nil
 }
 
@@ -338,6 +434,8 @@ type fakeStarterRuntime struct {
 	newErr            error
 	nilSuspendHandler bool
 	nilWaitForeground bool
+	queueSuspend      bool
+	suspendErr        error
 }
 
 func (r *fakeStarterRuntime) New(spec RuntimeSpec) (RuntimeResult, error) {
@@ -349,6 +447,9 @@ func (r *fakeStarterRuntime) New(spec RuntimeSpec) (RuntimeResult, error) {
 	if r.events != nil {
 		*r.events = append(*r.events, "runtime-new")
 	}
+	if r.queueSuspend {
+		spec.SuspendRequests.Request()
+	}
 	return RuntimeResult{Runtime: r.runtime, ControlOptions: []control.RouterOption{control.WithHotplug(fakeUnsupportedHotplug{})}}, nil
 }
 
@@ -359,7 +460,7 @@ func (r *fakeStarterRuntime) SuspendHandler(SuspendSpec) SuspendHandler {
 	if r.events != nil {
 		*r.events = append(*r.events, "runtime-suspend-handler")
 	}
-	return fakeSuspendHandler{events: r.events}
+	return fakeSuspendHandler{events: r.events, err: r.suspendErr}
 }
 
 func (r *fakeStarterRuntime) WaitForeground(ForegroundSpec) func(context.Context, *Plan) error {
@@ -395,13 +496,14 @@ func (r *fakeStartedRuntime) QMP() qmpclient.Client                { return &fak
 
 type fakeSuspendHandler struct {
 	events *[]string
+	err    error
 }
 
 func (h fakeSuspendHandler) Handle(context.Context, *SuspendCoordinator) error {
 	if h.events != nil {
 		*h.events = append(*h.events, "runtime-suspend-handle")
 	}
-	return nil
+	return h.err
 }
 
 type fakeUnsupportedHotplug struct{}
@@ -411,10 +513,14 @@ func (fakeUnsupportedHotplug) Hotplug(context.Context, control.HotplugRequest) (
 }
 
 func hasStarterEvent(events []string, want string) bool {
-	for _, event := range events {
+	return starterEventIndex(events, want) != -1
+}
+
+func starterEventIndex(events []string, want string) int {
+	for i, event := range events {
 		if event == want {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
 }
