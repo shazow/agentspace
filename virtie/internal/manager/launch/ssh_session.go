@@ -25,17 +25,16 @@ type SSHSession struct {
 	Output                 io.Writer
 	RetryOutputRevealDelay time.Duration
 
-	AddProcesses   func(...*executor.Process)
-	RemoveProcess  func(*executor.Process) bool
-	Watchers       func() executor.Group
-	MarkSSHAttempt func(time.Time)
-	MarkSSHStarted func(time.Time)
-	Wait           func(context.Context, *executor.Process, executor.Group) error
-	WaitForRetry   func(context.Context, executor.Group) error
-	EnsureKey      func(*manifest.Manifest) (SSHAutoprovisionKey, error)
-	InstallKey     func(context.Context, *manifest.Manifest, SSHAutoprovisionKey, executor.Group) error
-	wrapStage      func(stage string, err error) error
-	Now            func() time.Time
+	AddProcesses  func(...*executor.Process)
+	RemoveProcess func(*executor.Process) bool
+	Watchers      func() executor.Group
+	RecordTimer   func(TimerEvent, time.Time)
+	Wait          func(context.Context, *executor.Process, executor.Group) error
+	WaitForRetry  func(context.Context, executor.Group) error
+	EnsureKey     func(*manifest.Manifest) (SSHAutoprovisionKey, error)
+	InstallKey    func(context.Context, *manifest.Manifest, SSHAutoprovisionKey, executor.Group) error
+	wrapStage     func(stage string, err error) error
+	Now           func() time.Time
 }
 
 func RunSSHSession(ctx context.Context, session SSHSession) error {
@@ -52,8 +51,8 @@ func RunSSHSession(ctx context.Context, session SSHSession) error {
 	for {
 		stderr := sshtools.NewRetryOutput(session.Output, false, session.RetryOutputRevealDelay)
 		attemptStarted := sshSessionNow(session)
-		if session.MarkSSHAttempt != nil {
-			session.MarkSSHAttempt(attemptStarted)
+		if session.RecordTimer != nil {
+			session.RecordTimer(TimerSSHAttempt, attemptStarted)
 		}
 		cmd, err := buildSSHCommandWithArgv(launchManifest, plan.CID, plan.RemoteCommand, argv)
 		if err != nil {
@@ -72,8 +71,8 @@ func RunSSHSession(ctx context.Context, session SSHSession) error {
 		if session.AddProcesses != nil {
 			session.AddProcesses(started)
 		}
-		if session.MarkSSHStarted != nil {
-			session.MarkSSHStarted(attemptStarted)
+		if session.RecordTimer != nil {
+			session.RecordTimer(TimerSSHStarted, attemptStarted)
 		}
 
 		err = session.Wait(ctx, started, watchers)

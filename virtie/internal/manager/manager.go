@@ -398,12 +398,7 @@ func (m *manager) runSSHSession(
 		AddProcesses:           processes.Add,
 		RemoveProcess:          processes.Remove,
 		Watchers:               processes.Watchers,
-		MarkSSHAttempt: func(t time.Time) {
-			stats.Timer(launch.TimerSSHAttempt, t)
-		},
-		MarkSSHStarted: func(t time.Time) {
-			stats.Timer(launch.TimerSSHStarted, t)
-		},
+		RecordTimer:            stats.Timer,
 		Wait: func(ctx context.Context, session *executor.Process, watchers executor.Group) error {
 			return m.waitForSession(ctx, session, lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, watchers)
 		},
