@@ -23,7 +23,21 @@ func (fakeControlCore) Info(context.Context, control.InfoRequest) (control.InfoR
 
 func startTestControlServerAt(t *testing.T, path string, runtime any) {
 	t.Helper()
-	router, err := control.NewRuntimeRouter(runtime)
+	core, ok := runtime.(control.RuntimeCore)
+	if !ok {
+		t.Fatalf("runtime core handler is required")
+	}
+	options := []control.RouterOption{}
+	if suspend, ok := runtime.(control.RuntimeSuspend); ok {
+		options = append(options, control.WithSuspend(suspend))
+	}
+	if hotplug, ok := runtime.(control.RuntimeHotplug); ok {
+		options = append(options, control.WithHotplug(hotplug))
+	}
+	if balloon, ok := runtime.(control.RuntimeBalloon); ok {
+		options = append(options, control.WithBalloon(balloon))
+	}
+	router, err := control.NewRouter(core, options...)
 	if err != nil {
 		t.Fatalf("router: %v", err)
 	}
