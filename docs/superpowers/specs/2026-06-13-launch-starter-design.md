@@ -95,6 +95,9 @@ tests and implemented by `manager.launchHost`:
 
 ```go
 type Host interface {
+	// NewLifecycle creates the signal-aware lifecycle for the launch context.
+	NewLifecycle(context.CancelFunc) *Lifecycle
+
 	// AcquireRuntimeLock obtains the sandbox runtime lock and launch PID.
 	AcquireRuntimeLock(RuntimeLockSpec) (*RuntimeLock, error)
 
@@ -116,6 +119,9 @@ type Host interface {
 	// StartQEMU starts the finalized QEMU command.
 	StartQEMU(*exec.Cmd) (*executor.Process, error)
 
+	// InstallQMPShutdown configures QEMU shutdown to go through the serialized QMP client.
+	InstallQMPShutdown(*executor.Process, qmpclient.Client)
+
 	// WaitForSockets waits for startup sockets while watching already-started processes.
 	WaitForSockets(context.Context, string, []string, executor.Group) error
 
@@ -128,8 +134,17 @@ type Host interface {
 	// WriteGuestFiles provisions configured guest files and workspace mounts.
 	WriteGuestFiles(context.Context, *Plan, *Stats, executor.Group) error
 
+	// WriteBackGuestFiles writes configured guest files back to the host during close.
+	WriteBackGuestFiles(context.Context, *Plan, executor.Group) error
+
 	// WaitForSSHReady waits for the guest readiness signal used by SSH startup.
 	WaitForSSHReady(context.Context, string, executor.Group) error
+
+	// ShutdownDelay returns the process shutdown delay used for startup-failure cleanup.
+	ShutdownDelay() time.Duration
+
+	// StatsOutput returns the writer used for launch stats output.
+	StatsOutput() io.Writer
 }
 ```
 
@@ -169,6 +184,7 @@ type RuntimeResult struct {
 type StartedRuntime interface {
 	SetReady()
 	MarkSavedSuspend()
+	SetWatchers(executor.Group)
 	StartControl(context.Context, ...control.RouterOption) (*control.Server, error)
 	Wait(context.Context, WaitMode) error
 	Close() error
@@ -183,6 +199,8 @@ directly after stats move into `launch`.
 ## Stats
 
 Move launch timing stats from `manager/runtime` into `manager/launch`.
+Move process ownership helpers from `manager/runtime` into `manager/launch` so
+`Starter` can own started process cleanup without importing runtime internals.
 
 Stats use one timer Interface rather than many phase-specific methods. The
 stored timings are map-backed so adding a new startup timer does not require a
