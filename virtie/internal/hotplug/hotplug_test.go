@@ -185,6 +185,27 @@ func TestVirtioFSDetachCompletesCleanupAfterDeviceDelCancellation(t *testing.T) 
 	}
 }
 
+func TestVirtioFSDetachCompletesQMPAfterGuestUnmountCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	runner, _, qmp, guest := testRunner(tmpDir, testVirtioFSDevice(tmpDir))
+	guest.afterRun = cancel
+	statePath := filepath.Join(tmpDir, "state", "hotplug", "cache.json")
+	if err := hotplugtypes.WriteState(statePath, hotplugtypes.State{ID: "cache", Kind: hotplugtypes.KindVirtioFS, Bus: "pcie.hotplug.0", PID: 42}); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	if err := runner.Detach(ctx, "cache"); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	if got, want := qmp.events, []string{"device_del:dev-cache", "run:chardev-remove"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events: got %#v want %#v", got, want)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected hotplug state file removed, got %v", err)
+	}
+}
+
 func TestNetAttachDetachCommands(t *testing.T) {
 	tmpDir := t.TempDir()
 	runner, _, qmp, _ := testRunner(tmpDir, hotplugtypes.Device{
@@ -430,10 +451,14 @@ func (q *fakeQMPClient) DeviceDelAndWait(timeout time.Duration, id string) error
 type fakeGuest struct {
 	commands [][]string
 	err      error
+	afterRun func()
 }
 
 func (g *fakeGuest) Run(ctx context.Context, command []string) error {
 	g.commands = append(g.commands, append([]string(nil), command...))
+	if g.afterRun != nil {
+		g.afterRun()
+	}
 	return g.err
 }
 
