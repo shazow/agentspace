@@ -187,24 +187,41 @@ type Router struct {
 	balloon RuntimeBalloon
 }
 
-// NewRouter creates a router with only core status and info methods.
-func NewRouter(core RuntimeCore) (*Router, error) {
+// RouterOption registers an optional control method handler.
+type RouterOption func(*Router)
+
+// WithSuspend registers suspend handling for a router.
+func WithSuspend(handler RuntimeSuspend) RouterOption {
+	return func(router *Router) {
+		router.suspend = handler
+	}
+}
+
+// WithHotplug registers hotplug handling for a router.
+func WithHotplug(handler RuntimeHotplug) RouterOption {
+	return func(router *Router) {
+		router.hotplug = handler
+	}
+}
+
+// WithBalloon registers balloon handling for a router.
+func WithBalloon(handler RuntimeBalloon) RouterOption {
+	return func(router *Router) {
+		router.balloon = handler
+	}
+}
+
+// NewRouter creates a router with core status and info methods plus explicit optional handlers.
+func NewRouter(core RuntimeCore, options ...RouterOption) (*Router, error) {
 	if core == nil {
 		return nil, fmt.Errorf("core handler is required")
 	}
-	return &Router{core: core}, nil
-}
-
-// NewRuntimeRouter creates a router from the capabilities implemented by runtime.
-func NewRuntimeRouter(runtime any) (*Router, error) {
-	core, ok := runtime.(RuntimeCore)
-	if !ok {
-		return nil, fmt.Errorf("runtime core handler is required")
-	}
 	router := &Router{core: core}
-	router.suspend, _ = runtime.(RuntimeSuspend)
-	router.hotplug, _ = runtime.(RuntimeHotplug)
-	router.balloon, _ = runtime.(RuntimeBalloon)
+	for _, option := range options {
+		if option != nil {
+			option(router)
+		}
+	}
 	return router, nil
 }
 
