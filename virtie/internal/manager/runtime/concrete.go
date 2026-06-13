@@ -24,7 +24,7 @@ type Core struct {
 	suspendRequests  *launch.SuspendCoordinator
 	waitForeground   func(context.Context, *launch.Plan) error
 	collectInfo      func(context.Context, string, executor.Group) (GuestInfo, error)
-	processes        *ProcessSet
+	processes        *launch.ProcessSet
 	shutdownDelay    time.Duration
 	qmpTimeout       time.Duration
 	logger           *slog.Logger

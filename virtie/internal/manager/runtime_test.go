@@ -205,7 +205,7 @@ func TestRuntimeStartControlServesStatus(t *testing.T) {
 func TestRuntimeWaitUsesConfiguredForegroundCallback(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	processes := runtimepkg.NewProcessSet()
+	processes := launch.NewProcessSet()
 	var called bool
 	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
@@ -264,7 +264,7 @@ func TestRuntimeWaitMapsMissingForegroundToFailedPrecondition(t *testing.T) {
 func TestRuntimeSavedSuspendWaitSkipsCloseWriteBack(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	processes := runtimepkg.NewProcessSet()
+	processes := launch.NewProcessSet()
 	qmp := &fakeQMPClient{}
 	var writeBackCalls int
 	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
@@ -385,7 +385,7 @@ func TestRuntimeCloseStopsProcessesAndDisconnectsQMPOnce(t *testing.T) {
 	cfg := validManifest(tmpDir)
 	qmp := &fakeQMPClient{}
 	process := (&executortest.Process{OverrideName: "qemu-system-x86_64"}).Process()
-	processes := runtimepkg.NewProcessSet()
+	processes := launch.NewProcessSet()
 	processes.SetQEMU(process)
 	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,

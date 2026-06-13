@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 )
 
 type disconnecter interface {
@@ -14,7 +15,7 @@ type disconnecter interface {
 }
 
 type shutdownResources struct {
-	Processes     *ProcessSet
+	Processes     *launch.ProcessSet
 	ShutdownDelay time.Duration
 	QMP           disconnecter
 	Stats         func()
