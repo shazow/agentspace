@@ -186,7 +186,7 @@ Move launch timing stats from `manager/runtime` into `manager/launch`.
 
 Stats use one timer Interface rather than many phase-specific methods. The
 stored timings are map-backed so adding a new startup timer does not require a
-new struct field and getter:
+new struct field or exported getter:
 
 ```go
 type TimerEvent string
@@ -210,20 +210,37 @@ type Stats struct {
 
 func NewStats(started time.Time) *Stats
 func (s *Stats) Timer(event TimerEvent, t time.Time)
-func (s *Stats) Get(event TimerEvent) time.Time
-func (s *Stats) Count(event TimerEvent) int
-func (s *Stats) Finalizer(output io.Writer) func()
+func (s *Stats) String() string
 ```
 
 `NewStats` records `TimerStarted` immediately. For ordinary events, `Timer`
 sets `timers[event] = t`. For `TimerSSHAttempt`, `Timer` increments the count
-and records only the first attempt time in the timers map.
+and records only the first attempt time in the timers map. `String` formats the
+same launch stats summary currently printed by `runtimepkg.Stats.String`.
+
+Stats finalization is not a `Stats` method. The runtime close hook records
+`TimerCompleted` and writes the summary when output is configured:
+
+```go
+func finalizeStats(stats *Stats, output io.Writer) func() {
+	return func() {
+		if stats == nil {
+			return
+		}
+		stats.Timer(TimerCompleted, time.Now())
+		if output != nil {
+			fmt.Fprintf(output, "stats: %s\n", stats)
+		}
+	}
+}
+```
 
 `runtime.Core` can continue to expose control status stats by consuming
 `*launch.Stats` through `RuntimeConfig`. The formatting and control response
-mapping can move with the stats type, or remain as thin runtime helpers that
-read launch stats through exported methods if that keeps the first migration
-smaller.
+mapping can move with the stats type, or remain as thin runtime helpers during
+the first migration. Runtime helpers should not require exported timer getters;
+if structured control stats need package-private timer access, put that mapping
+beside `Stats` in `launch`.
 
 ## Data Flow
 
