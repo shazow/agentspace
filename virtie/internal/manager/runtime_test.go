@@ -100,7 +100,7 @@ func TestRuntimeSuspendQueuesAndWaitsForLaunchLoop(t *testing.T) {
 		Dependencies: runtimepkg.Dependencies{
 			QMPTimeout:       time.Second,
 			Logger:           slog.New(slog.DiscardHandler),
-			SavedSuspendExit: isSavedSuspendExit,
+			SavedSuspendExit: launch.IsSavedSuspendExit,
 		},
 	})
 	runtime.SetReady()
@@ -131,7 +131,7 @@ func TestRuntimeSuspendQueuesAndWaitsForLaunchLoop(t *testing.T) {
 	}
 
 	coordinator.Begin()
-	coordinator.Complete(errSavedSuspendExit)
+	coordinator.Complete(launch.ErrSavedSuspendExit)
 	select {
 	case err := <-done:
 		if err != nil {
@@ -280,7 +280,7 @@ func TestRuntimeSavedSuspendWaitSkipsCloseWriteBack(t *testing.T) {
 		Processes:     processes,
 		ShutdownDelay: time.Millisecond,
 		WaitForeground: func(context.Context, *launch.Plan) error {
-			return errSavedSuspendExit
+			return launch.ErrSavedSuspendExit
 		},
 		CloseHooks: runtimepkg.CloseHooks{
 			WriteBack: func(context.Context) error {
@@ -291,12 +291,12 @@ func TestRuntimeSavedSuspendWaitSkipsCloseWriteBack(t *testing.T) {
 		Dependencies: runtimepkg.Dependencies{
 			QMPTimeout:       time.Second,
 			Logger:           slog.New(slog.DiscardHandler),
-			SavedSuspendExit: isSavedSuspendExit,
+			SavedSuspendExit: launch.IsSavedSuspendExit,
 		},
 	})
 
-	if err := runtime.Wait(context.Background(), WaitVM); !errors.Is(err, errSavedSuspendExit) {
-		t.Fatalf("wait error: got %v want %v", err, errSavedSuspendExit)
+	if err := runtime.Wait(context.Background(), WaitVM); !errors.Is(err, launch.ErrSavedSuspendExit) {
+		t.Fatalf("wait error: got %v want %v", err, launch.ErrSavedSuspendExit)
 	}
 	if err := runtime.Close(); err != nil {
 		t.Fatalf("close: %v", err)

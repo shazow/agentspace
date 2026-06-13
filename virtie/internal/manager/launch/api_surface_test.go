@@ -56,6 +56,27 @@ func TestLaunchPackageDoesNotExportPackagePrivateHelpers(t *testing.T) {
 	}
 }
 
+func TestLaunchPackageExportsStarterSurface(t *testing.T) {
+	names := exportedDecls(t)
+	for _, name := range []string{
+		"Starter",
+		"Host",
+		"Runtime",
+		"RuntimeSpec",
+		"RuntimeResult",
+		"StartedRuntime",
+		"SuspendHandler",
+		"SuspendSpec",
+		"ForegroundSpec",
+		"TimerEvent",
+		"Stats",
+	} {
+		if _, ok := names[name]; !ok {
+			t.Fatalf("launch should export %s", name)
+		}
+	}
+}
+
 func exportedDecls(t *testing.T) map[string]struct{} {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
