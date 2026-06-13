@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Deepen virtie's hotplug module so attach and detach are transaction-level operations. The consumer commandline interface stays the same, including the control-socket-first behavior and direct-QMP fallback. Internal Go package interfaces may break where that improves locality and leverage.
+Deepen virtie's hotplug module so attach and detach are transaction-level operations, while keeping hotplug isolated enough to remove or replace if a future VM runtime does not support it. The consumer commandline interface stays the same, including the control-socket-first behavior and direct-QMP fallback. Internal Go package interfaces may break where that improves locality, leverage, and feature isolation.
 
 ## Current Friction
 
@@ -17,7 +17,9 @@ The result is low locality: changing hotplug QMP behavior, guest mount behavior,
 
 ## Design
 
-Create a deeper hotplug transaction module. Callers ask the module to attach or detach a named manifest hotplug device. The implementation owns lookup, sequencing, state, rollback, host process handling, typed QMP operations, and guest mount intent.
+Create a deeper hotplug transaction module at the feature periphery. Callers ask the module to attach or detach a named manifest hotplug device. The implementation owns lookup, sequencing, state, rollback, host process handling, typed QMP operations, and guest mount intent.
+
+The compromise is that shared intermediary modules should not care about hotplugging. Runtime, control, process management, QMP transport, and guest-command execution should expose generic capabilities. Hotplug-specific policy composes those capabilities only at the edge where the `virtie hotplug` command and optional runtime control handler live.
 
 The commandline surface remains unchanged:
 
@@ -31,6 +33,8 @@ Internal package interfaces can change:
 - The exported shape of `hotplug.Runtime` can be replaced or reduced.
 - `runtime.HotplugQMP` can disappear.
 - The hotplug QMP seam should stop exposing raw JSON commands to callers.
+- `runtime.Dependencies` should stop carrying hotplug-named dependencies.
+- Core control routing should avoid hard-coded hotplug knowledge where a generic handler registration is practical.
 - Tests can move from duplicated manager/runtime coverage toward transaction-level coverage.
 
 ## Module Shape
@@ -52,18 +56,36 @@ The implementation hides:
 - QMP post-delete cleanup.
 - Guest mount and unmount command construction.
 
+## Feature Isolation
+
+Hotplug should be removable with limited edits:
+
+- Remove the hotplug command handler.
+- Remove the optional hotplug control handler registration.
+- Remove the hotplug transaction module and its tests.
+- Remove manifest hotplug lowering and validation only if the consumer contract changes later.
+
+Shared modules should remain useful without hotplug:
+
+- Runtime core manages process lifecycle, QMP lifecycle, suspend, stats, and foreground behavior.
+- Control core routes requests to registered handlers or reports unsupported operations.
+- QMP client remains a monitor transport and common VM lifecycle adapter.
+- Guest command execution remains a generic capability, not a hotplug-specific interface.
+
+This means hotplug-specific names should stay out of central runtime dependency structs. A launch can assemble a hotplug handler beside the runtime rather than embedding hotplug methods and dependencies inside the runtime core.
+
 ## Adapters
 
-Manager direct fallback and runtime control handling should share the same adapter assembly path as much as practical.
+Manager direct fallback and runtime control handling should share the same hotplug feature assembly path as much as practical.
 
 Adapters at the seam:
 
-- Host process starter: starts, stops, and signals virtiofsd process groups.
-- Socket waiter: waits for host-side socket readiness.
-- QMP device adapter: performs typed hotplug device operations against an existing QMP client.
-- Guest mount adapter: runs guest mount and unmount intent through QGA.
+- Host process adapter: starts, stops, and signals process groups using generic process facilities.
+- Socket readiness adapter: waits for host-side socket readiness using generic socket waiting.
+- QMP transport adapter: wraps an existing QMP client with hotplug-typed device operations inside the hotplug module.
+- Guest command adapter: runs guest commands through QGA without exposing hotplug-specific names to shared modules.
 
-The QMP adapter should be typed around hotplug concepts. Hotplug should not require callers or tests to pass arbitrary QMP JSON strings.
+The QMP adapter should be typed around hotplug concepts inside the hotplug module. Hotplug should not require callers or tests to pass arbitrary QMP JSON strings, and `qmpclient` should not gain broad hotplug policy unless another module also needs it.
 
 ## Data Flow
 
@@ -113,7 +135,14 @@ Manager and runtime tests should shrink to seam behavior:
 
 - Manager uses control socket first.
 - Manager falls back to direct QMP only for unavailable or unsupported control socket errors.
-- Runtime control dispatches attach and detach to the shared transaction module.
+- Runtime launch registers a hotplug handler only at the feature periphery.
+- Control reports unsupported hotplug operations when no hotplug handler is registered.
+
+Isolation tests should guard the compromise:
+
+- Runtime dependency structs do not expose hotplug-named fields.
+- Hotplug transaction tests do not require manager or runtime types.
+- QMP client tests do not need hotplug device concepts.
 
 ## Out Of Scope
 
@@ -122,7 +151,8 @@ Manager and runtime tests should shrink to seam behavior:
 - Adding new hotplug device kinds.
 - Implementing full guest-side network setup.
 - Implementing full guest-side block discovery or mount policy.
-- Reworking the entire `qmpclient` package beyond what hotplug transactions need.
+- Making `qmpclient` a hotplug-aware module.
+- Embedding hotplug feature policy in runtime core.
 
 ## Migration Notes
 
