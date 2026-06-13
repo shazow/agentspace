@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 )
 
 type fakeSuspendRequester struct {
@@ -20,8 +21,8 @@ func (r fakeSuspendRequester) RequestAndWait(context.Context) error {
 func TestMarkReadyAndStatus(t *testing.T) {
 	state := newState(control.RuntimeStarting)
 	markReady(state)
-	stats := NewStats(time.Now())
-	stats.MarkBootStarted(time.Now().Add(time.Second))
+	stats := launch.NewStats(time.Now())
+	stats.Timer(launch.TimerBootStarted, time.Now().Add(time.Second))
 	got := status(state, 7, control.StatusPaths{ControlSocket: "/tmp/virtie.sock"}, stats)
 	if got.State != control.RuntimeReady || got.CID != 7 || got.Paths.ControlSocket != "/tmp/virtie.sock" {
 		t.Fatalf("status: %#v", got)
