@@ -14,7 +14,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
-type Runtime struct {
+type Core struct {
 	manifest         *manifest.Manifest
 	plan             *launch.Plan
 	paths            launch.RuntimePaths
@@ -38,10 +38,10 @@ type Runtime struct {
 	control *control.Server
 }
 
-func New(config RuntimeConfig) *Runtime {
+func New(config RuntimeConfig) *Core {
 	deps := config.Dependencies
 	state := newState(control.RuntimeStarting)
-	return &Runtime{
+	return &Core{
 		manifest:         config.Manifest,
 		paths:            config.Paths,
 		plan:             config.Plan,
@@ -62,23 +62,23 @@ func New(config RuntimeConfig) *Runtime {
 	}
 }
 
-func (r *Runtime) SetReady() {
+func (r *Core) SetReady() {
 	markReady(r.state)
 }
 
-func (r *Runtime) MarkSavedSuspend() {
+func (r *Core) MarkSavedSuspend() {
 	r.savedSuspend.Store(true)
 }
 
-func (r *Runtime) SetWatchers(watchers executor.Group) {
+func (r *Core) SetWatchers(watchers executor.Group) {
 	r.watchers = watchers
 }
 
-func (r *Runtime) QMP() qmpclient.Client {
+func (r *Core) QMP() qmpclient.Client {
 	return r.qmp
 }
 
-func (r *Runtime) StartControl(ctx context.Context, options ...control.RouterOption) (*control.Server, error) {
+func (r *Core) StartControl(ctx context.Context, options ...control.RouterOption) (*control.Server, error) {
 	routerOptions := []control.RouterOption{
 		control.WithSuspend(r),
 		control.WithBalloon(r),
@@ -95,7 +95,7 @@ func (r *Runtime) StartControl(ctx context.Context, options ...control.RouterOpt
 	return controlServer, err
 }
 
-func (r *Runtime) Close() error {
+func (r *Core) Close() error {
 	return r.closer.Close(closeActions{
 		shutdownResources: shutdownResources{
 			Processes:     r.processes,
@@ -111,7 +111,7 @@ func (r *Runtime) Close() error {
 	})
 }
 
-func (r *Runtime) Wait(ctx context.Context, mode launch.WaitMode) error {
+func (r *Core) Wait(ctx context.Context, mode launch.WaitMode) error {
 	if r.plan == nil || r.processes == nil || r.waitForeground == nil {
 		return control.FailedPrecondition(errForegroundWaitNotConfigured)
 	}
@@ -123,7 +123,7 @@ func (r *Runtime) Wait(ctx context.Context, mode launch.WaitMode) error {
 	return err
 }
 
-func (r *Runtime) Status(ctx context.Context, req control.StatusRequest) (control.StatusResponse, error) {
+func (r *Core) Status(ctx context.Context, req control.StatusRequest) (control.StatusResponse, error) {
 	_ = ctx
 	return status(r.state, r.cid, control.StatusPaths{
 		ControlSocket:    r.paths.ControlSocket,
@@ -133,7 +133,7 @@ func (r *Runtime) Status(ctx context.Context, req control.StatusRequest) (contro
 	}, r.stats), nil
 }
 
-func (r *Runtime) Info(ctx context.Context, req control.InfoRequest) (control.InfoResponse, error) {
+func (r *Core) Info(ctx context.Context, req control.InfoRequest) (control.InfoResponse, error) {
 	if r.collectInfo == nil {
 		return control.InfoResponse{}, control.FailedPrecondition(errors.New("runtime info collector is not configured"))
 	}
@@ -144,7 +144,7 @@ func (r *Runtime) Info(ctx context.Context, req control.InfoRequest) (control.In
 	return control.InfoResponse{ProcessList: info.ProcessList}, nil
 }
 
-func (r *Runtime) Suspend(ctx context.Context, req control.SuspendRequest) (control.SuspendResponse, error) {
+func (r *Core) Suspend(ctx context.Context, req control.SuspendRequest) (control.SuspendResponse, error) {
 	if r.suspendRequests == nil {
 		return control.SuspendResponse{}, control.FailedPrecondition(errSuspendNotReady)
 	}
@@ -158,7 +158,7 @@ func (r *Runtime) Suspend(ctx context.Context, req control.SuspendRequest) (cont
 	return control.SuspendResponse{Saved: true, VMStatePath: launch.VMStatePath(r.manifest)}, nil
 }
 
-func (r *Runtime) Balloon(ctx context.Context, req control.BalloonRequest) (control.BalloonResponse, error) {
+func (r *Core) Balloon(ctx context.Context, req control.BalloonRequest) (control.BalloonResponse, error) {
 	resp, err := balloon(ctx, r.manifest.QEMU.Devices.Balloon, r.qmp, r.qmpTimeout, req)
 	if errors.Is(err, errBalloonNotConfigured) {
 		return control.BalloonResponse{}, control.FailedPrecondition(err)
@@ -166,6 +166,6 @@ func (r *Runtime) Balloon(ctx context.Context, req control.BalloonRequest) (cont
 	return resp, err
 }
 
-func (r *Runtime) isSavedSuspendExit(err error) bool {
+func (r *Core) isSavedSuspendExit(err error) bool {
 	return r.savedSuspendExit != nil && r.savedSuspendExit(err)
 }

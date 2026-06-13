@@ -148,7 +148,7 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *launch.Plan) (err er
 	return err
 }
 
-func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime *runtimepkg.Runtime, err error) {
+func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime *runtimepkg.Core, err error) {
 	stats := runtimepkg.NewStats(time.Now())
 	manifest := plan.Manifest
 
@@ -440,7 +440,7 @@ func (m *manager) waitForLaunchForeground(
 	ctx context.Context,
 	plan *launch.Plan,
 	stats *runtimepkg.Stats,
-	runtime *runtimepkg.Runtime,
+	runtime *runtimepkg.Core,
 	qmpClient qmpclient.Client,
 	lifecycle *launch.Lifecycle,
 	suspendHandler *launchSuspendHandler,
