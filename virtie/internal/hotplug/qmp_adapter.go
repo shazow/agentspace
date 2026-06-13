@@ -5,14 +5,13 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
-	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
 // QMPDeviceAdapter adapts a generic QMP client to hotplug device operations.
 type QMPDeviceAdapter struct {
 	Client interface {
-		qmpclient.RawRunner
-		qmpclient.DeviceController
+		RunRaw(time.Duration, string) error
+		DeviceDelAndWait(time.Duration, string) error
 	}
 	Timeout time.Duration
 }
@@ -23,6 +22,9 @@ func (a QMPDeviceAdapter) AttachDevice(ctx context.Context, device hotplugtypes.
 	}
 	successful := 0
 	for _, command := range attachCommands(device, bus) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if err := a.Client.RunRaw(a.Timeout, command); err != nil {
 			a.rollbackAttach(ctx, device, successful)
 			return nil, err
@@ -43,6 +45,9 @@ func (a QMPDeviceAdapter) DetachDevice(ctx context.Context, device hotplugtypes.
 		return err
 	}
 	for _, command := range detachPostDeviceDelCommands(device) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := a.Client.RunRaw(a.Timeout, command); err != nil {
 			return err
 		}
