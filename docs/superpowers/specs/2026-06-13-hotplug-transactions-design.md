@@ -8,8 +8,8 @@ Deepen virtie's hotplug module so attach and detach are transaction-level operat
 
 Hotplug behavior is split across shallow modules:
 
-- `virtie/internal/manager/hotplug.go` assembles a `hotplug.Runtime` for direct fallback.
-- `virtie/internal/manager/runtime/concrete_hotplug.go` assembles the same runtime for control-socket handling.
+- `virtie/internal/manager/hotplug.go` assembles a hotplug transaction runner for direct fallback.
+- `virtie/internal/manager/runtime/concrete_hotplug.go` assembles the same runner for control-socket handling.
 - `virtie/internal/hotplug/hotplug.go` owns most sequencing, but its QMP interface is raw JSON plus `DeviceDel`.
 - Guest mount commands, QEMU device IDs, rollback order, state files, and process cleanup are visible across seams.
 
@@ -30,7 +30,7 @@ The commandline surface remains unchanged:
 
 Internal package interfaces can change:
 
-- The exported shape of `hotplug.Runtime` can be replaced or reduced.
+- The exported hotplug transaction runner shape can be replaced or reduced.
 - `runtime.HotplugQMP` can disappear.
 - The hotplug QMP seam should stop exposing raw JSON commands to callers.
 - `runtime.Dependencies` should stop carrying hotplug-named dependencies.

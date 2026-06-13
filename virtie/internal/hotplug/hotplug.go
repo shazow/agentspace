@@ -90,11 +90,11 @@ func (r Runner) hotplugRegistry(ctx context.Context) (hotplugRegistry, error) {
 
 func (r Runner) hotplug(ctx context.Context, device hotplugtypes.Device, index int) (hotplugDevice, error) {
 	base := hotplugBase{
-		ctx:     ctx,
-		runtime: &r,
-		id:      device.ID,
-		kind:    device.Kind,
-		bus:     fmt.Sprintf("pcie.hotplug.%d", index),
+		ctx:    ctx,
+		runner: &r,
+		id:     device.ID,
+		kind:   device.Kind,
+		bus:    fmt.Sprintf("pcie.hotplug.%d", index),
 	}
 	switch device.Kind {
 	case hotplugtypes.KindVirtioFS:
@@ -126,11 +126,11 @@ func (r hotplugRegistry) lookup(id string) (hotplugDevice, error) {
 }
 
 type hotplugBase struct {
-	ctx     context.Context
-	runtime *Runner
-	id      string
-	kind    hotplugtypes.Kind
-	bus     string
+	ctx    context.Context
+	runner *Runner
+	id     string
+	kind   hotplugtypes.Kind
+	bus    string
 }
 
 func (h hotplugBase) ID() string {
@@ -141,7 +141,7 @@ func (h hotplugBase) attach(device hotplugtypes.Device, attachHost func() (*exec
 	if detachHost == nil {
 		detachHost = func(*executor.Process) {}
 	}
-	statePath, err := hotplugtypes.StatePath(h.runtime.StateDir, h.id)
+	statePath, err := hotplugtypes.StatePath(h.runner.StateDir, h.id)
 	if err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func (h hotplugBase) attach(device hotplugtypes.Device, attachHost func() (*exec
 	if proc != nil {
 		state.PID = proc.PID()
 	}
-	rollbackQMP, err := h.runtime.QMP.AttachDevice(h.ctx, device, h.bus)
+	rollbackQMP, err := h.runner.QMP.AttachDevice(h.ctx, device, h.bus)
 	if err != nil {
 		detachHost(proc)
 		return err
@@ -171,13 +171,13 @@ func (h hotplugBase) attach(device hotplugtypes.Device, attachHost func() (*exec
 	if rollbackQMP == nil {
 		rollbackQMP = func(context.Context) {}
 	}
-	if err := h.runtime.attachGuest(h.ctx, device); err != nil {
+	if err := h.runner.attachGuest(h.ctx, device); err != nil {
 		rollbackQMP(h.ctx)
 		detachHost(proc)
 		return err
 	}
 	if err := hotplugtypes.WriteState(statePath, state); err != nil {
-		_ = h.runtime.detachGuest(h.ctx, device)
+		_ = h.runner.detachGuest(h.ctx, device)
 		rollbackQMP(h.ctx)
 		detachHost(proc)
 		return err
@@ -186,7 +186,7 @@ func (h hotplugBase) attach(device hotplugtypes.Device, attachHost func() (*exec
 }
 
 func (h hotplugBase) detach(device hotplugtypes.Device, cleanup func(hotplugtypes.State) error) error {
-	statePath, err := hotplugtypes.StatePath(h.runtime.StateDir, h.id)
+	statePath, err := hotplugtypes.StatePath(h.runner.StateDir, h.id)
 	if err != nil {
 		return err
 	}
@@ -201,10 +201,10 @@ func (h hotplugBase) detach(device hotplugtypes.Device, cleanup func(hotplugtype
 		return fmt.Errorf("hotplug state %q is kind %q, not current manifest kind %q", statePath, state.Kind, h.kind)
 	}
 
-	if err := h.runtime.detachGuest(h.ctx, device); err != nil {
+	if err := h.runner.detachGuest(h.ctx, device); err != nil {
 		return err
 	}
-	if err := h.runtime.QMP.DetachDevice(h.ctx, device); err != nil {
+	if err := h.runner.QMP.DetachDevice(h.ctx, device); err != nil {
 		return err
 	}
 	if cleanup != nil {
@@ -230,7 +230,7 @@ func (h hotplugVirtioFS) Attach() error {
 func (h hotplugVirtioFS) Detach() error {
 	return h.detach(h.device(), func(state hotplugtypes.State) error {
 		if state.PID > 0 {
-			if err := h.runtime.terminatePID(state.PID); err != nil {
+			if err := h.runner.terminatePID(state.PID); err != nil {
 				return err
 			}
 		}
@@ -246,11 +246,11 @@ func (h hotplugVirtioFS) device() hotplugtypes.Device {
 }
 
 func (h hotplugVirtioFS) attachHost() (*executor.Process, error) {
-	return h.runtime.attachVirtioFSHost(h.ctx, h.device())
+	return h.runner.attachVirtioFSHost(h.ctx, h.device())
 }
 
 func (h hotplugVirtioFS) detachHost(proc *executor.Process) {
-	h.runtime.rollbackHost(proc)
+	h.runner.rollbackHost(proc)
 }
 
 type hotplugNet struct {
