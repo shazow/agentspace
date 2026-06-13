@@ -86,11 +86,10 @@ launch process, while other `virtie` commands talk to that process through
   processes, foreground wait, close hooks, QMP client, suspend coordinator, and
   dependencies. Startup lifecycle actions such as `SetReady` and
   `StartControl` remain explicit.
-- `Task` and `TaskGroup` own foreground task cancellation and ordered shutdown.
 - `State` provides consistent status output; launch stats are mapped into
   control responses from `manager/launch`.
-- `Closer`, `CloseActions`, `StartupFailureActions`, and
-  `ShutdownResources` keep teardown ordering idempotent and testable.
+- `Closer`, `CloseActions`, and `ShutdownResources` keep already-started
+  runtime teardown ordering idempotent and testable.
 - Concrete control methods map runtime state, info, suspend, and balloon
   behavior into typed `manager/control` responses. Hotplug is registered from
   the manager/control periphery so the feature remains removable.
