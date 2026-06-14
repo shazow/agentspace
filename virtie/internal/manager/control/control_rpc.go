@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -322,7 +323,9 @@ func rpcError(err error) *RPCError {
 // Server serves control socket requests for a router.
 type Server struct {
 	handler  *Router
+	mu       sync.Mutex
 	listener net.Listener
+	closed   bool
 	done     chan struct{}
 }
 
@@ -373,9 +376,26 @@ func (s *Server) Serve(l net.Listener) error {
 	if s.handler == nil {
 		return fmt.Errorf("control handler is required")
 	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return l.Close()
+	}
 	s.listener = l
 	s.done = make(chan struct{})
-	defer close(s.done)
+	done := s.done
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		if s.listener == l {
+			s.listener = nil
+		}
+		if s.done == done {
+			s.done = nil
+		}
+		s.mu.Unlock()
+		close(done)
+	}()
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -390,10 +410,17 @@ func (s *Server) Serve(l net.Listener) error {
 
 // Close stops accepting new control socket connections.
 func (s *Server) Close() error {
-	if s == nil || s.listener == nil {
+	if s == nil {
 		return nil
 	}
-	return s.listener.Close()
+	s.mu.Lock()
+	s.closed = true
+	listener := s.listener
+	s.mu.Unlock()
+	if listener == nil {
+		return nil
+	}
+	return listener.Close()
 }
 
 func (s *Server) handleConn(conn net.Conn) {

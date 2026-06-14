@@ -61,6 +61,29 @@ func newTestLaunchLifecycle() *launch.Lifecycle {
 	return launch.NewLifecycle(nil, func() {}, func() {})
 }
 
+func createStaleUnixSocket(t *testing.T, path string) {
+	t.Helper()
+	if err := createStaleUnixSocketPath(path); err != nil {
+		t.Fatalf("create stale unix socket %q: %v", path, err)
+	}
+}
+
+func createStaleUnixSocketPath(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(path)
+	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Bind(fd, &syscall.SockaddrUnix{Name: path}); err != nil {
+		_ = syscall.Close(fd)
+		return err
+	}
+	return syscall.Close(fd)
+}
+
 type fakeSuspendHandler struct {
 	err error
 }
@@ -287,9 +310,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cleanupPath), 0o755); err != nil {
 		t.Fatalf("create cleanup directory: %v", err)
 	}
-	if err := os.WriteFile(cleanupPath, []byte("cleanup"), 0o600); err != nil {
-		t.Fatalf("write cleanup file: %v", err)
-	}
+	createStaleUnixSocket(t, cleanupPath)
 	if err := os.WriteFile(untouchedPath, []byte("external"), 0o600); err != nil {
 		t.Fatalf("write external path: %v", err)
 	}
@@ -306,11 +327,9 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	waiter := &fakeSocketWaiter{
 		callback: func(paths []string) error {
 			for _, path := range paths {
-				file, err := os.Create(path)
-				if err != nil {
+				if err := createStaleUnixSocketPath(path); err != nil {
 					return err
 				}
-				file.Close()
 			}
 			return nil
 		},
@@ -564,12 +583,7 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 		},
 	}
 	cleanupPath := filepath.Join(tmpDir, ".virtie", "cleanup.sock")
-	if err := os.MkdirAll(filepath.Dir(cleanupPath), 0o755); err != nil {
-		t.Fatalf("create cleanup directory: %v", err)
-	}
-	if err := os.WriteFile(cleanupPath, []byte("cleanup"), 0o600); err != nil {
-		t.Fatalf("write cleanup file: %v", err)
-	}
+	createStaleUnixSocket(t, cleanupPath)
 
 	runner := &launchRunner{
 		startErrors: map[string]error{
@@ -669,11 +683,10 @@ func TestManagerLaunchRemovesCleanupPathAfterQMPStartupFailure(t *testing.T) {
 	waiter := &fakeSocketWaiter{
 		callback: func(paths []string) error {
 			if len(paths) == 1 && paths[0] == cleanupPath {
-				file, err := os.Create(cleanupPath)
-				if err != nil {
+				if err := createStaleUnixSocketPath(cleanupPath); err != nil {
 					return err
 				}
-				return file.Close()
+				return nil
 			}
 			return errors.New("qmp did not start")
 		},
@@ -707,15 +720,13 @@ func TestManagerLaunchRemovesCleanupPathAfterQMPStartupFailure(t *testing.T) {
 	}
 }
 
-func TestRemoveSocketPathsIgnoresMissing(t *testing.T) {
+func TestRemoveStaleSocketsIgnoresMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "cleanup.sock")
 	missingPath := filepath.Join(tmpDir, "missing.sock")
-	if err := os.WriteFile(filePath, []byte("cleanup"), 0o600); err != nil {
-		t.Fatalf("write cleanup file: %v", err)
-	}
+	createStaleUnixSocket(t, filePath)
 
-	if err := launch.RemoveSocketPaths([]string{filePath, missingPath}); err != nil {
+	if err := launch.RemoveStaleSockets(filePath, missingPath); err != nil {
 		t.Fatalf("remove socket paths: %v", err)
 	}
 	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
@@ -4626,7 +4637,7 @@ func (w *fakeSocketWaiter) Wait(ctx context.Context, socketPaths []string) error
 	w.calls++
 	w.paths = append(w.paths, append([]string(nil), socketPaths...))
 	if !w.noAutoSSHReady && len(socketPaths) == 1 && filepath.Base(socketPaths[0]) == "ready.sock" {
-		return startFakeSSHReadySocket(ctx, socketPaths[0])
+		return startFakeSSHReadySocket(socketPaths[0])
 	}
 	if w.callback == nil {
 		return nil
@@ -4634,7 +4645,7 @@ func (w *fakeSocketWaiter) Wait(ctx context.Context, socketPaths []string) error
 	return w.callback(socketPaths)
 }
 
-func startFakeSSHReadySocket(_ context.Context, path string) error {
+func startFakeSSHReadySocket(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -4651,7 +4662,6 @@ func startFakeSSHReadySocket(_ context.Context, path string) error {
 		}
 		defer conn.Close()
 		_, _ = io.WriteString(conn, SSHReadyToken+"\n")
-		time.Sleep(100 * time.Millisecond)
 	}()
 	return nil
 }
@@ -4702,6 +4712,9 @@ func (d *fakeSSHReadyDialer) Dial(ctx context.Context, socketPath string, timeou
 	d.attempts++
 	if d.record != nil {
 		d.record("ssh-ready-dial:" + socketPath)
+	}
+	if conn, err := net.Dial("unix", socketPath); err == nil {
+		_ = conn.Close()
 	}
 	if d.err != nil {
 		return nil, d.err
