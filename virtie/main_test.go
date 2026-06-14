@@ -5,9 +5,60 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestOptionsDeclaresCommands(t *testing.T) {
+	tests := []struct {
+		field           string
+		command         string
+		description     string
+		longDescription string
+	}{
+		{
+			field:           "Launch",
+			command:         "launch",
+			description:     "Launch a virtiofs + ssh sandbox session",
+			longDescription: "Start configured host-side run processes, launch QEMU directly, then optionally attach over ssh.",
+		},
+		{
+			field:           "Suspend",
+			command:         "suspend",
+			description:     "Suspend a running sandbox session",
+			longDescription: "Save QEMU state to disk and exit the launch session.",
+		},
+		{
+			field:           "Hotplug",
+			command:         "hotplug",
+			description:     "Attach or detach a predefined hotplug device",
+			longDescription: "Attach or detach a device described under manifest [hotplug].",
+		},
+	}
+
+	optionsType := reflect.TypeOf(Options{})
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			field, ok := optionsType.FieldByName(tt.field)
+			if !ok {
+				t.Fatalf("Options is missing %s command field", tt.field)
+			}
+			if field.Type.Kind() != reflect.Struct || field.Type.Name() != "" {
+				t.Fatalf("%s field type = %s, want anonymous struct in Options", tt.field, field.Type)
+			}
+			if got := field.Tag.Get("command"); got != tt.command {
+				t.Fatalf("%s command tag = %q, want %q", tt.field, got, tt.command)
+			}
+			if got := field.Tag.Get("description"); got != tt.description {
+				t.Fatalf("%s description tag = %q, want %q", tt.field, got, tt.description)
+			}
+			if got := field.Tag.Get("long-description"); got != tt.longDescription {
+				t.Fatalf("%s long-description tag = %q, want %q", tt.field, got, tt.longDescription)
+			}
+		})
+	}
+}
 
 func TestParserRejectsInvalidCommandLines(t *testing.T) {
 	tests := []struct {
@@ -44,12 +95,12 @@ func TestParserRejectsInvalidCommandLines(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := newParser().ParseArgs(tt.args)
+			err := run(tt.args)
 			if err == nil {
-				t.Fatalf("ParseArgs(%v) succeeded, expected error containing %q", tt.args, tt.wantErr)
+				t.Fatalf("run(%v) succeeded, expected error containing %q", tt.args, tt.wantErr)
 			}
 			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("ParseArgs(%v) error %q does not contain %q", tt.args, err, tt.wantErr)
+				t.Fatalf("run(%v) error %q does not contain %q", tt.args, err, tt.wantErr)
 			}
 		})
 	}
@@ -139,18 +190,18 @@ func TestParserAcceptsSharedOptionsBeforeOrAfterSubcommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := newParser().ParseArgs(tt.args)
+			err := run(tt.args)
 			if err == nil {
-				t.Fatalf("ParseArgs(%v) succeeded, expected manifest load error", tt.args)
+				t.Fatalf("run(%v) succeeded, expected manifest load error", tt.args)
 			}
 			if strings.Contains(err.Error(), "unknown flag `manifest'") {
-				t.Fatalf("ParseArgs(%v) rejected supported manifest placement: %v", tt.args, err)
+				t.Fatalf("run(%v) rejected supported manifest placement: %v", tt.args, err)
 			}
 			if strings.Contains(err.Error(), "unknown flag `v'") {
-				t.Fatalf("ParseArgs(%v) rejected supported verbose placement: %v", tt.args, err)
+				t.Fatalf("run(%v) rejected supported verbose placement: %v", tt.args, err)
 			}
 			if !strings.Contains(err.Error(), `open manifest`) || !strings.Contains(err.Error(), manifestPath) {
-				t.Fatalf("ParseArgs(%v) did not parse manifest path, got %v", tt.args, err)
+				t.Fatalf("run(%v) did not parse manifest path, got %v", tt.args, err)
 			}
 		})
 	}

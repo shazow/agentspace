@@ -21,21 +21,30 @@ import (
 type Options struct {
 	Manifest string `long:"manifest" value-name:"MANIFEST" description:"Path to the virtie manifest"`
 	Verbose  []bool `short:"v" long:"verbose" description:"Show verbose logging."`
+
+	Launch struct {
+		Resume              string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
+		SSH                 bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
+		AlwaysDeleteSockets bool   `long:"always-delete-sockets" description:"Delete stale socket files without prompting"`
+
+		Args struct {
+			RemoteCommand []string `positional-arg-name:"remote-cmd"`
+		} `positional-args:"yes"`
+	} `command:"launch" description:"Launch a virtiofs + ssh sandbox session" long-description:"Start configured host-side run processes, launch QEMU directly, then optionally attach over ssh."`
+
+	Suspend struct{} `command:"suspend" description:"Suspend a running sandbox session" long-description:"Save QEMU state to disk and exit the launch session."`
+
+	Hotplug struct {
+		Detach bool `long:"detach" description:"Detach the hotplug device instead of attaching it"`
+
+		Args struct {
+			ID string `positional-arg-name:"id" required:"yes"`
+		} `positional-args:"yes"`
+	} `command:"hotplug" description:"Attach or detach a predefined hotplug device" long-description:"Attach or detach a device described under manifest [hotplug]."`
 }
 
-type launchCommand struct {
-	options             *Options
-	Resume              string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
-	SSH                 bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
-	AlwaysDeleteSockets bool   `long:"always-delete-sockets" description:"Delete stale socket files without prompting"`
-
-	Args struct {
-		RemoteCommand []string `positional-arg-name:"remote-cmd"`
-	} `positional-args:"yes"`
-}
-
-func (c *launchCommand) Execute(args []string) error {
-	if len(c.Args.RemoteCommand) > 0 && !c.SSH {
+func runLaunch(options *Options) error {
+	if len(options.Launch.Args.RemoteCommand) > 0 && !options.Launch.SSH {
 		return fmt.Errorf("remote command arguments require --ssh")
 	}
 
@@ -44,33 +53,29 @@ func (c *launchCommand) Execute(args []string) error {
 	manifestLogger := discardLogger
 	manager.SetLogger(discardLogger)
 	balloon.SetLogger(discardLogger)
-	if len(c.options.Verbose) > 0 {
+	if len(options.Verbose) > 0 {
 		manifestLogger = baseLogger.With("package", "manifest")
 		manager.SetLogger(baseLogger.With("package", "manager"))
 	}
-	if len(c.options.Verbose) > 1 {
+	if len(options.Verbose) > 1 {
 		balloon.SetLogger(baseLogger.With("package", "balloon"))
 	}
 
-	manifest, err := loadLaunchManifest(c.options.Manifest, manifestLogger)
+	manifest, err := loadLaunchManifest(options.Manifest, manifestLogger)
 	if err != nil {
 		return err
 	}
 
-	return manager.LaunchWithOptions(context.Background(), manifest, c.Args.RemoteCommand, manager.LaunchOptions{
-		Resume:              manager.ResumeMode(c.Resume),
-		SSH:                 c.SSH,
-		Verbosity:           len(c.options.Verbose),
-		AlwaysDeleteSockets: c.AlwaysDeleteSockets,
+	return manager.LaunchWithOptions(context.Background(), manifest, options.Launch.Args.RemoteCommand, manager.LaunchOptions{
+		Resume:              manager.ResumeMode(options.Launch.Resume),
+		SSH:                 options.Launch.SSH,
+		Verbosity:           len(options.Verbose),
+		AlwaysDeleteSockets: options.Launch.AlwaysDeleteSockets,
 	})
 }
 
-type suspendCommand struct {
-	options *Options
-}
-
-func (c *suspendCommand) Execute(args []string) error {
-	manifest, err := loadManifest(c.options.Manifest)
+func runSuspend(options *Options) error {
+	manifest, err := loadManifest(options.Manifest)
 	if err != nil {
 		return err
 	}
@@ -81,26 +86,17 @@ func (c *suspendCommand) Execute(args []string) error {
 	return manager.Suspend(ctx, manifest)
 }
 
-type hotplugCommand struct {
-	options *Options
-	Detach  bool `long:"detach" description:"Detach the hotplug device instead of attaching it"`
-
-	Args struct {
-		ID string `positional-arg-name:"id" required:"yes"`
-	} `positional-args:"yes"`
-}
-
-func (c *hotplugCommand) Execute(args []string) error {
+func runHotplug(options *Options) error {
 	baseLogger := slog.Default()
 	discardLogger := slog.New(slog.DiscardHandler)
 	manifestLogger := discardLogger
 	manager.SetLogger(discardLogger)
-	if len(c.options.Verbose) > 0 {
+	if len(options.Verbose) > 0 {
 		manifestLogger = baseLogger.With("package", "manifest")
 		manager.SetLogger(baseLogger.With("package", "manager"))
 	}
 
-	manifest, err := loadLaunchManifest(c.options.Manifest, manifestLogger)
+	manifest, err := loadLaunchManifest(options.Manifest, manifestLogger)
 	if err != nil {
 		return err
 	}
@@ -108,7 +104,7 @@ func (c *hotplugCommand) Execute(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	return manager.Hotplug(ctx, manifest, c.Args.ID, c.Detach)
+	return manager.Hotplug(ctx, manifest, options.Hotplug.Args.ID, options.Hotplug.Detach)
 }
 
 func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {
@@ -223,9 +219,7 @@ func writeManifestWorkingDir(path string, data []byte, workingDir string) error 
 }
 
 func main() {
-	parser := newParser()
-
-	if _, err := parser.Parse(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		var flagsErr *flags.Error
 		if errors.As(err, &flagsErr) && flagsErr.Type == flags.ErrHelp {
 			os.Exit(0)
@@ -236,39 +230,30 @@ func main() {
 	}
 }
 
-func newParser() *flags.Parser {
+func run(args []string) error {
 	opts := &Options{}
-	parser := flags.NewParser(opts, flags.Default|flags.PassDoubleDash)
+	parser := newParserForOptions(opts)
 
-	if _, err := parser.AddCommand(
-		"launch",
-		"Launch a virtiofs + ssh sandbox session",
-		"Start configured host-side run processes, launch QEMU directly, then optionally attach over ssh.",
-		&launchCommand{options: opts},
-	); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	if _, err := parser.ParseArgs(args); err != nil {
+		return err
 	}
 
-	if _, err := parser.AddCommand(
-		"suspend",
-		"Suspend a running sandbox session",
-		"Save QEMU state to disk and exit the launch session.",
-		&suspendCommand{options: opts},
-	); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	switch parser.Active.Name {
+	case "launch":
+		return runLaunch(opts)
+	case "suspend":
+		return runSuspend(opts)
+	case "hotplug":
+		return runHotplug(opts)
+	default:
+		return fmt.Errorf("unknown command %q", parser.Active.Name)
 	}
+}
 
-	if _, err := parser.AddCommand(
-		"hotplug",
-		"Attach or detach a predefined hotplug device",
-		"Attach or detach a device described under manifest [hotplug].",
-		&hotplugCommand{options: opts},
-	); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+func newParser() *flags.Parser {
+	return newParserForOptions(&Options{})
+}
 
-	return parser
+func newParserForOptions(opts *Options) *flags.Parser {
+	return flags.NewParser(opts, flags.Default|flags.PassDoubleDash)
 }
