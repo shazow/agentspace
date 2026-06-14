@@ -68,9 +68,6 @@ func TestCloseActionsRunInShutdownOrder(t *testing.T) {
 				calls = append(calls, "qmp")
 				return nil
 			}),
-			Stats: func() {
-				calls = append(calls, "stats")
-			},
 		},
 		Cleanup: func() error {
 			calls = append(calls, "cleanup")
@@ -81,7 +78,7 @@ func TestCloseActionsRunInShutdownOrder(t *testing.T) {
 	if err := actions.Run(); err != nil {
 		t.Fatalf("run close actions: %v", err)
 	}
-	want := []string{"writeback", "qmp", "cleanup", "stats"}
+	want := []string{"writeback", "qmp", "cleanup"}
 	if len(calls) != len(want) {
 		t.Fatalf("calls: got %#v want %#v", calls, want)
 	}

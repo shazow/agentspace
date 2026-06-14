@@ -124,14 +124,17 @@ func (m *manager) planLaunch(spec launch.Spec) (*launch.Plan, error) {
 }
 
 func (m *manager) launchWithPlan(ctx context.Context, plan *launch.Plan) (err error) {
-	runtime, err := m.startWithPlan(ctx, plan)
+	runtime, stats, err := m.startWithPlan(ctx, plan)
 	if err != nil {
 		if launch.IsSavedSuspendExit(err) {
 			return nil
 		}
 		return err
 	}
-	defer joinDeferredError(&err, runtime.Close)
+	defer func() {
+		joinDeferredError(&err, runtime.Close)
+		m.writeLaunchStats(stats)
+	}()
 	err = runtime.Wait(ctx, plan.Options.WaitMode())
 	if launch.IsSavedSuspendExit(err) {
 		return nil

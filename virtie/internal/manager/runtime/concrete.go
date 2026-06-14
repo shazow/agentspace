@@ -31,7 +31,6 @@ type Core struct {
 	savedSuspendExit func(error) bool
 	writeBack        func(context.Context) error
 	cleanup          func() error
-	closeStats       func()
 	savedSuspend     atomic.Bool
 	watchers         executor.Group
 
@@ -61,7 +60,6 @@ func New(config RuntimeConfig) *Core {
 		shutdownDelay:    config.ShutdownDelay,
 		writeBack:        config.WriteBack,
 		cleanup:          config.Cleanup,
-		closeStats:       config.CloseStats,
 		state:            state,
 		closer:           newCloser(state),
 	}
@@ -106,7 +104,6 @@ func (r *Core) Close() error {
 			Processes:     r.processes,
 			ShutdownDelay: r.shutdownDelay,
 			QMP:           r.qmp,
-			Stats:         r.closeStats,
 		},
 		WriteBack:        r.writeBack,
 		WriteBackTimeout: r.qmpTimeout,

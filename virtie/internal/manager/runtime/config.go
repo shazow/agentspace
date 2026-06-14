@@ -25,7 +25,6 @@ type RuntimeConfig struct {
 	WaitForeground   func(context.Context, *launch.Plan) error
 	WriteBack        func(context.Context) error
 	Cleanup          func() error
-	CloseStats       func()
 	QMPTimeout       time.Duration
 	Logger           *slog.Logger
 	SavedSuspendExit func(error) bool

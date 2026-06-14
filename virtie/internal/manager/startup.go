@@ -16,12 +16,12 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
-func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started *runtimepkg.Core, err error) {
+func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started *runtimepkg.Core, stats *launch.Stats, err error) {
 	if plan == nil {
-		return nil, &launch.StageError{Stage: "preflight", Err: errors.New("launch plan is required")}
+		return nil, nil, &launch.StageError{Stage: "preflight", Err: errors.New("launch plan is required")}
 	}
 
-	stats := launch.NewStats(time.Now())
+	stats = launch.NewStats(time.Now())
 	launchCtx, cancelLaunch := context.WithCancel(ctx)
 	lifecycle := launch.NewSignalLifecycle(m.signals, cancelLaunch)
 	runtimeLock, err := launch.AcquireRuntimeLock(launch.RuntimeLockSpec{
@@ -33,11 +33,11 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 		PID:         os.Getpid(),
 	})
 	if err != nil {
-		return nil, &launch.StageError{Stage: "preflight", Err: err}
+		return nil, nil, &launch.StageError{Stage: "preflight", Err: err}
 	}
 	if runtimeLock == nil {
 		stopLaunchLifecycle(lifecycle, cancelLaunch)
-		return nil, &launch.StageError{Stage: "preflight", Err: errors.New("runtime lock is required")}
+		return nil, nil, &launch.StageError{Stage: "preflight", Err: errors.New("runtime lock is required")}
 	}
 
 	processes := launch.NewProcessSet()
@@ -45,12 +45,6 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 	writeBackOnExit := false
 	socketCleanupReached := false
 	cleanupRuntime := func() error { return runtimeLock.Cleanup() }
-	closeStats := func() {
-		stats.Timer(launch.TimerCompleted, time.Now())
-		if output := m.outputWriter(); output != nil {
-			fmt.Fprintf(output, "stats: %s\n", stats.String())
-		}
-	}
 	defer func() {
 		if err == nil {
 			return
@@ -60,6 +54,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 				started.MarkSavedSuspend()
 			}
 			err = errors.Join(err, started.Close())
+			m.writeLaunchStats(stats)
 			return
 		}
 
@@ -72,54 +67,54 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 		if socketCleanupReached {
 			cleanupErr = errors.Join(cleanupErr, launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()))
 		}
-		closeStats()
+		m.writeLaunchStats(stats)
 		err = errors.Join(err, cleanupErr)
 	}()
 
 	cid, err := launch.AcquireCID(plan.Manifest, plan.ResumeState, m.vsockCIDChecker)
 	if err != nil {
-		return nil, &launch.StageError{Stage: "preflight", Err: err}
+		return nil, stats, &launch.StageError{Stage: "preflight", Err: err}
 	}
 	qemuCmd, err := buildQEMUCommand(plan.Manifest, cid, plan.ResumeState != nil)
 	if err != nil {
-		return nil, &launch.StageError{Stage: "preflight", Err: err}
+		return nil, stats, &launch.StageError{Stage: "preflight", Err: err}
 	}
 	if qemuCmd == nil {
-		return nil, &launch.StageError{Stage: "preflight", Err: errors.New("qemu command is required")}
+		return nil, stats, &launch.StageError{Stage: "preflight", Err: errors.New("qemu command is required")}
 	}
 	plan.CID = cid
 	plan.QEMUCommand = qemuCmd
 	if err := m.prepareRuntimeState(plan); err != nil {
-		return nil, &launch.StageError{Stage: "preflight", Err: err}
+		return nil, stats, &launch.StageError{Stage: "preflight", Err: err}
 	}
 	socketCleanupReached = true
 
 	runProcesses, err := m.startRuns(plan.CID, plan.Manifest)
 	if err != nil {
-		return nil, err
+		return nil, stats, err
 	}
 	processes.AddGroup(runProcesses)
 	if len(plan.VirtioFSSocketPaths) > 0 {
 		if err := m.waitForSockets(launchCtx, "virtiofs startup", plan.VirtioFSSocketPaths, processes.Watchers()); err != nil {
-			return nil, err
+			return nil, stats, err
 		}
 	}
 
 	stats.Timer(launch.TimerBootStarted, time.Now())
 	qemu, err := m.startQEMU(plan.QEMUCommand)
 	if err != nil {
-		return nil, launch.WrapFixedStage("vm startup")(err)
+		return nil, stats, launch.WrapFixedStage("vm startup")(err)
 	}
 	if qemu == nil {
-		return nil, launch.WrapFixedStage("vm startup")(errors.New("qemu process is required"))
+		return nil, stats, launch.WrapFixedStage("vm startup")(errors.New("qemu process is required"))
 	}
 	processes.SetQEMU(qemu)
 	qmp, err = m.waitForQMP(launchCtx, plan.Paths.QMPSocket, processes.Watchers())
 	if err != nil {
-		return nil, err
+		return nil, stats, err
 	}
 	if qmp == nil {
-		return nil, launch.WrapFixedStage("vm startup")(errors.New("qmp client is required"))
+		return nil, stats, launch.WrapFixedStage("vm startup")(errors.New("qmp client is required"))
 	}
 	qmp = qmpclient.Serialized(qmp)
 	stats.Timer(launch.TimerQMPReady, time.Now())
@@ -129,7 +124,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 
 	if plan.ResumeState != nil {
 		if err := m.restoreLaunchRuntime(launchCtx, plan, qmp); err != nil {
-			return nil, err
+			return nil, stats, err
 		}
 		writeBackOnExit = true
 	}
@@ -160,7 +155,6 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 		Cleanup: func() error {
 			return errors.Join(launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
 		},
-		CloseStats:       closeStats,
 		QMPTimeout:       m.effectiveQMPCommandTimeout(),
 		Logger:           m.logger,
 		SavedSuspendExit: launch.IsSavedSuspendExit,
@@ -174,14 +168,14 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 	})
 	started.SetReady()
 	if _, err := started.StartControl(launchCtx, controlpkg.WithHotplug(m.hotplugFeature(plan.Manifest, started.QMP()))); err != nil {
-		return nil, launch.WrapFixedStage("control startup")(err)
+		return nil, stats, launch.WrapFixedStage("control startup")(err)
 	}
 	if err := launch.HandleQueuedSuspend(launchCtx, lifecycle, suspendHandler.Handle); err != nil {
-		return nil, err
+		return nil, stats, err
 	}
 	if plan.ResumeState == nil {
 		if err := m.writeGuestFiles(launchCtx, plan.Manifest, stats, processes.Watchers()); err != nil {
-			return nil, err
+			return nil, stats, err
 		}
 		stats.Timer(launch.TimerFilesReady, time.Now())
 		if plan.Paths.SSHReadySocket != "" {
@@ -189,13 +183,23 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 				m.logger.Info("waiting for ssh readiness")
 			}
 			if err := m.waitForSSHReady(launchCtx, plan.Paths.SSHReadySocket, processes.Watchers()); err != nil {
-				return nil, err
+				return nil, stats, err
 			}
 		}
 		stats.Timer(launch.TimerSSHReady, time.Now())
 		writeBackOnExit = true
 	}
-	return started, nil
+	return started, stats, nil
+}
+
+func (m *manager) writeLaunchStats(stats *launch.Stats) {
+	if stats == nil {
+		return
+	}
+	stats.Timer(launch.TimerCompleted, time.Now())
+	if output := m.outputWriter(); output != nil {
+		fmt.Fprintf(output, "stats: %s\n", stats.String())
+	}
 }
 
 func stopLaunchLifecycle(lifecycle *launch.Lifecycle, cancel context.CancelFunc) {

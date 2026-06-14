@@ -18,7 +18,6 @@ type shutdownResources struct {
 	Processes     *launch.ProcessSet
 	ShutdownDelay time.Duration
 	QMP           disconnecter
-	Stats         func()
 }
 
 type closeActions struct {
@@ -71,9 +70,6 @@ func (a closeActions) Run() error {
 	}
 	if a.Cleanup != nil {
 		err = errors.Join(err, a.Cleanup())
-	}
-	if a.Stats != nil {
-		a.Stats()
 	}
 	return err
 }
