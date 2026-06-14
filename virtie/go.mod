@@ -7,6 +7,7 @@ require (
 	github.com/adrg/xdg v0.5.3
 	github.com/digitalocean/go-qemu v0.0.0-20250212194115-ee9b0668d242
 	github.com/diskfs/go-diskfs v1.9.2
+	github.com/invopop/jsonschema v0.14.0
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/kata-containers/govmm v0.0.0-20220119175834-88960a15dacd
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
@@ -21,7 +22,6 @@ require (
 	github.com/djherbis/times v1.6.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20260129054604-cfde2086bc57 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
