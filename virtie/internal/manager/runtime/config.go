@@ -5,8 +5,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/shazow/agentspace/virtie/internal/executor"
-	"github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
@@ -26,5 +24,4 @@ type RuntimeConfig struct {
 	QMPTimeout       time.Duration
 	Logger           *slog.Logger
 	SavedSuspendExit func(error) bool
-	CollectInfo      func(context.Context, string, executor.Group) (control.InfoResponse, error)
 }

@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
@@ -21,7 +20,6 @@ type Core struct {
 	stats            *launch.Stats
 	qmp              qmpclient.Client
 	suspendRequests  *launch.SuspendCoordinator
-	collectInfo      func(context.Context, string, executor.Group) (control.InfoResponse, error)
 	processes        *launch.ProcessSet
 	shutdownDelay    time.Duration
 	qmpTimeout       time.Duration
@@ -48,7 +46,6 @@ func New(config RuntimeConfig) *Core {
 		qmpTimeout:       config.QMPTimeout,
 		logger:           config.Logger,
 		savedSuspendExit: config.SavedSuspendExit,
-		collectInfo:      config.CollectInfo,
 		processes:        config.Processes,
 		shutdownDelay:    config.ShutdownDelay,
 		writeBack:        config.WriteBack,
@@ -110,21 +107,6 @@ func (r *Core) Status(ctx context.Context, req control.StatusRequest) (control.S
 		GuestAgentSocket: r.paths.GuestAgentSocket,
 		SSHReadySocket:   r.paths.SSHReadySocket,
 	}, r.stats), nil
-}
-
-func (r *Core) Info(ctx context.Context, req control.InfoRequest) (control.InfoResponse, error) {
-	if r.collectInfo == nil {
-		return control.InfoResponse{}, control.FailedPrecondition(errors.New("runtime info collector is not configured"))
-	}
-	watchers := executor.NewGroup()
-	if r.processes != nil {
-		watchers = r.processes.Watchers()
-	}
-	info, err := r.collectInfo(ctx, r.paths.GuestAgentSocket, watchers)
-	if err != nil {
-		return control.InfoResponse{}, control.FailedPrecondition(err)
-	}
-	return info, nil
 }
 
 func (r *Core) Suspend(ctx context.Context, req control.SuspendRequest) (control.SuspendResponse, error) {

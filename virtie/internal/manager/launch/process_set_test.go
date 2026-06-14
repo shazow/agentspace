@@ -2,6 +2,7 @@ package launch
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
@@ -50,4 +51,31 @@ func TestProcessSetCloseStopsTasksBeforeProcesses(t *testing.T) {
 	if got, want := order, []string{"task", "process"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("unexpected close order: got %#v want %#v", got, want)
 	}
+}
+
+func TestProcessSetConcurrentWatchersAndMutation(t *testing.T) {
+	processes := NewProcessSet()
+	processes.SetQEMU((&executortest.Process{Exited: true}).Process())
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := 0; i < 200; i++ {
+				process := (&executortest.Process{Exited: true}).Process()
+				processes.Add(process)
+				_ = processes.QEMU()
+				watchers := processes.Watchers()
+				_ = len(watchers.Processes())
+				vmWatchers := processes.VMWatchers()
+				_ = len(vmWatchers.Processes())
+				processes.Remove(process)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/shazow/agentspace/virtie/internal/balloon"
-	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	control "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
@@ -236,76 +235,6 @@ func TestRuntimeMarkSavedSuspendSkipsCloseWriteBack(t *testing.T) {
 	}
 	if writeBackCalls != 0 {
 		t.Fatalf("write-back calls: got %d want 0", writeBackCalls)
-	}
-}
-
-func TestRuntimeInfoUsesConfiguredCollector(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := validManifest(tmpDir)
-	processes := launch.NewProcessSet()
-	processes.Add((&executortest.Process{OverrideName: "qemu-system-x86_64"}).Process())
-	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
-		Manifest: cfg,
-		Paths: launch.RuntimePaths{
-			ControlSocket:    filepath.Join(tmpDir, "virtie.sock"),
-			QMPSocket:        filepath.Join(tmpDir, "qmp.sock"),
-			GuestAgentSocket: filepath.Join(tmpDir, "qga.sock"),
-			SSHReadySocket:   filepath.Join(tmpDir, "ssh-ready.sock"),
-		},
-		CID:        11,
-		Stats:      launch.NewStats(time.Now()),
-		QMP:        &fakeQMPClient{},
-		Processes:  processes,
-		QMPTimeout: time.Second,
-		Logger:     slog.New(slog.DiscardHandler),
-		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (control.InfoResponse, error) {
-			if socketPath != filepath.Join(tmpDir, "qga.sock") {
-				t.Fatalf("socket path: got %q", socketPath)
-			}
-			if watchers.Len() != 1 {
-				t.Fatalf("watchers: got %d want 1", watchers.Len())
-			}
-			return control.InfoResponse{ProcessList: "PID COMMAND\n1 init"}, nil
-		},
-	})
-
-	resp, err := runtime.Info(context.Background(), control.InfoRequest{})
-	if err != nil {
-		t.Fatalf("info: %v", err)
-	}
-	if resp.ProcessList != "PID COMMAND\n1 init" {
-		t.Fatalf("info response: %#v", resp)
-	}
-}
-
-func TestRuntimeInfoMapsCollectorErrorToFailedPrecondition(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := validManifest(tmpDir)
-	collectErr := errors.New("guest agent failed")
-	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
-		Manifest: cfg,
-		Paths: launch.RuntimePaths{
-			ControlSocket:    filepath.Join(tmpDir, "virtie.sock"),
-			QMPSocket:        filepath.Join(tmpDir, "qmp.sock"),
-			GuestAgentSocket: filepath.Join(tmpDir, "qga.sock"),
-		},
-		CID:        11,
-		Stats:      launch.NewStats(time.Now()),
-		QMP:        &fakeQMPClient{},
-		QMPTimeout: time.Second,
-		Logger:     slog.New(slog.DiscardHandler),
-		CollectInfo: func(context.Context, string, executor.Group) (control.InfoResponse, error) {
-			return control.InfoResponse{}, collectErr
-		},
-	})
-
-	_, err := runtime.Info(context.Background(), control.InfoRequest{})
-	var rpcErr *control.RPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("error type: got %T", err)
-	}
-	if rpcErr.Code != control.ErrFailedPrecondition || rpcErr.Message != collectErr.Error() {
-		t.Fatalf("rpc error: %#v", rpcErr)
 	}
 }
 

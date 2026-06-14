@@ -14,19 +14,23 @@ import (
 
 type fakeControlCore struct {
 	status StatusResponse
-	info   InfoResponse
 }
 
 func (h *fakeControlCore) Status(context.Context, StatusRequest) (StatusResponse, error) {
 	return h.status, nil
 }
 
-func (h *fakeControlCore) Info(context.Context, InfoRequest) (InfoResponse, error) {
+type fakeControlInfo struct {
+	info InfoResponse
+}
+
+func (h *fakeControlInfo) Info(context.Context, InfoRequest) (InfoResponse, error) {
 	return h.info, nil
 }
 
 type fakeControlHandler struct {
 	fakeControlCore
+	fakeControlInfo
 	suspendCalls int
 	hotplugReq   HotplugRequest
 	balloonReq   BalloonRequest
@@ -51,7 +55,9 @@ func TestControlClientServerTypedCalls(t *testing.T) {
 	handler := &fakeControlHandler{
 		fakeControlCore: fakeControlCore{
 			status: StatusResponse{State: RuntimeReady, CID: 7},
-			info:   InfoResponse{ProcessList: "USER COMMAND\nroot init"},
+		},
+		fakeControlInfo: fakeControlInfo{
+			info: InfoResponse{ProcessList: "USER COMMAND\nroot init"},
 		},
 	}
 	path := startTestControlServer(t, handler)
@@ -149,6 +155,37 @@ func TestControlRouterRequiresExplicitHotplugRegistration(t *testing.T) {
 	}
 }
 
+func TestControlRouterRequiresExplicitInfoRegistration(t *testing.T) {
+	handler := &fakeControlHandler{}
+	router, err := NewRouter(handler)
+	if err != nil {
+		t.Fatalf("router: %v", err)
+	}
+	serverPath := filepath.Join(t.TempDir(), "virtie.sock")
+	startTestControlRouterAt(t, serverPath, router)
+
+	_, err = Dial(serverPath).Info(context.Background(), InfoRequest{})
+	var rpcErr *RPCError
+	if err == nil || !errors.As(err, &rpcErr) || rpcErr.Code != ErrUnsupported {
+		t.Fatalf("expected unregistered info to be unsupported, got %v", err)
+	}
+
+	router, err = NewRouter(handler, WithInfo(handler))
+	if err != nil {
+		t.Fatalf("router with info: %v", err)
+	}
+	registeredPath := filepath.Join(t.TempDir(), "virtie.sock")
+	startTestControlRouterAt(t, registeredPath, router)
+
+	resp, err := Dial(registeredPath).Info(context.Background(), InfoRequest{})
+	if err != nil {
+		t.Fatalf("registered info: %v", err)
+	}
+	if resp.ProcessList != "" {
+		t.Fatalf("unexpected info response: %#v", resp)
+	}
+}
+
 func TestControlInvalidJSONAndUnknownMethod(t *testing.T) {
 	path := startTestControlServer(t, &fakeControlHandler{})
 	conn, err := net.Dial("unix", path)
@@ -201,6 +238,9 @@ func startTestControlServer(t *testing.T, runtime any) string {
 		t.Fatalf("runtime core handler is required")
 	}
 	options := []RouterOption{}
+	if info, ok := runtime.(RuntimeInfo); ok {
+		options = append(options, WithInfo(info))
+	}
 	if suspend, ok := runtime.(RuntimeSuspend); ok {
 		options = append(options, WithSuspend(suspend))
 	}

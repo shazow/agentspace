@@ -161,6 +161,10 @@ type responseEnvelope struct {
 // RuntimeCore is the minimum runtime surface required by a control router.
 type RuntimeCore interface {
 	Status(context.Context, StatusRequest) (StatusResponse, error)
+}
+
+// RuntimeInfo is implemented by handlers that can report guest runtime information.
+type RuntimeInfo interface {
 	Info(context.Context, InfoRequest) (InfoResponse, error)
 }
 
@@ -182,6 +186,7 @@ type RuntimeBalloon interface {
 // Router dispatches typed control socket requests to runtime capabilities.
 type Router struct {
 	core    RuntimeCore
+	info    RuntimeInfo
 	suspend RuntimeSuspend
 	hotplug RuntimeHotplug
 	balloon RuntimeBalloon
@@ -189,6 +194,13 @@ type Router struct {
 
 // RouterOption registers an optional control method handler.
 type RouterOption func(*Router)
+
+// WithInfo registers info handling for a router.
+func WithInfo(handler RuntimeInfo) RouterOption {
+	return func(router *Router) {
+		router.info = handler
+	}
+}
 
 // WithSuspend registers suspend handling for a router.
 func WithSuspend(handler RuntimeSuspend) RouterOption {
@@ -211,7 +223,7 @@ func WithBalloon(handler RuntimeBalloon) RouterOption {
 	}
 }
 
-// NewRouter creates a router with core status and info methods plus explicit optional handlers.
+// NewRouter creates a router with core status plus explicit optional handlers.
 func NewRouter(core RuntimeCore, options ...RouterOption) (*Router, error) {
 	if core == nil {
 		return nil, fmt.Errorf("core handler is required")
@@ -236,9 +248,13 @@ func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelo
 			result, err = r.core.Status(ctx, params)
 		}
 	case rpcInfo:
+		if r.info == nil {
+			err = &RPCError{Code: ErrUnsupported, Message: "info is not supported"}
+			break
+		}
 		var params InfoRequest
 		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.core.Info(ctx, params)
+			result, err = r.info.Info(ctx, params)
 		}
 	case rpcSuspend:
 		if r.suspend == nil {

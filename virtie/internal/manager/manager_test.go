@@ -3813,6 +3813,103 @@ func TestLaunchRuntimeRegistersHotplugAtControlPeriphery(t *testing.T) {
 	}
 }
 
+func TestLaunchRuntimeRegistersInfoAtControlPeriphery(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.QEMU.SSHReady.SocketPath = ""
+	cfg.Volumes[0].AutoCreate = false
+
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []qga.ExecStatus{{
+			Exited:  true,
+			OutData: "cm9vdCBpbml0CmFnZW50IHZpcnRpZQo=",
+		}},
+	}
+	runner := &launchRunner{}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		qmpDialer:         &fakeQMPDialer{client: &fakeQMPClient{}},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		socketWaiter:      &fakeSocketWaiter{},
+		logger:            slog.New(slog.DiscardHandler),
+		qmpConnectTimeout: time.Second,
+		qmpRetryDelay:     time.Millisecond,
+	}
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, Options: LaunchOptions{Resume: ResumeModeNo, SSH: false}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
+
+	running, err := manager.startWithPlan(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("start runtime: %v", err)
+	}
+	defer running.Close()
+
+	resp, err := control.Dial(plan.Paths.ControlSocket).Info(context.Background(), control.InfoRequest{})
+	if err != nil {
+		t.Fatalf("control info: %v", err)
+	}
+	if resp.ProcessList != "USER COMMAND\nagent virtie\nroot init" {
+		t.Fatalf("unexpected process list: %q", resp.ProcessList)
+	}
+	if got, want := len(guestAgent.execs), 1; got != want {
+		t.Fatalf("guest exec count: got %d want %d", got, want)
+	}
+	exec := guestAgent.execs[0]
+	if exec.path != guestPSPath || !reflect.DeepEqual(exec.args, []string{"-eo", "user=,comm="}) || !exec.captureOutput {
+		t.Fatalf("unexpected ps exec: %#v", exec)
+	}
+}
+
+func TestLaunchRuntimeInfoMapsFailureToFailedPrecondition(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = ""
+	cfg.QEMU.SSHReady.SocketPath = ""
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &launchRunner{}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		qmpDialer:         &fakeQMPDialer{client: &fakeQMPClient{}},
+		socketWaiter:      &fakeSocketWaiter{},
+		logger:            slog.New(slog.DiscardHandler),
+		qmpConnectTimeout: time.Second,
+		qmpRetryDelay:     time.Millisecond,
+	}
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, Options: LaunchOptions{Resume: ResumeModeNo, SSH: false}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
+
+	running, err := manager.startWithPlan(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("start runtime: %v", err)
+	}
+	defer running.Close()
+
+	_, err = control.Dial(plan.Paths.ControlSocket).Info(context.Background(), control.InfoRequest{})
+	var rpcErr *control.RPCError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("error type: got %T", err)
+	}
+	if rpcErr.Code != control.ErrFailedPrecondition {
+		t.Fatalf("code: got %s want %s", rpcErr.Code, control.ErrFailedPrecondition)
+	}
+}
+
 func TestBuildQEMUCommandAddsGraphicsArgs(t *testing.T) {
 	tests := []struct {
 		name string

@@ -153,13 +153,6 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 		QMPTimeout:       m.effectiveQMPCommandTimeout(),
 		Logger:           m.logger,
 		SavedSuspendExit: launch.IsSavedSuspendExit,
-		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (controlpkg.InfoResponse, error) {
-			info, err := m.collectGuestInfo(ctx, socketPath, watchers)
-			if err != nil {
-				return controlpkg.InfoResponse{}, err
-			}
-			return controlpkg.InfoResponse{ProcessList: info.ProcessList}, nil
-		},
 	})
 	started = &runningLaunch{
 		runtime:        runtime,
@@ -171,7 +164,11 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 		processes:      processes,
 	}
 	runtime.SetReady()
-	if _, err := runtime.StartControl(launchCtx, controlpkg.WithHotplug(m.hotplugFeature(plan.Manifest, runtime.QMP()))); err != nil {
+	if _, err := runtime.StartControl(
+		launchCtx,
+		controlpkg.WithInfo(m.infoFeature(plan.Paths.GuestAgentSocket, processes)),
+		controlpkg.WithHotplug(m.hotplugFeature(plan.Manifest, runtime.QMP())),
+	); err != nil {
 		return nil, launch.WrapFixedStage("control startup")(err)
 	}
 	if err := launch.HandleQueuedSuspend(launchCtx, lifecycle, suspendHandler.Handle); err != nil {
