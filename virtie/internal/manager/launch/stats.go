@@ -2,7 +2,6 @@ package launch
 
 import (
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"time"
@@ -153,18 +152,6 @@ func ControlStats(stats *Stats) control.RuntimeStats {
 		resp.Total = completed.Sub(started).String()
 	}
 	return resp
-}
-
-func FinalizeStats(stats *Stats, output io.Writer) func() {
-	return func() {
-		if stats == nil {
-			return
-		}
-		stats.Timer(TimerCompleted, time.Now())
-		if output != nil {
-			fmt.Fprintf(output, "stats: %s\n", stats)
-		}
-	}
 }
 
 func (s *Stats) time(event TimerEvent) time.Time {

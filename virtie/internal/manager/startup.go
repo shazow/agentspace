@@ -45,6 +45,12 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 	writeBackOnExit := false
 	socketCleanupReached := false
 	cleanupRuntime := func() error { return runtimeLock.Cleanup() }
+	closeStats := func() {
+		stats.Timer(launch.TimerCompleted, time.Now())
+		if output := m.outputWriter(); output != nil {
+			fmt.Fprintf(output, "stats: %s\n", stats.String())
+		}
+	}
 	defer func() {
 		if err == nil {
 			return
@@ -66,7 +72,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 		if socketCleanupReached {
 			cleanupErr = errors.Join(cleanupErr, launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()))
 		}
-		launch.FinalizeStats(stats, m.outputWriter())()
+		closeStats()
 		err = errors.Join(err, cleanupErr)
 	}()
 
@@ -154,7 +160,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 		Cleanup: func() error {
 			return errors.Join(launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
 		},
-		CloseStats:       launch.FinalizeStats(stats, m.outputWriter()),
+		CloseStats:       closeStats,
 		QMPTimeout:       m.effectiveQMPCommandTimeout(),
 		Logger:           m.logger,
 		SavedSuspendExit: launch.IsSavedSuspendExit,
