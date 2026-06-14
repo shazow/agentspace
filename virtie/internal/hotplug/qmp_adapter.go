@@ -3,8 +3,6 @@ package hotplug
 import (
 	"context"
 	"time"
-
-	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
 )
 
 // QMPDeviceAdapter adapts a generic QMP client to hotplug device operations.
@@ -16,7 +14,7 @@ type QMPDeviceAdapter struct {
 	Timeout time.Duration
 }
 
-func (a QMPDeviceAdapter) AttachDevice(ctx context.Context, device hotplugtypes.Device, bus string) (func(context.Context), error) {
+func (a QMPDeviceAdapter) AttachDevice(ctx context.Context, device Device, bus string) (func(context.Context), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -37,7 +35,7 @@ func (a QMPDeviceAdapter) AttachDevice(ctx context.Context, device hotplugtypes.
 	}, nil
 }
 
-func (a QMPDeviceAdapter) DetachDevice(ctx context.Context, device hotplugtypes.Device) error {
+func (a QMPDeviceAdapter) DetachDevice(ctx context.Context, device Device) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -53,7 +51,7 @@ func (a QMPDeviceAdapter) DetachDevice(ctx context.Context, device hotplugtypes.
 	return nil
 }
 
-func (a QMPDeviceAdapter) rollbackAttach(ctx context.Context, device hotplugtypes.Device, successful int) {
+func (a QMPDeviceAdapter) rollbackAttach(ctx context.Context, device Device, successful int) {
 	if successful == 0 {
 		return
 	}

@@ -1,5 +1,4 @@
-// Package hotplugtypes defines always-built hotplug configuration and state types.
-package hotplugtypes
+package hotplug
 
 import (
 	"encoding/json"

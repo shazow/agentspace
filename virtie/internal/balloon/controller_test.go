@@ -6,13 +6,11 @@ import (
 	"log/slog"
 	"testing"
 	"time"
-
-	"github.com/shazow/agentspace/virtie/internal/balloontypes"
 )
 
 func TestEvaluateGrowsGuestMemory(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	config := balloontypes.ControllerConfig{
+	config := ControllerConfig{
 		MinActual:             256,
 		MaxActual:             1024,
 		GrowBelowAvailable:    128,
@@ -41,7 +39,7 @@ func TestEvaluateGrowsGuestMemory(t *testing.T) {
 
 func TestEvaluateReclaimsAfterHoldoff(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	config := balloontypes.ControllerConfig{
+	config := ControllerConfig{
 		MinActual:             256,
 		MaxActual:             1024,
 		GrowBelowAvailable:    128,
@@ -78,7 +76,7 @@ func TestEvaluateReclaimsAfterHoldoff(t *testing.T) {
 
 func TestEvaluateNoopsWithinHysteresis(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	config := balloontypes.ControllerConfig{
+	config := ControllerConfig{
 		MinActual:             256,
 		MaxActual:             1024,
 		GrowBelowAvailable:    128,
@@ -110,7 +108,7 @@ func TestEvaluateNoopsWithinHysteresis(t *testing.T) {
 
 func TestEvaluateRejectsStaleStats(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	config := balloontypes.ControllerConfig{
+	config := ControllerConfig{
 		MinActual:             256,
 		MaxActual:             1024,
 		GrowBelowAvailable:    128,
@@ -133,7 +131,7 @@ func TestEvaluateRejectsStaleStats(t *testing.T) {
 
 func TestEvaluateRejectsUnavailableStats(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	config := balloontypes.ControllerConfig{
+	config := ControllerConfig{
 		MinActual:             256,
 		MaxActual:             1024,
 		GrowBelowAvailable:    128,
@@ -152,7 +150,7 @@ func TestEvaluateRejectsUnavailableStats(t *testing.T) {
 
 func TestEvaluateClampsToBounds(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	config := balloontypes.ControllerConfig{
+	config := ControllerConfig{
 		MinActual:             256,
 		MaxActual:             1024,
 		GrowBelowAvailable:    128,
@@ -267,7 +265,7 @@ func TestControllerNotifiesAfterSuccessfulResize(t *testing.T) {
 		Logger:     slog.New(slog.DiscardHandler),
 		DeviceID:   "balloon0",
 		QMPTimeout: time.Second,
-		Config: balloontypes.ControllerConfig{
+		Config: ControllerConfig{
 			MinActual:             1024,
 			MaxActual:             8192,
 			GrowBelowAvailable:    128,
@@ -334,7 +332,7 @@ func TestControllerDoesNotNotifyWhenResizeIsNotApplied(t *testing.T) {
 		Logger:     slog.New(slog.DiscardHandler),
 		DeviceID:   "balloon0",
 		QMPTimeout: time.Second,
-		Config: balloontypes.ControllerConfig{
+		Config: ControllerConfig{
 			MinActual:             1024,
 			MaxActual:             8192,
 			GrowBelowAvailable:    128,

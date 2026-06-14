@@ -10,7 +10,7 @@ import (
 	"text/template/parse"
 	"time"
 
-	hotplugpkg "github.com/shazow/agentspace/virtie/internal/hotplugtypes"
+	hotplugpkg "github.com/shazow/agentspace/virtie/internal/hotplug"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
 

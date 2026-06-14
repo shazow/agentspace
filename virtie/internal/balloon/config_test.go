@@ -1,4 +1,4 @@
-package balloontypes
+package balloon
 
 import "testing"
 

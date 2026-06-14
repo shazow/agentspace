@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
-	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
+	"github.com/shazow/agentspace/virtie/internal/hotplug"
 )
 
 func writeFileText(text string) WriteFile {
@@ -2045,7 +2045,7 @@ func TestDocumentHotplugVirtioFSMountGeneratesHotplugEntry(t *testing.T) {
 	if got, want := device.ID, "workspace"; got != want {
 		t.Fatalf("unexpected hotplug id: got %q want %q", got, want)
 	}
-	if got, want := device.Kind, hotplugtypes.KindVirtioFS; got != want {
+	if got, want := device.Kind, hotplug.KindVirtioFS; got != want {
 		t.Fatalf("unexpected hotplug kind: got %q want %q", got, want)
 	}
 	if got, want := device.VirtioFS.Target, "/mnt/cache"; got != want {
@@ -2164,7 +2164,7 @@ func TestDocumentTypedHotplugEntries(t *testing.T) {
 	if got, want := manifest.QEMU.Hotplug.PCIEPorts, 3; got != want {
 		t.Fatalf("unexpected pcie ports: got %d want %d", got, want)
 	}
-	if got, want := []hotplugtypes.Kind{manifest.Hotplug[0].Kind, manifest.Hotplug[1].Kind, manifest.Hotplug[2].Kind}, []hotplugtypes.Kind{hotplugtypes.KindVirtioFS, hotplugtypes.KindBlock, hotplugtypes.KindNet}; !reflect.DeepEqual(got, want) {
+	if got, want := []hotplug.Kind{manifest.Hotplug[0].Kind, manifest.Hotplug[1].Kind, manifest.Hotplug[2].Kind}, []hotplug.Kind{hotplug.KindVirtioFS, hotplug.KindBlock, hotplug.KindNet}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected hotplug order: got %#v want %#v", got, want)
 	}
 	if got, want := manifest.Hotplug[0].VirtioFS.SocketPath, "/tmp/work/.virtie/cache.sock"; got != want {
@@ -2209,7 +2209,7 @@ func TestDocumentHotplugNetworkForwardDefaultsProto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve manifest: %v", err)
 	}
-	if got, want := manifest.Hotplug[0].Net.Forward, []hotplugtypes.Forward{{Proto: "tcp", Host: "127.0.0.1:2223", Guest: "10.0.2.15:22"}}; !reflect.DeepEqual(got, want) {
+	if got, want := manifest.Hotplug[0].Net.Forward, []hotplug.Forward{{Proto: "tcp", Host: "127.0.0.1:2223", Guest: "10.0.2.15:22"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected hotplug forward: got %#v want %#v", got, want)
 	}
 }
@@ -2482,7 +2482,7 @@ func TestManifestHotplugRequiresPCITransport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve manifest: %v", err)
 	}
-	manifest.Hotplug = []hotplugtypes.Device{{Kind: hotplugtypes.KindNet, ID: "vpn", Net: hotplugtypes.Net{Backend: "user", MAC: "02:02:00:00:00:10"}}}
+	manifest.Hotplug = []hotplug.Device{{Kind: hotplug.KindNet, ID: "vpn", Net: hotplug.Net{Backend: "user", MAC: "02:02:00:00:00:10"}}}
 	manifest.QEMU.Hotplug.PCIEPorts = 1
 	manifest.QEMU.Devices.RNG.Transport = "mmio"
 	if err := manifest.Validate(); err == nil || !strings.Contains(err.Error(), "requires pci transport") {

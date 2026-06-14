@@ -7,7 +7,7 @@ import (
 	"time"
 
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
-	"github.com/shazow/agentspace/virtie/internal/balloontypes"
+	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
 
@@ -17,7 +17,7 @@ type balloonQMP interface {
 	WithRaw(timeout time.Duration, fn func(*rawQMP.Monitor) error) error
 }
 
-func balloon(ctx context.Context, device *balloontypes.Device, qmp balloonQMP, timeout time.Duration, req control.BalloonRequest) (control.BalloonResponse, error) {
+func balloon(ctx context.Context, device *balloonpkg.Device, qmp balloonQMP, timeout time.Duration, req control.BalloonRequest) (control.BalloonResponse, error) {
 	_ = ctx
 	if device == nil {
 		return control.BalloonResponse{}, errBalloonNotConfigured

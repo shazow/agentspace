@@ -1,5 +1,4 @@
-// Package balloontypes defines always-built virtio-balloon configuration types.
-package balloontypes
+package balloon
 
 import (
 	"fmt"

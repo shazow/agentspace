@@ -15,9 +15,9 @@ import (
 	"time"
 
 	shellquote "github.com/kballard/go-shellquote"
-	"github.com/shazow/agentspace/virtie/internal/balloontypes"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
-	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
+	"github.com/shazow/agentspace/virtie/internal/hotplug"
 )
 
 const virtioFSSocketProbeTimeout = 100 * time.Millisecond
@@ -581,8 +581,8 @@ func (m *Manifest) resolveVirtioFSRuns(mounts []VirtioFSMountInput, options Reso
 	return runs, nil
 }
 
-func (m *Manifest) resolveHotplug(d Document) ([]hotplugtypes.Device, error) {
-	hotplugs := make([]hotplugtypes.Device, 0, d.hotplugCount())
+func (m *Manifest) resolveHotplug(d Document) ([]hotplug.Device, error) {
+	hotplugs := make([]hotplug.Device, 0, d.hotplugCount())
 	for i, mount := range d.Hotplug.Mounts {
 		device, err := m.resolveHotplugMount(mount)
 		if err != nil {
@@ -600,18 +600,18 @@ func (m *Manifest) resolveHotplug(d Document) ([]hotplugtypes.Device, error) {
 	return hotplugs, nil
 }
 
-func (m *Manifest) resolveHotplugMount(entry MountEntry) (hotplugtypes.Device, error) {
+func (m *Manifest) resolveHotplugMount(entry MountEntry) (hotplug.Device, error) {
 	switch typed := entry.(type) {
 	case VirtioFSMountInput:
 		return m.resolveVirtioFSHotplug(typed)
 	case ImageMountInput:
 		return m.resolveImageHotplug(typed)
 	default:
-		return hotplugtypes.Device{}, fmt.Errorf("type %q does not support hotplug", entry.mountType())
+		return hotplug.Device{}, fmt.Errorf("type %q does not support hotplug", entry.mountType())
 	}
 }
 
-func (m *Manifest) resolveImageHotplug(entry ImageMountInput) (hotplugtypes.Device, error) {
+func (m *Manifest) resolveImageHotplug(entry ImageMountInput) (hotplug.Device, error) {
 	serial := stringValue(entry.Image.Serial)
 	format := resolveImageFormat(entry.Image.Format)
 	id, err := renderHotplugID(serial, "{{.Serial}}", StaticTemplateContext(executor.Context{
@@ -620,12 +620,12 @@ func (m *Manifest) resolveImageHotplug(entry ImageMountInput) (hotplugtypes.Devi
 		"Format": format,
 	}))
 	if err != nil {
-		return hotplugtypes.Device{}, err
+		return hotplug.Device{}, err
 	}
-	return hotplugtypes.Device{
-		Kind: hotplugtypes.KindBlock,
+	return hotplug.Device{
+		Kind: hotplug.KindBlock,
 		ID:   id,
-		Block: hotplugtypes.Block{
+		Block: hotplug.Block{
 			ImagePath: m.resolvePath(entry.SourcePath),
 			Format:    format,
 			ReadOnly:  entry.ReadOnly,
@@ -634,7 +634,7 @@ func (m *Manifest) resolveImageHotplug(entry ImageMountInput) (hotplugtypes.Devi
 	}, nil
 }
 
-func (m *Manifest) resolveVirtioFSHotplug(mount VirtioFSMountInput) (hotplugtypes.Device, error) {
+func (m *Manifest) resolveVirtioFSHotplug(mount VirtioFSMountInput) (hotplug.Device, error) {
 	id := mount.Tag
 	socket := mount.VirtioFS.Socket
 	if socket == "" {
@@ -642,7 +642,7 @@ func (m *Manifest) resolveVirtioFSHotplug(mount VirtioFSMountInput) (hotplugtype
 	}
 	socketPath, err := m.resolveSocketPath(socket)
 	if err != nil {
-		return hotplugtypes.Device{}, err
+		return hotplug.Device{}, err
 	}
 	bin := mount.VirtioFS.Bin
 	if bin == "" {
@@ -651,18 +651,18 @@ func (m *Manifest) resolveVirtioFSHotplug(mount VirtioFSMountInput) (hotplugtype
 	source := m.resolvePath(mount.SourcePath)
 	args := append([]string(nil), mount.VirtioFS.Args...)
 	if len(args) == 0 {
-		args = hotplugtypes.DefaultVirtioFSArgs(socketPath, source, id)
+		args = hotplug.DefaultVirtioFSArgs(socketPath, source, id)
 	} else {
 		renderedArgs, err := renderVirtioFSArgv(args, socketPath, source, id)
 		if err != nil {
-			return hotplugtypes.Device{}, err
+			return hotplug.Device{}, err
 		}
 		args = renderedArgs
 	}
-	return hotplugtypes.Device{
-		Kind: hotplugtypes.KindVirtioFS,
+	return hotplug.Device{
+		Kind: hotplug.KindVirtioFS,
 		ID:   id,
-		VirtioFS: hotplugtypes.VirtioFS{
+		VirtioFS: hotplug.VirtioFS{
 			Source:     source,
 			Target:     mount.Target,
 			SocketPath: socketPath,
@@ -679,7 +679,7 @@ func (m *Manifest) resolveOptionalBin(bin string, defaultBin string) string {
 	return m.resolvePath(bin)
 }
 
-func resolveNetworkHotplug(entry NetworkInput, index int) (hotplugtypes.Device, error) {
+func resolveNetworkHotplug(entry NetworkInput, index int) (hotplug.Device, error) {
 	id := entry.ID
 	if id == "" {
 		id = fmt.Sprintf("net%d", index)
@@ -692,25 +692,25 @@ func resolveNetworkHotplug(entry NetworkInput, index int) (hotplugtypes.Device, 
 	if mac == "" {
 		mac = defaultNetworkMAC
 	}
-	forward := make([]hotplugtypes.Forward, 0, len(entry.Forward))
+	forward := make([]hotplug.Forward, 0, len(entry.Forward))
 	for i, fwd := range entry.Forward {
 		normalized, err := normalizeForwardPort(fwd, fmt.Sprintf("forward[%d]", i))
 		if err != nil {
-			return hotplugtypes.Device{}, err
+			return hotplug.Device{}, err
 		}
 		if normalized.From == "guest" {
-			return hotplugtypes.Device{}, fmt.Errorf("forward[%d].from guest is not supported for hotplug networks", i)
+			return hotplug.Device{}, fmt.Errorf("forward[%d].from guest is not supported for hotplug networks", i)
 		}
-		forward = append(forward, hotplugtypes.Forward{
+		forward = append(forward, hotplug.Forward{
 			Proto: normalized.Proto,
 			Host:  formatPortEndpoint(normalized.Host),
 			Guest: formatPortEndpoint(normalized.Guest),
 		})
 	}
-	return hotplugtypes.Device{
-		Kind: hotplugtypes.KindNet,
+	return hotplug.Device{
+		Kind: hotplug.KindNet,
 		ID:   id,
-		Net: hotplugtypes.Net{
+		Net: hotplug.Net{
 			Backend: backend,
 			MAC:     mac,
 			Forward: forward,
@@ -918,16 +918,16 @@ func renderFwdTunnelExec(exec []string, hostEndpoint PortEndpoint) ([]string, er
 	return command, nil
 }
 
-func resolveBalloon(facts *BalloonInput, transport string) *balloontypes.Device {
+func resolveBalloon(facts *BalloonInput, transport string) *balloon.Device {
 	if facts == nil || !facts.Enabled {
 		return nil
 	}
-	device := &balloontypes.Device{
+	device := &balloon.Device{
 		DeflateOnOOM:      facts.DeflateOnOOM,
 		FreePageReporting: facts.FreePageReporting,
 	}
 	if facts.Controller != nil {
-		device.Controller = &balloontypes.ControllerConfig{
+		device.Controller = &balloon.ControllerConfig{
 			MinActual:             facts.Controller.MinActual,
 			MaxActual:             facts.Controller.MaxActual,
 			GrowBelowAvailable:    facts.Controller.GrowBelowAvailable,
