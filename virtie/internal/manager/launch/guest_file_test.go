@@ -308,6 +308,9 @@ func TestGuestWriteBackFilesFiltersEnabledFiles(t *testing.T) {
 func TestWriteBackGuestFilesReadsGuestAndWritesHost(t *testing.T) {
 	tmpDir := t.TempDir()
 	hostPath := filepath.Join(tmpDir, "host")
+	if err := os.WriteFile(hostPath, []byte("original"), 0o644); err != nil {
+		t.Fatalf("write host fixture: %v", err)
+	}
 	var events []string
 	err := WriteBackGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
 		{
@@ -343,6 +346,31 @@ func TestWriteBackGuestFilesReadsGuestAndWritesHost(t *testing.T) {
 	}
 }
 
+func TestWriteBackGuestFilesFailsWhenHostPathIsMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	hostPath := filepath.Join(tmpDir, "host")
+	err := WriteBackGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
+		{
+			GuestPath: "/var/lib/virtie/host",
+			Content: manifest.WriteFileContent{
+				Kind: manifest.WriteFileContentPath,
+				Path: hostPath,
+			},
+		},
+	}, GuestFileWriteBacker{
+		ReadFile: func(context.Context, string) ([]byte, error) {
+			return []byte("guest content"), nil
+		},
+		WriteHostFile: WriteHostFileAtomic,
+	})
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected missing host path error, got %v", err)
+	}
+	if _, statErr := os.Stat(hostPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("write-back should not create missing host path; stat error = %v", statErr)
+	}
+}
+
 func TestWriteBackGuestFilesRejectsFilesWithoutHostPath(t *testing.T) {
 	err := WriteBackGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
 		{
@@ -367,13 +395,18 @@ func TestWriteBackGuestFilesRejectsFilesWithoutHostPath(t *testing.T) {
 }
 
 func TestWriteBackGuestFilesWrapsHostWriteError(t *testing.T) {
+	tmpDir := t.TempDir()
+	hostPath := filepath.Join(tmpDir, "host")
+	if err := os.WriteFile(hostPath, []byte("original"), 0o644); err != nil {
+		t.Fatalf("write host fixture: %v", err)
+	}
 	writeErr := errors.New("disk full")
 	err := WriteBackGuestFiles(context.Background(), []manifest.ResolvedWriteFile{
 		{
 			GuestPath: "/var/lib/virtie/host",
 			Content: manifest.WriteFileContent{
 				Kind: manifest.WriteFileContentPath,
-				Path: "/tmp/virtie-host",
+				Path: hostPath,
 			},
 		},
 	}, GuestFileWriteBacker{

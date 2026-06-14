@@ -3,7 +3,6 @@ package launch
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -54,9 +53,6 @@ func writeBackHostPath(file manifest.ResolvedWriteFile) (string, error) {
 	}
 	info, err := os.Lstat(file.Content.Path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return file.Content.Path, nil
-		}
 		return "", fmt.Errorf("stat host file %q for guest path %q: %w", file.Content.Path, file.GuestPath, err)
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
