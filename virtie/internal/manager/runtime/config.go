@@ -14,7 +14,6 @@ import (
 
 type RuntimeConfig struct {
 	Manifest         *manifest.Manifest
-	Plan             *launch.Plan
 	Paths            launch.RuntimePaths
 	CID              int
 	Stats            *launch.Stats
@@ -22,7 +21,6 @@ type RuntimeConfig struct {
 	SuspendRequests  *launch.SuspendCoordinator
 	Processes        *launch.ProcessSet
 	ShutdownDelay    time.Duration
-	WaitForeground   func(context.Context, *launch.Plan) error
 	WriteBack        func(context.Context) error
 	Cleanup          func() error
 	QMPTimeout       time.Duration

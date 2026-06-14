@@ -16,13 +16,11 @@ import (
 
 type Core struct {
 	manifest         *manifest.Manifest
-	plan             *launch.Plan
 	paths            launch.RuntimePaths
 	cid              int
 	stats            *launch.Stats
 	qmp              qmpclient.Client
 	suspendRequests  *launch.SuspendCoordinator
-	waitForeground   func(context.Context, *launch.Plan) error
 	collectInfo      func(context.Context, string, executor.Group) (control.InfoResponse, error)
 	processes        *launch.ProcessSet
 	shutdownDelay    time.Duration
@@ -32,26 +30,21 @@ type Core struct {
 	writeBack        func(context.Context) error
 	cleanup          func() error
 	savedSuspend     atomic.Bool
-	watchers         executor.Group
 
 	state   *state
 	closer  *closer
 	control *control.Server
 }
 
-var errForegroundWaitNotConfigured = errors.New("runtime foreground wait is not configured")
-
 func New(config RuntimeConfig) *Core {
 	state := newState(control.RuntimeStarting)
 	return &Core{
 		manifest:         config.Manifest,
 		paths:            config.Paths,
-		plan:             config.Plan,
 		cid:              config.CID,
 		stats:            config.Stats,
 		qmp:              qmpclient.Serialized(config.QMP),
 		suspendRequests:  config.SuspendRequests,
-		waitForeground:   config.WaitForeground,
 		qmpTimeout:       config.QMPTimeout,
 		logger:           config.Logger,
 		savedSuspendExit: config.SavedSuspendExit,
@@ -71,10 +64,6 @@ func (r *Core) SetReady() {
 
 func (r *Core) MarkSavedSuspend() {
 	r.savedSuspend.Store(true)
-}
-
-func (r *Core) SetWatchers(watchers executor.Group) {
-	r.watchers = watchers
 }
 
 func (r *Core) QMP() qmpclient.Client {
@@ -113,18 +102,6 @@ func (r *Core) Close() error {
 	})
 }
 
-func (r *Core) Wait(ctx context.Context, mode launch.WaitMode) error {
-	if r.plan == nil || r.processes == nil || r.waitForeground == nil {
-		return control.FailedPrecondition(errForegroundWaitNotConfigured)
-	}
-	plan := launch.PlanForWaitMode(r.plan, mode)
-	err := r.waitForeground(ctx, plan)
-	if err != nil && r.isSavedSuspendExit(err) {
-		r.MarkSavedSuspend()
-	}
-	return err
-}
-
 func (r *Core) Status(ctx context.Context, req control.StatusRequest) (control.StatusResponse, error) {
 	_ = ctx
 	return status(r.state, r.cid, control.StatusPaths{
@@ -139,7 +116,11 @@ func (r *Core) Info(ctx context.Context, req control.InfoRequest) (control.InfoR
 	if r.collectInfo == nil {
 		return control.InfoResponse{}, control.FailedPrecondition(errors.New("runtime info collector is not configured"))
 	}
-	info, err := r.collectInfo(ctx, r.paths.GuestAgentSocket, r.watchers)
+	watchers := executor.NewGroup()
+	if r.processes != nil {
+		watchers = r.processes.Watchers()
+	}
+	info, err := r.collectInfo(ctx, r.paths.GuestAgentSocket, watchers)
 	if err != nil {
 		return control.InfoResponse{}, control.FailedPrecondition(err)
 	}

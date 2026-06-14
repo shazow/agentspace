@@ -124,7 +124,7 @@ func (m *manager) planLaunch(spec launch.Spec) (*launch.Plan, error) {
 }
 
 func (m *manager) launchWithPlan(ctx context.Context, plan *launch.Plan) (err error) {
-	runtime, stats, err := m.startWithPlan(ctx, plan)
+	running, err := m.startWithPlan(ctx, plan)
 	if err != nil {
 		if launch.IsSavedSuspendExit(err) {
 			return nil
@@ -132,10 +132,10 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *launch.Plan) (err er
 		return err
 	}
 	defer func() {
-		joinDeferredError(&err, runtime.Close)
-		m.writeLaunchStats(stats)
+		joinDeferredError(&err, running.Close)
+		m.writeLaunchStats(running.stats)
 	}()
-	err = runtime.Wait(ctx, plan.Options.WaitMode())
+	err = m.waitForRunningLaunch(ctx, running, plan.Options.WaitMode())
 	if launch.IsSavedSuspendExit(err) {
 		return nil
 	}
@@ -171,7 +171,6 @@ func (m *manager) waitForLaunchForeground(
 	ctx context.Context,
 	plan *launch.Plan,
 	stats *launch.Stats,
-	runtime watcherSetter,
 	qmpClient qmpclient.Client,
 	lifecycle *launch.Lifecycle,
 	suspendHandler suspendHandler,
@@ -218,7 +217,6 @@ func (m *manager) waitForLaunchForeground(
 	}
 
 	vmWatchers := processes.VMWatchers()
-	runtime.SetWatchers(vmWatchers)
 	return m.waitForVM(ctx, processes.QEMU(), lifecycle, suspendHandler, plan.Paths.GuestAgentSocket, vmWatchers)
 }
 
@@ -333,10 +331,6 @@ type launchSuspendHandler struct {
 
 type suspendHandler interface {
 	Handle(context.Context, *launch.SuspendCoordinator) error
-}
-
-type watcherSetter interface {
-	SetWatchers(executor.Group)
 }
 
 func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpclient.Client, cid int, notifier launch.NotificationSink, writeBack func() bool) *launchSuspendHandler {

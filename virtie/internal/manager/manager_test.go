@@ -31,6 +31,7 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
 	control "github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
+	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
@@ -60,6 +61,17 @@ func newTestLaunchLifecycle() *launch.Lifecycle {
 	return launch.NewLifecycle(nil, func() {}, func() {})
 }
 
+type fakeSuspendHandler struct {
+	err error
+}
+
+func (h fakeSuspendHandler) Handle(ctx context.Context, coordinator *launch.SuspendCoordinator) error {
+	_ = ctx
+	coordinator.Begin()
+	coordinator.Complete(h.err)
+	return h.err
+}
+
 func TestManagerStartExternalVirtioFSFailureKeepsRuntimeSockets(t *testing.T) {
 	tmpDir := t.TempDir()
 	manager := newLaunchProviderTestManager(nil)
@@ -85,7 +97,7 @@ func TestManagerStartExternalVirtioFSFailureKeepsRuntimeSockets(t *testing.T) {
 		}
 	}
 
-	_, _, err = manager.startWithPlan(context.Background(), plan)
+	_, err = manager.startWithPlan(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected external virtiofs failure")
 	}
@@ -108,7 +120,7 @@ func TestManagerStartQEMUNilRunnerWrapsOnce(t *testing.T) {
 		t.Fatalf("plan launch: %v", err)
 	}
 
-	_, _, err = manager.startWithPlan(context.Background(), plan)
+	_, err = manager.startWithPlan(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected nil runner failure")
 	}
@@ -862,7 +874,7 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 }
 
-func TestManagerStartAndRuntimeWaitWithoutSSH(t *testing.T) {
+func TestManagerStartAndWaitForRunningLaunchWithoutSSH(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
@@ -892,12 +904,12 @@ func TestManagerStartAndRuntimeWaitWithoutSSH(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	runtime, _, err := manager.startWithPlan(context.Background(), plan)
+	running, err := manager.startWithPlan(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	defer func() {
-		if err := runtime.Close(); err != nil {
+		if err := running.Close(); err != nil {
 			t.Errorf("runtime close: %v", err)
 		}
 	}()
@@ -909,7 +921,7 @@ func TestManagerStartAndRuntimeWaitWithoutSSH(t *testing.T) {
 		runner.exitQEMU(nil)
 	}()
 
-	if err := runtime.Wait(context.Background(), WaitVM); err != nil {
+	if err := manager.waitForRunningLaunch(context.Background(), running, WaitVM); err != nil {
 		t.Fatalf("wait: %v", err)
 	}
 	<-exitReadyQEMU
@@ -922,6 +934,99 @@ func TestManagerStartAndRuntimeWaitWithoutSSH(t *testing.T) {
 	}
 	if !strings.Contains(logOutput.String(), "connect with: /bin/ssh agent@vsock/") {
 		t.Fatalf("expected out-of-band ssh hint, got %q", logOutput.String())
+	}
+}
+
+func TestWaitForRunningLaunchNilRunningReturnsStageError(t *testing.T) {
+	manager := &manager{}
+
+	err := manager.waitForRunningLaunch(context.Background(), nil, WaitVM)
+
+	var stageErr *launch.StageError
+	if !errors.As(err, &stageErr) {
+		t.Fatalf("error type: got %T", err)
+	}
+	if stageErr.Stage != "runtime wait" {
+		t.Fatalf("stage: got %q want runtime wait", stageErr.Stage)
+	}
+}
+
+func TestWaitForRunningLaunchWaitModeOverrideEnablesSSH(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	runner := &launchRunner{finishInteractiveSSH: true}
+	manager := &manager{
+		runner:            runner,
+		logger:            slog.New(slog.DiscardHandler),
+		shutdownDelay:     time.Millisecond,
+		qmpConnectTimeout: time.Second,
+	}
+	processes := launch.NewProcessSet()
+	plan := &launch.Plan{
+		Manifest: cfg,
+		Options:  LaunchOptions{SSH: false},
+		CID:      3,
+	}
+	running := &runningLaunch{
+		plan:           plan,
+		stats:          launch.NewStats(time.Now()),
+		qmp:            &fakeQMPClient{},
+		lifecycle:      newTestLaunchLifecycle(),
+		suspendHandler: fakeSuspendHandler{},
+		processes:      processes,
+	}
+
+	if err := manager.waitForRunningLaunch(context.Background(), running, WaitSSH); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if plan.Options.SSH {
+		t.Fatal("original plan SSH option was mutated")
+	}
+	if got, want := len(runner.sshArgs()), 1; got != want {
+		t.Fatalf("ssh starts: got %d want %d", got, want)
+	}
+}
+
+func TestWaitForRunningLaunchSavedSuspendSkipsCloseWriteBack(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	stats := launch.NewStats(time.Now())
+	processes := launch.NewProcessSet()
+	processes.SetQEMU((&executortest.Process{OverrideName: "qemu-system-x86_64"}).Process())
+	var writeBackCalls int
+	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
+		Manifest:      cfg,
+		Stats:         stats,
+		QMP:           &fakeQMPClient{},
+		Processes:     processes,
+		ShutdownDelay: time.Millisecond,
+		WriteBack: func(context.Context) error {
+			writeBackCalls++
+			return nil
+		},
+		QMPTimeout: time.Second,
+		Logger:     slog.New(slog.DiscardHandler),
+	})
+	lifecycle := newTestLaunchLifecycle()
+	lifecycle.Suspend().Request()
+	running := &runningLaunch{
+		runtime:        runtime,
+		plan:           &launch.Plan{Manifest: cfg, Options: LaunchOptions{SSH: false}},
+		stats:          stats,
+		qmp:            &fakeQMPClient{},
+		lifecycle:      lifecycle,
+		suspendHandler: fakeSuspendHandler{err: launch.ErrSavedSuspendExit},
+		processes:      processes,
+	}
+
+	if err := (&manager{}).waitForRunningLaunch(context.Background(), running, WaitVM); !errors.Is(err, launch.ErrSavedSuspendExit) {
+		t.Fatalf("wait error: got %v want %v", err, launch.ErrSavedSuspendExit)
+	}
+	if err := running.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if writeBackCalls != 0 {
+		t.Fatalf("write-back calls: got %d want 0", writeBackCalls)
 	}
 }
 
@@ -3693,11 +3798,11 @@ func TestLaunchRuntimeRegistersHotplugAtControlPeriphery(t *testing.T) {
 		t.Fatalf("plan launch: %v", err)
 	}
 
-	runtime, _, err := manager.startWithPlan(context.Background(), plan)
+	running, err := manager.startWithPlan(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("start runtime: %v", err)
 	}
-	defer runtime.Close()
+	defer running.Close()
 
 	_, err = control.Dial(plan.Paths.ControlSocket).Hotplug(context.Background(), control.HotplugRequest{ID: "vpn"})
 	if err != nil {

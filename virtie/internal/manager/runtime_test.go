@@ -204,68 +204,7 @@ func TestRuntimeStartControlServesStatus(t *testing.T) {
 	}
 }
 
-func TestRuntimeWaitUsesConfiguredForegroundCallback(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := validManifest(tmpDir)
-	processes := launch.NewProcessSet()
-	var called bool
-	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
-		Manifest: cfg,
-		Plan:     &launch.Plan{Manifest: cfg, Options: LaunchOptions{SSH: false}},
-		Paths: launch.RuntimePaths{
-			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
-			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-		},
-		CID:           11,
-		Stats:         launch.NewStats(time.Now()),
-		QMP:           &fakeQMPClient{},
-		Processes:     processes,
-		ShutdownDelay: time.Millisecond,
-		WaitForeground: func(ctx context.Context, plan *launch.Plan) error {
-			called = true
-			if !plan.Options.SSH {
-				t.Fatalf("wait mode override did not enable ssh: %#v", plan.Options)
-			}
-			return nil
-		},
-		QMPTimeout: time.Second,
-		Logger:     slog.New(slog.DiscardHandler),
-	})
-	if err := runtime.Wait(context.Background(), WaitSSH); err != nil {
-		t.Fatalf("wait: %v", err)
-	}
-	if !called {
-		t.Fatal("foreground callback was not called")
-	}
-}
-
-func TestRuntimeWaitMapsMissingForegroundToFailedPrecondition(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := validManifest(tmpDir)
-	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
-		Manifest: cfg,
-		Paths: launch.RuntimePaths{
-			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
-			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
-		},
-		CID:        11,
-		Stats:      launch.NewStats(time.Now()),
-		QMP:        &fakeQMPClient{},
-		QMPTimeout: time.Second,
-		Logger:     slog.New(slog.DiscardHandler),
-	})
-
-	err := runtime.Wait(context.Background(), WaitSSH)
-	var rpcErr *control.RPCError
-	if !errors.As(err, &rpcErr) {
-		t.Fatalf("error type: got %T", err)
-	}
-	if rpcErr.Code != control.ErrFailedPrecondition {
-		t.Fatalf("code: got %s want %s", rpcErr.Code, control.ErrFailedPrecondition)
-	}
-}
-
-func TestRuntimeSavedSuspendWaitSkipsCloseWriteBack(t *testing.T) {
+func TestRuntimeMarkSavedSuspendSkipsCloseWriteBack(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	processes := launch.NewProcessSet()
@@ -273,7 +212,6 @@ func TestRuntimeSavedSuspendWaitSkipsCloseWriteBack(t *testing.T) {
 	var writeBackCalls int
 	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
-		Plan:     &launch.Plan{Manifest: cfg, Options: LaunchOptions{SSH: false}},
 		Paths: launch.RuntimePaths{
 			ControlSocket: filepath.Join(tmpDir, "virtie.sock"),
 			QMPSocket:     filepath.Join(tmpDir, "qmp.sock"),
@@ -283,9 +221,6 @@ func TestRuntimeSavedSuspendWaitSkipsCloseWriteBack(t *testing.T) {
 		QMP:           qmp,
 		Processes:     processes,
 		ShutdownDelay: time.Millisecond,
-		WaitForeground: func(context.Context, *launch.Plan) error {
-			return launch.ErrSavedSuspendExit
-		},
 		WriteBack: func(context.Context) error {
 			writeBackCalls++
 			return nil
@@ -295,9 +230,7 @@ func TestRuntimeSavedSuspendWaitSkipsCloseWriteBack(t *testing.T) {
 		SavedSuspendExit: launch.IsSavedSuspendExit,
 	})
 
-	if err := runtime.Wait(context.Background(), WaitVM); !errors.Is(err, launch.ErrSavedSuspendExit) {
-		t.Fatalf("wait error: got %v want %v", err, launch.ErrSavedSuspendExit)
-	}
+	runtime.MarkSavedSuspend()
 	if err := runtime.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -309,6 +242,8 @@ func TestRuntimeSavedSuspendWaitSkipsCloseWriteBack(t *testing.T) {
 func TestRuntimeInfoUsesConfiguredCollector(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
+	processes := launch.NewProcessSet()
+	processes.Add((&executortest.Process{OverrideName: "qemu-system-x86_64"}).Process())
 	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
 		Manifest: cfg,
 		Paths: launch.RuntimePaths{
@@ -320,6 +255,7 @@ func TestRuntimeInfoUsesConfiguredCollector(t *testing.T) {
 		CID:        11,
 		Stats:      launch.NewStats(time.Now()),
 		QMP:        &fakeQMPClient{},
+		Processes:  processes,
 		QMPTimeout: time.Second,
 		Logger:     slog.New(slog.DiscardHandler),
 		CollectInfo: func(ctx context.Context, socketPath string, watchers executor.Group) (control.InfoResponse, error) {
@@ -332,9 +268,6 @@ func TestRuntimeInfoUsesConfiguredCollector(t *testing.T) {
 			return control.InfoResponse{ProcessList: "PID COMMAND\n1 init"}, nil
 		},
 	})
-	processes := executor.NewGroup()
-	processes.Add((&executortest.Process{OverrideName: "qemu-system-x86_64"}).Process())
-	runtime.SetWatchers(processes)
 
 	resp, err := runtime.Info(context.Background(), control.InfoRequest{})
 	if err != nil {
