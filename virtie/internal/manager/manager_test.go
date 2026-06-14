@@ -60,12 +60,7 @@ func newTestLaunchLifecycle() *launch.Lifecycle {
 	return launch.NewLifecycle(nil, func() {}, func() {})
 }
 
-func TestManagerLaunchProvidersSatisfyLaunchStarterInterfaces(t *testing.T) {
-	var _ launch.Host = launchHost{}
-	var _ launch.Runtime = launchRuntime{}
-}
-
-func TestLaunchHostPrepareRuntimeStateExternalVirtioFSFailureKeepsRuntimeSockets(t *testing.T) {
+func TestManagerStartExternalVirtioFSFailureKeepsRuntimeSockets(t *testing.T) {
 	tmpDir := t.TempDir()
 	manager := newLaunchProviderTestManager(nil)
 	cfg := validProviderLaunchManifest(tmpDir)
@@ -90,10 +85,7 @@ func TestLaunchHostPrepareRuntimeStateExternalVirtioFSFailureKeepsRuntimeSockets
 		}
 	}
 
-	_, err = (launch.Starter{
-		Host:    launchHost{manager: manager},
-		Runtime: launchRuntime{manager: manager},
-	}).Start(context.Background(), plan)
+	_, err = manager.startWithPlan(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected external virtiofs failure")
 	}
@@ -107,7 +99,7 @@ func TestLaunchHostPrepareRuntimeStateExternalVirtioFSFailureKeepsRuntimeSockets
 	}
 }
 
-func TestLaunchHostStartQEMUNilRunnerWrapsOnceThroughStarter(t *testing.T) {
+func TestManagerStartQEMUNilRunnerWrapsOnce(t *testing.T) {
 	tmpDir := t.TempDir()
 	manager := newLaunchProviderTestManager(nil)
 	cfg := validProviderLaunchManifest(tmpDir)
@@ -116,10 +108,7 @@ func TestLaunchHostStartQEMUNilRunnerWrapsOnceThroughStarter(t *testing.T) {
 		t.Fatalf("plan launch: %v", err)
 	}
 
-	_, err = (launch.Starter{
-		Host:    launchHost{manager: manager},
-		Runtime: launchRuntime{manager: manager},
-	}).Start(context.Background(), plan)
+	_, err = manager.startWithPlan(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected nil runner failure")
 	}
@@ -128,59 +117,6 @@ func TestLaunchHostStartQEMUNilRunnerWrapsOnceThroughStarter(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "qemu runner is not configured") {
 		t.Fatalf("error: got %v want qemu runner is not configured", err)
-	}
-}
-
-func TestLaunchRuntimeNewMapsWaitAndCloseHooks(t *testing.T) {
-	manager := newLaunchProviderTestManager(&launchRunner{})
-	qmp := &fakeQMPClient{}
-	var waitCalled bool
-	var writeBackCalled bool
-	var cleanupCalled bool
-	var statsCalled bool
-
-	result, err := (launchRuntime{manager: manager}).New(launch.RuntimeSpec{
-		Manifest:        validProviderLaunchManifest(t.TempDir()),
-		Plan:            &launch.Plan{},
-		QMP:             qmp,
-		SuspendRequests: launch.NewSuspendCoordinator(),
-		Processes:       launch.NewProcessSet(),
-		WaitForeground: func(context.Context, *launch.Plan) error {
-			waitCalled = true
-			return nil
-		},
-		WriteBack: func(context.Context) error {
-			writeBackCalled = true
-			return nil
-		},
-		Cleanup: func() error {
-			cleanupCalled = true
-			return nil
-		},
-		CloseStats: func() {
-			statsCalled = true
-		},
-	})
-	if err != nil {
-		t.Fatalf("runtime new: %v", err)
-	}
-	if result.Runtime == nil {
-		t.Fatal("runtime new returned nil runtime")
-	}
-	if err := result.Runtime.Wait(context.Background(), launch.WaitVM); err != nil {
-		t.Fatalf("runtime wait: %v", err)
-	}
-	if !waitCalled {
-		t.Fatal("wait foreground hook was not mapped")
-	}
-	if err := result.Runtime.Close(); err != nil {
-		t.Fatalf("runtime close: %v", err)
-	}
-	if !writeBackCalled || !cleanupCalled || !statsCalled {
-		t.Fatalf("close hooks: writeBack=%t cleanup=%t stats=%t", writeBackCalled, cleanupCalled, statsCalled)
-	}
-	if got, want := qmp.disconnectCalls, 1; got != want {
-		t.Fatalf("qmp disconnect calls: got %d want %d", got, want)
 	}
 }
 
@@ -272,18 +208,18 @@ func TestManagerPlanLaunchResolvesRuntimeInputs(t *testing.T) {
 
 }
 
-func TestLauncherPlanUsesDefaultConfig(t *testing.T) {
+func TestManagerPlanUsesDefaultConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	remoteCommand := []string{"hostname"}
 
-	plan, err := NewLauncher(DefaultConfig()).Plan(context.Background(), launch.Spec{
+	plan, err := newManagerFromConfig(DefaultConfig()).planLaunch(launch.Spec{
 		Manifest:      cfg,
 		RemoteCommand: remoteCommand,
 		Options:       LaunchOptions{Resume: ResumeModeNo, SSH: true},
 	})
 	if err != nil {
-		t.Fatalf("launcher plan: %v", err)
+		t.Fatalf("manager plan: %v", err)
 	}
 
 	remoteCommand[0] = "mutated"
@@ -926,7 +862,7 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	}
 }
 
-func TestLauncherStartAndRuntimeWaitWithoutSSH(t *testing.T) {
+func TestManagerStartAndRuntimeWaitWithoutSSH(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
@@ -936,7 +872,7 @@ func TestLauncherStartAndRuntimeWaitWithoutSSH(t *testing.T) {
 	runner := &launchRunner{}
 	qmpClient := &fakeQMPClient{}
 	var logOutput bytes.Buffer
-	launcher := NewLauncher(Config{
+	manager := newManagerFromConfig(Config{
 		Locker:            &fileLocker{},
 		Runner:            runner,
 		SocketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
@@ -949,14 +885,14 @@ func TestLauncherStartAndRuntimeWaitWithoutSSH(t *testing.T) {
 		QMPQuitTimeout:    time.Millisecond,
 	})
 
-	plan, err := launcher.Plan(context.Background(), launch.Spec{
+	plan, err := manager.planLaunch(launch.Spec{
 		Manifest: cfg,
 		Options:  LaunchOptions{Resume: ResumeModeNo, SSH: false},
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	runtime, err := launcher.Start(context.Background(), plan)
+	runtime, err := manager.startWithPlan(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -3696,64 +3632,34 @@ func TestBuildQEMUCommandAddsPCIEHotplugPorts(t *testing.T) {
 	}
 }
 
-func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
+type testHotplugControlHandler struct {
+	fakeControlCore
+	requests []control.HotplugRequest
+}
+
+func (h *testHotplugControlHandler) Hotplug(ctx context.Context, req control.HotplugRequest) (control.HotplugResponse, error) {
+	h.requests = append(h.requests, req)
+	return control.HotplugResponse{ID: req.ID, Detach: req.Detach}, nil
+}
+
+func TestManagerHotplugUsesControlSocket(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Persistence.StateDir = ".virtie"
 	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
-	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
-	cfg.QEMU.Hotplug.PCIEPorts = 1
-	cfg.Hotplug = []hotplug.Device{
-		{
-			Kind: hotplug.KindVirtioFS,
-			ID:   "cache",
-			VirtioFS: hotplug.VirtioFS{
-				Source:     filepath.Join(tmpDir, "cache"),
-				Target:     "/mnt/cache",
-				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
-				Bin:        "/bin/virtiofsd",
-				Args:       []string{"--socket=" + filepath.Join(tmpDir, ".virtie", "cache.sock")},
-			},
-		},
-	}
 
-	qmpClient := &fakeQMPClient{}
-	guestClient := &fakeGuestAgentClient{}
-	runner := &launchRunner{}
-	manager := &manager{
-		runner:            runner,
-		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
-		socketWaiter:      &fakeSocketWaiter{},
-		qmpConnectTimeout: time.Second,
-		qmpRetryDelay:     time.Millisecond,
-	}
-
-	if err := manager.hotplug(context.Background(), cfg, "cache", false); err != nil {
-		t.Fatalf("attach hotplug: %v", err)
-	}
-
-	if got, want := runner.startedNames(), []string{"virtiofsd"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected starts: got %#v want %#v", got, want)
-	}
-	if !runner.processGroups()["virtiofsd"] {
-		t.Fatal("expected hotplug host process to run in its own process group")
-	}
-	if got := runner.virtiofsEnv()["virtiofsd"]; !containsString(got, "VIRTIOFSD_SOCKET="+filepath.Join(tmpDir, ".virtie", "cache.sock")) {
-		t.Fatalf("expected rendered hotplug env, got %#v", got)
-	}
-	if got := strings.Join(qmpClient.rawCommands, "\n"); !strings.Contains(got, `"execute":"chardev-add"`) || !strings.Contains(got, `"execute":"device_add"`) {
-		t.Fatalf("unexpected qmp commands: got %#v", qmpClient.rawCommands)
-	}
-	if len(guestClient.execs) != 1 || guestClient.execs[0].path != "/run/current-system/sw/bin/mount" || !reflect.DeepEqual(guestClient.execs[0].args, []string{"-t", "virtiofs", "cache", "/mnt/cache"}) {
-		t.Fatalf("unexpected guest execs: %#v", guestClient.execs)
-	}
-	state, err := hotplug.ReadState(filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json"))
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
 	if err != nil {
-		t.Fatalf("read hotplug state: %v", err)
+		t.Fatalf("resolve control socket: %v", err)
 	}
-	if state.ID != "cache" || state.Kind != hotplug.KindVirtioFS || state.Bus != "pcie.hotplug.0" || state.PID != 1 {
-		t.Fatalf("unexpected hotplug state: %#v", state)
+	handler := &testHotplugControlHandler{}
+	startTestControlServerAt(t, controlSocketPath, handler)
+
+	if err := (&manager{}).hotplug(context.Background(), cfg, "cache", true); err != nil {
+		t.Fatalf("hotplug: %v", err)
+	}
+	if got, want := handler.requests, []control.HotplugRequest{{ID: "cache", Detach: true}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected control requests: got %#v want %#v", got, want)
 	}
 }
 
@@ -3799,55 +3705,6 @@ func TestLaunchRuntimeRegistersHotplugAtControlPeriphery(t *testing.T) {
 	}
 	if got := strings.Join(qmp.rawCommands, "\n"); !strings.Contains(got, `"execute":"netdev_add"`) {
 		t.Fatalf("expected netdev_add command, got %#v", qmp.rawCommands)
-	}
-}
-
-func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := validManifest(tmpDir)
-	cfg.Persistence.StateDir = ".virtie"
-	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
-	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
-	cfg.QEMU.Hotplug.PCIEPorts = 1
-	cfg.Hotplug = []hotplug.Device{
-		{
-			Kind: hotplug.KindVirtioFS,
-			ID:   "cache",
-			VirtioFS: hotplug.VirtioFS{
-				Source:     filepath.Join(tmpDir, "cache"),
-				Target:     "/mnt/cache",
-				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
-				Bin:        "/bin/virtiofsd",
-			},
-		},
-	}
-	statePath := filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json")
-	if err := hotplug.WriteState(statePath, hotplug.State{ID: "cache", Kind: hotplug.KindVirtioFS, Bus: "pcie.hotplug.0"}); err != nil {
-		t.Fatalf("write hotplug state: %v", err)
-	}
-
-	qmpClient := &fakeQMPClient{}
-	guestClient := &fakeGuestAgentClient{}
-	manager := &manager{
-		runner:            &launchRunner{},
-		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
-		socketWaiter:      &fakeSocketWaiter{},
-		qmpConnectTimeout: time.Second,
-		qmpRetryDelay:     time.Millisecond,
-	}
-
-	if err := manager.hotplug(context.Background(), cfg, "cache", true); err != nil {
-		t.Fatalf("detach hotplug: %v", err)
-	}
-	if len(guestClient.execs) != 1 || guestClient.execs[0].path != "/run/current-system/sw/bin/umount" {
-		t.Fatalf("unexpected guest execs: %#v", guestClient.execs)
-	}
-	if got, want := qmpClient.deviceDelWaits, []string{"dev-cache"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected qmp commands: got %#v want %#v", got, want)
-	}
-	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected hotplug state removal, got err=%v", err)
 	}
 }
 

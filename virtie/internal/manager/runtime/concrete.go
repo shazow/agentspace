@@ -23,13 +23,15 @@ type Core struct {
 	qmp              qmpclient.Client
 	suspendRequests  *launch.SuspendCoordinator
 	waitForeground   func(context.Context, *launch.Plan) error
-	collectInfo      func(context.Context, string, executor.Group) (GuestInfo, error)
+	collectInfo      func(context.Context, string, executor.Group) (control.InfoResponse, error)
 	processes        *launch.ProcessSet
 	shutdownDelay    time.Duration
 	qmpTimeout       time.Duration
 	logger           *slog.Logger
 	savedSuspendExit func(error) bool
-	closeHooks       CloseHooks
+	writeBack        func(context.Context) error
+	cleanup          func() error
+	closeStats       func()
 	savedSuspend     atomic.Bool
 	watchers         executor.Group
 
@@ -38,8 +40,9 @@ type Core struct {
 	control *control.Server
 }
 
+var errForegroundWaitNotConfigured = errors.New("runtime foreground wait is not configured")
+
 func New(config RuntimeConfig) *Core {
-	deps := config.Dependencies
 	state := newState(control.RuntimeStarting)
 	return &Core{
 		manifest:         config.Manifest,
@@ -50,13 +53,15 @@ func New(config RuntimeConfig) *Core {
 		qmp:              qmpclient.Serialized(config.QMP),
 		suspendRequests:  config.SuspendRequests,
 		waitForeground:   config.WaitForeground,
-		qmpTimeout:       deps.QMPTimeout,
-		logger:           deps.Logger,
-		savedSuspendExit: deps.SavedSuspendExit,
-		collectInfo:      deps.CollectInfo,
+		qmpTimeout:       config.QMPTimeout,
+		logger:           config.Logger,
+		savedSuspendExit: config.SavedSuspendExit,
+		collectInfo:      config.CollectInfo,
 		processes:        config.Processes,
 		shutdownDelay:    config.ShutdownDelay,
-		closeHooks:       config.CloseHooks,
+		writeBack:        config.WriteBack,
+		cleanup:          config.Cleanup,
+		closeStats:       config.CloseStats,
 		state:            state,
 		closer:           newCloser(state),
 	}
@@ -101,13 +106,13 @@ func (r *Core) Close() error {
 			Processes:     r.processes,
 			ShutdownDelay: r.shutdownDelay,
 			QMP:           r.qmp,
-			Stats:         r.closeHooks.Stats,
+			Stats:         r.closeStats,
 		},
-		WriteBack:        r.closeHooks.WriteBack,
+		WriteBack:        r.writeBack,
 		WriteBackTimeout: r.qmpTimeout,
 		SkipWriteBack:    r.savedSuspend.Load(),
 		Control:          r.control,
-		Cleanup:          r.closeHooks.Cleanup,
+		Cleanup:          r.cleanup,
 	})
 }
 
@@ -141,7 +146,7 @@ func (r *Core) Info(ctx context.Context, req control.InfoRequest) (control.InfoR
 	if err != nil {
 		return control.InfoResponse{}, control.FailedPrecondition(err)
 	}
-	return control.InfoResponse{ProcessList: info.ProcessList}, nil
+	return info, nil
 }
 
 func (r *Core) Suspend(ctx context.Context, req control.SuspendRequest) (control.SuspendResponse, error) {

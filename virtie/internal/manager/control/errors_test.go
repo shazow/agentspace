@@ -28,12 +28,3 @@ func TestIsSocketUnavailable(t *testing.T) {
 		t.Fatalf("did not expect unavailable for arbitrary error")
 	}
 }
-
-func TestIsUnsupported(t *testing.T) {
-	if !IsUnsupported(&RPCError{Code: ErrUnsupported, Message: "nope"}) {
-		t.Fatalf("expected unsupported")
-	}
-	if IsUnsupported(&RPCError{Code: ErrFailedPrecondition, Message: "not ready"}) {
-		t.Fatalf("did not expect failed precondition to be unsupported")
-	}
-}

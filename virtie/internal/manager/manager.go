@@ -25,7 +25,6 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
-	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
@@ -140,22 +139,6 @@ func (m *manager) launchWithPlan(ctx context.Context, plan *launch.Plan) (err er
 	return err
 }
 
-func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (runtime *runtimepkg.Core, err error) {
-	started, err := launch.Starter{
-		Host:    launchHost{manager: m},
-		Runtime: launchRuntime{manager: m},
-	}.Start(ctx, plan)
-	if err != nil {
-		return nil, err
-	}
-	core, ok := started.(*runtimepkg.Core)
-	if !ok {
-		_ = started.Close()
-		return nil, &launch.StageError{Stage: "preflight", Err: fmt.Errorf("launch starter returned %T, not *runtime.Core", started)}
-	}
-	return core, nil
-}
-
 func (m *manager) restoreLaunchRuntime(ctx context.Context, plan *launch.Plan, client qmpclient.Client) error {
 	if plan == nil || plan.ResumeState == nil {
 		return fmt.Errorf("restore plan is not configured")
@@ -185,10 +168,10 @@ func (m *manager) waitForLaunchForeground(
 	ctx context.Context,
 	plan *launch.Plan,
 	stats *launch.Stats,
-	runtime launch.StartedRuntime,
+	runtime watcherSetter,
 	qmpClient qmpclient.Client,
 	lifecycle *launch.Lifecycle,
-	suspendHandler launch.SuspendHandler,
+	suspendHandler suspendHandler,
 	processes *launch.ProcessSet,
 ) error {
 	if task := balloon.ControllerTask(m.effectiveQMPCommandTimeout(), qmpClient, plan.Manifest.QEMU.Devices.Balloon, plan.Notifier); task != nil {
@@ -345,6 +328,14 @@ type launchSuspendHandler struct {
 	err           error
 }
 
+type suspendHandler interface {
+	Handle(context.Context, *launch.SuspendCoordinator) error
+}
+
+type watcherSetter interface {
+	SetWatchers(executor.Group)
+}
+
 func newLaunchSuspendHandler(manager *manager, manifest *manifest.Manifest, qmpSocketPath string, client qmpclient.Client, cid int, notifier launch.NotificationSink, writeBack func() bool) *launchSuspendHandler {
 	return &launchSuspendHandler{
 		manager:       manager,
@@ -362,6 +353,10 @@ func handleSuspendRequest(ctx context.Context, coordinator *launch.SuspendCoordi
 	err := handler.saveAndExit(ctx)
 	coordinator.Complete(err)
 	return err
+}
+
+func (h *launchSuspendHandler) Handle(ctx context.Context, coordinator *launch.SuspendCoordinator) error {
+	return handleSuspendRequest(ctx, coordinator, h)
 }
 
 func (h *launchSuspendHandler) saveAndExit(ctx context.Context) error {
@@ -386,7 +381,7 @@ func (m *manager) runSSHSession(
 	plan *launch.Plan,
 	stats *launch.Stats,
 	lifecycle *launch.Lifecycle,
-	suspendHandler launch.SuspendHandler,
+	suspendHandler suspendHandler,
 	processes *launch.ProcessSet,
 ) error {
 	return launch.RunSSHSession(ctx, launch.SSHSession{
@@ -410,7 +405,7 @@ func (m *manager) runSSHSession(
 	})
 }
 
-func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, lifecycle *launch.Lifecycle, suspendHandler launch.SuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manifest.Manifest, lifecycle *launch.Lifecycle, suspendHandler suspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	delay := launchManifest.SSHRetryDelay(m.sshRetryDelay)
 	if delay <= 0 {
 		delay = m.sshRetryDelay
@@ -422,15 +417,15 @@ func (m *manager) waitBeforeSSHRetry(ctx context.Context, launchManifest *manife
 	return m.waitForLifecycleEvent(ctx, "active session", delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
-func (m *manager) waitForSession(ctx context.Context, session *executor.Process, lifecycle *launch.Lifecycle, suspendHandler launch.SuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForSession(ctx context.Context, session *executor.Process, lifecycle *launch.Lifecycle, suspendHandler suspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	return m.waitForProcess(ctx, "active session", session, 0, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
-func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, lifecycle *launch.Lifecycle, suspendHandler launch.SuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForVM(ctx context.Context, qemu *executor.Process, lifecycle *launch.Lifecycle, suspendHandler suspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	return m.waitForProcess(ctx, "vm session", qemu, 0, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 
-func (m *manager) waitForProcess(ctx context.Context, stage string, process *executor.Process, delay time.Duration, lifecycle *launch.Lifecycle, suspendHandler launch.SuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForProcess(ctx context.Context, stage string, process *executor.Process, delay time.Duration, lifecycle *launch.Lifecycle, suspendHandler suspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	return launch.WaitForLifecycleProcess(ctx, launch.LifecycleProcessWait{
 		Stage:     stage,
 		Process:   process,
@@ -447,7 +442,7 @@ func (m *manager) waitForProcess(ctx context.Context, stage string, process *exe
 	})
 }
 
-func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, delay time.Duration, lifecycle *launch.Lifecycle, suspendHandler launch.SuspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
+func (m *manager) waitForLifecycleEvent(ctx context.Context, stage string, delay time.Duration, lifecycle *launch.Lifecycle, suspendHandler suspendHandler, guestAgentSocketPath string, watchers executor.Group) error {
 	return m.waitForProcess(ctx, stage, nil, delay, lifecycle, suspendHandler, guestAgentSocketPath, watchers)
 }
 

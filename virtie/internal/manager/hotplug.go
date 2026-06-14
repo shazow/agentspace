@@ -14,7 +14,6 @@ import (
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
-	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 )
 
 func Hotplug(ctx context.Context, manifest *manifest.Manifest, id string, detach bool) error {
@@ -26,38 +25,17 @@ func (m *manager) hotplug(ctx context.Context, launchManifest *manifest.Manifest
 		return &launch.StageError{Stage: "preflight", Err: err}
 	}
 	controlSocketPath, err := launchManifest.ResolvedControlSocketPath()
-	if err == nil && controlSocketPath != "" {
-		_, err := controlpkg.Dial(controlSocketPath).Hotplug(ctx, controlpkg.HotplugRequest{ID: id, Detach: detach})
-		if err == nil {
-			return nil
-		}
-		if !controlpkg.IsSocketUnavailable(err) && !controlpkg.IsUnsupported(err) {
-			return &launch.StageError{Stage: "control hotplug", Err: err}
-		}
-	}
-	feature, client, err := m.directHotplugFeature(ctx, launchManifest)
 	if err != nil {
-		return &launch.StageError{Stage: "hotplug", Err: err}
+		return &launch.StageError{Stage: "preflight", Err: err}
 	}
-	defer client.Disconnect()
-	if detach {
-		_, err := feature.Hotplug(ctx, controlpkg.HotplugRequest{ID: id, Detach: true})
-		return err
+	if controlSocketPath == "" {
+		return &launch.StageError{Stage: "control hotplug", Err: fmt.Errorf("control socket path is not configured")}
 	}
-	_, err = feature.Hotplug(ctx, controlpkg.HotplugRequest{ID: id})
-	return err
-}
-
-func (m *manager) directHotplugFeature(ctx context.Context, launchManifest *manifest.Manifest) (managerHotplugFeature, qmpclient.Client, error) {
-	socketPath, err := launchManifest.ResolvedQMPSocketPath()
+	_, err = controlpkg.Dial(controlSocketPath).Hotplug(ctx, controlpkg.HotplugRequest{ID: id, Detach: detach})
 	if err != nil {
-		return managerHotplugFeature{}, nil, err
+		return &launch.StageError{Stage: "control hotplug", Err: err}
 	}
-	client, err := m.waitForQMP(ctx, socketPath, executor.Group{})
-	if err != nil {
-		return managerHotplugFeature{}, nil, err
-	}
-	return m.hotplugFeature(launchManifest, client), client, nil
+	return nil
 }
 
 type managedProcessStarter struct {

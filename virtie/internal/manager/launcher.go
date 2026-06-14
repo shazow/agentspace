@@ -6,7 +6,6 @@ import (
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manager/launch"
-	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	"github.com/shazow/agentspace/virtie/internal/qga"
 	"github.com/shazow/agentspace/virtie/internal/qmpclient"
@@ -63,21 +62,6 @@ func NewLauncher(configs ...Config) *Launcher {
 	return &Launcher{manager: newManagerFromConfig(config)}
 }
 
-func (l *Launcher) Plan(ctx context.Context, spec launch.Spec) (*launch.Plan, error) {
-	_ = ctx
-	if l == nil || l.manager == nil {
-		l = NewLauncher()
-	}
-	return l.manager.planLaunch(spec)
-}
-
-func (l *Launcher) Start(ctx context.Context, plan *launch.Plan) (*runtimepkg.Core, error) {
-	if l == nil || l.manager == nil {
-		l = NewLauncher()
-	}
-	return l.manager.startWithPlan(ctx, plan)
-}
-
 // Launch runs the supported virtie sandbox session.
 func Launch(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string) error {
 	return NewLauncher().launch(ctx, manifest, remoteCommand)
@@ -93,7 +77,10 @@ func (l *Launcher) launch(ctx context.Context, manifest *manifest.Manifest, remo
 }
 
 func (l *Launcher) launchWithOptions(ctx context.Context, manifest *manifest.Manifest, remoteCommand []string, options launch.Options) error {
-	plan, err := l.Plan(ctx, launch.Spec{Manifest: manifest, RemoteCommand: remoteCommand, Options: options})
+	if l == nil || l.manager == nil {
+		l = NewLauncher()
+	}
+	plan, err := l.manager.planLaunch(launch.Spec{Manifest: manifest, RemoteCommand: remoteCommand, Options: options})
 	if err != nil {
 		return err
 	}
