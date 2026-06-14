@@ -147,11 +147,6 @@ func TestParserAcceptsLaunchFlags(t *testing.T) {
 			args:           []string{"--manifest=/tmp/manifest.json", "launch", "--verbose"},
 			unwantedErrMsg: "unknown flag `verbose'",
 		},
-		{
-			name:           "always delete sockets",
-			args:           []string{"--manifest=/tmp/manifest.json", "launch", "--always-delete-sockets"},
-			unwantedErrMsg: "unknown flag `always-delete-sockets'",
-		},
 	}
 
 	for _, tt := range tests {

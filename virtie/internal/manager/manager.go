@@ -48,7 +48,6 @@ type manager struct {
 	sshReadyDialer      launch.SSHReadyDialer
 	logger              *slog.Logger
 	logWriter           io.Writer
-	inputReader         io.Reader
 	sshRetryDelay       time.Duration
 	sshReadyTimeout     time.Duration
 	shutdownDelay       time.Duration
@@ -77,7 +76,6 @@ func newManagerFromConfig(config Config) *manager {
 		sshReadyDialer:      config.SSHReadyDialer,
 		logger:              config.Logger,
 		logWriter:           config.LogWriter,
-		inputReader:         config.InputReader,
 		sshRetryDelay:       config.SSHRetryDelay,
 		sshReadyTimeout:     config.SSHReadyTimeout,
 		shutdownDelay:       config.ShutdownDelay,
