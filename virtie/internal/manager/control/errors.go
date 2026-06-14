@@ -18,9 +18,3 @@ func IsSocketUnavailable(err error) bool {
 	}
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
 }
-
-// IsUnsupported reports whether err is an unsupported-capability RPC error.
-func IsUnsupported(err error) bool {
-	var rpcErr *RPCError
-	return errors.As(err, &rpcErr) && rpcErr.Code == ErrUnsupported
-}

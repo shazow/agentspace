@@ -155,7 +155,7 @@ func ControlStats(stats *Stats) control.RuntimeStats {
 	return resp
 }
 
-func finalizeStats(stats *Stats, output io.Writer) func() {
+func FinalizeStats(stats *Stats, output io.Writer) func() {
 	return func() {
 		if stats == nil {
 			return

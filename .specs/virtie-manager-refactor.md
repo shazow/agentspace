@@ -10,16 +10,16 @@ launch process, while other `virtie` commands talk to that process through
 
 ## Goals Delivered
 
-- `LaunchWithOptions` composes planning, launch starter startup, foreground
-  wait, and cleanup instead of owning lifecycle startup inline.
+- `LaunchWithOptions` composes planning, concrete manager startup, foreground
+  wait, and cleanup through one CLI-facing facade.
 - The launch process starts a typed `virtie.sock` server after QMP readiness
   and closes it during runtime teardown.
-- `virtie suspend`, `virtie hotplug`, status, info, and balloon control use
-  typed control client/server calls where supported.
+- `virtie hotplug`, status, info, and balloon control use typed control
+  client/server calls. `virtie suspend` uses the control socket when available
+  and keeps the PID/signal path for existing launch-process compatibility.
 - QMP-affecting runtime operations go through the launch-owned runtime and a
   serialized QMP client.
-- CLI compatibility fallbacks remain for unavailable control sockets,
-  unsupported build-tag capabilities, and migration-era launch processes.
+- Direct-QMP hotplug and build-tag capability fallbacks have been removed.
 - Manager tests cover the typed transport, socket permissions, status,
   suspend, hotplug, balloon, info, startup ordering, and cleanup behavior.
 
@@ -48,11 +48,11 @@ launch process, while other `virtie` commands talk to that process through
 - Owns concrete environment wiring: file locks, VSock CID checks, process
   runner, socket waiter, QMP/QGA dialers, signal channel, notification
   commands, logging, timeouts, and output writers.
-- Adapts manifest data and concrete dependencies into `manager/launch`,
-  `manager/runtime`, `manager/control`, `qmpclient`, `qga`, hotplug, balloon,
-  and SSH helpers.
-- Keeps compatibility fallbacks for suspend and hotplug until a separate policy
-  decision removes them.
+- Owns concrete startup ordering and adapts manifest data plus concrete
+  dependencies into `manager/launch`, `manager/runtime`, `manager/control`,
+  `qmpclient`, `qga`, hotplug, balloon, and SSH helpers.
+- Keeps the PID/signal suspend compatibility path until a separate policy
+  decision removes it.
 
 ### `virtie/internal/manager/launch`
 
@@ -65,27 +65,24 @@ launch process, while other `virtie` commands talk to that process through
 - Owns lifecycle coordination: `Lifecycle`, `SuspendCoordinator`,
   queued-suspend handling, signal mapping, info requests, and foreground
   process/lifecycle waiting.
-- `Starter`, `Host`, and `Runtime` own planned-launch startup ordering,
-  startup-failure cleanup, launch stats, and the seam between concrete host
-  effects and runtime construction.
 - `Stats`, `TimerEvent`, and `ProcessSet` live with launch startup because
   readiness timing and process ownership are startup concerns.
 - Owns concrete readiness helpers for sockets, QMP, QGA, SSH readiness,
   virtiofs waits, and unexpected process exits.
-- Owns focused launch helpers: run command startup, QEMU process startup,
-  QMP shutdown hook finalization, SSH command construction, SSH foreground
+- Owns focused launch helpers: SSH command construction, SSH foreground
   retry/autoprovisioning, guest file provisioning/write-back, workspace CWD
-  mounting, restore/save orchestration, and suspend/resume notifications.
+  mounting, runtime state files, stats, readiness waits, and suspend/resume
+  notifications. Manager owns the concrete launch-process startup ordering.
 
 ### `virtie/internal/manager/runtime`
 
 - Owns the long-lived `Core` object for QMP, launch-owned process and stats
-  references, control server, suspend queue, foreground wait, close hooks,
+  references, control server, suspend queue, foreground wait, close callbacks,
   runtime state, and typed control methods.
 - `RuntimeConfig` constructs a usable runtime with the required plan,
-  processes, foreground wait, close hooks, QMP client, suspend coordinator, and
-  dependencies. Startup lifecycle actions such as `SetReady` and
-  `StartControl` remain explicit.
+  processes, foreground wait, close callbacks, QMP client, suspend
+  coordinator, logger, timeouts, and info collector. Startup lifecycle actions
+  such as `SetReady` and `StartControl` remain explicit.
 - `State` provides consistent status output; launch stats are mapped into
   control responses from `manager/launch`.
 - `Closer`, `CloseActions`, and `ShutdownResources` keep already-started
@@ -101,8 +98,8 @@ launch process, while other `virtie` commands talk to that process through
 - Provides capability interfaces for core status/info, suspend, hotplug, and
   balloon behavior.
 - Implements typed router, server, listener, dialer, and client calls.
-- Centralizes unsupported, failed-precondition, and socket-unavailable helpers
-  used by compatibility fallbacks.
+- Centralizes typed protocol errors plus the failed-precondition and
+  socket-unavailable helpers used by control clients.
 
 ### `virtie/internal/qmpclient`
 
@@ -121,33 +118,29 @@ launch process, while other `virtie` commands talk to that process through
 
 1. `manager` builds a `launch.Plan` from manifest, options, resume state, and
    notification policy.
-2. `manager.startWithPlan` constructs `launch.Starter` with concrete
-   `launchHost` and `launchRuntime` providers.
-3. `launch.Starter` creates launch stats, lifecycle, runtime lock, process set,
-   CID/QEMU command data, and prepared filesystem/socket state.
-4. `launch.Starter` starts run commands, waits for virtiofs sockets, marks boot
-   start, starts QEMU, waits for QMP, serializes QMP, installs QMP shutdown,
-   and restores saved VM state when present.
-5. `launch.Starter` asks `launchRuntime` for suspend handling, foreground wait,
-   and a `runtime.Core` built from QMP, process ownership, launch stats, close
-   hooks, and control handlers.
-6. `launch.Starter` marks runtime state ready, starts the control server,
+2. `manager.startWithPlan` creates launch stats, lifecycle, runtime lock,
+   process set, CID/QEMU command data, and prepared filesystem/socket state.
+3. `manager.startWithPlan` starts run commands, waits for virtiofs sockets,
+   marks boot start, starts QEMU, waits for QMP, serializes QMP, installs QMP
+   shutdown, and restores saved VM state when present.
+4. `manager.startWithPlan` builds suspend handling, foreground wait, and a
+   `runtime.Core` from QMP, process ownership, launch stats, close callbacks,
+   and control handlers.
+5. `manager.startWithPlan` marks runtime state ready, starts the control server,
    drains queued suspend, provisions fresh guest files, observes SSH readiness,
    and enables write-back-on-exit.
-7. Foreground wait starts the balloon controller task when configured, then
+6. Foreground wait starts the balloon controller task when configured, then
    either runs the SSH foreground session or prints an SSH hint and waits for
    the VM.
-8. Runtime close performs write-back when enabled, control shutdown, process
+7. Runtime close performs write-back when enabled, control shutdown, process
    teardown, QMP disconnect, socket and lock cleanup, and stats finalization.
 
 ## Cleanup Policy
 
-The safe-abstraction cleanup and follow-up simplification cleanup have landed.
-The active follow-up items are intentionally narrow:
+The safe-abstraction cleanup, follow-up simplification cleanup, direct-QMP
+hotplug fallback removal, and partial launcher entrypoint cleanup have landed.
+The active follow-up item is intentionally narrow:
 
-- Decide when compatibility fallbacks for direct-QMP hotplug and PID/signal
-  suspend can be removed.
-- Reconsider whether `Launcher.Plan` and `Launcher.Start` should remain as
-  internal partial-lifecycle entrypoints or become private test helpers.
+- Decide when the PID/signal suspend compatibility path can be removed.
 - Keep this record current when lifecycle topology, control-socket behavior,
   QMP ownership, or fallback policy changes.

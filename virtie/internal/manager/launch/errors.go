@@ -40,6 +40,12 @@ func (e *StageError) Unwrap() error {
 	return e.Err
 }
 
+var ErrSavedSuspendExit = errors.New("saved suspend requested")
+
+func IsSavedSuspendExit(err error) bool {
+	return errors.Is(err, ErrSavedSuspendExit)
+}
+
 func wrapStage(stage string, err error) error {
 	return &StageError{Stage: stage, Err: err}
 }

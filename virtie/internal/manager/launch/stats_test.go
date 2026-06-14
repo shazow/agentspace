@@ -164,7 +164,7 @@ func TestFinalizeStatsMarksCompletedAndWritesOutput(t *testing.T) {
 	stats := NewStats(time.Now().Add(-time.Second))
 	stats.Timer(TimerBootStarted, time.Now().Add(-500*time.Millisecond))
 	var output bytes.Buffer
-	finalizeStats(stats, &output)()
+	FinalizeStats(stats, &output)()
 	got := output.String()
 	if !strings.HasPrefix(got, "stats: ") || !strings.Contains(got, "total=") {
 		t.Fatalf("unexpected stats output: %q", got)
@@ -173,5 +173,5 @@ func TestFinalizeStatsMarksCompletedAndWritesOutput(t *testing.T) {
 		t.Fatal("stats finalizer did not mark completion")
 	}
 
-	finalizeStats(nil, &output)()
+	FinalizeStats(nil, &output)()
 }
