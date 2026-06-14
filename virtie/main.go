@@ -25,9 +25,8 @@ type Options struct {
 	Verbose  []bool `short:"v" long:"verbose" description:"Show verbose logging."`
 
 	Launch struct {
-		Resume              string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
-		SSH                 bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
-		AlwaysDeleteSockets bool   `long:"always-delete-sockets" description:"Delete stale socket files without prompting"`
+		Resume string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
+		SSH    bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
 
 		Args struct {
 			RemoteCommand []string `positional-arg-name:"remote-cmd"`
@@ -79,10 +78,9 @@ func runLaunch(options *Options) error {
 	}
 
 	return manager.LaunchWithOptions(context.Background(), manifest, options.Launch.Args.RemoteCommand, manager.LaunchOptions{
-		Resume:              manager.ResumeMode(options.Launch.Resume),
-		SSH:                 options.Launch.SSH,
-		Verbosity:           len(options.Verbose),
-		AlwaysDeleteSockets: options.Launch.AlwaysDeleteSockets,
+		Resume:    manager.ResumeMode(options.Launch.Resume),
+		SSH:       options.Launch.SSH,
+		Verbosity: len(options.Verbose),
 	})
 }
 

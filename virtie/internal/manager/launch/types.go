@@ -17,10 +17,9 @@ const (
 )
 
 type Options struct {
-	Resume              ResumeMode
-	SSH                 bool
-	Verbosity           int
-	AlwaysDeleteSockets bool
+	Resume    ResumeMode
+	SSH       bool
+	Verbosity int
 }
 
 func (o Options) WaitMode() WaitMode {

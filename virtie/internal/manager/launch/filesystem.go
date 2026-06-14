@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	backendfile "github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
@@ -64,83 +63,11 @@ func CreateVolumeImage(volume manifest.Volume) error {
 	return nil
 }
 
-type SocketCleanupPrompt func(path string) (bool, error)
-
-type SocketCleanupOptions struct {
-	Paths        []string
-	StateDir     string
-	AlwaysDelete bool
-	Prompt       SocketCleanupPrompt
-}
-
-func RemoveStaleSocketPaths(options SocketCleanupOptions) error {
-	for _, path := range options.Paths {
-		info, err := os.Lstat(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return fmt.Errorf("stat socket %q: %w", path, err)
-		}
-		if info.Mode()&os.ModeSocket == 0 {
-			return fmt.Errorf("remove socket %q: path is not a socket", path)
-		}
-
-		trustedStateSocket := false
-		if options.StateDir != "" {
-			absPath, pathErr := filepath.Abs(path)
-			absStateDir, dirErr := filepath.Abs(options.StateDir)
-			if pathErr == nil && dirErr == nil {
-				rel, relErr := filepath.Rel(absStateDir, absPath)
-				trustedStateSocket = relErr == nil && rel != "." && filepath.IsLocal(rel)
-			}
-		}
-
-		if options.AlwaysDelete || trustedStateSocket {
-			if err := removeExistingSocketPath(path); err != nil {
-				return err
-			}
-			continue
-		}
-		if options.Prompt == nil {
-			return fmt.Errorf("stale socket %q requires confirmation before deletion", path)
-		}
-		deleteSocket, err := options.Prompt(path)
-		if err != nil {
-			return fmt.Errorf("confirm stale socket %q deletion: %w", path, err)
-		}
-		if !deleteSocket {
-			return fmt.Errorf("stale socket %q was not deleted", path)
-		}
-		if err := removeExistingSocketPath(path); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func RemoveSocketPaths(paths []string) error {
 	for _, path := range paths {
-		info, err := os.Lstat(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return fmt.Errorf("stat socket %q: %w", path, err)
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove socket %q: %w", path, err)
 		}
-		if info.Mode()&os.ModeSocket == 0 {
-			return fmt.Errorf("remove socket %q: path is not a socket", path)
-		}
-		if err := removeExistingSocketPath(path); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func removeExistingSocketPath(path string) error {
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove socket %q: %w", path, err)
 	}
 	return nil
 }
