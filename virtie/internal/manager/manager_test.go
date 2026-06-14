@@ -85,7 +85,7 @@ func TestManagerStartExternalVirtioFSFailureKeepsRuntimeSockets(t *testing.T) {
 		}
 	}
 
-	_, err = manager.startWithPlan(context.Background(), plan)
+	_, _, err = manager.startWithPlan(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected external virtiofs failure")
 	}
@@ -108,7 +108,7 @@ func TestManagerStartQEMUNilRunnerWrapsOnce(t *testing.T) {
 		t.Fatalf("plan launch: %v", err)
 	}
 
-	_, err = manager.startWithPlan(context.Background(), plan)
+	_, _, err = manager.startWithPlan(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected nil runner failure")
 	}
@@ -892,7 +892,7 @@ func TestManagerStartAndRuntimeWaitWithoutSSH(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	runtime, err := manager.startWithPlan(context.Background(), plan)
+	runtime, _, err := manager.startWithPlan(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -3693,7 +3693,7 @@ func TestLaunchRuntimeRegistersHotplugAtControlPeriphery(t *testing.T) {
 		t.Fatalf("plan launch: %v", err)
 	}
 
-	runtime, err := manager.startWithPlan(context.Background(), plan)
+	runtime, _, err := manager.startWithPlan(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("start runtime: %v", err)
 	}
