@@ -17,7 +17,7 @@ the main flake.
 The supported CLI is:
 
 ```console
-virtie --manifest=MANIFEST [-v|-vv] launch [--ssh] [--resume=no|auto|force] [-- <remote-cmd...>]
+virtie --manifest=MANIFEST [-v|-vv] launch [--ssh] [--resume=no|auto|force] [--always-delete-sockets] [-- <remote-cmd...>]
 virtie --manifest=MANIFEST suspend
 virtie --manifest=MANIFEST [-v] hotplug ID
 virtie --manifest=MANIFEST [-v] hotplug --detach ID

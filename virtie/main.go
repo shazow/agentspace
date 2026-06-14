@@ -26,9 +26,10 @@ type Options struct {
 }
 
 type launchCommand struct {
-	options *Options
-	Resume  string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
-	SSH     bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
+	options             *Options
+	Resume              string `long:"resume" choice:"no" choice:"auto" choice:"force" default:"auto" description:"Resume suspended VM instead of launching a fresh one"`
+	SSH                 bool   `long:"ssh" description:"Attach an SSH session after launch readiness"`
+	AlwaysDeleteSockets bool   `long:"always-delete-sockets" description:"Delete stale socket files without prompting"`
 
 	Args struct {
 		RemoteCommand []string `positional-arg-name:"remote-cmd"`
@@ -59,9 +60,10 @@ func (c *launchCommand) Execute(args []string) error {
 	}
 
 	return manager.LaunchWithOptions(context.Background(), manifest, c.Args.RemoteCommand, manager.LaunchOptions{
-		Resume:    manager.ResumeMode(c.Resume),
-		SSH:       c.SSH,
-		Verbosity: len(c.options.Verbose),
+		Resume:              manager.ResumeMode(c.Resume),
+		SSH:                 c.SSH,
+		Verbosity:           len(c.options.Verbose),
+		AlwaysDeleteSockets: c.AlwaysDeleteSockets,
 	})
 }
 
