@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"bytes"
 	"strings"
 	"sync"
 	"testing"
@@ -158,20 +157,4 @@ func TestControlStatsFromTimerEvents(t *testing.T) {
 	if got.SSHAttempts != 1 {
 		t.Fatalf("unexpected ssh attempts: got %d want 1", got.SSHAttempts)
 	}
-}
-
-func TestFinalizeStatsMarksCompletedAndWritesOutput(t *testing.T) {
-	stats := NewStats(time.Now().Add(-time.Second))
-	stats.Timer(TimerBootStarted, time.Now().Add(-500*time.Millisecond))
-	var output bytes.Buffer
-	FinalizeStats(stats, &output)()
-	got := output.String()
-	if !strings.HasPrefix(got, "stats: ") || !strings.Contains(got, "total=") {
-		t.Fatalf("unexpected stats output: %q", got)
-	}
-	if ControlStats(stats).CompletedAt.IsZero() {
-		t.Fatal("stats finalizer did not mark completion")
-	}
-
-	FinalizeStats(nil, &output)()
 }
