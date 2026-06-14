@@ -7,7 +7,7 @@ import (
 	"time"
 
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
-	"github.com/shazow/agentspace/virtie/internal/balloontypes"
+	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
 
@@ -28,7 +28,7 @@ func TestBalloonRequiresConfiguredDevice(t *testing.T) {
 
 func TestBalloonPropagatesQMPError(t *testing.T) {
 	qmpErr := errors.New("qmp failed")
-	_, err := balloon(context.Background(), &balloontypes.Device{}, fakeBalloonQMP{err: qmpErr}, time.Second, control.BalloonRequest{})
+	_, err := balloon(context.Background(), &balloonpkg.Device{}, fakeBalloonQMP{err: qmpErr}, time.Second, control.BalloonRequest{})
 	if !errors.Is(err, qmpErr) {
 		t.Fatalf("error: got %v want %v", err, qmpErr)
 	}

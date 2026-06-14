@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shazow/agentspace/virtie/internal/balloontypes"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	control "github.com/shazow/agentspace/virtie/internal/manager/control"
@@ -19,7 +19,7 @@ import (
 func TestRuntimeStatusAndBalloonUseOwnedQMP(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	cfg.QEMU.Devices.Balloon = &balloontypes.Device{ID: "balloon0", Transport: "pci"}
+	cfg.QEMU.Devices.Balloon = &balloon.Device{ID: "balloon0", Transport: "pci"}
 	stats := launch.NewStats(time.Now())
 	stats.Timer(launch.TimerBootStarted, time.Now())
 	stats.Timer(launch.TimerQMPReady, time.Now())

@@ -10,7 +10,6 @@ import (
 	"syscall"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
-	"github.com/shazow/agentspace/virtie/internal/hotplugtypes"
 )
 
 type hotplugDevice interface {
@@ -22,7 +21,7 @@ type hotplugDevice interface {
 type Runner struct {
 	StateDir string
 	WorkDir  string
-	Devices  []hotplugtypes.Device
+	Devices  []Device
 	Start    ProcessStarter
 	Sockets  SocketWaiter
 	QMP      DeviceQMP
@@ -40,8 +39,8 @@ type SocketWaiter interface {
 }
 
 type DeviceQMP interface {
-	AttachDevice(context.Context, hotplugtypes.Device, string) (func(context.Context), error)
-	DetachDevice(context.Context, hotplugtypes.Device) error
+	AttachDevice(context.Context, Device, string) (func(context.Context), error)
+	DetachDevice(context.Context, Device) error
 }
 
 type GuestRunner interface {
@@ -88,7 +87,7 @@ func (r Runner) hotplugRegistry(ctx context.Context) (hotplugRegistry, error) {
 	return registry, nil
 }
 
-func (r Runner) hotplug(ctx context.Context, device hotplugtypes.Device, index int) (hotplugDevice, error) {
+func (r Runner) hotplug(ctx context.Context, device Device, index int) (hotplugDevice, error) {
 	base := hotplugBase{
 		ctx:    ctx,
 		runner: &r,
@@ -97,11 +96,11 @@ func (r Runner) hotplug(ctx context.Context, device hotplugtypes.Device, index i
 		bus:    fmt.Sprintf("pcie.hotplug.%d", index),
 	}
 	switch device.Kind {
-	case hotplugtypes.KindVirtioFS:
+	case KindVirtioFS:
 		return &hotplugVirtioFS{hotplugBase: base, VirtioFS: device.VirtioFS}, nil
-	case hotplugtypes.KindNet:
+	case KindNet:
 		return &hotplugNet{hotplugBase: base, Net: device.Net}, nil
-	case hotplugtypes.KindBlock:
+	case KindBlock:
 		return &hotplugBlock{hotplugBase: base, Block: device.Block}, nil
 	default:
 		return nil, fmt.Errorf("manifest.hotplug id %q has unsupported kind %q", device.ID, device.Kind)
@@ -129,7 +128,7 @@ type hotplugBase struct {
 	ctx    context.Context
 	runner *Runner
 	id     string
-	kind   hotplugtypes.Kind
+	kind   Kind
 	bus    string
 }
 
@@ -137,11 +136,11 @@ func (h hotplugBase) ID() string {
 	return h.id
 }
 
-func (h hotplugBase) attach(device hotplugtypes.Device, attachHost func() (*executor.Process, error), detachHost func(*executor.Process)) error {
+func (h hotplugBase) attach(device Device, attachHost func() (*executor.Process, error), detachHost func(*executor.Process)) error {
 	if detachHost == nil {
 		detachHost = func(*executor.Process) {}
 	}
-	statePath, err := hotplugtypes.StatePath(h.runner.StateDir, h.id)
+	statePath, err := StatePath(h.runner.StateDir, h.id)
 	if err != nil {
 		return err
 	}
@@ -159,7 +158,7 @@ func (h hotplugBase) attach(device hotplugtypes.Device, attachHost func() (*exec
 		}
 	}
 
-	state := hotplugtypes.State{ID: h.id, Kind: h.kind, Bus: h.bus}
+	state := State{ID: h.id, Kind: h.kind, Bus: h.bus}
 	if proc != nil {
 		state.PID = proc.PID()
 	}
@@ -176,7 +175,7 @@ func (h hotplugBase) attach(device hotplugtypes.Device, attachHost func() (*exec
 		detachHost(proc)
 		return err
 	}
-	if err := hotplugtypes.WriteState(statePath, state); err != nil {
+	if err := WriteState(statePath, state); err != nil {
 		_ = h.runner.detachGuest(h.ctx, device)
 		rollbackQMP(h.ctx)
 		detachHost(proc)
@@ -185,12 +184,12 @@ func (h hotplugBase) attach(device hotplugtypes.Device, attachHost func() (*exec
 	return nil
 }
 
-func (h hotplugBase) detach(device hotplugtypes.Device, cleanup func(hotplugtypes.State) error) error {
-	statePath, err := hotplugtypes.StatePath(h.runner.StateDir, h.id)
+func (h hotplugBase) detach(device Device, cleanup func(State) error) error {
+	statePath, err := StatePath(h.runner.StateDir, h.id)
 	if err != nil {
 		return err
 	}
-	state, err := hotplugtypes.ReadState(statePath)
+	state, err := ReadState(statePath)
 	if err != nil {
 		return err
 	}
@@ -201,7 +200,7 @@ func (h hotplugBase) detach(device hotplugtypes.Device, cleanup func(hotplugtype
 		return fmt.Errorf("hotplug state %q is kind %q, not current manifest kind %q", statePath, state.Kind, h.kind)
 	}
 
-	guestUnmounted := device.Kind == hotplugtypes.KindVirtioFS && device.VirtioFS.Target != ""
+	guestUnmounted := device.Kind == KindVirtioFS && device.VirtioFS.Target != ""
 	if err := h.runner.detachGuest(h.ctx, device); err != nil {
 		return err
 	}
@@ -225,7 +224,7 @@ func (h hotplugBase) detach(device hotplugtypes.Device, cleanup func(hotplugtype
 
 type hotplugVirtioFS struct {
 	hotplugBase
-	hotplugtypes.VirtioFS
+	VirtioFS
 }
 
 func (h hotplugVirtioFS) Attach() error {
@@ -233,7 +232,7 @@ func (h hotplugVirtioFS) Attach() error {
 }
 
 func (h hotplugVirtioFS) Detach() error {
-	return h.detach(h.device(), func(state hotplugtypes.State) error {
+	return h.detach(h.device(), func(state State) error {
 		if state.PID > 0 {
 			if err := h.runner.terminatePID(state.PID); err != nil {
 				return err
@@ -246,8 +245,8 @@ func (h hotplugVirtioFS) Detach() error {
 	})
 }
 
-func (h hotplugVirtioFS) device() hotplugtypes.Device {
-	return hotplugtypes.Device{Kind: hotplugtypes.KindVirtioFS, ID: h.id, VirtioFS: h.VirtioFS}
+func (h hotplugVirtioFS) device() Device {
+	return Device{Kind: KindVirtioFS, ID: h.id, VirtioFS: h.VirtioFS}
 }
 
 func (h hotplugVirtioFS) attachHost() (*executor.Process, error) {
@@ -260,7 +259,7 @@ func (h hotplugVirtioFS) detachHost(proc *executor.Process) {
 
 type hotplugNet struct {
 	hotplugBase
-	hotplugtypes.Net
+	Net
 }
 
 func (h hotplugNet) Attach() error {
@@ -271,13 +270,13 @@ func (h hotplugNet) Detach() error {
 	return h.detach(h.device(), nil)
 }
 
-func (h hotplugNet) device() hotplugtypes.Device {
-	return hotplugtypes.Device{Kind: hotplugtypes.KindNet, ID: h.id, Net: h.Net}
+func (h hotplugNet) device() Device {
+	return Device{Kind: KindNet, ID: h.id, Net: h.Net}
 }
 
 type hotplugBlock struct {
 	hotplugBase
-	hotplugtypes.Block
+	Block
 }
 
 func (h hotplugBlock) Attach() error {
@@ -288,11 +287,11 @@ func (h hotplugBlock) Detach() error {
 	return h.detach(h.device(), nil)
 }
 
-func (h hotplugBlock) device() hotplugtypes.Device {
-	return hotplugtypes.Device{Kind: hotplugtypes.KindBlock, ID: h.id, Block: h.Block}
+func (h hotplugBlock) device() Device {
+	return Device{Kind: KindBlock, ID: h.id, Block: h.Block}
 }
 
-func (r Runner) attachVirtioFSHost(ctx context.Context, device hotplugtypes.Device) (*executor.Process, error) {
+func (r Runner) attachVirtioFSHost(ctx context.Context, device Device) (*executor.Process, error) {
 	fs := device.VirtioFS
 	if r.Start == nil {
 		return nil, fmt.Errorf("hotplug process starter is not configured")
@@ -313,15 +312,15 @@ func (r Runner) attachVirtioFSHost(ctx context.Context, device hotplugtypes.Devi
 	return proc, nil
 }
 
-func (r Runner) attachGuest(ctx context.Context, device hotplugtypes.Device) error {
-	if device.Kind != hotplugtypes.KindVirtioFS || device.VirtioFS.Target == "" {
+func (r Runner) attachGuest(ctx context.Context, device Device) error {
+	if device.Kind != KindVirtioFS || device.VirtioFS.Target == "" {
 		return nil
 	}
 	return r.Guest.Run(ctx, []string{"/run/current-system/sw/bin/mount", "-t", "virtiofs", device.ID, device.VirtioFS.Target})
 }
 
-func (r Runner) detachGuest(ctx context.Context, device hotplugtypes.Device) error {
-	if device.Kind != hotplugtypes.KindVirtioFS || device.VirtioFS.Target == "" {
+func (r Runner) detachGuest(ctx context.Context, device Device) error {
+	if device.Kind != KindVirtioFS || device.VirtioFS.Target == "" {
 		return nil
 	}
 	return r.Guest.Run(ctx, []string{"/run/current-system/sw/bin/umount", device.VirtioFS.Target})
@@ -340,49 +339,49 @@ func (r Runner) terminatePID(pid int) error {
 	return executor.SignalProcessGroup(pid, syscall.SIGTERM)
 }
 
-func attachCommands(device hotplugtypes.Device, bus string) []string {
+func attachCommands(device Device, bus string) []string {
 	switch device.Kind {
-	case hotplugtypes.KindVirtioFS:
+	case KindVirtioFS:
 		return virtioFSAttachCommands(device, bus)
-	case hotplugtypes.KindNet:
+	case KindNet:
 		return netAttachCommands(device, bus)
-	case hotplugtypes.KindBlock:
+	case KindBlock:
 		return blockAttachCommands(device, bus)
 	default:
 		return nil
 	}
 }
 
-func detachPostDeviceDelCommands(device hotplugtypes.Device) []string {
+func detachPostDeviceDelCommands(device Device) []string {
 	switch device.Kind {
-	case hotplugtypes.KindVirtioFS:
+	case KindVirtioFS:
 		return []string{qmpCommand("chardev-remove", map[string]any{"id": charID(device.ID)})}
-	case hotplugtypes.KindNet:
+	case KindNet:
 		return []string{qmpCommand("netdev_del", map[string]any{"id": netdevID(device.ID)})}
-	case hotplugtypes.KindBlock:
+	case KindBlock:
 		return []string{qmpCommand("blockdev-del", map[string]any{"node-name": blockNodeID(device.ID)})}
 	default:
 		return nil
 	}
 }
 
-func rollbackAttachCommands(device hotplugtypes.Device, successful int) []string {
+func rollbackAttachCommands(device Device, successful int) []string {
 	if successful < 1 {
 		return nil
 	}
 	switch device.Kind {
-	case hotplugtypes.KindVirtioFS:
+	case KindVirtioFS:
 		return []string{qmpCommand("chardev-remove", map[string]any{"id": charID(device.ID)})}
-	case hotplugtypes.KindNet:
+	case KindNet:
 		return []string{qmpCommand("netdev_del", map[string]any{"id": netdevID(device.ID)})}
-	case hotplugtypes.KindBlock:
+	case KindBlock:
 		return []string{qmpCommand("blockdev-del", map[string]any{"node-name": blockNodeID(device.ID)})}
 	default:
 		return nil
 	}
 }
 
-func virtioFSAttachCommands(device hotplugtypes.Device, bus string) []string {
+func virtioFSAttachCommands(device Device, bus string) []string {
 	id := device.ID
 	return []string{
 		qmpCommand("chardev-add", map[string]any{
@@ -407,7 +406,7 @@ func virtioFSAttachCommands(device hotplugtypes.Device, bus string) []string {
 
 // netAttachCommands only attaches the QEMU side. Full networking support also
 // needs guest-side link naming, DHCP or static address policy, and route setup.
-func netAttachCommands(device hotplugtypes.Device, bus string) []string {
+func netAttachCommands(device Device, bus string) []string {
 	id := device.ID
 	netdev := map[string]any{"id": netdevID(id), "type": "user"}
 	if len(device.Net.Forward) > 0 {
@@ -431,7 +430,7 @@ func netAttachCommands(device hotplugtypes.Device, bus string) []string {
 
 // blockAttachCommands only attaches the QEMU block device. Full storage support
 // also needs guest-side discovery, partition/filesystem policy, and mount setup.
-func blockAttachCommands(device hotplugtypes.Device, bus string) []string {
+func blockAttachCommands(device Device, bus string) []string {
 	id := device.ID
 	blockdev := map[string]any{
 		"node-name": blockNodeID(id),

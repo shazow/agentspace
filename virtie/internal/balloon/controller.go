@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/shazow/agentspace/virtie/internal/balloontypes"
 )
 
 var (
@@ -50,7 +48,7 @@ type controller struct {
 	Session    session
 	Logger     *slog.Logger
 	DeviceID   string
-	Config     balloontypes.ControllerConfig
+	Config     ControllerConfig
 	QMPTimeout time.Duration
 	Now        func() time.Time
 	Notifier   notifier
@@ -225,7 +223,7 @@ func (c *controller) nowFunc() func() time.Time {
 }
 
 func evaluate(
-	config balloontypes.ControllerConfig,
+	config ControllerConfig,
 	state *controllerState,
 	now time.Time,
 	actualBytes int64,
