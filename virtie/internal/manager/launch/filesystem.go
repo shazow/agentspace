@@ -3,8 +3,10 @@ package launch
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
+	"syscall"
 
 	backendfile "github.com/diskfs/go-diskfs/backend/file"
 	"github.com/diskfs/go-diskfs/filesystem/ext4"
@@ -63,11 +65,42 @@ func CreateVolumeImage(volume manifest.Volume) error {
 	return nil
 }
 
-func RemoveSocketPaths(paths []string) error {
+var ErrStaleSocket = errors.New("stale socket")
+
+func RemoveStaleSockets(paths ...string) error {
 	for _, path := range paths {
+		err := CheckSocketPath(path)
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, ErrStaleSocket) {
+			return err
+		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove socket %q: %w", path, err)
 		}
 	}
 	return nil
+}
+
+func CheckSocketPath(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat socket %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("socket %q: path is not a socket", path)
+	}
+	conn, err := net.Dial("unix", path)
+	if err == nil {
+		_ = conn.Close()
+		return fmt.Errorf("socket %q is still live", path)
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return fmt.Errorf("check socket %q liveness: %w", path, err)
+	}
+	return ErrStaleSocket
 }

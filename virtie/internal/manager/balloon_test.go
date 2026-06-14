@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -60,11 +59,9 @@ func TestManagerLaunchStartsBalloonControllerAndStopsItBeforeQuit(t *testing.T) 
 	waiter := &fakeSocketWaiter{
 		callback: func(paths []string) error {
 			for _, path := range paths {
-				file, err := os.Create(path)
-				if err != nil {
+				if err := createStaleUnixSocketPath(path); err != nil {
 					return err
 				}
-				file.Close()
 			}
 			return nil
 		},
@@ -120,11 +117,9 @@ func TestManagerLaunchDoesNotAbortOnBalloonControllerFailure(t *testing.T) {
 	waiter := &fakeSocketWaiter{
 		callback: func(paths []string) error {
 			for _, path := range paths {
-				file, err := os.Create(path)
-				if err != nil {
+				if err := createStaleUnixSocketPath(path); err != nil {
 					return err
 				}
-				file.Close()
 			}
 			return nil
 		},

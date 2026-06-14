@@ -65,7 +65,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 			cleanupErr = errors.Join(cleanupErr, qmp.Disconnect())
 		}
 		if socketCleanupReached {
-			cleanupErr = errors.Join(cleanupErr, launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()))
+			cleanupErr = errors.Join(cleanupErr, launch.RemoveStaleSockets(plan.RuntimeSocketCleanupFiles()...))
 		}
 		m.writeLaunchStats(stats)
 		err = errors.Join(err, cleanupErr)
@@ -148,7 +148,7 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 			return m.writeBackGuestFiles(ctx, plan.Manifest, executor.Group{})
 		},
 		Cleanup: func() error {
-			return errors.Join(launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()), cleanupRuntime())
+			return errors.Join(launch.RemoveStaleSockets(plan.RuntimeSocketCleanupFiles()...), cleanupRuntime())
 		},
 		QMPTimeout:       m.effectiveQMPCommandTimeout(),
 		Logger:           m.logger,
@@ -250,7 +250,7 @@ func (m *manager) prepareRuntimeState(plan *launch.Plan) error {
 			return fmt.Errorf("create directory %q: %w", dir, err)
 		}
 	}
-	if err := launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()); err != nil {
+	if err := launch.RemoveStaleSockets(plan.RuntimeSocketCleanupFiles()...); err != nil {
 		return err
 	}
 	for _, volume := range plan.Volumes {
