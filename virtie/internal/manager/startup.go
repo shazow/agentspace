@@ -250,7 +250,12 @@ func (m *manager) prepareRuntimeState(plan *launch.Plan) error {
 			return fmt.Errorf("create directory %q: %w", dir, err)
 		}
 	}
-	if err := launch.RemoveSocketPaths(plan.RuntimeSocketCleanupFiles()); err != nil {
+	if err := launch.RemoveStaleSocketPaths(launch.SocketCleanupOptions{
+		Paths:        plan.RuntimeSocketCleanupFiles(),
+		StateDir:     plan.Paths.StateDir,
+		AlwaysDelete: plan.Options.AlwaysDeleteSockets,
+		Prompt:       m.confirmDeleteStaleSocket,
+	}); err != nil {
 		return err
 	}
 	for _, volume := range plan.Volumes {

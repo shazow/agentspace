@@ -111,6 +111,39 @@ func TestManagerStartExternalVirtioFSFailureKeepsRuntimeSockets(t *testing.T) {
 	}
 }
 
+func TestConfirmDeleteStaleSocketPromptDefaultsYes(t *testing.T) {
+	var output bytes.Buffer
+	manager := &manager{
+		inputReader: strings.NewReader("\n"),
+		logWriter:   &output,
+	}
+	ok, err := manager.confirmDeleteStaleSocket("/tmp/qmp.sock")
+	if err != nil {
+		t.Fatalf("confirm delete stale socket: %v", err)
+	}
+	if !ok {
+		t.Fatal("empty prompt response should default to yes")
+	}
+	want := "Stale socket detected, delete before launching? [Y|n] \"/tmp/qmp.sock\" "
+	if got := output.String(); got != want {
+		t.Fatalf("prompt output: got %q want %q", got, want)
+	}
+}
+
+func TestConfirmDeleteStaleSocketPromptNo(t *testing.T) {
+	manager := &manager{
+		inputReader: strings.NewReader("n\n"),
+		logWriter:   io.Discard,
+	}
+	ok, err := manager.confirmDeleteStaleSocket("/tmp/qmp.sock")
+	if err != nil {
+		t.Fatalf("confirm delete stale socket: %v", err)
+	}
+	if ok {
+		t.Fatal("n prompt response should decline deletion")
+	}
+}
+
 func TestManagerStartQEMUNilRunnerWrapsOnce(t *testing.T) {
 	tmpDir := t.TempDir()
 	manager := newLaunchProviderTestManager(nil)
@@ -284,12 +317,8 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	volumeImage := filepath.Join(tmpDir, "overlay.img")
 	cleanupPath := filepath.Join(tmpDir, ".virtie", "cleanup.sock")
 	untouchedPath := filepath.Join(tmpDir, ".virtie", "external.sock")
-	if err := os.MkdirAll(filepath.Dir(cleanupPath), 0o755); err != nil {
-		t.Fatalf("create cleanup directory: %v", err)
-	}
-	if err := os.WriteFile(cleanupPath, []byte("cleanup"), 0o600); err != nil {
-		t.Fatalf("write cleanup file: %v", err)
-	}
+	cleanupListener := listenUnixSocket(t, cleanupPath)
+	defer cleanupListener.Close()
 	if err := os.WriteFile(untouchedPath, []byte("external"), 0o600); err != nil {
 		t.Fatalf("write external path: %v", err)
 	}
@@ -303,14 +332,12 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 			runner.exitQEMU(nil)
 		},
 	}
+	waiterListeners := &testSocketListeners{}
+	defer waiterListeners.close()
 	waiter := &fakeSocketWaiter{
 		callback: func(paths []string) error {
 			for _, path := range paths {
-				file, err := os.Create(path)
-				if err != nil {
-					return err
-				}
-				file.Close()
+				waiterListeners.add(t, path)
 			}
 			return nil
 		},
@@ -564,12 +591,8 @@ func TestManagerLaunchFailsWhenRunStartFails(t *testing.T) {
 		},
 	}
 	cleanupPath := filepath.Join(tmpDir, ".virtie", "cleanup.sock")
-	if err := os.MkdirAll(filepath.Dir(cleanupPath), 0o755); err != nil {
-		t.Fatalf("create cleanup directory: %v", err)
-	}
-	if err := os.WriteFile(cleanupPath, []byte("cleanup"), 0o600); err != nil {
-		t.Fatalf("write cleanup file: %v", err)
-	}
+	cleanupListener := listenUnixSocket(t, cleanupPath)
+	defer cleanupListener.Close()
 
 	runner := &launchRunner{
 		startErrors: map[string]error{
@@ -666,14 +689,17 @@ func TestManagerLaunchRemovesCleanupPathAfterQMPStartupFailure(t *testing.T) {
 	cfg.Volumes[0].AutoCreate = false
 
 	cleanupPath := filepath.Join(tmpDir, "fs.sock")
+	var cleanupListener net.Listener
+	defer func() {
+		if cleanupListener != nil {
+			_ = cleanupListener.Close()
+		}
+	}()
 	waiter := &fakeSocketWaiter{
 		callback: func(paths []string) error {
 			if len(paths) == 1 && paths[0] == cleanupPath {
-				file, err := os.Create(cleanupPath)
-				if err != nil {
-					return err
-				}
-				return file.Close()
+				cleanupListener = listenUnixSocket(t, cleanupPath)
+				return nil
 			}
 			return errors.New("qmp did not start")
 		},
@@ -711,9 +737,8 @@ func TestRemoveSocketPathsIgnoresMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "cleanup.sock")
 	missingPath := filepath.Join(tmpDir, "missing.sock")
-	if err := os.WriteFile(filePath, []byte("cleanup"), 0o600); err != nil {
-		t.Fatalf("write cleanup file: %v", err)
-	}
+	listener := listenUnixSocket(t, filePath)
+	defer listener.Close()
 
 	if err := launch.RemoveSocketPaths([]string{filePath, missingPath}); err != nil {
 		t.Fatalf("remove socket paths: %v", err)
@@ -4654,6 +4679,34 @@ func startFakeSSHReadySocket(_ context.Context, path string) error {
 		time.Sleep(100 * time.Millisecond)
 	}()
 	return nil
+}
+
+type testSocketListeners struct {
+	listeners []net.Listener
+}
+
+func (l *testSocketListeners) add(t *testing.T, path string) {
+	t.Helper()
+	listener := listenUnixSocket(t, path)
+	l.listeners = append(l.listeners, listener)
+}
+
+func (l *testSocketListeners) close() {
+	for _, listener := range l.listeners {
+		_ = listener.Close()
+	}
+}
+
+func listenUnixSocket(t *testing.T, path string) net.Listener {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create socket parent: %v", err)
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen on unix socket %q: %v", path, err)
+	}
+	return listener
 }
 
 type fakeQMPDialer struct {
