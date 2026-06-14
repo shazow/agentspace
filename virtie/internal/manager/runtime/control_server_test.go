@@ -49,7 +49,3 @@ type fakeRuntimeHandler struct{}
 func (fakeRuntimeHandler) Status(context.Context, control.StatusRequest) (control.StatusResponse, error) {
 	return control.StatusResponse{State: control.RuntimeReady, CID: 7}, nil
 }
-
-func (fakeRuntimeHandler) Info(context.Context, control.InfoRequest) (control.InfoResponse, error) {
-	return control.InfoResponse{}, nil
-}

@@ -17,10 +17,6 @@ func (fakeControlCore) Status(context.Context, control.StatusRequest) (control.S
 	return control.StatusResponse{State: control.RuntimeReady}, nil
 }
 
-func (fakeControlCore) Info(context.Context, control.InfoRequest) (control.InfoResponse, error) {
-	return control.InfoResponse{}, nil
-}
-
 func startTestControlServerAt(t *testing.T, path string, runtime any) {
 	t.Helper()
 	core, ok := runtime.(control.RuntimeCore)
@@ -28,6 +24,9 @@ func startTestControlServerAt(t *testing.T, path string, runtime any) {
 		t.Fatalf("runtime core handler is required")
 	}
 	options := []control.RouterOption{}
+	if info, ok := runtime.(control.RuntimeInfo); ok {
+		options = append(options, control.WithInfo(info))
+	}
 	if suspend, ok := runtime.(control.RuntimeSuspend); ok {
 		options = append(options, control.WithSuspend(suspend))
 	}
