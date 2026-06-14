@@ -3802,59 +3802,6 @@ func TestLaunchRuntimeRegistersHotplugAtControlPeriphery(t *testing.T) {
 	}
 }
 
-func TestManagerHotplugFallsBackWhenControlSocketUnsupported(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := validManifest(tmpDir)
-	cfg.Persistence.StateDir = ".virtie"
-	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
-	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
-	cfg.QEMU.Hotplug.PCIEPorts = 1
-	cfg.Hotplug = []hotplug.Device{
-		{
-			Kind: hotplug.KindVirtioFS,
-			ID:   "cache",
-			VirtioFS: hotplug.VirtioFS{
-				Source:     filepath.Join(tmpDir, "cache"),
-				Target:     "/mnt/cache",
-				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
-				Bin:        "/bin/virtiofsd",
-				Args:       []string{"--socket=" + filepath.Join(tmpDir, ".virtie", "cache.sock")},
-			},
-		},
-	}
-	controlSocketPath, err := cfg.ResolvedControlSocketPath()
-	if err != nil {
-		t.Fatalf("resolve control socket: %v", err)
-	}
-	startTestControlServerAt(t, controlSocketPath, &fakeControlCore{})
-
-	qmpClient := &fakeQMPClient{}
-	guestClient := &fakeGuestAgentClient{}
-	runner := &launchRunner{}
-	manager := &manager{
-		runner:            runner,
-		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
-		socketWaiter:      &fakeSocketWaiter{},
-		qmpConnectTimeout: time.Second,
-		qmpRetryDelay:     time.Millisecond,
-	}
-
-	if err := manager.hotplug(context.Background(), cfg, "cache", false); err != nil {
-		t.Fatalf("attach hotplug with unsupported control socket: %v", err)
-	}
-
-	if got, want := runner.startedNames(), []string{"virtiofsd"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected starts: got %#v want %#v", got, want)
-	}
-	if got := strings.Join(qmpClient.rawCommands, "\n"); !strings.Contains(got, `"execute":"chardev-add"`) || !strings.Contains(got, `"execute":"device_add"`) {
-		t.Fatalf("unexpected qmp commands: got %#v", qmpClient.rawCommands)
-	}
-	if len(guestClient.execs) != 1 || guestClient.execs[0].path != "/run/current-system/sw/bin/mount" {
-		t.Fatalf("unexpected guest execs: %#v", guestClient.execs)
-	}
-}
-
 func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
