@@ -1,4 +1,4 @@
-package manager
+package qmpclient
 
 import (
 	"context"
@@ -159,7 +159,7 @@ func TestQMPDialContextCancelsDuringHandshake(t *testing.T) {
 	time.AfterFunc(50*time.Millisecond, cancel)
 
 	start := time.Now()
-	_, err = (&socketMonitorDialer{}).Dial(ctx, socketPath, 5*time.Second)
+	_, err = (&SocketMonitorDialer{}).Dial(ctx, socketPath, 5*time.Second)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}

@@ -25,13 +25,13 @@ func TestApplyDefaultsCreatesHalfAllocationTarget(t *testing.T) {
 	if got, want := device.Controller.ReclaimAboveAvailable.Int(), 1024; got != want {
 		t.Fatalf("unexpected reclaimAboveAvailableMiB: got %d want %d", got, want)
 	}
-	if got, want := device.Controller.Step, defaultControllerStep; got != want {
+	if got, want := device.Controller.Step, DefaultControllerStep; got != want {
 		t.Fatalf("unexpected stepMiB: got %d want %d", got, want)
 	}
-	if got, want := device.Controller.PollIntervalSeconds, defaultControllerPollIntervalSecs; got != want {
+	if got, want := device.Controller.PollIntervalSeconds, DefaultControllerPollIntervalSecs; got != want {
 		t.Fatalf("unexpected pollIntervalSeconds: got %d want %d", got, want)
 	}
-	if got, want := device.Controller.ReclaimHoldoffSeconds, defaultControllerReclaimHoldoff; got != want {
+	if got, want := device.Controller.ReclaimHoldoffSeconds, DefaultControllerReclaimHoldoff; got != want {
 		t.Fatalf("unexpected reclaimHoldoffSeconds: got %d want %d", got, want)
 	}
 }
@@ -64,9 +64,9 @@ func TestValidateControllerRejectsNegativeThresholds(t *testing.T) {
 		MaxActual:             1024,
 		GrowBelowAvailable:    -1,
 		ReclaimAboveAvailable: 512,
-		Step:                  defaultControllerStep,
-		PollIntervalSeconds:   defaultControllerPollIntervalSecs,
-		ReclaimHoldoffSeconds: defaultControllerReclaimHoldoff,
+		Step:                  DefaultControllerStep,
+		PollIntervalSeconds:   DefaultControllerPollIntervalSecs,
+		ReclaimHoldoffSeconds: DefaultControllerReclaimHoldoff,
 	}
 	if err := ValidateController(1024, config); err == nil {
 		t.Fatal("expected negative grow threshold validation error")
@@ -77,9 +77,9 @@ func TestValidateControllerRejectsNegativeThresholds(t *testing.T) {
 		MaxActual:             1024,
 		GrowBelowAvailable:    256,
 		ReclaimAboveAvailable: -1,
-		Step:                  defaultControllerStep,
-		PollIntervalSeconds:   defaultControllerPollIntervalSecs,
-		ReclaimHoldoffSeconds: defaultControllerReclaimHoldoff,
+		Step:                  DefaultControllerStep,
+		PollIntervalSeconds:   DefaultControllerPollIntervalSecs,
+		ReclaimHoldoffSeconds: DefaultControllerReclaimHoldoff,
 	}
 	if err := ValidateController(1024, config); err == nil {
 		t.Fatal("expected negative reclaim threshold validation error")

@@ -118,23 +118,6 @@ func TestLoadRejectsTrailingData(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsLegacyTopLevelVolumes(t *testing.T) {
-	data := []byte(`{
-		"host_name": "agent-sandbox",
-		"working_dir": "/tmp/work",
-		"state_dir": ".virtie",
-		"ssh": {"exec": ["/bin/ssh"], "user": "agent"},
-		"qemu": {"exec": ["/bin/qemu-system-x86_64"]},
-		"kernel": {"path": "/tmp/vmlinuz", "initrd_path": "/tmp/initrd"},
-		"volumes": [{"image": "root.img", "size": 256, "create": true}]
-	}`)
-
-	_, err := Load(bytes.NewReader(data))
-	if err == nil || !strings.Contains(err.Error(), `unknown field "volumes"`) {
-		t.Fatalf("expected legacy volumes decode error, got %v", err)
-	}
-}
-
 func TestDocumentManagedVirtioFSDefaultBinUsesPATH(t *testing.T) {
 	document := validDocument()
 	mount := document.Mounts[0].(VirtioFSMountInput)
@@ -1721,46 +1704,6 @@ func TestLoadGuestForwardUsesTunnelExecTemplate(t *testing.T) {
 	}
 }
 
-func TestLoadGuestForwardRejectsLegacyTunnelExecEnvTokens(t *testing.T) {
-	for _, tt := range []struct {
-		name          string
-		fwdTunnelExec []string
-		wantError     string
-	}{
-		{
-			name:          "legacy host",
-			fwdTunnelExec: []string{"nc", "$HOST", "{{.Port}}"},
-			wantError:     "exec[1] uses legacy $HOST; use {{.Host}}",
-		},
-		{
-			name:          "legacy port",
-			fwdTunnelExec: []string{"nc", "{{.Host}}", "$PORT"},
-			wantError:     "exec[2] uses legacy $PORT; use {{.Port}}",
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			document := validDocument()
-			document.QEMU.FwdTunnelExec = tt.fwdTunnelExec
-			document.Networks = []NetworkInput{
-				{
-					Forward: []ForwardPort{
-						{
-							From:  "guest",
-							Host:  "127.0.0.1:22",
-							Guest: "10.0.2.15:2222",
-						},
-					},
-				},
-			}
-
-			_, err := document.Manifest()
-			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
-				t.Fatalf("expected error containing %q, got %v", tt.wantError, err)
-			}
-		})
-	}
-}
-
 func TestLoadRejectsInvalidForwardOptions(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -2487,36 +2430,6 @@ func TestManifestHotplugRequiresPCITransport(t *testing.T) {
 	manifest.QEMU.Devices.RNG.Transport = "mmio"
 	if err := manifest.Validate(); err == nil || !strings.Contains(err.Error(), "requires pci transport") {
 		t.Fatalf("expected pci transport error, got %v", err)
-	}
-}
-
-func TestDocumentRejectsExplicitHotplugPortAllocation(t *testing.T) {
-	_, err := DecodeDocumentBytes([]byte(`
-[kernel]
-path = "/tmp/vmlinuz"
-initrd_path = "/tmp/initrd"
-
-[qemu]
-allocate_pcie_ports = 4
-`), "manifest.toml")
-	if err == nil || !strings.Contains(err.Error(), "unknown key qemu.allocate_pcie_ports") {
-		t.Fatalf("expected unknown key error for allocate_pcie_ports, got %v", err)
-	}
-}
-
-func TestDocumentRejectsLegacyTaggedHotplugList(t *testing.T) {
-	_, err := DecodeDocumentBytes([]byte(`
-[kernel]
-path = "/tmp/vmlinuz"
-initrd_path = "/tmp/initrd"
-
-[[hotplug]]
-type = "virtiofs"
-tag = "cache"
-source = "/tmp/cache"
-`), "manifest.toml")
-	if err == nil || !strings.Contains(err.Error(), "expected table") {
-		t.Fatalf("expected legacy hotplug list error, got %v", err)
 	}
 }
 

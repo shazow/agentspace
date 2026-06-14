@@ -16,6 +16,8 @@ var (
 	errQOMPathNotFound       = errors.New("balloon qom path not found")
 )
 
+const bytesPerMiB int64 = 1024 * 1024
+
 type notifier interface {
 	Notify(ctx context.Context, state string, message string, values map[string]string)
 }

@@ -5,6 +5,8 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
+
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 )
 
 const (
@@ -14,7 +16,7 @@ const (
 
 type hostVSockCIDChecker struct{}
 
-func newHostVSockCIDChecker() vsockCIDChecker {
+func newHostVSockCIDChecker() launch.VSockCIDChecker {
 	return &hostVSockCIDChecker{}
 }
 

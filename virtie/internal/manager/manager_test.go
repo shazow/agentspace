@@ -25,15 +25,23 @@ import (
 	rawQMP "github.com/digitalocean/go-qemu/qmp/raw"
 	diskfs "github.com/diskfs/go-diskfs"
 	"github.com/diskfs/go-diskfs/filesystem"
-	balloonpkg "github.com/shazow/agentspace/virtie/internal/balloon"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/executor/executortest"
 	"github.com/shazow/agentspace/virtie/internal/hotplug"
+	control "github.com/shazow/agentspace/virtie/internal/manager/control"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
+	runtimepkg "github.com/shazow/agentspace/virtie/internal/manager/runtime"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
+	"github.com/shazow/agentspace/virtie/internal/qga"
+	"github.com/shazow/agentspace/virtie/internal/qmpclient"
 	"github.com/shazow/agentspace/virtie/internal/units"
 )
 
-const testMiB int64 = 1024 * 1024
+const (
+	testMiB             int64 = 1024 * 1024
+	testNoReturnTimeout       = 50 * time.Millisecond
+)
 
 func manifestWriteText(text string) manifest.WriteFile {
 	return manifest.WriteFile{
@@ -47,6 +55,103 @@ func manifestWritePath(path string) manifest.WriteFile {
 		Content:     manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: path},
 		FollowLinks: true,
 	}
+}
+
+func newTestLaunchLifecycle() *launch.Lifecycle {
+	return launch.NewLifecycle(nil, func() {}, func() {})
+}
+
+type fakeSuspendHandler struct {
+	err error
+}
+
+func (h fakeSuspendHandler) Handle(ctx context.Context, coordinator *launch.SuspendCoordinator) error {
+	_ = ctx
+	coordinator.Begin()
+	coordinator.Complete(h.err)
+	return h.err
+}
+
+func TestManagerStartExternalVirtioFSFailureKeepsRuntimeSockets(t *testing.T) {
+	tmpDir := t.TempDir()
+	manager := newLaunchProviderTestManager(nil)
+	cfg := validProviderLaunchManifest(tmpDir)
+	cfg.QEMU.Devices.VirtioFS = []manifest.QEMUVirtioFSShare{
+		{
+			ID:         "fs0",
+			SocketPath: filepath.Join(tmpDir, "missing-external.sock"),
+			Tag:        "workspace",
+			Transport:  "pci",
+		},
+	}
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, Options: launch.Options{SSH: false}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
+	for _, path := range plan.RuntimeSocketCleanupFiles() {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create socket parent: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("stale socket placeholder"), 0o644); err != nil {
+			t.Fatalf("write socket placeholder: %v", err)
+		}
+	}
+
+	_, err = manager.startWithPlan(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected external virtiofs failure")
+	}
+	if !strings.Contains(err.Error(), "external virtiofs socket") {
+		t.Fatalf("error: got %v want external virtiofs socket failure", err)
+	}
+	for _, path := range plan.RuntimeSocketCleanupFiles() {
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("runtime socket cleanup path %q was removed: %v", path, statErr)
+		}
+	}
+}
+
+func TestManagerStartQEMUNilRunnerWrapsOnce(t *testing.T) {
+	tmpDir := t.TempDir()
+	manager := newLaunchProviderTestManager(nil)
+	cfg := validProviderLaunchManifest(tmpDir)
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, Options: launch.Options{SSH: false}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
+
+	_, err = manager.startWithPlan(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected nil runner failure")
+	}
+	if got, want := strings.Count(err.Error(), "vm startup:"), 1; got != want {
+		t.Fatalf("vm startup wrapping count: got %d want %d in %q", got, want, err.Error())
+	}
+	if !strings.Contains(err.Error(), "qemu runner is not configured") {
+		t.Fatalf("error: got %v want qemu runner is not configured", err)
+	}
+}
+
+func newLaunchProviderTestManager(runner launch.Runner) *manager {
+	return &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		logger:            slog.New(slog.DiscardHandler),
+		shutdownDelay:     time.Millisecond,
+		qmpConnectTimeout: time.Second,
+	}
+}
+
+func validProviderLaunchManifest(workingDir string) *manifest.Manifest {
+	cfg := validManifest(workingDir)
+	cfg.Paths.LockPath = filepath.Join(workingDir, "virtie.lock")
+	cfg.Run = nil
+	cfg.CleanupFiles = nil
+	cfg.Volumes = nil
+	cfg.QEMU.Devices.VirtioFS = nil
+	cfg.QEMU.Devices.Block = nil
+	cfg.QEMU.SSHReady.SocketPath = ""
+	return cfg
 }
 
 func TestManifestValidate(t *testing.T) {
@@ -86,160 +191,55 @@ func TestManifestValidate(t *testing.T) {
 	}
 }
 
-func TestGuestInstallDirectoryArgs(t *testing.T) {
-	tests := []struct {
-		name     string
-		chown    string
-		mode     string
-		expected []string
-	}{
-		{
-			name:     "nil chown",
-			expected: []string{"-d", "/etc/virtie"},
-		},
-		{
-			name:     "empty chown",
-			chown:    "",
-			expected: []string{"-d", "/etc/virtie"},
-		},
-		{
-			name:     "user and group",
-			chown:    "agent:users",
-			expected: []string{"-d", "-o", "agent", "-g", "users", "/etc/virtie"},
-		},
-		{
-			name:     "user only",
-			chown:    "agent",
-			expected: []string{"-d", "-o", "agent", "/etc/virtie"},
-		},
-		{
-			name:     "group only",
-			chown:    ":users",
-			expected: []string{"-d", "-g", "users", "/etc/virtie"},
-		},
-		{
-			name:     "mode",
-			mode:     "0640",
-			expected: []string{"-d", "-m", "0750", "/etc/virtie"},
-		},
+func TestManagerPlanLaunchResolvesRuntimeInputs(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".runtime"}
+	cfg.Persistence.StateDir = ".state"
+
+	remoteCommand := []string{"uname", "-a"}
+	manager := &manager{}
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, RemoteCommand: remoteCommand, Options: LaunchOptions{Resume: ResumeModeNo, SSH: true}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := guestInstallDirectoryArgs("/etc/virtie", tt.chown, tt.mode); !reflect.DeepEqual(got, tt.expected) {
-				t.Fatalf("unexpected install args: got %#v want %#v", got, tt.expected)
-			}
-		})
+	remoteCommand[0] = "mutated"
+	if got, want := plan.RemoteCommand, []string{"uname", "-a"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected copied remote command: got %#v want %#v", got, want)
 	}
+	if got, want := plan.Paths.ControlSocket, filepath.Join(tmpDir, ".runtime", "virtie.sock"); got != want {
+		t.Fatalf("unexpected control socket path: got %q want %q", got, want)
+	}
+	if got, want := plan.Paths.QMPSocket, filepath.Join(tmpDir, ".runtime", "qmp.sock"); got != want {
+		t.Fatalf("unexpected qmp socket path: got %q want %q", got, want)
+	}
+	if got, want := plan.Paths.StateDir, filepath.Join(tmpDir, ".state"); got != want {
+		t.Fatalf("unexpected state dir: got %q want %q", got, want)
+	}
+
 }
 
-func TestBuildSSHSpecBuildsInteractiveSession(t *testing.T) {
-	manifest := &manifest.Manifest{
-		Paths: manifest.Paths{
-			WorkingDir: "/tmp/work",
-		},
-		SSH: manifest.SSH{
-			Argv: []string{
-				"/bin/ssh",
-				"-q",
-				"-o",
-				"StrictHostKeyChecking=no",
-			},
-			User: "agent",
-		},
-	}
+func TestManagerPlanUsesDefaultConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	remoteCommand := []string{"hostname"}
 
-	session, err := buildSSHSpec(manifest, 10, []string{"bash", "-lc", "echo hi"})
+	plan, err := newManagerFromConfig(DefaultConfig()).planLaunch(launch.Spec{
+		Manifest:      cfg,
+		RemoteCommand: remoteCommand,
+		Options:       LaunchOptions{Resume: ResumeModeNo, SSH: true},
+	})
 	if err != nil {
-		t.Fatalf("build ssh spec: %v", err)
-	}
-	wantArgs := []string{
-		"-tt",
-		"-q",
-		"-o",
-		"StrictHostKeyChecking=no",
-		"agent@vsock/10",
-		"bash -lc 'echo hi'",
-	}
-	if !reflect.DeepEqual(commandArgs(session), wantArgs) {
-		t.Fatalf("unexpected ssh session args: got %v want %v", commandArgs(session), wantArgs)
+		t.Fatalf("manager plan: %v", err)
 	}
 
-	if session.Stdin != os.Stdin || session.Stdout != os.Stdout || session.Stderr != os.Stderr {
-		t.Fatalf("expected interactive ssh session to inherit stdio")
+	remoteCommand[0] = "mutated"
+	if got, want := plan.RemoteCommand, []string{"hostname"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected copied remote command: got %#v want %#v", got, want)
 	}
-}
-
-func TestBuildSSHSpecShellQuotesRemoteCommand(t *testing.T) {
-	manifest := &manifest.Manifest{
-		Paths: manifest.Paths{WorkingDir: "/tmp/work"},
-		SSH: manifest.SSH{
-			Argv: []string{"/bin/ssh"},
-			User: "agent",
-		},
-	}
-
-	session, err := buildSSHSpec(manifest, 10, []string{"printf", "%s\n", "it's $HOME", ""})
-	if err != nil {
-		t.Fatalf("build ssh spec: %v", err)
-	}
-	want := "printf '%s\n' 'it'\\''s $HOME' ''"
-	if got := commandArgs(session)[len(commandArgs(session))-1]; got != want {
-		t.Fatalf("unexpected quoted remote command: got %q want %q", got, want)
-	}
-
-	configuredCommand, err := buildSSHSpec(manifest, 10, []string{"tmux new-session -A -s codex \"npx @openai/codex --yolo\""})
-	if err != nil {
-		t.Fatalf("build configured ssh spec: %v", err)
-	}
-	wantConfigured := "tmux new-session -A -s codex \"npx @openai/codex --yolo\""
-	if got := configuredCommand.Args[len(configuredCommand.Args)-1]; got != wantConfigured {
-		t.Fatalf("unexpected configured remote command: got %q want %q", got, wantConfigured)
-	}
-}
-
-func TestBuildSSHSpecRendersManifestExecTemplates(t *testing.T) {
-	manifest := &manifest.Manifest{
-		Paths: manifest.Paths{WorkingDir: "/tmp/work"},
-		SSH: manifest.SSH{
-			Argv: []string{"/bin/ssh", "-S", "control-{{.CID}}", "-o", "HostName={{.Destination}}"},
-			User: "agent",
-		},
-	}
-
-	session, err := buildSSHSpec(manifest, 10, nil)
-	if err != nil {
-		t.Fatalf("build ssh spec: %v", err)
-	}
-
-	for _, want := range []string{"CID=10", "USER=agent", "DESTINATION=agent@vsock/10"} {
-		if !containsString(commandEnvAdditions(session.Env), want) {
-			t.Fatalf("expected ssh env %q in %#v", want, session.Env)
-		}
-	}
-	if !containsString(commandArgs(session), "control-10") || !containsString(commandArgs(session), "HostName=agent@vsock/10") {
-		t.Fatalf("expected rendered ssh args, got %#v", commandArgs(session))
-	}
-	hint, err := buildSSHCommandHint(manifest, 10)
-	if err != nil {
-		t.Fatalf("build ssh command hint: %v", err)
-	}
-	if got, want := hint, "/bin/ssh -S control-10 -o 'HostName=agent@vsock/10' agent@vsock/10"; got != want {
-		t.Fatalf("unexpected rendered ssh hint: got %q want %q", got, want)
-	}
-}
-
-func TestBuildSSHCommandHintReturnsTemplateError(t *testing.T) {
-	manifest := &manifest.Manifest{
-		SSH: manifest.SSH{
-			Argv: []string{"/bin/ssh", "{{.Missing}}"},
-			User: "agent",
-		},
-	}
-
-	_, err := buildSSHCommandHint(manifest, 10)
-	if err == nil || !strings.Contains(err.Error(), `map has no entry for key "Missing"`) {
-		t.Fatalf("expected ssh hint template error, got %v", err)
+	if got, want := plan.Paths.ControlSocket, filepath.Join(tmpDir, "virtie.sock"); got != want {
+		t.Fatalf("unexpected control socket path: got %q want %q", got, want)
 	}
 }
 
@@ -274,7 +274,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		{ID: "fs0", SocketPath: "sock-a", Tag: "ro-store", Transport: "pci"},
 		{ID: "fs1", SocketPath: "sock-b", Tag: "workspace", Transport: "pci"},
 	}
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		QMPSocketPath: filepath.Join(tmpDir, "old-qmp.sock"),
 		Status:        "paused",
 	}); err != nil {
@@ -363,7 +363,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 		t.Fatalf("expected qemu args to contain ssh readiness port: %v", runner.qemuArgs())
 	}
 	if containsString(runner.qemuArgs(), "balloon") {
-		t.Fatalf("expected qemu args to omit optional feature devices when disabled: %v", runner.qemuArgs())
+		t.Fatalf("expected qemu args to omit balloon device when not configured: %v", runner.qemuArgs())
 	}
 
 	if got := runner.qemuEnv(); len(got) != 0 {
@@ -402,7 +402,7 @@ func TestManagerLaunchSequenceAndTeardownOrder(t *testing.T) {
 	} else if got, want := info.Size(), int64(256*1024*1024); got != want {
 		t.Fatalf("unexpected volume size: got %d want %d", got, want)
 	}
-	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
+	if _, err := os.Stat(launch.SuspendStatePath(cfg)); !os.IsNotExist(err) {
 		t.Fatalf("expected launch to clear stale suspend state, stat err: %v", err)
 	}
 	if _, err := os.Stat(cleanupPath); !os.IsNotExist(err) {
@@ -715,7 +715,7 @@ func TestRemoveSocketPathsIgnoresMissing(t *testing.T) {
 		t.Fatalf("write cleanup file: %v", err)
 	}
 
-	if err := removeSocketPaths([]string{filePath, missingPath}); err != nil {
+	if err := launch.RemoveSocketPaths([]string{filePath, missingPath}); err != nil {
 		t.Fatalf("remove socket paths: %v", err)
 	}
 	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
@@ -739,7 +739,7 @@ func TestCreateVolumeImageCreatesNativeExt4(t *testing.T) {
 			tmpDir := t.TempDir()
 			imagePath := filepath.Join(tmpDir, "volume.img")
 
-			err := createVolumeImage(manifest.Volume{
+			err := launch.CreateVolumeImage(manifest.Volume{
 				ImagePath:  imagePath,
 				Size:       tt.sizeMiB,
 				FSType:     "ext4",
@@ -791,7 +791,7 @@ func TestCreateVolumeImageRunsChattrBeforeSizingImage(t *testing.T) {
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 
 	imagePath := filepath.Join(tmpDir, "volume.img")
-	if err := createVolumeImage(manifest.Volume{
+	if err := launch.CreateVolumeImage(manifest.Volume{
 		ImagePath:  imagePath,
 		Size:       256,
 		FSType:     "ext4",
@@ -871,6 +871,162 @@ func TestManagerLaunchWithoutSSHPrintsConnectHintAndWaitsForQEMU(t *testing.T) {
 	})
 	if qmpClient.quitCalls != 0 {
 		t.Fatalf("expected natural qemu exit without qmp quit, got %d calls", qmpClient.quitCalls)
+	}
+}
+
+func TestManagerStartAndWaitForRunningLaunchWithoutSSH(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &launchRunner{}
+	qmpClient := &fakeQMPClient{}
+	var logOutput bytes.Buffer
+	manager := newManagerFromConfig(Config{
+		Locker:            &fileLocker{},
+		Runner:            runner,
+		SocketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		QMPDialer:         &fakeQMPDialer{client: qmpClient},
+		Logger:            slog.New(slog.NewTextHandler(&logOutput, nil)),
+		LogWriter:         &logOutput,
+		ShutdownDelay:     10 * time.Millisecond,
+		QMPRetryDelay:     0,
+		QMPConnectTimeout: time.Millisecond,
+		QMPQuitTimeout:    time.Millisecond,
+	})
+
+	plan, err := manager.planLaunch(launch.Spec{
+		Manifest: cfg,
+		Options:  LaunchOptions{Resume: ResumeModeNo, SSH: false},
+	})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	running, err := manager.startWithPlan(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer func() {
+		if err := running.Close(); err != nil {
+			t.Errorf("runtime close: %v", err)
+		}
+	}()
+
+	exitReadyQEMU := make(chan struct{})
+	go func() {
+		defer close(exitReadyQEMU)
+		time.Sleep(10 * time.Millisecond)
+		runner.exitQEMU(nil)
+	}()
+
+	if err := manager.waitForRunningLaunch(context.Background(), running, WaitVM); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	<-exitReadyQEMU
+
+	if got, want := runner.startedNames(), []string{"virtiofsd-workspace", "qemu-system-x86_64"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected start order: got %v want %v", got, want)
+	}
+	if got := len(runner.sshArgs()); got != 0 {
+		t.Fatalf("expected no ssh starts, got %d", got)
+	}
+	if !strings.Contains(logOutput.String(), "connect with: /bin/ssh agent@vsock/") {
+		t.Fatalf("expected out-of-band ssh hint, got %q", logOutput.String())
+	}
+}
+
+func TestWaitForRunningLaunchNilRunningReturnsStageError(t *testing.T) {
+	manager := &manager{}
+
+	err := manager.waitForRunningLaunch(context.Background(), nil, WaitVM)
+
+	var stageErr *launch.StageError
+	if !errors.As(err, &stageErr) {
+		t.Fatalf("error type: got %T", err)
+	}
+	if stageErr.Stage != "runtime wait" {
+		t.Fatalf("stage: got %q want runtime wait", stageErr.Stage)
+	}
+}
+
+func TestWaitForRunningLaunchWaitModeOverrideEnablesSSH(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	runner := &launchRunner{finishInteractiveSSH: true}
+	manager := &manager{
+		runner:            runner,
+		logger:            slog.New(slog.DiscardHandler),
+		shutdownDelay:     time.Millisecond,
+		qmpConnectTimeout: time.Second,
+	}
+	processes := launch.NewProcessSet()
+	plan := &launch.Plan{
+		Manifest: cfg,
+		Options:  LaunchOptions{SSH: false},
+		CID:      3,
+	}
+	running := &runningLaunch{
+		plan:           plan,
+		stats:          launch.NewStats(time.Now()),
+		qmp:            &fakeQMPClient{},
+		lifecycle:      newTestLaunchLifecycle(),
+		suspendHandler: fakeSuspendHandler{},
+		processes:      processes,
+	}
+
+	if err := manager.waitForRunningLaunch(context.Background(), running, WaitSSH); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if plan.Options.SSH {
+		t.Fatal("original plan SSH option was mutated")
+	}
+	if got, want := len(runner.sshArgs()), 1; got != want {
+		t.Fatalf("ssh starts: got %d want %d", got, want)
+	}
+}
+
+func TestWaitForRunningLaunchSavedSuspendSkipsCloseWriteBack(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	stats := launch.NewStats(time.Now())
+	processes := launch.NewProcessSet()
+	processes.SetQEMU((&executortest.Process{OverrideName: "qemu-system-x86_64"}).Process())
+	var writeBackCalls int
+	runtime := runtimepkg.New(runtimepkg.RuntimeConfig{
+		Manifest:      cfg,
+		Stats:         stats,
+		QMP:           &fakeQMPClient{},
+		Processes:     processes,
+		ShutdownDelay: time.Millisecond,
+		WriteBack: func(context.Context) error {
+			writeBackCalls++
+			return nil
+		},
+		QMPTimeout: time.Second,
+		Logger:     slog.New(slog.DiscardHandler),
+	})
+	lifecycle := newTestLaunchLifecycle()
+	lifecycle.Suspend().Request()
+	running := &runningLaunch{
+		runtime:        runtime,
+		plan:           &launch.Plan{Manifest: cfg, Options: LaunchOptions{SSH: false}},
+		stats:          stats,
+		qmp:            &fakeQMPClient{},
+		lifecycle:      lifecycle,
+		suspendHandler: fakeSuspendHandler{err: launch.ErrSavedSuspendExit},
+		processes:      processes,
+	}
+
+	if err := (&manager{}).waitForRunningLaunch(context.Background(), running, WaitVM); !errors.Is(err, launch.ErrSavedSuspendExit) {
+		t.Fatalf("wait error: got %v want %v", err, launch.ErrSavedSuspendExit)
+	}
+	if err := running.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if writeBackCalls != 0 {
+		t.Fatalf("write-back calls: got %d want 0", writeBackCalls)
 	}
 }
 
@@ -1171,7 +1327,7 @@ func TestManagerLaunchPrintsGuestInfoOnSIGUSR1(t *testing.T) {
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{{
+		execStatuses: []qga.ExecStatus{{
 			Exited:  true,
 			OutData: "cm9vdCB6c2gKYWdlbnQgdmlydGllIGxhdW5jaCAtLXNzaApyb290IGluaXQK",
 		}},
@@ -1278,7 +1434,7 @@ func TestManagerMountsWorkspaceCWD(t *testing.T) {
 		MountCWD: true,
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{{Exited: true}, {Exited: true}},
+		execStatuses: []qga.ExecStatus{{Exited: true}, {Exited: true}},
 	}
 	manager := &manager{
 		socketWaiter:      &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
@@ -1351,7 +1507,7 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	}
 	guestAgent := &fakeGuestAgentClient{
 		record: record,
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true, ExitCode: 1}, // test -d /etc/virtie
 			{Exited: true},              // test -d /etc
 			{Exited: true},              // install -d /etc/virtie
@@ -1477,39 +1633,6 @@ func TestManagerLaunchWritesGuestFilesBeforeSSHSession(t *testing.T) {
 	}
 }
 
-func TestGuestFilePayloadRejectsHostSymlinkWhenFollowLinksFalse(t *testing.T) {
-	tmpDir := t.TempDir()
-	targetPath := filepath.Join(tmpDir, "target")
-	if err := os.WriteFile(targetPath, []byte("target content"), 0o644); err != nil {
-		t.Fatalf("write target fixture: %v", err)
-	}
-	linkPath := filepath.Join(tmpDir, "link")
-	if err := os.Symlink(targetPath, linkPath); err != nil {
-		t.Fatalf("create symlink fixture: %v", err)
-	}
-
-	_, err := guestFilePayloadBase64(manifest.ResolvedWriteFile{
-		GuestPath:   "/etc/from-link",
-		Content:     manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: linkPath},
-		FollowLinks: false,
-	})
-	if err == nil || !strings.Contains(err.Error(), "followLinks is false") {
-		t.Fatalf("expected followLinks symlink error, got %v", err)
-	}
-
-	payload, err := guestFilePayloadBase64(manifest.ResolvedWriteFile{
-		GuestPath:   "/etc/from-link",
-		Content:     manifest.WriteFileContent{Kind: manifest.WriteFileContentPath, Path: linkPath},
-		FollowLinks: true,
-	})
-	if err != nil {
-		t.Fatalf("expected followLinks=true to read symlink target: %v", err)
-	}
-	if got, want := payload, "dGFyZ2V0IGNvbnRlbnQ="; got != want {
-		t.Fatalf("unexpected symlink target payload: got %q want %q", got, want)
-	}
-}
-
 func TestManagerLaunchWritesBackGuestFilesOnShutdown(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
@@ -1538,7 +1661,7 @@ func TestManagerLaunchWritesBackGuestFilesOnShutdown(t *testing.T) {
 		readPayloads: map[string][]string{
 			"/var/lib/virtie/host": {"ZnJvbSBndWVzdA=="},
 		},
-		execStatuses: []guestExecStatus{{Exited: true}},
+		execStatuses: []qga.ExecStatus{{Exited: true}},
 	}
 	manager := &manager{
 		locker:            &fileLocker{},
@@ -1599,8 +1722,8 @@ func TestLaunchSuspendHandlerWritesBackGuestFilesBeforeSuspend(t *testing.T) {
 		return true
 	})
 
-	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
-		t.Fatalf("suspend returned %v, want errSavedSuspendExit", err)
+	if err := handler.saveAndExit(context.Background()); !errors.Is(err, launch.ErrSavedSuspendExit) {
+		t.Fatalf("suspend returned %v, want launch.ErrSavedSuspendExit", err)
 	}
 
 	data, err := os.ReadFile(hostPath)
@@ -1760,7 +1883,7 @@ func TestManagerLaunchAutoprovisionsSSHKeyAfterAuthFailure(t *testing.T) {
 	if got := guestAgent.writes["/run/virtie-autoprovision-authorized-key.pub"]; got == "" {
 		t.Fatalf("expected temporary public key write, got writes %#v", guestAgent.writes)
 	}
-	if !containsGuestExec(guestAgent.execs, guestShellPath, "/home/agent/.ssh/authorized_keys") {
+	if !containsGuestExec(guestAgent.execs, launch.GuestShellPath, "/home/agent/.ssh/authorized_keys") {
 		t.Fatalf("expected authorized_keys append command, got %#v", guestAgent.execs)
 	}
 }
@@ -1828,7 +1951,7 @@ func TestManagerLaunchSkipsGuestFileDirectoryInstallWhenParentExists(t *testing.
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true},
 			{Exited: true},
 		},
@@ -1891,7 +2014,7 @@ func TestManagerLaunchSkipsGuestFileWhenOverwriteFalseAndPathExists(t *testing.T
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true},
 		},
 	}
@@ -1954,7 +2077,7 @@ func TestManagerLaunchCreatesAllMissingGuestParentDirectoriesWithOwnerAndMode(t 
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true, ExitCode: 1}, // test -d /etc/virtie/nested
 			{Exited: true, ExitCode: 1}, // test -d /etc/virtie
 			{Exited: true},              // test -d /etc
@@ -2047,7 +2170,7 @@ func TestManagerLaunchWritesGuestFileWhenOverwriteFalseAndPathMissing(t *testing
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true, ExitCode: 1},
 			{Exited: true},
 			{Exited: true},
@@ -2113,7 +2236,7 @@ func TestManagerLaunchFailsOnGuestFileChownFailure(t *testing.T) {
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true},
 			{Exited: true, ExitCode: 1, ErrData: "Y2hvd24gZmFpbGVk"},
 		},
@@ -2182,7 +2305,7 @@ func TestManagerLaunchFailsOnGuestFileDirectoryFailure(t *testing.T) {
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{Exited: true, ExitCode: 1}, // test -d /etc/virtie
 			{Exited: true},              // test -d /etc
 			{Exited: true, ExitCode: 1, ErrData: "aW5zdGFsbCBmYWlsZWQ="}, // install -d /etc/virtie
@@ -2260,7 +2383,7 @@ func TestManagerLaunchFailsOnGuestFileChmodFailure(t *testing.T) {
 		},
 	}
 	guestAgent := &fakeGuestAgentClient{
-		execStatuses: []guestExecStatus{
+		execStatuses: []qga.ExecStatus{
 			{
 				Exited: true,
 			},
@@ -2318,7 +2441,7 @@ func TestManagerLaunchSkipsGuestFilesOnResume(t *testing.T) {
 	if err := os.WriteFile(vmStatePath, []byte("state"), 0o644); err != nil {
 		t.Fatalf("write vm state: %v", err)
 	}
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		HostName:      cfg.Identity.HostName,
 		QMPSocketPath: filepath.Join(tmpDir, "old-qmp.sock"),
 		VMStatePath:   vmStatePath,
@@ -2416,11 +2539,11 @@ func TestManagerLaunchWithoutSSHSavesQueuedSuspend(t *testing.T) {
 		t.Fatalf("launch: %v", err)
 	}
 
-	state, err := readSuspendState(cfg)
+	state, err := launch.ReadSuspendState(cfg)
 	if err != nil {
 		t.Fatalf("read suspend state: %v", err)
 	}
-	if state.Status != "saved" || state.CID != 3 || state.VMStatePath != vmStatePath(cfg) {
+	if state.Status != "saved" || state.CID != 3 || state.VMStatePath != launch.VMStatePath(cfg) {
 		t.Fatalf("unexpected suspend state: %+v", state)
 	}
 	if qmpClient.migrateCalls != 1 {
@@ -2433,6 +2556,121 @@ func TestManagerLaunchWithoutSSHSavesQueuedSuspend(t *testing.T) {
 		if signal.sig == syscall.SIGTSTP || signal.sig == syscall.SIGSTOP || signal.sig == syscall.SIGCONT {
 			t.Fatalf("unexpected job-control signal forwarded to %s: %v", signal.name, signal.sig)
 		}
+	}
+}
+
+func TestManagerLaunchControlSuspendWaitsForGuestProvisioning(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.QEMU.SSHReady.SocketPath = ""
+	cfg.Volumes[0].AutoCreate = false
+	cfg.WriteFiles = manifest.WriteFiles{
+		"/etc/virtie/startup": {
+			Overwrite: true,
+			Content:   manifest.WriteFileContent{Kind: manifest.WriteFileContentText, Text: "ready\n"},
+		},
+	}
+
+	writeStarted := make(chan struct{})
+	allowWrite := make(chan struct{})
+	var writeStartedOnce sync.Once
+	guestAgent := &fakeGuestAgentClient{
+		record: func(event string) {
+			if strings.HasPrefix(event, "guest-write:") {
+				writeStartedOnce.Do(func() {
+					close(writeStarted)
+				})
+				<-allowWrite
+			}
+		},
+	}
+	runner := &launchRunner{}
+	qmpClient := &fakeQMPClient{
+		status: "running",
+		onQuit: func() {
+			runner.exitQEMU(nil)
+		},
+	}
+	manager := &manager{
+		logger:              slog.New(slog.DiscardHandler),
+		locker:              &fileLocker{},
+		runner:              runner,
+		socketWaiter:        &fakeSocketWaiter{callback: func(paths []string) error { return nil }},
+		qmpDialer:           &fakeQMPDialer{client: qmpClient},
+		guestAgentDialer:    &fakeGuestAgentDialer{client: guestAgent},
+		sshRetryDelay:       time.Hour,
+		shutdownDelay:       10 * time.Millisecond,
+		qmpRetryDelay:       0,
+		qmpConnectTimeout:   time.Millisecond,
+		qmpQuitTimeout:      time.Millisecond,
+		qmpMigrationTimeout: time.Second,
+	}
+
+	launchDone := make(chan error, 1)
+	go func() {
+		launchDone <- manager.launchWithOptions(context.Background(), cfg, nil, LaunchOptions{Resume: ResumeModeNo, SSH: false})
+	}()
+
+	select {
+	case <-writeStarted:
+	case err := <-launchDone:
+		t.Fatalf("launch returned before guest write started: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("guest write did not start")
+	}
+
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
+	if err != nil {
+		t.Fatalf("resolve control socket: %v", err)
+	}
+	rpcCtx, cancelRPC := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelRPC()
+	rpcDone := make(chan error, 1)
+	go func() {
+		resp, err := control.Dial(controlSocketPath).Suspend(rpcCtx, control.SuspendRequest{})
+		if err == nil && !resp.Saved {
+			err = errors.New("suspend response was not saved")
+		}
+		rpcDone <- err
+	}()
+
+	select {
+	case err := <-rpcDone:
+		t.Fatalf("control suspend returned before guest write completed: %v", err)
+	case <-time.After(testNoReturnTimeout):
+	}
+	qmpClient.mu.Lock()
+	migrateCalls := qmpClient.migrateCalls
+	qmpClient.mu.Unlock()
+	if migrateCalls != 0 {
+		t.Fatalf("control suspend migrated during guest provisioning, got %d calls", migrateCalls)
+	}
+
+	close(allowWrite)
+	select {
+	case err := <-rpcDone:
+		if err != nil {
+			t.Fatalf("control suspend: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("control suspend did not return after guest provisioning")
+	}
+	select {
+	case err := <-launchDone:
+		if err != nil {
+			t.Fatalf("launch: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("launch did not return after control suspend")
+	}
+	qmpClient.mu.Lock()
+	migrateCalls = qmpClient.migrateCalls
+	qmpClient.mu.Unlock()
+	if migrateCalls != 1 {
+		t.Fatalf("expected one migration after guest provisioning, got %d", migrateCalls)
 	}
 }
 
@@ -2477,7 +2715,7 @@ func TestManagerLaunchHandlesDuplicateSuspendDuringActiveSessionWithoutForwardin
 		t.Fatalf("launch: %v", err)
 	}
 
-	state, err := readSuspendState(cfg)
+	state, err := launch.ReadSuspendState(cfg)
 	if err != nil {
 		t.Fatalf("read suspend state: %v", err)
 	}
@@ -2740,19 +2978,19 @@ func TestSaveSuspendStateConnectedStopsMigratesAndWritesSavedState(t *testing.T)
 	if queryMigrateCalls == 0 {
 		t.Fatal("expected query-migrate polling")
 	}
-	if migratePath != vmStatePath(cfg) {
-		t.Fatalf("unexpected migrate path: got %q want %q", migratePath, vmStatePath(cfg))
+	if migratePath != launch.VMStatePath(cfg) {
+		t.Fatalf("unexpected migrate path: got %q want %q", migratePath, launch.VMStatePath(cfg))
 	}
 	if status != "paused" {
 		t.Fatalf("expected paused status, got %q", status)
 	}
 
-	statePath := suspendStatePath(cfg)
+	statePath := launch.SuspendStatePath(cfg)
 	data, err := os.ReadFile(statePath)
 	if err != nil {
 		t.Fatalf("read suspend state: %v", err)
 	}
-	var state suspendState
+	var state launch.SuspendState
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatalf("decode suspend state: %v", err)
 	}
@@ -2762,7 +3000,7 @@ func TestSaveSuspendStateConnectedStopsMigratesAndWritesSavedState(t *testing.T)
 	if state.QMPSocketPath != qmpSocketPath {
 		t.Fatalf("unexpected state qmp socket: got %q", state.QMPSocketPath)
 	}
-	if state.VMStatePath != vmStatePath(cfg) {
+	if state.VMStatePath != launch.VMStatePath(cfg) {
 		t.Fatalf("unexpected vm state path: got %q", state.VMStatePath)
 	}
 	if state.CID != 7 {
@@ -2786,11 +3024,11 @@ func TestLaunchSuspendHandlerSaveAndExitIsIdempotent(t *testing.T) {
 	}
 	handler := newLaunchSuspendHandler(manager, cfg, filepath.Join(tmpDir, "qmp.sock"), qmpClient, 7, nil, nil)
 
-	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
-		t.Fatalf("first suspend returned %v, want errSavedSuspendExit", err)
+	if err := handler.saveAndExit(context.Background()); !errors.Is(err, launch.ErrSavedSuspendExit) {
+		t.Fatalf("first suspend returned %v, want launch.ErrSavedSuspendExit", err)
 	}
-	if err := handler.saveAndExit(context.Background()); !errors.Is(err, errSavedSuspendExit) {
-		t.Fatalf("second suspend returned %v, want errSavedSuspendExit", err)
+	if err := handler.saveAndExit(context.Background()); !errors.Is(err, launch.ErrSavedSuspendExit) {
+		t.Fatalf("second suspend returned %v, want launch.ErrSavedSuspendExit", err)
 	}
 
 	qmpClient.mu.Lock()
@@ -2810,10 +3048,88 @@ func TestLaunchSuspendHandlerSaveAndExitIsIdempotent(t *testing.T) {
 	}
 }
 
+type testSuspendControlHandler struct {
+	fakeControlCore
+	onSuspend func() error
+}
+
+func (h *testSuspendControlHandler) Suspend(context.Context, control.SuspendRequest) (control.SuspendResponse, error) {
+	if h.onSuspend != nil {
+		if err := h.onSuspend(); err != nil {
+			return control.SuspendResponse{}, err
+		}
+	}
+	return control.SuspendResponse{Saved: true, VMStatePath: "/tmp/vm-state"}, nil
+}
+
+func TestManagerSuspendControlSocketWaitsForLaunchExit(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	if err := launch.WriteLaunchPID(cfg, 12345); err != nil {
+		t.Fatalf("write launch pid: %v", err)
+	}
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
+	if err != nil {
+		t.Fatalf("resolve control socket: %v", err)
+	}
+
+	allowRemove := make(chan struct{})
+	removeDone := make(chan error, 1)
+	suspendCalled := make(chan struct{})
+	startTestControlServerAt(t, controlSocketPath, &testSuspendControlHandler{
+		onSuspend: func() error {
+			close(suspendCalled)
+			go func() {
+				<-allowRemove
+				removeDone <- launch.RemoveLaunchPID(cfg, 12345)
+			}()
+			return nil
+		},
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- (&manager{}).suspend(context.Background(), cfg)
+	}()
+
+	select {
+	case <-suspendCalled:
+	case err := <-done:
+		t.Fatalf("suspend returned before control handler ran: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("control suspend was not called")
+	}
+
+	select {
+	case err := <-done:
+		t.Fatalf("suspend returned before launch pid removal: %v", err)
+	case <-time.After(testNoReturnTimeout):
+	}
+
+	close(allowRemove)
+	select {
+	case err := <-removeDone:
+		if err != nil {
+			t.Fatalf("remove launch pid: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("launch pid was not removed")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("suspend: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("suspend did not return after launch pid removal")
+	}
+}
+
 func TestManagerSuspendSignalsLaunchAndWaitsForSavedStateAndExit(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	if err := writeLaunchPID(cfg, 12345); err != nil {
+	if err := launch.WriteLaunchPID(cfg, 12345); err != nil {
 		t.Fatalf("write launch pid: %v", err)
 	}
 	releaseLock := acquireTestLaunchLock(t, cfg, 12345)
@@ -2828,15 +3144,15 @@ func TestManagerSuspendSignalsLaunchAndWaitsForSavedStateAndExit(t *testing.T) {
 			if sig != syscall.SIGTSTP {
 				t.Fatalf("unexpected signal: got %v want %v", sig, syscall.SIGTSTP)
 			}
-			if err := writeSuspendStateData(cfg, suspendState{
+			if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 				QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
-				VMStatePath:   vmStatePath(cfg),
+				VMStatePath:   launch.VMStatePath(cfg),
 				CID:           3,
 				Status:        "saved",
 			}); err != nil {
 				return err
 			}
-			return removeLaunchPID(cfg, 12345)
+			return launch.RemoveLaunchPID(cfg, 12345)
 		},
 	}
 	manager := &manager{
@@ -2857,7 +3173,7 @@ func TestManagerSuspendSignalsLaunchAndWaitsForSavedStateAndExit(t *testing.T) {
 	if !reflect.DeepEqual(signaler.signals, []pidSignal{{pid: 12345, sig: syscall.SIGTSTP}}) {
 		t.Fatalf("unexpected signals: got %v", signaler.signals)
 	}
-	state, err := readSuspendState(cfg)
+	state, err := launch.ReadSuspendState(cfg)
 	if err != nil {
 		t.Fatalf("read suspend state: %v", err)
 	}
@@ -2869,15 +3185,15 @@ func TestManagerSuspendSignalsLaunchAndWaitsForSavedStateAndExit(t *testing.T) {
 func TestManagerSuspendSignalsActiveLaunchWhenSavedStateAlreadyExists(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		QMPSocketPath: filepath.Join(tmpDir, "old-qmp.sock"),
-		VMStatePath:   vmStatePath(cfg),
+		VMStatePath:   launch.VMStatePath(cfg),
 		CID:           3,
 		Status:        "saved",
 	}); err != nil {
 		t.Fatalf("write saved suspend state: %v", err)
 	}
-	if err := writeLaunchPID(cfg, 12345); err != nil {
+	if err := launch.WriteLaunchPID(cfg, 12345); err != nil {
 		t.Fatalf("write launch pid: %v", err)
 	}
 	releaseLock := acquireTestLaunchLock(t, cfg, 12345)
@@ -2891,7 +3207,7 @@ func TestManagerSuspendSignalsActiveLaunchWhenSavedStateAlreadyExists(t *testing
 			if sig != syscall.SIGTSTP {
 				t.Fatalf("unexpected signal: got %v want %v", sig, syscall.SIGTSTP)
 			}
-			return removeLaunchPID(cfg, 12345)
+			return launch.RemoveLaunchPID(cfg, 12345)
 		},
 	}
 	manager := &manager{
@@ -2912,9 +3228,9 @@ func TestManagerSuspendSignalsActiveLaunchWhenSavedStateAlreadyExists(t *testing
 func TestManagerSuspendPreservesExistingSavedStateWithoutSignal(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
-		VMStatePath:   vmStatePath(cfg),
+		VMStatePath:   launch.VMStatePath(cfg),
 		CID:           3,
 		Status:        "saved",
 	}); err != nil {
@@ -2987,7 +3303,7 @@ func TestManagerLaunchResumeForceMissingSavedStateReportsRestoreError(t *testing
 func TestManagerLaunchResumeForceNonSavedStateReportsRestoreError(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
 		Status:        "paused",
 	}); err != nil {
@@ -3043,14 +3359,14 @@ func TestManagerLaunchResumeForceRestoresAndRemovesSavedState(t *testing.T) {
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Volumes[0].AutoCreate = false
-	statePath := vmStatePath(cfg)
+	statePath := launch.VMStatePath(cfg)
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
 	if err := os.WriteFile(statePath, []byte("saved state"), 0o644); err != nil {
 		t.Fatalf("write vm state: %v", err)
 	}
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
 		VMStatePath:   statePath,
 		CID:           3,
@@ -3094,7 +3410,7 @@ func TestManagerLaunchResumeForceRestoresAndRemovesSavedState(t *testing.T) {
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Fatalf("expected vm state removal, stat err: %v", err)
 	}
-	if _, err := os.Stat(suspendStatePath(cfg)); !os.IsNotExist(err) {
+	if _, err := os.Stat(launch.SuspendStatePath(cfg)); !os.IsNotExist(err) {
 		t.Fatalf("expected suspend state removal, stat err: %v", err)
 	}
 }
@@ -3104,14 +3420,14 @@ func TestManagerLaunchResumeForceSavesSuspendDuringRestoredSession(t *testing.T)
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Volumes[0].AutoCreate = false
-	statePath := vmStatePath(cfg)
+	statePath := launch.VMStatePath(cfg)
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
 	if err := os.WriteFile(statePath, []byte("saved state"), 0o644); err != nil {
 		t.Fatalf("write vm state: %v", err)
 	}
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
 		VMStatePath:   statePath,
 		CID:           3,
@@ -3154,7 +3470,7 @@ func TestManagerLaunchResumeForceSavesSuspendDuringRestoredSession(t *testing.T)
 	if qmpClient.migrateIncomingCalls != 1 || qmpClient.contCalls != 1 || qmpClient.migrateCalls != 1 {
 		t.Fatalf("unexpected qmp calls: migrate-incoming=%d cont=%d migrate=%d", qmpClient.migrateIncomingCalls, qmpClient.contCalls, qmpClient.migrateCalls)
 	}
-	readState, err := readSuspendState(cfg)
+	readState, err := launch.ReadSuspendState(cfg)
 	if err != nil {
 		t.Fatalf("read new suspend state: %v", err)
 	}
@@ -3168,14 +3484,14 @@ func TestManagerLaunchResumeCancellationDuringActiveSessionIsNotSuspend(t *testi
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Volumes[0].AutoCreate = false
-	statePath := vmStatePath(cfg)
+	statePath := launch.VMStatePath(cfg)
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
 	if err := os.WriteFile(statePath, []byte("saved state"), 0o644); err != nil {
 		t.Fatalf("write vm state: %v", err)
 	}
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
 		VMStatePath:   statePath,
 		CID:           3,
@@ -3215,7 +3531,7 @@ func TestManagerLaunchResumeCancellationDuringActiveSessionIsNotSuspend(t *testi
 	if err == nil {
 		t.Fatal("expected resume cancellation error")
 	}
-	if errors.Is(err, errSavedSuspendExit) {
+	if launch.IsSavedSuspendExit(err) {
 		t.Fatalf("cancellation was misreported as suspend: %v", err)
 	}
 	if qmpClient.migrateCalls != 0 {
@@ -3228,14 +3544,14 @@ func TestManagerLaunchResumeForcePreservesStateWhenSessionStartFails(t *testing.
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Volumes[0].AutoCreate = false
-	statePath := vmStatePath(cfg)
+	statePath := launch.VMStatePath(cfg)
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
 	if err := os.WriteFile(statePath, []byte("saved state"), 0o644); err != nil {
 		t.Fatalf("write vm state: %v", err)
 	}
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
 		VMStatePath:   statePath,
 		CID:           3,
@@ -3274,7 +3590,7 @@ func TestManagerLaunchResumeForcePreservesStateWhenSessionStartFails(t *testing.
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("expected saved vm state to remain: %v", err)
 	}
-	readState, err := readSuspendState(cfg)
+	readState, err := launch.ReadSuspendState(cfg)
 	if err != nil {
 		t.Fatalf("expected suspend state to remain: %v", err)
 	}
@@ -3286,9 +3602,9 @@ func TestManagerLaunchResumeForcePreservesStateWhenSessionStartFails(t *testing.
 func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
-		VMStatePath:   vmStatePath(cfg),
+		VMStatePath:   launch.VMStatePath(cfg),
 		CID:           3,
 		Status:        "saved",
 	}); err != nil {
@@ -3299,7 +3615,7 @@ func TestWaitForSessionReturnsNilWhenSavedStateExistsOnCancellation(t *testing.T
 	cancel()
 	session := (&executortest.Process{OverrideName: "ssh"}).Process()
 
-	err := (&manager{}).waitForSession(ctx, session, make(chan struct{}), make(chan struct{}), nil, "", executor.Group{})
+	err := (&manager{}).waitForSession(ctx, session, newTestLaunchLifecycle(), nil, "", executor.Group{})
 	if err == nil {
 		t.Fatal("expected active session cancellation error")
 	}
@@ -3323,13 +3639,8 @@ func TestAllocateCIDSkipsHostUnavailableIDs(t *testing.T) {
 		},
 	}
 
-	locker := &fileLocker{}
 	checker := &fakeVSockCIDChecker{unavailable: map[int]bool{7: true}}
-	manager := &manager{
-		locker:          locker,
-		vsockCIDChecker: checker,
-	}
-	cid, err := manager.allocateCID(manifest)
+	cid, err := launch.AcquireCID(manifest, nil, checker)
 	if err != nil {
 		t.Fatalf("allocate cid: %v", err)
 	}
@@ -3357,12 +3668,9 @@ func TestAllocateCIDReturnsHostCheckError(t *testing.T) {
 		},
 	}
 
-	manager := &manager{
-		vsockCIDChecker: &fakeVSockCIDChecker{
-			err: errors.New("probe failed"),
-		},
-	}
-	_, err := manager.allocateCID(manifest)
+	_, err := launch.AcquireCID(manifest, nil, &fakeVSockCIDChecker{
+		err: errors.New("probe failed"),
+	})
 	if err == nil || !strings.Contains(err.Error(), "probe failed") {
 		t.Fatalf("expected probe failure, got %v", err)
 	}
@@ -3429,113 +3737,176 @@ func TestBuildQEMUCommandAddsPCIEHotplugPorts(t *testing.T) {
 	}
 }
 
-func TestManagerHotplugAttachRunsHostQMPAndGuestSteps(t *testing.T) {
+type testHotplugControlHandler struct {
+	fakeControlCore
+	requests []control.HotplugRequest
+}
+
+func (h *testHotplugControlHandler) Hotplug(ctx context.Context, req control.HotplugRequest) (control.HotplugResponse, error) {
+	h.requests = append(h.requests, req)
+	return control.HotplugResponse{ID: req.ID, Detach: req.Detach}, nil
+}
+
+func TestManagerHotplugUsesControlSocket(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Persistence.StateDir = ".virtie"
 	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
-	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
-	cfg.QEMU.Hotplug.PCIEPorts = 1
-	cfg.Hotplug = []hotplug.Device{
-		{
-			Kind: hotplug.KindVirtioFS,
-			ID:   "cache",
-			VirtioFS: hotplug.VirtioFS{
-				Source:     filepath.Join(tmpDir, "cache"),
-				Target:     "/mnt/cache",
-				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
-				Bin:        "/bin/virtiofsd",
-				Args:       []string{"--socket=" + filepath.Join(tmpDir, ".virtie", "cache.sock")},
-			},
-		},
-	}
 
-	qmpClient := &fakeQMPClient{}
-	guestClient := &fakeGuestAgentClient{}
-	runner := &launchRunner{}
-	manager := &manager{
-		runner:            runner,
-		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
-		socketWaiter:      &fakeSocketWaiter{},
-		qmpConnectTimeout: time.Second,
-		qmpRetryDelay:     time.Millisecond,
-	}
-
-	if err := manager.hotplug(context.Background(), cfg, "cache", HotplugOptions{}); err != nil {
-		t.Fatalf("attach hotplug: %v", err)
-	}
-
-	if got, want := runner.startedNames(), []string{"virtiofsd"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected starts: got %#v want %#v", got, want)
-	}
-	if !runner.processGroups()["virtiofsd"] {
-		t.Fatal("expected hotplug host process to run in its own process group")
-	}
-	if got := runner.virtiofsEnv()["virtiofsd"]; !containsString(got, "VIRTIOFSD_SOCKET="+filepath.Join(tmpDir, ".virtie", "cache.sock")) {
-		t.Fatalf("expected rendered hotplug env, got %#v", got)
-	}
-	if got := strings.Join(qmpClient.rawCommands, "\n"); !strings.Contains(got, `"execute":"chardev-add"`) || !strings.Contains(got, `"execute":"device_add"`) {
-		t.Fatalf("unexpected qmp commands: got %#v", qmpClient.rawCommands)
-	}
-	if len(guestClient.execs) != 1 || guestClient.execs[0].path != "/run/current-system/sw/bin/mount" || !reflect.DeepEqual(guestClient.execs[0].args, []string{"-t", "virtiofs", "cache", "/mnt/cache"}) {
-		t.Fatalf("unexpected guest execs: %#v", guestClient.execs)
-	}
-	state, err := readHotplugState(filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json"))
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
 	if err != nil {
-		t.Fatalf("read hotplug state: %v", err)
+		t.Fatalf("resolve control socket: %v", err)
 	}
-	if state.ID != "cache" || state.Kind != hotplug.KindVirtioFS || state.Bus != "pcie.hotplug.0" || state.PID != 1 {
-		t.Fatalf("unexpected hotplug state: %#v", state)
+	handler := &testHotplugControlHandler{}
+	startTestControlServerAt(t, controlSocketPath, handler)
+
+	if err := (&manager{}).hotplug(context.Background(), cfg, "cache", true); err != nil {
+		t.Fatalf("hotplug: %v", err)
+	}
+	if got, want := handler.requests, []control.HotplugRequest{{ID: "cache", Detach: true}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected control requests: got %#v want %#v", got, want)
 	}
 }
 
-func TestManagerHotplugDetachRunsGuestThenQMPAndRemovesState(t *testing.T) {
+func TestLaunchRuntimeRegistersHotplugAtControlPeriphery(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Persistence.StateDir = ".virtie"
 	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
-	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
 	cfg.QEMU.Hotplug.PCIEPorts = 1
 	cfg.Hotplug = []hotplug.Device{
 		{
-			Kind: hotplug.KindVirtioFS,
-			ID:   "cache",
-			VirtioFS: hotplug.VirtioFS{
-				Source:     filepath.Join(tmpDir, "cache"),
-				Target:     "/mnt/cache",
-				SocketPath: filepath.Join(tmpDir, ".virtie", "cache.sock"),
-				Bin:        "/bin/virtiofsd",
-			},
+			Kind: hotplug.KindNet,
+			ID:   "vpn",
+			Net:  hotplug.Net{Backend: "user", MAC: "02:02:00:00:00:10"},
 		},
 	}
-	statePath := filepath.Join(tmpDir, ".virtie", "hotplug", "cache.json")
-	if err := writeHotplugState(statePath, hotplug.State{ID: "cache", Kind: hotplug.KindVirtioFS, Bus: "pcie.hotplug.0"}); err != nil {
-		t.Fatalf("write hotplug state: %v", err)
-	}
 
-	qmpClient := &fakeQMPClient{}
-	guestClient := &fakeGuestAgentClient{}
+	runner := &launchRunner{}
+	qmp := &fakeQMPClient{}
 	manager := &manager{
-		runner:            &launchRunner{},
-		qmpDialer:         &fakeQMPDialer{client: qmpClient},
-		guestAgentDialer:  &fakeGuestAgentDialer{client: guestClient},
+		locker:            &fileLocker{},
+		runner:            runner,
+		qmpDialer:         &fakeQMPDialer{client: qmp},
 		socketWaiter:      &fakeSocketWaiter{},
+		logger:            slog.New(slog.DiscardHandler),
 		qmpConnectTimeout: time.Second,
 		qmpRetryDelay:     time.Millisecond,
 	}
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, Options: LaunchOptions{Resume: ResumeModeNo, SSH: false}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
 
-	if err := manager.hotplug(context.Background(), cfg, "cache", HotplugOptions{Detach: true}); err != nil {
-		t.Fatalf("detach hotplug: %v", err)
+	running, err := manager.startWithPlan(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("start runtime: %v", err)
 	}
-	if len(guestClient.execs) != 1 || guestClient.execs[0].path != "/run/current-system/sw/bin/umount" {
-		t.Fatalf("unexpected guest execs: %#v", guestClient.execs)
+	defer running.Close()
+
+	_, err = control.Dial(plan.Paths.ControlSocket).Hotplug(context.Background(), control.HotplugRequest{ID: "vpn"})
+	if err != nil {
+		t.Fatalf("control hotplug: %v", err)
 	}
-	if got, want := qmpClient.deviceDelWaits, []string{"dev-cache"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected qmp commands: got %#v want %#v", got, want)
+	if got := strings.Join(qmp.rawCommands, "\n"); !strings.Contains(got, `"execute":"netdev_add"`) {
+		t.Fatalf("expected netdev_add command, got %#v", qmp.rawCommands)
 	}
-	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected hotplug state removal, got err=%v", err)
+}
+
+func TestLaunchRuntimeRegistersInfoAtControlPeriphery(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = "qga.sock"
+	cfg.QEMU.SSHReady.SocketPath = ""
+	cfg.Volumes[0].AutoCreate = false
+
+	guestAgent := &fakeGuestAgentClient{
+		execStatuses: []qga.ExecStatus{{
+			Exited:  true,
+			OutData: "cm9vdCBpbml0CmFnZW50IHZpcnRpZQo=",
+		}},
+	}
+	runner := &launchRunner{}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		qmpDialer:         &fakeQMPDialer{client: &fakeQMPClient{}},
+		guestAgentDialer:  &fakeGuestAgentDialer{client: guestAgent},
+		socketWaiter:      &fakeSocketWaiter{},
+		logger:            slog.New(slog.DiscardHandler),
+		qmpConnectTimeout: time.Second,
+		qmpRetryDelay:     time.Millisecond,
+	}
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, Options: LaunchOptions{Resume: ResumeModeNo, SSH: false}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
+
+	running, err := manager.startWithPlan(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("start runtime: %v", err)
+	}
+	defer running.Close()
+
+	resp, err := control.Dial(plan.Paths.ControlSocket).Info(context.Background(), control.InfoRequest{})
+	if err != nil {
+		t.Fatalf("control info: %v", err)
+	}
+	if resp.ProcessList != "USER COMMAND\nagent virtie\nroot init" {
+		t.Fatalf("unexpected process list: %q", resp.ProcessList)
+	}
+	if got, want := len(guestAgent.execs), 1; got != want {
+		t.Fatalf("guest exec count: got %d want %d", got, want)
+	}
+	exec := guestAgent.execs[0]
+	if exec.path != guestPSPath || !reflect.DeepEqual(exec.args, []string{"-eo", "user=,comm="}) || !exec.captureOutput {
+		t.Fatalf("unexpected ps exec: %#v", exec)
+	}
+}
+
+func TestLaunchRuntimeInfoMapsFailureToFailedPrecondition(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := validManifest(tmpDir)
+	cfg.Persistence.StateDir = ".virtie"
+	cfg.Paths.RuntimeDir = manifest.RuntimeDir{Mode: manifest.RuntimeDirPath, Path: ".virtie"}
+	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
+	cfg.QEMU.QMP.SocketPath = "qmp.sock"
+	cfg.QEMU.GuestAgent.SocketPath = ""
+	cfg.QEMU.SSHReady.SocketPath = ""
+	cfg.Volumes[0].AutoCreate = false
+
+	runner := &launchRunner{}
+	manager := &manager{
+		locker:            &fileLocker{},
+		runner:            runner,
+		qmpDialer:         &fakeQMPDialer{client: &fakeQMPClient{}},
+		socketWaiter:      &fakeSocketWaiter{},
+		logger:            slog.New(slog.DiscardHandler),
+		qmpConnectTimeout: time.Second,
+		qmpRetryDelay:     time.Millisecond,
+	}
+	plan, err := manager.planLaunch(launch.Spec{Manifest: cfg, Options: LaunchOptions{Resume: ResumeModeNo, SSH: false}})
+	if err != nil {
+		t.Fatalf("plan launch: %v", err)
+	}
+
+	running, err := manager.startWithPlan(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("start runtime: %v", err)
+	}
+	defer running.Close()
+
+	_, err = control.Dial(plan.Paths.ControlSocket).Info(context.Background(), control.InfoRequest{})
+	var rpcErr *control.RPCError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("error type: got %T", err)
+	}
+	if rpcErr.Code != control.ErrFailedPrecondition {
+		t.Fatalf("code: got %s want %s", rpcErr.Code, control.ErrFailedPrecondition)
 	}
 }
 
@@ -3999,7 +4370,7 @@ func validManifest(workingDir string) *manifest.Manifest {
 
 func validManifestWithBalloon(workingDir string) *manifest.Manifest {
 	manifest := validManifest(workingDir)
-	manifest.QEMU.Devices.Balloon = &balloonpkg.Device{
+	manifest.QEMU.Devices.Balloon = &balloon.Device{
 		ID:        "balloon0",
 		Transport: "pci",
 	}
@@ -4286,21 +4657,21 @@ func startFakeSSHReadySocket(_ context.Context, path string) error {
 }
 
 type fakeQMPDialer struct {
-	client   qmpClient
+	client   qmpclient.Client
 	attempts int
 }
 
-func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpClient, error) {
+func (d *fakeQMPDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qmpclient.Client, error) {
 	d.attempts++
 	return d.client, nil
 }
 
 type fakeGuestAgentDialer struct {
-	client   guestAgentClient
+	client   qga.Client
 	attempts int
 }
 
-func (d *fakeGuestAgentDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (guestAgentClient, error) {
+func (d *fakeGuestAgentDialer) Dial(ctx context.Context, socketPath string, timeout time.Duration) (qga.Client, error) {
 	d.attempts++
 	return d.client, nil
 }
@@ -4355,7 +4726,7 @@ type fakeGuestAgentClient struct {
 	readIndexes     map[string]int
 	closes          []string
 	execs           []guestExecCall
-	execStatuses    []guestExecStatus
+	execStatuses    []qga.ExecStatus
 	execStatusCalls int
 	readErr         error
 	writeErr        error
@@ -4500,15 +4871,15 @@ func (c *fakeGuestAgentClient) Exec(timeout time.Duration, path string, args []s
 	return pid, nil
 }
 
-func (c *fakeGuestAgentClient) ExecStatus(timeout time.Duration, pid int) (guestExecStatus, error) {
+func (c *fakeGuestAgentClient) ExecStatus(timeout time.Duration, pid int) (qga.ExecStatus, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.execStatusCalls++
 	if c.execStatusErr != nil {
-		return guestExecStatus{}, c.execStatusErr
+		return qga.ExecStatus{}, c.execStatusErr
 	}
 	if len(c.execStatuses) == 0 {
-		return guestExecStatus{Exited: true}, nil
+		return qga.ExecStatus{Exited: true}, nil
 	}
 	index := c.execStatusCalls - 1
 	if index >= len(c.execStatuses) {

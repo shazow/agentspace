@@ -1,4 +1,4 @@
-package manager
+package launch
 
 import (
 	"context"
@@ -6,18 +6,18 @@ import (
 	"sync"
 )
 
-type managedTask struct {
+type task struct {
 	cancel context.CancelFunc
 	done   chan error
 	once   sync.Once
 	err    error
 }
 
-type managedTaskGroup struct {
-	tasks []*managedTask
+type taskGroup struct {
+	tasks []*task
 }
 
-func startManagedTask(ctx context.Context, fn func(context.Context) error) *managedTask {
+func startTask(ctx context.Context, fn func(context.Context) error) *task {
 	taskCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 
@@ -26,13 +26,13 @@ func startManagedTask(ctx context.Context, fn func(context.Context) error) *mana
 		close(done)
 	}()
 
-	return &managedTask{
+	return &task{
 		cancel: cancel,
 		done:   done,
 	}
 }
 
-func (t *managedTask) Stop() error {
+func (t *task) Stop() error {
 	if t == nil {
 		return nil
 	}
@@ -44,14 +44,14 @@ func (t *managedTask) Stop() error {
 	return t.err
 }
 
-func (g *managedTaskGroup) Add(task *managedTask) {
+func (g *taskGroup) Add(task *task) {
 	if g == nil || task == nil {
 		return
 	}
 	g.tasks = append(g.tasks, task)
 }
 
-func (g *managedTaskGroup) Stop() error {
+func (g *taskGroup) Stop() error {
 	if g == nil {
 		return nil
 	}

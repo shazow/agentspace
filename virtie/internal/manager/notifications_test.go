@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -139,7 +140,7 @@ func TestSaveSuspendStateConnectedNotifiesAfterSavedStateWrite(t *testing.T) {
 
 	notifier := &recordingNotifier{
 		onNotify: func() {
-			if _, err := os.Stat(suspendStatePath(cfg)); err != nil {
+			if _, err := os.Stat(launch.SuspendStatePath(cfg)); err != nil {
 				t.Fatalf("expected suspend state to exist before notification: %v", err)
 			}
 		},
@@ -155,7 +156,7 @@ func TestSaveSuspendStateConnectedNotifiesAfterSavedStateWrite(t *testing.T) {
 	if call.state != notifyStateRuntimeSuspend {
 		t.Fatalf("unexpected notification state: got %q", call.state)
 	}
-	if call.values["vm_state_path"] != vmStatePath(cfg) || call.values["cid"] != "7" {
+	if call.values["vm_state_path"] != launch.VMStatePath(cfg) || call.values["cid"] != "7" {
 		t.Fatalf("unexpected notification values: %#v", call.values)
 	}
 }
@@ -165,14 +166,14 @@ func TestLaunchResumeNotifiesAfterMigrationAndContinue(t *testing.T) {
 	cfg := validManifest(tmpDir)
 	cfg.Paths.LockPath = filepath.Join(tmpDir, "virtie.lock")
 	cfg.Volumes[0].AutoCreate = false
-	statePath := vmStatePath(cfg)
+	statePath := launch.VMStatePath(cfg)
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		t.Fatalf("create state dir: %v", err)
 	}
 	if err := os.WriteFile(statePath, []byte("saved state"), 0o644); err != nil {
 		t.Fatalf("write vm state: %v", err)
 	}
-	if err := writeSuspendStateData(cfg, suspendState{
+	if err := launch.WriteSuspendStateData(cfg, launch.SuspendState{
 		QMPSocketPath: filepath.Join(tmpDir, "qmp.sock"),
 		VMStatePath:   statePath,
 		CID:           3,

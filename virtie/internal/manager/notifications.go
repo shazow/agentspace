@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/shazow/agentspace/virtie/internal/executor"
+	"github.com/shazow/agentspace/virtie/internal/manager/launch"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
 
@@ -18,8 +19,27 @@ const (
 	notifyStateRuntimeResume  = "runtime:resume"
 )
 
-type notificationSink interface {
-	Notify(ctx context.Context, state string, message string, values map[string]string)
+func notifyRuntimeResume(ctx context.Context, plan *launch.Plan) {
+	if plan == nil || plan.Notifier == nil || plan.ResumeState == nil {
+		return
+	}
+	plan.Notifier.Notify(ctx, notifyStateRuntimeResume, "Restored saved VM state", map[string]string{
+		"host_name":     plan.Manifest.Identity.HostName,
+		"vm_state_path": plan.ResumeState.VMStatePath,
+		"cid":           fmt.Sprintf("%d", plan.CID),
+	})
+}
+
+func notifyRuntimeSuspend(ctx context.Context, notifier launch.NotificationSink, state launch.SuspendState) {
+	if notifier == nil {
+		return
+	}
+	notifier.Notify(ctx, notifyStateRuntimeSuspend, "Saved VM suspend state", map[string]string{
+		"host_name":       state.HostName,
+		"qmp_socket_path": state.QMPSocketPath,
+		"vm_state_path":   state.VMStatePath,
+		"cid":             fmt.Sprintf("%d", state.CID),
+	})
 }
 
 type noopNotifier struct{}
@@ -33,14 +53,7 @@ type commandNotifier struct {
 	logger  *slog.Logger
 }
 
-func (m *manager) effectiveNotifier(manifest *manifest.Manifest) notificationSink {
-	if m.notifier != nil {
-		return m.notifier
-	}
-	return newCommandNotifier(manifest, m.logger)
-}
-
-func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger) notificationSink {
+func newCommandNotifier(manifest *manifest.Manifest, logger *slog.Logger) launch.NotificationSink {
 	if manifest == nil {
 		return noopNotifier{}
 	}

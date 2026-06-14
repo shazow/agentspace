@@ -161,7 +161,7 @@ func (c *hotplugCommand) Execute(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	return manager.Hotplug(ctx, manifest, c.Args.ID, manager.HotplugOptions{Detach: c.Detach})
+	return manager.Hotplug(ctx, manifest, c.Args.ID, c.Detach)
 }
 
 func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {

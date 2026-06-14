@@ -1,10 +1,3 @@
-// Package balloon implements the internal virtio-balloon feature.
-//
-// It owns the manifest-facing balloon configuration, the QEMU argument lowering
-// for the virtio-balloon device, and the optional runtime controller that
-// adjusts guest memory through QMP. The controller reads guest pressure stats,
-// applies the configured hysteresis and holdoff rules, and issues balloon
-// commands without exposing those QMP-specific details to the rest of virtie.
 package balloon
 
 import (
@@ -14,11 +7,9 @@ import (
 )
 
 const (
-	bytesPerMiB int64 = 1024 * 1024
-
-	defaultControllerStep             = units.MiB(256)
-	defaultControllerPollIntervalSecs = 5
-	defaultControllerReclaimHoldoff   = 30
+	DefaultControllerStep             = units.MiB(256)
+	DefaultControllerPollIntervalSecs = 5
+	DefaultControllerReclaimHoldoff   = 30
 )
 
 type Device struct {
@@ -66,13 +57,13 @@ func ApplyDefaults(memory units.MiB, device *Device) {
 		controller.ReclaimAboveAvailable = defaultReclaimAboveAvailable(idleTarget)
 	}
 	if controller.Step == 0 {
-		controller.Step = defaultControllerStep
+		controller.Step = DefaultControllerStep
 	}
 	if controller.PollIntervalSeconds == 0 {
-		controller.PollIntervalSeconds = defaultControllerPollIntervalSecs
+		controller.PollIntervalSeconds = DefaultControllerPollIntervalSecs
 	}
 	if controller.ReclaimHoldoffSeconds == 0 {
-		controller.ReclaimHoldoffSeconds = defaultControllerReclaimHoldoff
+		controller.ReclaimHoldoffSeconds = DefaultControllerReclaimHoldoff
 	}
 }
 

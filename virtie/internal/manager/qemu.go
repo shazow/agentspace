@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	govmmQemu "github.com/kata-containers/govmm/qemu"
+	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/executor"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 )
@@ -150,7 +151,7 @@ func buildQEMUArgs(qemu manifest.QEMU, cid int, incoming bool) ([]string, error)
 		return nil, fmt.Errorf("unsupported qemu memory backend %q", qemu.Memory.Backend)
 	}
 
-	args, err = appendOptionalFeatureQEMUArgs(qemu, config, args)
+	args, err = balloon.AppendQEMUArgs(args, config, resolveQEMUTransport, qemu.Devices.Balloon)
 	if err != nil {
 		return nil, err
 	}
