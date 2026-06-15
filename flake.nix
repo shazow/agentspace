@@ -54,7 +54,7 @@
               // sandboxCfg;
 
               # System-specific overrides can still go here
-              system.stateVersion = "25.11";
+              system.stateVersion = "26.05";
               nix.registry.nixpkgs.flake = nixpkgs;
               nix.nixPath = [ "nixpkgs=${nixpkgs}" ];
               nix.settings.experimental-features = [
