@@ -620,7 +620,7 @@ in
           cpu = config.microvm.cpu;
         };
         kernel = {
-          path = "${config.microvm.kernel.out}/${pkgs.stdenv.hostPlatform.linux-kernel.target}";
+          path = "${config.microvm.kernel.out}/${config.system.boot.loader.kernelFile}";
           initrd_path = config.microvm.initrdPath;
           params = config.microvm.kernelParams;
           serial = resolvedSerialMode;
