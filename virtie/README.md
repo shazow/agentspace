@@ -55,8 +55,9 @@ be placed before or after the subcommand.
 - Uses QMP for readiness and graceful shutdown.
 - Attaches or detaches typed hotplug devices. Virtiofs includes optional guest
   mount/umount; net and block currently attach only the QEMU-side device.
-- Calls the running control socket directly with `virtie rpc METHOD
-  [JSON_ARGS]`, for example `virtie rpc status` or `virtie rpc hotplug
+- Provides `virtie rpc METHOD [JSON_ARGS]` as a convenience helper for
+  interacting with the running `virtie.sock` control socket, for example
+  `virtie rpc methods`, `virtie rpc status`, or `virtie rpc hotplug
   '{"id":"cache"}'`.
 - Records the active launch PID under the manifest persistence state directory.
   `virtie suspend` validates that PID and sends `SIGTSTP` as a caught control

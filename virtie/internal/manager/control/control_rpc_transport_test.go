@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,15 @@ func TestControlClientServerTypedCalls(t *testing.T) {
 	}
 	if balloon.ActualBytes != 512 || balloon.TargetBytes != 1024 || handler.balloonReq.TargetBytes != 1024 {
 		t.Fatalf("unexpected balloon response=%#v req=%#v", balloon, handler.balloonReq)
+	}
+
+	methods, err := client.Methods(context.Background(), MethodsRequest{})
+	if err != nil {
+		t.Fatalf("methods: %v", err)
+	}
+	wantMethods := []string{"status", "methods", "info", "suspend", "hotplug", "balloon"}
+	if !reflect.DeepEqual(methods.Methods, wantMethods) {
+		t.Fatalf("unexpected methods: got %#v want %#v", methods.Methods, wantMethods)
 	}
 }
 

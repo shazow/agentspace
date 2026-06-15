@@ -106,6 +106,14 @@ type InfoResponse struct {
 	ProcessList string `json:"processList,omitempty"`
 }
 
+// MethodsRequest asks which RPC methods are available on this control socket.
+type MethodsRequest struct{}
+
+// MethodsResponse reports RPC methods available on this control socket.
+type MethodsResponse struct {
+	Methods []string `json:"methods"`
+}
+
 // ErrorCode classifies a control socket RPC failure.
 type ErrorCode string
 
@@ -141,6 +149,7 @@ type rpcMethod string
 
 const (
 	rpcStatus  rpcMethod = "status"
+	rpcMethods rpcMethod = "methods"
 	rpcSuspend rpcMethod = "suspend"
 	rpcHotplug rpcMethod = "hotplug"
 	rpcBalloon rpcMethod = "balloon"
@@ -248,6 +257,11 @@ func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelo
 		if err = decodeParams(req.Params, &params); err == nil {
 			result, err = r.core.Status(ctx, params)
 		}
+	case rpcMethods:
+		var params MethodsRequest
+		if err = decodeParams(req.Params, &params); err == nil {
+			result = r.methods()
+		}
 	case rpcInfo:
 		if r.info == nil {
 			err = &RPCError{Code: ErrUnsupported, Message: "info is not supported"}
@@ -300,6 +314,23 @@ func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelo
 	}
 	resp.Result = payload
 	return resp
+}
+
+func (r *Router) methods() MethodsResponse {
+	methods := []string{string(rpcStatus), string(rpcMethods)}
+	if r.info != nil {
+		methods = append(methods, string(rpcInfo))
+	}
+	if r.suspend != nil {
+		methods = append(methods, string(rpcSuspend))
+	}
+	if r.hotplug != nil {
+		methods = append(methods, string(rpcHotplug))
+	}
+	if r.balloon != nil {
+		methods = append(methods, string(rpcBalloon))
+	}
+	return MethodsResponse{Methods: methods}
 }
 
 func decodeParams(data json.RawMessage, dst any) error {
@@ -455,6 +486,13 @@ func Dial(path string) *Client {
 func (c *Client) Status(ctx context.Context, req StatusRequest) (StatusResponse, error) {
 	var resp StatusResponse
 	err := c.call(ctx, rpcStatus, req, &resp)
+	return resp, err
+}
+
+// Methods sends a methods request.
+func (c *Client) Methods(ctx context.Context, req MethodsRequest) (MethodsResponse, error) {
+	var resp MethodsResponse
+	err := c.call(ctx, rpcMethods, req, &resp)
 	return resp, err
 }
 

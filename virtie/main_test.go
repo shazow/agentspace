@@ -291,6 +291,39 @@ func TestRunRPCUsesJSONParams(t *testing.T) {
 	}
 }
 
+func TestRunRPCMethodsPrintsAvailableControlSocketMethods(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(testManifestJSON(tmpDir)), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	cfg, err := loadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
+	if err != nil {
+		t.Fatalf("resolve control socket: %v", err)
+	}
+	handler := &mainTestControlHandler{}
+	startMainTestControlServerAt(t, controlSocketPath, handler)
+
+	output := captureStdout(t, func() {
+		if err := run([]string{"--manifest=" + manifestPath, "rpc", "methods"}); err != nil {
+			t.Fatalf("rpc methods: %v", err)
+		}
+	})
+
+	var got control.MethodsResponse
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("decode rpc output %q: %v", output, err)
+	}
+	want := []string{"status", "methods", "hotplug"}
+	if !reflect.DeepEqual(got.Methods, want) {
+		t.Fatalf("unexpected rpc methods output: got %#v want %#v", got.Methods, want)
+	}
+}
+
 func TestResolveManifestPathDefaultsToTOMLThenJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldDir, err := os.Getwd()
