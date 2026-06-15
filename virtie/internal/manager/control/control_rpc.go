@@ -256,10 +256,11 @@ func NewRouter(handlers Handlers) (*Router, error) {
 		return nil, fmt.Errorf("core handler is required")
 	}
 	router := &Router{methods: make(map[rpcMethod]methodSpec, len(defaultMethods))}
-	for _, method := range defaultMethods {
+	for _, name := range defaultMethodOrder {
+		method := defaultMethods[name]
 		spec, ok := method.bind(router, handlers)
 		if ok {
-			router.methods[method.name] = spec
+			router.methods[name] = spec
 		}
 	}
 	return router, nil
@@ -270,67 +271,65 @@ type methodSpec struct {
 }
 
 type methodRegistration struct {
-	name rpcMethod
 	bind func(*Router, Handlers) (methodSpec, bool)
 }
 
 var (
-	defaultMethods       []methodRegistration
-	defaultMethodsByName = map[rpcMethod]struct{}{}
+	defaultMethodOrder []rpcMethod
+	defaultMethods     = map[rpcMethod]methodRegistration{}
 )
 
 func init() {
-	registerDefaultMethod(typedRegistration(rpcStatus, func(handlers Handlers) func(context.Context, StatusRequest) (StatusResponse, error) {
+	registerDefaultMethod(rpcStatus, typedRegistration(func(handlers Handlers) func(context.Context, StatusRequest) (StatusResponse, error) {
 		if handlers.Core == nil {
 			return nil
 		}
 		return handlers.Core.Status
 	}))
-	registerDefaultMethod(methodRegistration{
-		name: rpcMethods,
+	registerDefaultMethod(rpcMethods, methodRegistration{
 		bind: func(router *Router, handlers Handlers) (methodSpec, bool) {
 			return typedMethod(func(context.Context, MethodsRequest) (MethodsResponse, error) {
 				return router.methodsResponse(), nil
 			}), true
 		},
 	})
-	registerDefaultMethod(typedRegistration(rpcGuestPS, func(handlers Handlers) func(context.Context, GuestPSRequest) (GuestPSResponse, error) {
+	registerDefaultMethod(rpcGuestPS, typedRegistration(func(handlers Handlers) func(context.Context, GuestPSRequest) (GuestPSResponse, error) {
 		if handlers.Guest == nil {
 			return nil
 		}
 		return handlers.Guest.GuestPS
 	}))
-	registerDefaultMethod(typedRegistration(rpcGuestExec, func(handlers Handlers) func(context.Context, GuestExecRequest) (GuestExecResponse, error) {
+	registerDefaultMethod(rpcGuestExec, typedRegistration(func(handlers Handlers) func(context.Context, GuestExecRequest) (GuestExecResponse, error) {
 		if handlers.Guest == nil {
 			return nil
 		}
 		return handlers.Guest.GuestExec
 	}))
-	registerDefaultMethod(typedRegistration(rpcGuestRead, func(handlers Handlers) func(context.Context, GuestReadRequest) (GuestReadResponse, error) {
+	registerDefaultMethod(rpcGuestRead, typedRegistration(func(handlers Handlers) func(context.Context, GuestReadRequest) (GuestReadResponse, error) {
 		if handlers.Guest == nil {
 			return nil
 		}
 		return handlers.Guest.GuestRead
 	}))
-	registerDefaultMethod(typedRegistration(rpcGuestWrite, func(handlers Handlers) func(context.Context, GuestWriteRequest) (GuestWriteResponse, error) {
+	registerDefaultMethod(rpcGuestWrite, typedRegistration(func(handlers Handlers) func(context.Context, GuestWriteRequest) (GuestWriteResponse, error) {
 		if handlers.Guest == nil {
 			return nil
 		}
 		return handlers.Guest.GuestWrite
 	}))
-	registerDefaultMethod(typedRegistration(rpcSuspend, func(handlers Handlers) func(context.Context, SuspendRequest) (SuspendResponse, error) {
+	registerDefaultMethod(rpcSuspend, typedRegistration(func(handlers Handlers) func(context.Context, SuspendRequest) (SuspendResponse, error) {
 		if handlers.Suspend == nil {
 			return nil
 		}
 		return handlers.Suspend.Suspend
 	}))
-	registerDefaultMethod(typedRegistration(rpcHotplug, func(handlers Handlers) func(context.Context, HotplugRequest) (HotplugResponse, error) {
+	registerDefaultMethod(rpcHotplug, typedRegistration(func(handlers Handlers) func(context.Context, HotplugRequest) (HotplugResponse, error) {
 		if handlers.Hotplug == nil {
 			return nil
 		}
 		return handlers.Hotplug.Hotplug
 	}))
-	registerDefaultMethod(typedRegistration(rpcBalloon, func(handlers Handlers) func(context.Context, BalloonRequest) (BalloonResponse, error) {
+	registerDefaultMethod(rpcBalloon, typedRegistration(func(handlers Handlers) func(context.Context, BalloonRequest) (BalloonResponse, error) {
 		if handlers.Balloon == nil {
 			return nil
 		}
@@ -338,26 +337,24 @@ func init() {
 	}))
 }
 
-func registerDefaultMethod(method methodRegistration) {
-	if method.name == "" {
+func registerDefaultMethod(name rpcMethod, method methodRegistration) {
+	if name == "" {
 		panic("control method name is required")
 	}
 	if method.bind == nil {
-		panic(fmt.Sprintf("control method %q bind function is required", method.name))
+		panic(fmt.Sprintf("control method %q bind function is required", name))
 	}
-	if _, exists := defaultMethodsByName[method.name]; exists {
-		panic(fmt.Sprintf("control method %q registered twice", method.name))
+	if _, exists := defaultMethods[name]; exists {
+		panic(fmt.Sprintf("control method %q registered twice", name))
 	}
-	defaultMethods = append(defaultMethods, method)
-	defaultMethodsByName[method.name] = struct{}{}
+	defaultMethods[name] = method
+	defaultMethodOrder = append(defaultMethodOrder, name)
 }
 
 func typedRegistration[Req any, Resp any](
-	name rpcMethod,
 	selector func(Handlers) func(context.Context, Req) (Resp, error),
 ) methodRegistration {
 	return methodRegistration{
-		name: name,
 		bind: func(_ *Router, handlers Handlers) (methodSpec, bool) {
 			call := selector(handlers)
 			if call == nil {
@@ -386,7 +383,7 @@ func typedMethod[Req any, Resp any](
 func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelope {
 	spec, ok := r.methods[req.Method]
 	if !ok {
-		if _, known := defaultMethodsByName[req.Method]; known {
+		if _, known := defaultMethods[req.Method]; known {
 			return responseEnvelope{
 				ID:    req.ID,
 				Error: &RPCError{Code: ErrUnsupported, Message: fmt.Sprintf("%s is not supported by this control socket", req.Method)},
@@ -415,9 +412,9 @@ func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelo
 
 func (r *Router) methodsResponse() MethodsResponse {
 	methods := make([]string, 0, len(r.methods))
-	for _, method := range defaultMethods {
-		if _, ok := r.methods[method.name]; ok {
-			methods = append(methods, string(method.name))
+	for _, method := range defaultMethodOrder {
+		if _, ok := r.methods[method]; ok {
+			methods = append(methods, string(method))
 		}
 	}
 	return MethodsResponse{Methods: methods}
@@ -574,71 +571,59 @@ func Dial(path string) *Client {
 
 // Status sends a status request.
 func (c *Client) Status(ctx context.Context, req StatusRequest) (StatusResponse, error) {
-	var resp StatusResponse
-	err := c.call(ctx, rpcStatus, req, &resp)
-	return resp, err
+	return callTyped[StatusRequest, StatusResponse](c, ctx, rpcStatus, req)
 }
 
 // Methods sends a methods request.
 func (c *Client) Methods(ctx context.Context, req MethodsRequest) (MethodsResponse, error) {
-	var resp MethodsResponse
-	err := c.call(ctx, rpcMethods, req, &resp)
-	return resp, err
+	return callTyped[MethodsRequest, MethodsResponse](c, ctx, rpcMethods, req)
 }
 
 // Suspend sends a suspend request.
 func (c *Client) Suspend(ctx context.Context, req SuspendRequest) (SuspendResponse, error) {
-	var resp SuspendResponse
-	err := c.call(ctx, rpcSuspend, req, &resp)
-	return resp, err
+	return callTyped[SuspendRequest, SuspendResponse](c, ctx, rpcSuspend, req)
 }
 
 // Hotplug sends a hotplug request.
 func (c *Client) Hotplug(ctx context.Context, req HotplugRequest) (HotplugResponse, error) {
-	var resp HotplugResponse
-	err := c.call(ctx, rpcHotplug, req, &resp)
-	return resp, err
+	return callTyped[HotplugRequest, HotplugResponse](c, ctx, rpcHotplug, req)
 }
 
 // Balloon sends a balloon request.
 func (c *Client) Balloon(ctx context.Context, req BalloonRequest) (BalloonResponse, error) {
-	var resp BalloonResponse
-	err := c.call(ctx, rpcBalloon, req, &resp)
-	return resp, err
+	return callTyped[BalloonRequest, BalloonResponse](c, ctx, rpcBalloon, req)
 }
 
 // GuestPS sends a guest process list request.
 func (c *Client) GuestPS(ctx context.Context, req GuestPSRequest) (GuestPSResponse, error) {
-	var resp GuestPSResponse
-	err := c.call(ctx, rpcGuestPS, req, &resp)
-	return resp, err
+	return callTyped[GuestPSRequest, GuestPSResponse](c, ctx, rpcGuestPS, req)
 }
 
 // GuestExec sends a guest process execution request.
 func (c *Client) GuestExec(ctx context.Context, req GuestExecRequest) (GuestExecResponse, error) {
-	var resp GuestExecResponse
-	err := c.call(ctx, rpcGuestExec, req, &resp)
-	return resp, err
+	return callTyped[GuestExecRequest, GuestExecResponse](c, ctx, rpcGuestExec, req)
 }
 
 // GuestRead sends a guest file read request.
 func (c *Client) GuestRead(ctx context.Context, req GuestReadRequest) (GuestReadResponse, error) {
-	var resp GuestReadResponse
-	err := c.call(ctx, rpcGuestRead, req, &resp)
-	return resp, err
+	return callTyped[GuestReadRequest, GuestReadResponse](c, ctx, rpcGuestRead, req)
 }
 
 // GuestWrite sends a guest file write request.
 func (c *Client) GuestWrite(ctx context.Context, req GuestWriteRequest) (GuestWriteResponse, error) {
-	var resp GuestWriteResponse
-	err := c.call(ctx, rpcGuestWrite, req, &resp)
-	return resp, err
+	return callTyped[GuestWriteRequest, GuestWriteResponse](c, ctx, rpcGuestWrite, req)
 }
 
 // Raw sends a request to method with raw JSON params and returns the raw JSON result.
 func (c *Client) Raw(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 	var resp json.RawMessage
 	err := c.call(ctx, rpcMethod(method), params, &resp)
+	return resp, err
+}
+
+func callTyped[Req any, Resp any](c *Client, ctx context.Context, method rpcMethod, req Req) (Resp, error) {
+	var resp Resp
+	err := c.call(ctx, method, req, &resp)
 	return resp, err
 }
 
