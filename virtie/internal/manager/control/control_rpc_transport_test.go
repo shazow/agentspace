@@ -195,7 +195,7 @@ func TestControlRouterUnsupportedCapability(t *testing.T) {
 
 func TestControlRouterRequiresExplicitHotplugRegistration(t *testing.T) {
 	handler := &fakeControlHandler{}
-	router, err := NewRouter(handler)
+	router, err := NewRouter(Handlers{Core: handler})
 	if err != nil {
 		t.Fatalf("router: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestControlRouterRequiresExplicitHotplugRegistration(t *testing.T) {
 		t.Fatalf("expected unregistered hotplug to be unsupported, got %v", err)
 	}
 
-	router, err = NewRouter(handler, WithHotplug(handler))
+	router, err = NewRouter(Handlers{Core: handler, Hotplug: handler})
 	if err != nil {
 		t.Fatalf("router with hotplug: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestControlRouterRequiresExplicitHotplugRegistration(t *testing.T) {
 
 func TestControlRouterRequiresExplicitGuestRegistration(t *testing.T) {
 	handler := &fakeControlHandler{}
-	router, err := NewRouter(handler)
+	router, err := NewRouter(Handlers{Core: handler})
 	if err != nil {
 		t.Fatalf("router: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestControlRouterRequiresExplicitGuestRegistration(t *testing.T) {
 		t.Fatalf("expected unregistered guest ps to be unsupported, got %v", err)
 	}
 
-	router, err = NewRouter(handler, WithGuest(handler))
+	router, err = NewRouter(Handlers{Core: handler, Guest: handler})
 	if err != nil {
 		t.Fatalf("router with guest: %v", err)
 	}
@@ -306,20 +306,20 @@ func startTestControlServer(t *testing.T, runtime any) string {
 	if !ok {
 		t.Fatalf("runtime core handler is required")
 	}
-	options := []RouterOption{}
+	handlers := Handlers{Core: core}
 	if guest, ok := runtime.(RuntimeGuest); ok {
-		options = append(options, WithGuest(guest))
+		handlers.Guest = guest
 	}
 	if suspend, ok := runtime.(RuntimeSuspend); ok {
-		options = append(options, WithSuspend(suspend))
+		handlers.Suspend = suspend
 	}
 	if hotplug, ok := runtime.(RuntimeHotplug); ok {
-		options = append(options, WithHotplug(hotplug))
+		handlers.Hotplug = hotplug
 	}
 	if balloon, ok := runtime.(RuntimeBalloon); ok {
-		options = append(options, WithBalloon(balloon))
+		handlers.Balloon = balloon
 	}
-	router, err := NewRouter(core, options...)
+	router, err := NewRouter(handlers)
 	if err != nil {
 		t.Fatalf("router: %v", err)
 	}

@@ -185,7 +185,7 @@ func TestRuntimeStartControlServesStatus(t *testing.T) {
 		Logger:     slog.New(slog.DiscardHandler),
 	})
 	runtime.SetReady()
-	if _, err := runtime.StartControl(context.Background()); err != nil {
+	if _, err := runtime.StartControl(context.Background(), control.Handlers{}); err != nil {
 		t.Fatalf("start control: %v", err)
 	}
 	t.Cleanup(func() {

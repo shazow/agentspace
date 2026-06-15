@@ -236,143 +236,170 @@ type RuntimeBalloon interface {
 	Balloon(context.Context, BalloonRequest) (BalloonResponse, error)
 }
 
+// Handlers groups the runtime capabilities used by a control router.
+type Handlers struct {
+	Core    RuntimeCore
+	Guest   RuntimeGuest
+	Suspend RuntimeSuspend
+	Hotplug RuntimeHotplug
+	Balloon RuntimeBalloon
+}
+
 // Router dispatches typed control socket requests to runtime capabilities.
 type Router struct {
-	core    RuntimeCore
-	guest   RuntimeGuest
-	suspend RuntimeSuspend
-	hotplug RuntimeHotplug
-	balloon RuntimeBalloon
+	methods map[rpcMethod]methodSpec
 }
 
-// RouterOption registers an optional control method handler.
-type RouterOption func(*Router)
-
-// WithGuest registers guest-agent handling for a router.
-func WithGuest(handler RuntimeGuest) RouterOption {
-	return func(router *Router) {
-		router.guest = handler
-	}
-}
-
-// WithSuspend registers suspend handling for a router.
-func WithSuspend(handler RuntimeSuspend) RouterOption {
-	return func(router *Router) {
-		router.suspend = handler
-	}
-}
-
-// WithHotplug registers hotplug handling for a router.
-func WithHotplug(handler RuntimeHotplug) RouterOption {
-	return func(router *Router) {
-		router.hotplug = handler
-	}
-}
-
-// WithBalloon registers balloon handling for a router.
-func WithBalloon(handler RuntimeBalloon) RouterOption {
-	return func(router *Router) {
-		router.balloon = handler
-	}
-}
-
-// NewRouter creates a router with core status plus explicit optional handlers.
-func NewRouter(core RuntimeCore, options ...RouterOption) (*Router, error) {
-	if core == nil {
+// NewRouter creates a router from explicit runtime capability handlers.
+func NewRouter(handlers Handlers) (*Router, error) {
+	if handlers.Core == nil {
 		return nil, fmt.Errorf("core handler is required")
 	}
-	router := &Router{core: core}
-	for _, option := range options {
-		if option != nil {
-			option(router)
+	router := &Router{methods: make(map[rpcMethod]methodSpec, len(defaultMethods))}
+	for _, method := range defaultMethods {
+		spec, ok := method.bind(router, handlers)
+		if ok {
+			router.methods[method.name] = spec
 		}
 	}
 	return router, nil
 }
 
-func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelope {
-	var result any
-	var err error
+type methodSpec struct {
+	handle func(context.Context, json.RawMessage) (any, error)
+}
 
-	switch req.Method {
-	case rpcStatus:
-		var params StatusRequest
-		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.core.Status(ctx, params)
+type methodRegistration struct {
+	name rpcMethod
+	bind func(*Router, Handlers) (methodSpec, bool)
+}
+
+var (
+	defaultMethods       []methodRegistration
+	defaultMethodsByName = map[rpcMethod]struct{}{}
+)
+
+func init() {
+	registerDefaultMethod(typedRegistration(rpcStatus, func(handlers Handlers) func(context.Context, StatusRequest) (StatusResponse, error) {
+		if handlers.Core == nil {
+			return nil
 		}
-	case rpcMethods:
-		var params MethodsRequest
-		if err = decodeParams(req.Params, &params); err == nil {
-			result = r.methods()
+		return handlers.Core.Status
+	}))
+	registerDefaultMethod(methodRegistration{
+		name: rpcMethods,
+		bind: func(router *Router, handlers Handlers) (methodSpec, bool) {
+			return typedMethod(func(context.Context, MethodsRequest) (MethodsResponse, error) {
+				return router.methodsResponse(), nil
+			}), true
+		},
+	})
+	registerDefaultMethod(typedRegistration(rpcGuestPS, func(handlers Handlers) func(context.Context, GuestPSRequest) (GuestPSResponse, error) {
+		if handlers.Guest == nil {
+			return nil
 		}
-	case rpcGuestPS:
-		if r.guest == nil {
-			err = &RPCError{Code: ErrUnsupported, Message: "guest agent RPCs are not supported"}
-			break
+		return handlers.Guest.GuestPS
+	}))
+	registerDefaultMethod(typedRegistration(rpcGuestExec, func(handlers Handlers) func(context.Context, GuestExecRequest) (GuestExecResponse, error) {
+		if handlers.Guest == nil {
+			return nil
 		}
-		var params GuestPSRequest
-		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.guest.GuestPS(ctx, params)
+		return handlers.Guest.GuestExec
+	}))
+	registerDefaultMethod(typedRegistration(rpcGuestRead, func(handlers Handlers) func(context.Context, GuestReadRequest) (GuestReadResponse, error) {
+		if handlers.Guest == nil {
+			return nil
 		}
-	case rpcGuestExec:
-		if r.guest == nil {
-			err = &RPCError{Code: ErrUnsupported, Message: "guest agent RPCs are not supported"}
-			break
+		return handlers.Guest.GuestRead
+	}))
+	registerDefaultMethod(typedRegistration(rpcGuestWrite, func(handlers Handlers) func(context.Context, GuestWriteRequest) (GuestWriteResponse, error) {
+		if handlers.Guest == nil {
+			return nil
 		}
-		var params GuestExecRequest
-		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.guest.GuestExec(ctx, params)
+		return handlers.Guest.GuestWrite
+	}))
+	registerDefaultMethod(typedRegistration(rpcSuspend, func(handlers Handlers) func(context.Context, SuspendRequest) (SuspendResponse, error) {
+		if handlers.Suspend == nil {
+			return nil
 		}
-	case rpcGuestRead:
-		if r.guest == nil {
-			err = &RPCError{Code: ErrUnsupported, Message: "guest agent RPCs are not supported"}
-			break
+		return handlers.Suspend.Suspend
+	}))
+	registerDefaultMethod(typedRegistration(rpcHotplug, func(handlers Handlers) func(context.Context, HotplugRequest) (HotplugResponse, error) {
+		if handlers.Hotplug == nil {
+			return nil
 		}
-		var params GuestReadRequest
-		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.guest.GuestRead(ctx, params)
+		return handlers.Hotplug.Hotplug
+	}))
+	registerDefaultMethod(typedRegistration(rpcBalloon, func(handlers Handlers) func(context.Context, BalloonRequest) (BalloonResponse, error) {
+		if handlers.Balloon == nil {
+			return nil
 		}
-	case rpcGuestWrite:
-		if r.guest == nil {
-			err = &RPCError{Code: ErrUnsupported, Message: "guest agent RPCs are not supported"}
-			break
+		return handlers.Balloon.Balloon
+	}))
+}
+
+func registerDefaultMethod(method methodRegistration) {
+	if method.name == "" {
+		panic("control method name is required")
+	}
+	if method.bind == nil {
+		panic(fmt.Sprintf("control method %q bind function is required", method.name))
+	}
+	if _, exists := defaultMethodsByName[method.name]; exists {
+		panic(fmt.Sprintf("control method %q registered twice", method.name))
+	}
+	defaultMethods = append(defaultMethods, method)
+	defaultMethodsByName[method.name] = struct{}{}
+}
+
+func typedRegistration[Req any, Resp any](
+	name rpcMethod,
+	selector func(Handlers) func(context.Context, Req) (Resp, error),
+) methodRegistration {
+	return methodRegistration{
+		name: name,
+		bind: func(_ *Router, handlers Handlers) (methodSpec, bool) {
+			call := selector(handlers)
+			if call == nil {
+				return methodSpec{}, false
+			}
+			return typedMethod(call), true
+		},
+	}
+}
+
+func typedMethod[Req any, Resp any](
+	call func(context.Context, Req) (Resp, error),
+) methodSpec {
+	return methodSpec{
+		handle: func(ctx context.Context, params json.RawMessage) (any, error) {
+			var req Req
+			if err := decodeParams(params, &req); err != nil {
+				var zero Resp
+				return zero, err
+			}
+			return call(ctx, req)
+		},
+	}
+}
+
+func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelope {
+	spec, ok := r.methods[req.Method]
+	if !ok {
+		if _, known := defaultMethodsByName[req.Method]; known {
+			return responseEnvelope{
+				ID:    req.ID,
+				Error: &RPCError{Code: ErrUnsupported, Message: fmt.Sprintf("%s is not supported by this control socket", req.Method)},
+			}
 		}
-		var params GuestWriteRequest
-		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.guest.GuestWrite(ctx, params)
+		return responseEnvelope{
+			ID:    req.ID,
+			Error: &RPCError{Code: ErrUnknownMethod, Message: fmt.Sprintf("unknown method %q", req.Method)},
 		}
-	case rpcSuspend:
-		if r.suspend == nil {
-			err = &RPCError{Code: ErrUnsupported, Message: "suspend is not supported"}
-			break
-		}
-		var params SuspendRequest
-		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.suspend.Suspend(ctx, params)
-		}
-	case rpcHotplug:
-		if r.hotplug == nil {
-			err = &RPCError{Code: ErrUnsupported, Message: "hotplug is not supported"}
-			break
-		}
-		var params HotplugRequest
-		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.hotplug.Hotplug(ctx, params)
-		}
-	case rpcBalloon:
-		if r.balloon == nil {
-			err = &RPCError{Code: ErrUnsupported, Message: "balloon is not supported"}
-			break
-		}
-		var params BalloonRequest
-		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.balloon.Balloon(ctx, params)
-		}
-	default:
-		err = &RPCError{Code: ErrUnknownMethod, Message: fmt.Sprintf("unknown method %q", req.Method)}
 	}
 
 	resp := responseEnvelope{ID: req.ID}
+	result, err := spec.handle(ctx, req.Params)
 	if err != nil {
 		resp.Error = rpcError(err)
 		return resp
@@ -386,19 +413,12 @@ func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelo
 	return resp
 }
 
-func (r *Router) methods() MethodsResponse {
-	methods := []string{string(rpcStatus), string(rpcMethods)}
-	if r.guest != nil {
-		methods = append(methods, string(rpcGuestPS), string(rpcGuestExec), string(rpcGuestRead), string(rpcGuestWrite))
-	}
-	if r.suspend != nil {
-		methods = append(methods, string(rpcSuspend))
-	}
-	if r.hotplug != nil {
-		methods = append(methods, string(rpcHotplug))
-	}
-	if r.balloon != nil {
-		methods = append(methods, string(rpcBalloon))
+func (r *Router) methodsResponse() MethodsResponse {
+	methods := make([]string, 0, len(r.methods))
+	for _, method := range defaultMethods {
+		if _, ok := r.methods[method.name]; ok {
+			methods = append(methods, string(method.name))
+		}
 	}
 	return MethodsResponse{Methods: methods}
 }

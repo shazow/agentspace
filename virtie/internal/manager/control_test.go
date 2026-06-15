@@ -23,20 +23,20 @@ func startTestControlServerAt(t *testing.T, path string, runtime any) {
 	if !ok {
 		t.Fatalf("runtime core handler is required")
 	}
-	options := []control.RouterOption{}
+	handlers := control.Handlers{Core: core}
 	if guest, ok := runtime.(control.RuntimeGuest); ok {
-		options = append(options, control.WithGuest(guest))
+		handlers.Guest = guest
 	}
 	if suspend, ok := runtime.(control.RuntimeSuspend); ok {
-		options = append(options, control.WithSuspend(suspend))
+		handlers.Suspend = suspend
 	}
 	if hotplug, ok := runtime.(control.RuntimeHotplug); ok {
-		options = append(options, control.WithHotplug(hotplug))
+		handlers.Hotplug = hotplug
 	}
 	if balloon, ok := runtime.(control.RuntimeBalloon); ok {
-		options = append(options, control.WithBalloon(balloon))
+		handlers.Balloon = balloon
 	}
-	router, err := control.NewRouter(core, options...)
+	router, err := control.NewRouter(handlers)
 	if err != nil {
 		t.Fatalf("router: %v", err)
 	}

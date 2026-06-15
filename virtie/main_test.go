@@ -506,14 +506,14 @@ func startMainTestControlServerAt(t *testing.T, path string, runtime control.Run
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("create control socket directory: %v", err)
 	}
-	options := []control.RouterOption{}
+	handlers := control.Handlers{Core: runtime}
 	if guest, ok := runtime.(control.RuntimeGuest); ok {
-		options = append(options, control.WithGuest(guest))
+		handlers.Guest = guest
 	}
 	if hotplug, ok := runtime.(control.RuntimeHotplug); ok {
-		options = append(options, control.WithHotplug(hotplug))
+		handlers.Hotplug = hotplug
 	}
-	router, err := control.NewRouter(runtime, options...)
+	router, err := control.NewRouter(handlers)
 	if err != nil {
 		t.Fatalf("router: %v", err)
 	}

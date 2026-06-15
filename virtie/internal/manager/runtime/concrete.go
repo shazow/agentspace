@@ -67,13 +67,11 @@ func (r *Core) QMP() qmpclient.Client {
 	return r.qmp
 }
 
-func (r *Core) StartControl(ctx context.Context, options ...control.RouterOption) (*control.Server, error) {
-	routerOptions := []control.RouterOption{
-		control.WithSuspend(r),
-		control.WithBalloon(r),
-	}
-	routerOptions = append(routerOptions, options...)
-	router, err := control.NewRouter(r, routerOptions...)
+func (r *Core) StartControl(ctx context.Context, handlers control.Handlers) (*control.Server, error) {
+	handlers.Core = r
+	handlers.Suspend = r
+	handlers.Balloon = r
+	router, err := control.NewRouter(handlers)
 	if err != nil {
 		return nil, err
 	}

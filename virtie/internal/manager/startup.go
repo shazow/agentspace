@@ -164,11 +164,10 @@ func (m *manager) startWithPlan(ctx context.Context, plan *launch.Plan) (started
 		processes:      processes,
 	}
 	runtime.SetReady()
-	if _, err := runtime.StartControl(
-		launchCtx,
-		controlpkg.WithGuest(m.guestFeature(plan.Paths.GuestAgentSocket, processes)),
-		controlpkg.WithHotplug(m.hotplugFeature(plan.Manifest, runtime.QMP())),
-	); err != nil {
+	if _, err := runtime.StartControl(launchCtx, controlpkg.Handlers{
+		Guest:   m.guestFeature(plan.Paths.GuestAgentSocket, processes),
+		Hotplug: m.hotplugFeature(plan.Manifest, runtime.QMP()),
+	}); err != nil {
 		return nil, launch.WrapFixedStage("control startup")(err)
 	}
 	if err := launch.HandleQueuedSuspend(launchCtx, lifecycle, suspendHandler.Handle); err != nil {
