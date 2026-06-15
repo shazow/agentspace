@@ -24,8 +24,8 @@ func startTestControlServerAt(t *testing.T, path string, runtime any) {
 		t.Fatalf("runtime core handler is required")
 	}
 	options := []control.RouterOption{}
-	if info, ok := runtime.(control.RuntimeInfo); ok {
-		options = append(options, control.WithInfo(info))
+	if guest, ok := runtime.(control.RuntimeGuest); ok {
+		options = append(options, control.WithGuest(guest))
 	}
 	if suspend, ok := runtime.(control.RuntimeSuspend); ok {
 		options = append(options, control.WithSuspend(suspend))

@@ -318,7 +318,7 @@ func TestRunRPCMethodsPrintsAvailableControlSocketMethods(t *testing.T) {
 	if err := json.Unmarshal([]byte(output), &got); err != nil {
 		t.Fatalf("decode rpc output %q: %v", output, err)
 	}
-	want := []string{"status", "methods", "hotplug"}
+	want := []string{"status", "methods", "guest-ps", "guest-exec", "guest-read", "guest-write", "hotplug"}
 	if !reflect.DeepEqual(got.Methods, want) {
 		t.Fatalf("unexpected rpc methods output: got %#v want %#v", got.Methods, want)
 	}
@@ -480,6 +480,22 @@ type mainTestControlHandler struct {
 	hotplugReq control.HotplugRequest
 }
 
+func (h *mainTestControlHandler) GuestPS(context.Context, control.GuestPSRequest) (control.GuestPSResponse, error) {
+	return control.GuestPSResponse{ProcessList: "USER COMMAND\nroot init"}, nil
+}
+
+func (h *mainTestControlHandler) GuestExec(ctx context.Context, req control.GuestExecRequest) (control.GuestExecResponse, error) {
+	return control.GuestExecResponse{Exited: true, ExitCode: 0, OutData: "b2sK"}, nil
+}
+
+func (h *mainTestControlHandler) GuestRead(ctx context.Context, req control.GuestReadRequest) (control.GuestReadResponse, error) {
+	return control.GuestReadResponse{Path: req.Path, Data: "b2sK"}, nil
+}
+
+func (h *mainTestControlHandler) GuestWrite(ctx context.Context, req control.GuestWriteRequest) (control.GuestWriteResponse, error) {
+	return control.GuestWriteResponse{Path: req.Path}, nil
+}
+
 func (h *mainTestControlHandler) Hotplug(ctx context.Context, req control.HotplugRequest) (control.HotplugResponse, error) {
 	h.hotplugReq = req
 	return control.HotplugResponse{ID: req.ID, Detach: req.Detach}, nil
@@ -491,6 +507,9 @@ func startMainTestControlServerAt(t *testing.T, path string, runtime control.Run
 		t.Fatalf("create control socket directory: %v", err)
 	}
 	options := []control.RouterOption{}
+	if guest, ok := runtime.(control.RuntimeGuest); ok {
+		options = append(options, control.WithGuest(guest))
+	}
 	if hotplug, ok := runtime.(control.RuntimeHotplug); ok {
 		options = append(options, control.WithHotplug(hotplug))
 	}

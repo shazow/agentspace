@@ -57,8 +57,11 @@ be placed before or after the subcommand.
   mount/umount; net and block currently attach only the QEMU-side device.
 - Provides `virtie rpc METHOD [JSON_ARGS]` as a convenience helper for
   interacting with the running `virtie.sock` control socket, for example
-  `virtie rpc methods`, `virtie rpc status`, or `virtie rpc hotplug
-  '{"id":"cache"}'`.
+  `virtie rpc methods`, `virtie rpc guest-ps`, `virtie rpc guest-exec
+  '{"path":"/bin/echo","args":["hello"],"captureOutput":true}'`, or
+  `virtie rpc guest-read '{"path":"/etc/hostname"}'`. Guest file reads and
+  writes use base64-encoded data, as in `virtie rpc guest-write
+  '{"path":"/tmp/message","data":"aGVsbG8K"}'`.
 - Records the active launch PID under the manifest persistence state directory.
   `virtie suspend` validates that PID and sends `SIGTSTP` as a caught control
   signal; the launch process saves QEMU migration state through its existing

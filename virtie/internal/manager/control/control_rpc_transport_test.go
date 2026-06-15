@@ -21,17 +21,37 @@ func (h *fakeControlCore) Status(context.Context, StatusRequest) (StatusResponse
 	return h.status, nil
 }
 
-type fakeControlInfo struct {
-	info InfoResponse
+type fakeControlGuest struct {
+	psResp    GuestPSResponse
+	execReq   GuestExecRequest
+	readReq   GuestReadRequest
+	readResp  GuestReadResponse
+	writeReq  GuestWriteRequest
+	writeResp GuestWriteResponse
 }
 
-func (h *fakeControlInfo) Info(context.Context, InfoRequest) (InfoResponse, error) {
-	return h.info, nil
+func (h *fakeControlGuest) GuestPS(context.Context, GuestPSRequest) (GuestPSResponse, error) {
+	return h.psResp, nil
+}
+
+func (h *fakeControlGuest) GuestExec(ctx context.Context, req GuestExecRequest) (GuestExecResponse, error) {
+	h.execReq = req
+	return GuestExecResponse{Exited: true, ExitCode: 7, OutData: "b3V0Cg==", ErrData: "ZXJyCg=="}, nil
+}
+
+func (h *fakeControlGuest) GuestRead(ctx context.Context, req GuestReadRequest) (GuestReadResponse, error) {
+	h.readReq = req
+	return h.readResp, nil
+}
+
+func (h *fakeControlGuest) GuestWrite(ctx context.Context, req GuestWriteRequest) (GuestWriteResponse, error) {
+	h.writeReq = req
+	return h.writeResp, nil
 }
 
 type fakeControlHandler struct {
 	fakeControlCore
-	fakeControlInfo
+	fakeControlGuest
 	suspendCalls int
 	hotplugReq   HotplugRequest
 	balloonReq   BalloonRequest
@@ -57,8 +77,10 @@ func TestControlClientServerTypedCalls(t *testing.T) {
 		fakeControlCore: fakeControlCore{
 			status: StatusResponse{State: RuntimeReady, CID: 7},
 		},
-		fakeControlInfo: fakeControlInfo{
-			info: InfoResponse{ProcessList: "USER COMMAND\nroot init"},
+		fakeControlGuest: fakeControlGuest{
+			psResp:    GuestPSResponse{ProcessList: "USER COMMAND\nroot init"},
+			readResp:  GuestReadResponse{Path: "/tmp/message", Data: "aGVsbG8="},
+			writeResp: GuestWriteResponse{Path: "/tmp/message"},
 		},
 	}
 	path := startTestControlServer(t, handler)
@@ -72,12 +94,49 @@ func TestControlClientServerTypedCalls(t *testing.T) {
 		t.Fatalf("unexpected status: %#v", status)
 	}
 
-	info, err := client.Info(context.Background(), InfoRequest{})
+	ps, err := client.GuestPS(context.Background(), GuestPSRequest{})
 	if err != nil {
-		t.Fatalf("info: %v", err)
+		t.Fatalf("guest ps: %v", err)
 	}
-	if info.ProcessList != "USER COMMAND\nroot init" {
-		t.Fatalf("unexpected info: %#v", info)
+	if ps.ProcessList != "USER COMMAND\nroot init" {
+		t.Fatalf("unexpected guest ps: %#v", ps)
+	}
+
+	execResp, err := client.GuestExec(context.Background(), GuestExecRequest{
+		Path:          "/bin/echo",
+		Args:          []string{"hello"},
+		CaptureOutput: true,
+	})
+	if err != nil {
+		t.Fatalf("guest exec: %v", err)
+	}
+	if handler.execReq.Path != "/bin/echo" || !reflect.DeepEqual(handler.execReq.Args, []string{"hello"}) || !handler.execReq.CaptureOutput {
+		t.Fatalf("unexpected guest exec request: %#v", handler.execReq)
+	}
+	if !execResp.Exited || execResp.ExitCode != 7 || execResp.OutData != "b3V0Cg==" || execResp.ErrData != "ZXJyCg==" {
+		t.Fatalf("unexpected guest exec response: %#v", execResp)
+	}
+
+	readResp, err := client.GuestRead(context.Background(), GuestReadRequest{Path: "/tmp/message"})
+	if err != nil {
+		t.Fatalf("guest read: %v", err)
+	}
+	if handler.readReq.Path != "/tmp/message" {
+		t.Fatalf("unexpected guest read request: %#v", handler.readReq)
+	}
+	if readResp.Path != "/tmp/message" || readResp.Data != "aGVsbG8=" {
+		t.Fatalf("unexpected guest read response: %#v", readResp)
+	}
+
+	writeResp, err := client.GuestWrite(context.Background(), GuestWriteRequest{Path: "/tmp/message", Data: "dXBkYXRlZA=="})
+	if err != nil {
+		t.Fatalf("guest write: %v", err)
+	}
+	if handler.writeReq.Path != "/tmp/message" || handler.writeReq.Data != "dXBkYXRlZA==" {
+		t.Fatalf("unexpected guest write request: %#v", handler.writeReq)
+	}
+	if writeResp.Path != "/tmp/message" {
+		t.Fatalf("unexpected guest write response: %#v", writeResp)
 	}
 
 	suspend, err := client.Suspend(context.Background(), SuspendRequest{})
@@ -108,7 +167,7 @@ func TestControlClientServerTypedCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("methods: %v", err)
 	}
-	wantMethods := []string{"status", "methods", "info", "suspend", "hotplug", "balloon"}
+	wantMethods := []string{"status", "methods", "guest-ps", "guest-exec", "guest-read", "guest-write", "suspend", "hotplug", "balloon"}
 	if !reflect.DeepEqual(methods.Methods, wantMethods) {
 		t.Fatalf("unexpected methods: got %#v want %#v", methods.Methods, wantMethods)
 	}
@@ -165,7 +224,7 @@ func TestControlRouterRequiresExplicitHotplugRegistration(t *testing.T) {
 	}
 }
 
-func TestControlRouterRequiresExplicitInfoRegistration(t *testing.T) {
+func TestControlRouterRequiresExplicitGuestRegistration(t *testing.T) {
 	handler := &fakeControlHandler{}
 	router, err := NewRouter(handler)
 	if err != nil {
@@ -174,25 +233,25 @@ func TestControlRouterRequiresExplicitInfoRegistration(t *testing.T) {
 	serverPath := filepath.Join(t.TempDir(), "virtie.sock")
 	startTestControlRouterAt(t, serverPath, router)
 
-	_, err = Dial(serverPath).Info(context.Background(), InfoRequest{})
+	_, err = Dial(serverPath).GuestPS(context.Background(), GuestPSRequest{})
 	var rpcErr *RPCError
 	if err == nil || !errors.As(err, &rpcErr) || rpcErr.Code != ErrUnsupported {
-		t.Fatalf("expected unregistered info to be unsupported, got %v", err)
+		t.Fatalf("expected unregistered guest ps to be unsupported, got %v", err)
 	}
 
-	router, err = NewRouter(handler, WithInfo(handler))
+	router, err = NewRouter(handler, WithGuest(handler))
 	if err != nil {
-		t.Fatalf("router with info: %v", err)
+		t.Fatalf("router with guest: %v", err)
 	}
 	registeredPath := filepath.Join(t.TempDir(), "virtie.sock")
 	startTestControlRouterAt(t, registeredPath, router)
 
-	resp, err := Dial(registeredPath).Info(context.Background(), InfoRequest{})
+	resp, err := Dial(registeredPath).GuestPS(context.Background(), GuestPSRequest{})
 	if err != nil {
-		t.Fatalf("registered info: %v", err)
+		t.Fatalf("registered guest ps: %v", err)
 	}
 	if resp.ProcessList != "" {
-		t.Fatalf("unexpected info response: %#v", resp)
+		t.Fatalf("unexpected guest ps response: %#v", resp)
 	}
 }
 
@@ -248,8 +307,8 @@ func startTestControlServer(t *testing.T, runtime any) string {
 		t.Fatalf("runtime core handler is required")
 	}
 	options := []RouterOption{}
-	if info, ok := runtime.(RuntimeInfo); ok {
-		options = append(options, WithInfo(info))
+	if guest, ok := runtime.(RuntimeGuest); ok {
+		options = append(options, WithGuest(guest))
 	}
 	if suspend, ok := runtime.(RuntimeSuspend); ok {
 		options = append(options, WithSuspend(suspend))

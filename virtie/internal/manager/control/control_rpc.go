@@ -98,12 +98,49 @@ type BalloonResponse struct {
 	TargetBytes int64 `json:"targetBytes,omitempty"`
 }
 
-// InfoRequest asks for guest runtime information.
-type InfoRequest struct{}
+// GuestPSRequest asks for the guest process list.
+type GuestPSRequest struct{}
 
-// InfoResponse reports guest runtime information.
-type InfoResponse struct {
+// GuestPSResponse reports the guest process list.
+type GuestPSResponse struct {
 	ProcessList string `json:"processList,omitempty"`
+}
+
+// GuestExecRequest asks the guest agent to execute a process.
+type GuestExecRequest struct {
+	Path          string   `json:"path"`
+	Args          []string `json:"args,omitempty"`
+	CaptureOutput bool     `json:"captureOutput,omitempty"`
+}
+
+// GuestExecResponse reports the completed guest process status.
+type GuestExecResponse struct {
+	Exited   bool   `json:"exited"`
+	ExitCode int    `json:"exitCode"`
+	OutData  string `json:"outData,omitempty"`
+	ErrData  string `json:"errData,omitempty"`
+}
+
+// GuestReadRequest asks the guest agent to read a file.
+type GuestReadRequest struct {
+	Path string `json:"path"`
+}
+
+// GuestReadResponse reports base64-encoded file data read from the guest.
+type GuestReadResponse struct {
+	Path string `json:"path"`
+	Data string `json:"data"`
+}
+
+// GuestWriteRequest asks the guest agent to write base64-encoded data to a file.
+type GuestWriteRequest struct {
+	Path string `json:"path"`
+	Data string `json:"data"`
+}
+
+// GuestWriteResponse reports the guest file path that was written.
+type GuestWriteResponse struct {
+	Path string `json:"path"`
 }
 
 // MethodsRequest asks which RPC methods are available on this control socket.
@@ -148,12 +185,15 @@ func (e *RPCError) Error() string {
 type rpcMethod string
 
 const (
-	rpcStatus  rpcMethod = "status"
-	rpcMethods rpcMethod = "methods"
-	rpcSuspend rpcMethod = "suspend"
-	rpcHotplug rpcMethod = "hotplug"
-	rpcBalloon rpcMethod = "balloon"
-	rpcInfo    rpcMethod = "info"
+	rpcStatus     rpcMethod = "status"
+	rpcMethods    rpcMethod = "methods"
+	rpcSuspend    rpcMethod = "suspend"
+	rpcHotplug    rpcMethod = "hotplug"
+	rpcBalloon    rpcMethod = "balloon"
+	rpcGuestPS    rpcMethod = "guest-ps"
+	rpcGuestExec  rpcMethod = "guest-exec"
+	rpcGuestRead  rpcMethod = "guest-read"
+	rpcGuestWrite rpcMethod = "guest-write"
 )
 
 type requestEnvelope struct {
@@ -173,9 +213,12 @@ type RuntimeCore interface {
 	Status(context.Context, StatusRequest) (StatusResponse, error)
 }
 
-// RuntimeInfo is implemented by handlers that can report guest runtime information.
-type RuntimeInfo interface {
-	Info(context.Context, InfoRequest) (InfoResponse, error)
+// RuntimeGuest is implemented by handlers that can interact with the guest agent.
+type RuntimeGuest interface {
+	GuestPS(context.Context, GuestPSRequest) (GuestPSResponse, error)
+	GuestExec(context.Context, GuestExecRequest) (GuestExecResponse, error)
+	GuestRead(context.Context, GuestReadRequest) (GuestReadResponse, error)
+	GuestWrite(context.Context, GuestWriteRequest) (GuestWriteResponse, error)
 }
 
 // RuntimeSuspend is implemented by runtimes that can save VM state.
@@ -196,7 +239,7 @@ type RuntimeBalloon interface {
 // Router dispatches typed control socket requests to runtime capabilities.
 type Router struct {
 	core    RuntimeCore
-	info    RuntimeInfo
+	guest   RuntimeGuest
 	suspend RuntimeSuspend
 	hotplug RuntimeHotplug
 	balloon RuntimeBalloon
@@ -205,10 +248,10 @@ type Router struct {
 // RouterOption registers an optional control method handler.
 type RouterOption func(*Router)
 
-// WithInfo registers info handling for a router.
-func WithInfo(handler RuntimeInfo) RouterOption {
+// WithGuest registers guest-agent handling for a router.
+func WithGuest(handler RuntimeGuest) RouterOption {
 	return func(router *Router) {
-		router.info = handler
+		router.guest = handler
 	}
 }
 
@@ -262,14 +305,41 @@ func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelo
 		if err = decodeParams(req.Params, &params); err == nil {
 			result = r.methods()
 		}
-	case rpcInfo:
-		if r.info == nil {
-			err = &RPCError{Code: ErrUnsupported, Message: "info is not supported"}
+	case rpcGuestPS:
+		if r.guest == nil {
+			err = &RPCError{Code: ErrUnsupported, Message: "guest agent RPCs are not supported"}
 			break
 		}
-		var params InfoRequest
+		var params GuestPSRequest
 		if err = decodeParams(req.Params, &params); err == nil {
-			result, err = r.info.Info(ctx, params)
+			result, err = r.guest.GuestPS(ctx, params)
+		}
+	case rpcGuestExec:
+		if r.guest == nil {
+			err = &RPCError{Code: ErrUnsupported, Message: "guest agent RPCs are not supported"}
+			break
+		}
+		var params GuestExecRequest
+		if err = decodeParams(req.Params, &params); err == nil {
+			result, err = r.guest.GuestExec(ctx, params)
+		}
+	case rpcGuestRead:
+		if r.guest == nil {
+			err = &RPCError{Code: ErrUnsupported, Message: "guest agent RPCs are not supported"}
+			break
+		}
+		var params GuestReadRequest
+		if err = decodeParams(req.Params, &params); err == nil {
+			result, err = r.guest.GuestRead(ctx, params)
+		}
+	case rpcGuestWrite:
+		if r.guest == nil {
+			err = &RPCError{Code: ErrUnsupported, Message: "guest agent RPCs are not supported"}
+			break
+		}
+		var params GuestWriteRequest
+		if err = decodeParams(req.Params, &params); err == nil {
+			result, err = r.guest.GuestWrite(ctx, params)
 		}
 	case rpcSuspend:
 		if r.suspend == nil {
@@ -318,8 +388,8 @@ func (r *Router) handle(ctx context.Context, req requestEnvelope) responseEnvelo
 
 func (r *Router) methods() MethodsResponse {
 	methods := []string{string(rpcStatus), string(rpcMethods)}
-	if r.info != nil {
-		methods = append(methods, string(rpcInfo))
+	if r.guest != nil {
+		methods = append(methods, string(rpcGuestPS), string(rpcGuestExec), string(rpcGuestRead), string(rpcGuestWrite))
 	}
 	if r.suspend != nil {
 		methods = append(methods, string(rpcSuspend))
@@ -517,10 +587,31 @@ func (c *Client) Balloon(ctx context.Context, req BalloonRequest) (BalloonRespon
 	return resp, err
 }
 
-// Info sends an info request.
-func (c *Client) Info(ctx context.Context, req InfoRequest) (InfoResponse, error) {
-	var resp InfoResponse
-	err := c.call(ctx, rpcInfo, req, &resp)
+// GuestPS sends a guest process list request.
+func (c *Client) GuestPS(ctx context.Context, req GuestPSRequest) (GuestPSResponse, error) {
+	var resp GuestPSResponse
+	err := c.call(ctx, rpcGuestPS, req, &resp)
+	return resp, err
+}
+
+// GuestExec sends a guest process execution request.
+func (c *Client) GuestExec(ctx context.Context, req GuestExecRequest) (GuestExecResponse, error) {
+	var resp GuestExecResponse
+	err := c.call(ctx, rpcGuestExec, req, &resp)
+	return resp, err
+}
+
+// GuestRead sends a guest file read request.
+func (c *Client) GuestRead(ctx context.Context, req GuestReadRequest) (GuestReadResponse, error) {
+	var resp GuestReadResponse
+	err := c.call(ctx, rpcGuestRead, req, &resp)
+	return resp, err
+}
+
+// GuestWrite sends a guest file write request.
+func (c *Client) GuestWrite(ctx context.Context, req GuestWriteRequest) (GuestWriteResponse, error) {
+	var resp GuestWriteResponse
+	err := c.call(ctx, rpcGuestWrite, req, &resp)
 	return resp, err
 }
 
