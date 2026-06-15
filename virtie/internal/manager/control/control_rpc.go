@@ -486,6 +486,13 @@ func (c *Client) Info(ctx context.Context, req InfoRequest) (InfoResponse, error
 	return resp, err
 }
 
+// Raw sends a request to method with raw JSON params and returns the raw JSON result.
+func (c *Client) Raw(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+	var resp json.RawMessage
+	err := c.call(ctx, rpcMethod(method), params, &resp)
+	return resp, err
+}
+
 func (c *Client) call(ctx context.Context, method rpcMethod, params any, result any) error {
 	conn, err := c.dial(ctx)
 	if err != nil {
