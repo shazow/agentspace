@@ -489,7 +489,7 @@ func (h *mainTestControlHandler) GuestExec(ctx context.Context, req control.Gues
 }
 
 func (h *mainTestControlHandler) GuestRead(ctx context.Context, req control.GuestReadRequest) (control.GuestReadResponse, error) {
-	return control.GuestReadResponse{Path: req.Path, Data: "b2sK"}, nil
+	return control.GuestReadResponse{Path: req.Path, DataBase64: "b2sK"}, nil
 }
 
 func (h *mainTestControlHandler) GuestWrite(ctx context.Context, req control.GuestWriteRequest) (control.GuestWriteResponse, error) {

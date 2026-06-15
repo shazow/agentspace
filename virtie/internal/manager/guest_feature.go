@@ -78,14 +78,14 @@ func (f managerGuestFeature) GuestRead(ctx context.Context, req controlpkg.Guest
 	if err != nil {
 		return controlpkg.GuestReadResponse{}, controlpkg.FailedPrecondition(err)
 	}
-	return controlpkg.GuestReadResponse{Path: req.Path, Data: base64.StdEncoding.EncodeToString(data)}, nil
+	return controlpkg.GuestReadResponse{Path: req.Path, DataBase64: base64.StdEncoding.EncodeToString(data)}, nil
 }
 
 func (f managerGuestFeature) GuestWrite(ctx context.Context, req controlpkg.GuestWriteRequest) (controlpkg.GuestWriteResponse, error) {
 	if req.Path == "" {
 		return controlpkg.GuestWriteResponse{}, &controlpkg.RPCError{Code: controlpkg.ErrInvalidParams, Message: "guest write path is required"}
 	}
-	if _, err := base64.StdEncoding.DecodeString(req.Data); err != nil {
+	if _, err := base64.StdEncoding.DecodeString(req.DataBase64); err != nil {
 		return controlpkg.GuestWriteResponse{}, &controlpkg.RPCError{Code: controlpkg.ErrInvalidParams, Message: fmt.Sprintf("guest write data must be base64: %v", err)}
 	}
 	client, err := f.guestClient(ctx)
@@ -94,7 +94,7 @@ func (f managerGuestFeature) GuestWrite(ctx context.Context, req controlpkg.Gues
 	}
 	defer client.Disconnect()
 
-	if err := f.manager.writeGuestFile(client, req.Path, req.Data); err != nil {
+	if err := f.manager.writeGuestFile(client, req.Path, req.DataBase64); err != nil {
 		return controlpkg.GuestWriteResponse{}, controlpkg.FailedPrecondition(err)
 	}
 	return controlpkg.GuestWriteResponse{Path: req.Path}, nil

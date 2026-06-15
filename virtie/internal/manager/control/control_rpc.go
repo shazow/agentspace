@@ -128,14 +128,14 @@ type GuestReadRequest struct {
 
 // GuestReadResponse reports base64-encoded file data read from the guest.
 type GuestReadResponse struct {
-	Path string `json:"path"`
-	Data string `json:"data"`
+	Path       string `json:"path"`
+	DataBase64 string `json:"data-base64"`
 }
 
 // GuestWriteRequest asks the guest agent to write base64-encoded data to a file.
 type GuestWriteRequest struct {
-	Path string `json:"path"`
-	Data string `json:"data"`
+	Path       string `json:"path"`
+	DataBase64 string `json:"data-base64"`
 }
 
 // GuestWriteResponse reports the guest file path that was written.

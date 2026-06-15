@@ -16,7 +16,8 @@ flake output, manifest contract, or generated wrapper behavior changes.
 The `info` RPC method was removed and replaced by the more explicit `guest-ps`
 method. The same guest-agent control surface now also exposes `guest-exec` for
 running guest commands, `guest-read` for reading guest files, and `guest-write`
-for writing guest files. Guest file reads and writes use base64-encoded data.
+for writing guest files. Guest file reads and writes use the `data-base64`
+field.
 
 ### Migration Steps
 

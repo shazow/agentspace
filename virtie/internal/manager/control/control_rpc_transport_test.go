@@ -79,7 +79,7 @@ func TestControlClientServerTypedCalls(t *testing.T) {
 		},
 		fakeControlGuest: fakeControlGuest{
 			psResp:    GuestPSResponse{ProcessList: "USER COMMAND\nroot init"},
-			readResp:  GuestReadResponse{Path: "/tmp/message", Data: "aGVsbG8="},
+			readResp:  GuestReadResponse{Path: "/tmp/message", DataBase64: "aGVsbG8="},
 			writeResp: GuestWriteResponse{Path: "/tmp/message"},
 		},
 	}
@@ -124,15 +124,15 @@ func TestControlClientServerTypedCalls(t *testing.T) {
 	if handler.readReq.Path != "/tmp/message" {
 		t.Fatalf("unexpected guest read request: %#v", handler.readReq)
 	}
-	if readResp.Path != "/tmp/message" || readResp.Data != "aGVsbG8=" {
+	if readResp.Path != "/tmp/message" || readResp.DataBase64 != "aGVsbG8=" {
 		t.Fatalf("unexpected guest read response: %#v", readResp)
 	}
 
-	writeResp, err := client.GuestWrite(context.Background(), GuestWriteRequest{Path: "/tmp/message", Data: "dXBkYXRlZA=="})
+	writeResp, err := client.GuestWrite(context.Background(), GuestWriteRequest{Path: "/tmp/message", DataBase64: "dXBkYXRlZA=="})
 	if err != nil {
 		t.Fatalf("guest write: %v", err)
 	}
-	if handler.writeReq.Path != "/tmp/message" || handler.writeReq.Data != "dXBkYXRlZA==" {
+	if handler.writeReq.Path != "/tmp/message" || handler.writeReq.DataBase64 != "dXBkYXRlZA==" {
 		t.Fatalf("unexpected guest write request: %#v", handler.writeReq)
 	}
 	if writeResp.Path != "/tmp/message" {
