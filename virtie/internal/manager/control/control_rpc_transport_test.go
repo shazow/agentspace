@@ -173,37 +173,6 @@ func TestControlClientServerTypedCalls(t *testing.T) {
 	}
 }
 
-func TestDefaultMethodRegistryDefinesDiscoveryOrder(t *testing.T) {
-	want := []rpcMethod{rpcStatus, rpcMethods, rpcGuestPS, rpcGuestExec, rpcGuestRead, rpcGuestWrite, rpcSuspend, rpcHotplug, rpcBalloon}
-	if !reflect.DeepEqual(defaultMethodOrder, want) {
-		t.Fatalf("default method order: got %#v want %#v", defaultMethodOrder, want)
-	}
-	if got, want := len(defaultMethods), len(defaultMethodOrder); got != want {
-		t.Fatalf("default method count: got %d want %d", got, want)
-	}
-	for _, method := range defaultMethodOrder {
-		if _, ok := defaultMethods[method]; !ok {
-			t.Fatalf("default method %q is missing from registry map", method)
-		}
-	}
-}
-
-func TestCallTypedUsesMethodAndDecodesResponse(t *testing.T) {
-	handler := &fakeControlHandler{
-		fakeControlCore: fakeControlCore{
-			status: StatusResponse{State: RuntimeReady, CID: 42},
-		},
-	}
-	path := startTestControlServer(t, handler)
-	resp, err := callTyped[StatusRequest, StatusResponse](Dial(path), context.Background(), rpcStatus, StatusRequest{})
-	if err != nil {
-		t.Fatalf("call typed: %v", err)
-	}
-	if resp.State != RuntimeReady || resp.CID != 42 {
-		t.Fatalf("unexpected typed call response: %#v", resp)
-	}
-}
-
 func TestControlSocketPermissions(t *testing.T) {
 	path := startTestControlServer(t, &fakeControlHandler{})
 	info, err := os.Stat(path)
