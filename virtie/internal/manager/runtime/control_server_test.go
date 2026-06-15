@@ -11,7 +11,7 @@ import (
 func TestStartControlServesRuntimeHandler(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "virtie.sock")
 	handler := fakeRuntimeHandler{}
-	router, err := control.NewRouter(handler)
+	router, err := control.NewRouter(control.Handlers{Core: handler})
 	if err != nil {
 		t.Fatalf("router: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestStartControlServesRuntimeHandler(t *testing.T) {
 }
 
 func TestStartControlEmptySocketPath(t *testing.T) {
-	router, err := control.NewRouter(fakeRuntimeHandler{})
+	router, err := control.NewRouter(control.Handlers{Core: fakeRuntimeHandler{}})
 	if err != nil {
 		t.Fatalf("router: %v", err)
 	}

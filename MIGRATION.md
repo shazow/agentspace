@@ -4,6 +4,36 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-06-15: virtie guest control RPCs renamed and expanded
+
+### Who Is Affected
+
+- Direct users of `virtie rpc info` or control socket clients that call the
+  `info` RPC method.
+
+### What Changed
+
+The `info` RPC method was removed and replaced by the more explicit `guest-ps`
+method. The same guest-agent control surface now also exposes `guest-exec` for
+running guest commands, `guest-read` for reading guest files, and `guest-write`
+for writing guest files. Guest file reads and writes use the `data-base64`
+field.
+
+### Migration Steps
+
+Replace `info` calls with `guest-ps`:
+
+```bash
+virtie rpc guest-ps
+```
+
+Use `methods` to discover the guest methods available on a running control
+socket:
+
+```bash
+virtie rpc methods
+```
+
 ## 2026-06-13: virtie optional feature build tags removed
 
 ### Who Is Affected

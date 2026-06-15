@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"github.com/jessevdk/go-flags"
 	"github.com/shazow/agentspace/virtie/internal/balloon"
 	"github.com/shazow/agentspace/virtie/internal/manager"
+	"github.com/shazow/agentspace/virtie/internal/manager/control"
 	"github.com/shazow/agentspace/virtie/internal/manifest"
 	manifestschema "github.com/shazow/agentspace/virtie/internal/manifest/schema"
 )
@@ -42,6 +44,13 @@ type Options struct {
 			ID string `positional-arg-name:"id" required:"yes"`
 		} `positional-args:"yes"`
 	} `command:"hotplug" description:"Attach or detach a predefined hotplug device" long-description:"Attach or detach a device described under manifest [hotplug]."`
+
+	RPC struct {
+		Args struct {
+			Method string `positional-arg-name:"method" required:"yes"`
+			Params string `positional-arg-name:"json-args"`
+		} `positional-args:"yes"`
+	} `command:"rpc" description:"Call a virtie control socket RPC method" long-description:"Call a method on the running virtie control socket with optional JSON params."`
 
 	ManifestCommand struct {
 		Defaults struct {
@@ -152,6 +161,35 @@ func runHotplug(options *Options) error {
 	defer cancel()
 
 	return manager.Hotplug(ctx, manifest, options.Hotplug.Args.ID, options.Hotplug.Detach)
+}
+
+func runRPC(options *Options) error {
+	manifest, err := loadManifest(options.Manifest)
+	if err != nil {
+		return err
+	}
+	controlSocketPath, err := manifest.ResolvedControlSocketPath()
+	if err != nil {
+		return err
+	}
+
+	params := json.RawMessage("{}")
+	if options.RPC.Args.Params != "" {
+		params = json.RawMessage(options.RPC.Args.Params)
+		if !json.Valid(params) {
+			return fmt.Errorf("rpc params must be valid JSON")
+		}
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	result, err := control.Dial(controlSocketPath).Raw(ctx, options.RPC.Args.Method, params)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, string(result))
+	return err
 }
 
 func loadLaunchManifest(path string, logger *slog.Logger) (*manifest.Manifest, error) {
@@ -292,6 +330,8 @@ func run(args []string) error {
 		return runSuspend(opts)
 	case "hotplug":
 		return runHotplug(opts)
+	case "rpc":
+		return runRPC(opts)
 	case "manifest":
 		switch parser.Active.Active.Name {
 		case "defaults":

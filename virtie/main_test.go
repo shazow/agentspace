@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/shazow/agentspace/virtie/internal/manager/control"
 )
 
 func TestOptionsDeclaresCommands(t *testing.T) {
@@ -34,6 +38,12 @@ func TestOptionsDeclaresCommands(t *testing.T) {
 			command:         "hotplug",
 			description:     "Attach or detach a predefined hotplug device",
 			longDescription: "Attach or detach a device described under manifest [hotplug].",
+		},
+		{
+			field:           "RPC",
+			command:         "rpc",
+			description:     "Call a virtie control socket RPC method",
+			longDescription: "Call a method on the running virtie control socket with optional JSON params.",
 		},
 		{
 			field:           "ManifestCommand",
@@ -208,6 +218,112 @@ func TestParserAcceptsSharedOptionsBeforeOrAfterSubcommand(t *testing.T) {
 	}
 }
 
+func TestRunRPCStatusPrintsControlSocketResponse(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(testManifestJSON(tmpDir)), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	cfg, err := loadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
+	if err != nil {
+		t.Fatalf("resolve control socket: %v", err)
+	}
+	startMainTestControlServerAt(t, controlSocketPath, &mainTestControlCore{
+		status: control.StatusResponse{
+			State: control.RuntimeReady,
+			CID:   7,
+			Paths: control.StatusPaths{ControlSocket: controlSocketPath},
+		},
+	})
+
+	output := captureStdout(t, func() {
+		if err := run([]string{"--manifest=" + manifestPath, "rpc", "status"}); err != nil {
+			t.Fatalf("rpc status: %v", err)
+		}
+	})
+
+	var got control.StatusResponse
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("decode rpc output %q: %v", output, err)
+	}
+	if got.State != control.RuntimeReady || got.CID != 7 || got.Paths.ControlSocket != controlSocketPath {
+		t.Fatalf("unexpected rpc status output: %#v", got)
+	}
+}
+
+func TestRunRPCUsesJSONParams(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(testManifestJSON(tmpDir)), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	cfg, err := loadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
+	if err != nil {
+		t.Fatalf("resolve control socket: %v", err)
+	}
+	handler := &mainTestControlHandler{}
+	startMainTestControlServerAt(t, controlSocketPath, handler)
+
+	output := captureStdout(t, func() {
+		args := []string{"--manifest=" + manifestPath, "rpc", "hotplug", `{"id":"cache","detach":true}`}
+		if err := run(args); err != nil {
+			t.Fatalf("rpc hotplug: %v", err)
+		}
+	})
+
+	if handler.hotplugReq.ID != "cache" || !handler.hotplugReq.Detach {
+		t.Fatalf("unexpected hotplug request: %#v", handler.hotplugReq)
+	}
+	var got control.HotplugResponse
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("decode rpc output %q: %v", output, err)
+	}
+	if got.ID != "cache" || !got.Detach {
+		t.Fatalf("unexpected rpc hotplug output: %#v", got)
+	}
+}
+
+func TestRunRPCMethodsPrintsAvailableControlSocketMethods(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(testManifestJSON(tmpDir)), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	cfg, err := loadManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	controlSocketPath, err := cfg.ResolvedControlSocketPath()
+	if err != nil {
+		t.Fatalf("resolve control socket: %v", err)
+	}
+	handler := &mainTestControlHandler{}
+	startMainTestControlServerAt(t, controlSocketPath, handler)
+
+	output := captureStdout(t, func() {
+		if err := run([]string{"--manifest=" + manifestPath, "rpc", "methods"}); err != nil {
+			t.Fatalf("rpc methods: %v", err)
+		}
+	})
+
+	var got control.MethodsResponse
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("decode rpc output %q: %v", output, err)
+	}
+	want := []string{"status", "methods", "guest-ps", "guest-exec", "guest-read", "guest-write", "hotplug"}
+	if !reflect.DeepEqual(got.Methods, want) {
+		t.Fatalf("unexpected rpc methods output: got %#v want %#v", got.Methods, want)
+	}
+}
+
 func TestResolveManifestPathDefaultsToTOMLThenJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	oldDir, err := os.Getwd()
@@ -349,4 +465,103 @@ func testManifestJSON(workingDir string) string {
   ]
 }
 `
+}
+
+type mainTestControlCore struct {
+	status control.StatusResponse
+}
+
+func (h *mainTestControlCore) Status(context.Context, control.StatusRequest) (control.StatusResponse, error) {
+	return h.status, nil
+}
+
+type mainTestControlHandler struct {
+	mainTestControlCore
+	hotplugReq control.HotplugRequest
+}
+
+func (h *mainTestControlHandler) GuestPS(context.Context, control.GuestPSRequest) (control.GuestPSResponse, error) {
+	return control.GuestPSResponse{ProcessList: "USER COMMAND\nroot init"}, nil
+}
+
+func (h *mainTestControlHandler) GuestExec(ctx context.Context, req control.GuestExecRequest) (control.GuestExecResponse, error) {
+	return control.GuestExecResponse{Exited: true, ExitCode: 0, OutData: "b2sK"}, nil
+}
+
+func (h *mainTestControlHandler) GuestRead(ctx context.Context, req control.GuestReadRequest) (control.GuestReadResponse, error) {
+	return control.GuestReadResponse{Path: req.Path, DataBase64: "b2sK"}, nil
+}
+
+func (h *mainTestControlHandler) GuestWrite(ctx context.Context, req control.GuestWriteRequest) (control.GuestWriteResponse, error) {
+	return control.GuestWriteResponse{Path: req.Path}, nil
+}
+
+func (h *mainTestControlHandler) Hotplug(ctx context.Context, req control.HotplugRequest) (control.HotplugResponse, error) {
+	h.hotplugReq = req
+	return control.HotplugResponse{ID: req.ID, Detach: req.Detach}, nil
+}
+
+func startMainTestControlServerAt(t *testing.T, path string, runtime control.RuntimeCore) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create control socket directory: %v", err)
+	}
+	handlers := control.Handlers{Core: runtime}
+	if guest, ok := runtime.(control.RuntimeGuest); ok {
+		handlers.Guest = guest
+	}
+	if hotplug, ok := runtime.(control.RuntimeHotplug); ok {
+		handlers.Hotplug = hotplug
+	}
+	router, err := control.NewRouter(handlers)
+	if err != nil {
+		t.Fatalf("router: %v", err)
+	}
+	listener, err := control.Listen(path)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	server, err := control.NewServer(router)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		if err := listener.Close(); err != nil && !strings.Contains(err.Error(), "use of closed") {
+			t.Errorf("close control socket: %v", err)
+		}
+		if err := <-done; err != nil {
+			t.Errorf("serve control socket: %v", err)
+		}
+	})
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	original := os.Stdout
+	readFile, writeFile, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stdout: %v", err)
+	}
+	os.Stdout = writeFile
+	defer func() {
+		os.Stdout = original
+	}()
+
+	fn()
+
+	if err := writeFile.Close(); err != nil {
+		t.Fatalf("close stdout pipe writer: %v", err)
+	}
+	data, err := io.ReadAll(readFile)
+	if err != nil {
+		t.Fatalf("read stdout pipe: %v", err)
+	}
+	if err := readFile.Close(); err != nil {
+		t.Fatalf("close stdout pipe reader: %v", err)
+	}
+	return string(data)
 }

@@ -3824,7 +3824,7 @@ func TestLaunchRuntimeRegistersHotplugAtControlPeriphery(t *testing.T) {
 	}
 }
 
-func TestLaunchRuntimeRegistersInfoAtControlPeriphery(t *testing.T) {
+func TestLaunchRuntimeRegistersGuestRPCsAtControlPeriphery(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Persistence.StateDir = ".virtie"
@@ -3839,7 +3839,15 @@ func TestLaunchRuntimeRegistersInfoAtControlPeriphery(t *testing.T) {
 		execStatuses: []qga.ExecStatus{{
 			Exited:  true,
 			OutData: "cm9vdCBpbml0CmFnZW50IHZpcnRpZQo=",
+		}, {
+			Exited:   true,
+			ExitCode: 3,
+			OutData:  "ZXhlYy1vdXQK",
+			ErrData:  "ZXhlYy1lcnIK",
 		}},
+		readPayloads: map[string][]string{
+			"/tmp/message": {"aGVs", "bG8="},
+		},
 	}
 	runner := &launchRunner{}
 	manager := &manager{
@@ -3863,12 +3871,13 @@ func TestLaunchRuntimeRegistersInfoAtControlPeriphery(t *testing.T) {
 	}
 	defer running.Close()
 
-	resp, err := control.Dial(plan.Paths.ControlSocket).Info(context.Background(), control.InfoRequest{})
+	client := control.Dial(plan.Paths.ControlSocket)
+	psResp, err := client.GuestPS(context.Background(), control.GuestPSRequest{})
 	if err != nil {
-		t.Fatalf("control info: %v", err)
+		t.Fatalf("control guest ps: %v", err)
 	}
-	if resp.ProcessList != "USER COMMAND\nagent virtie\nroot init" {
-		t.Fatalf("unexpected process list: %q", resp.ProcessList)
+	if psResp.ProcessList != "USER COMMAND\nagent virtie\nroot init" {
+		t.Fatalf("unexpected process list: %q", psResp.ProcessList)
 	}
 	if got, want := len(guestAgent.execs), 1; got != want {
 		t.Fatalf("guest exec count: got %d want %d", got, want)
@@ -3877,9 +3886,47 @@ func TestLaunchRuntimeRegistersInfoAtControlPeriphery(t *testing.T) {
 	if exec.path != guestPSPath || !reflect.DeepEqual(exec.args, []string{"-eo", "user=,comm="}) || !exec.captureOutput {
 		t.Fatalf("unexpected ps exec: %#v", exec)
 	}
+
+	execResp, err := client.GuestExec(context.Background(), control.GuestExecRequest{
+		Path:          "/bin/sh",
+		Args:          []string{"-c", "echo hi"},
+		CaptureOutput: true,
+	})
+	if err != nil {
+		t.Fatalf("control guest exec: %v", err)
+	}
+	if !execResp.Exited || execResp.ExitCode != 3 || execResp.OutData != "ZXhlYy1vdXQK" || execResp.ErrData != "ZXhlYy1lcnIK" {
+		t.Fatalf("unexpected guest exec response: %#v", execResp)
+	}
+	if got, want := len(guestAgent.execs), 2; got != want {
+		t.Fatalf("guest exec count after guest-exec: got %d want %d", got, want)
+	}
+	exec = guestAgent.execs[1]
+	if exec.path != "/bin/sh" || !reflect.DeepEqual(exec.args, []string{"-c", "echo hi"}) || !exec.captureOutput {
+		t.Fatalf("unexpected guest-exec call: %#v", exec)
+	}
+
+	readResp, err := client.GuestRead(context.Background(), control.GuestReadRequest{Path: "/tmp/message"})
+	if err != nil {
+		t.Fatalf("control guest read: %v", err)
+	}
+	if readResp.Path != "/tmp/message" || readResp.DataBase64 != "aGVsbG8=" {
+		t.Fatalf("unexpected guest read response: %#v", readResp)
+	}
+
+	writeResp, err := client.GuestWrite(context.Background(), control.GuestWriteRequest{Path: "/tmp/message", DataBase64: "dXBkYXRlZA=="})
+	if err != nil {
+		t.Fatalf("control guest write: %v", err)
+	}
+	if writeResp.Path != "/tmp/message" {
+		t.Fatalf("unexpected guest write response: %#v", writeResp)
+	}
+	if got := guestAgent.writes["/tmp/message"]; got != "dXBkYXRlZA==" {
+		t.Fatalf("unexpected guest write payload: %q", got)
+	}
 }
 
-func TestLaunchRuntimeInfoMapsFailureToFailedPrecondition(t *testing.T) {
+func TestLaunchRuntimeGuestPSMapsFailureToFailedPrecondition(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := validManifest(tmpDir)
 	cfg.Persistence.StateDir = ".virtie"
@@ -3911,7 +3958,7 @@ func TestLaunchRuntimeInfoMapsFailureToFailedPrecondition(t *testing.T) {
 	}
 	defer running.Close()
 
-	_, err = control.Dial(plan.Paths.ControlSocket).Info(context.Background(), control.InfoRequest{})
+	_, err = control.Dial(plan.Paths.ControlSocket).GuestPS(context.Background(), control.GuestPSRequest{})
 	var rpcErr *control.RPCError
 	if !errors.As(err, &rpcErr) {
 		t.Fatalf("error type: got %T", err)
