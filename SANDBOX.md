@@ -91,6 +91,30 @@ size without a workspace).
 | `nixStoreShareSocket` (`null`) | Existing host virtiofsd socket for the read-only Nix-store share. When set, virtie does not start its own daemon for that share; the path must be absolute and already be a socket when launching. |
 | `virtiofsd.*` | Configure the virtiofsd package, group, thread-pool size, inode file-handle policy, and extra arguments using the `mkVirtioFSD` options. |
 
+`agentspace.nixosModules.hostVirtiofsdNixStore` provides a ready-made socket
+producer for `nixStoreShareSocket`: a socket-activated `virtiofsd` systemd
+service on the **host** that shares `/nix/store` read-only at
+`/run/virtiofs-nix-store.sock`. Import it into your host's NixOS
+configuration (not the sandbox), enable it, and point the sandbox at the
+resulting socket:
+
+```nix
+{
+  imports = [ agentspace.nixosModules.hostVirtiofsdNixStore ];
+  agentspace.hostVirtiofsdNixStore.enable = true;
+}
+```
+
+```nix
+agentspace.sandbox.nixStoreShareSocket = "/run/virtiofs-nix-store.sock";
+```
+
+| Option (`agentspace.hostVirtiofsdNixStore.*`) | Function |
+| --- | --- |
+| `enable` (`false`) | Enable the host-side socket-activated virtiofsd service. |
+| `socketGroup` (`"kvm"`) | Group owning the virtiofsd socket. |
+| `ownHardening` (`false`) | Disable virtiofsd's own sandboxing and rely on systemd hardening (`ProtectSystem`, `PrivateNetwork`, etc.) instead. |
+
 The default writable store overlay is a 8 GiB image. Additional `volumes` are
 attached after the built-in store overlay and optional home image. Additional
 shares and forwards are merged with the built-in mounts and user-mode network.
