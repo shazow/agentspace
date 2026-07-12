@@ -163,6 +163,7 @@
       formatter.${system} = pkgs.nixfmt-tree;
 
       nixosModules.default = ./sandbox-qemu.nix;
+      nixosModules.hostVirtiofsdNixStore = ./host/virtiofsd-nix-store.nix;
 
       lib = {
         inherit
