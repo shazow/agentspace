@@ -60,6 +60,7 @@ SSH login is disabled.
 | `persistence.homeImage` (`"home.img"`) | Ext4 image for persistent `/home/<user>`. Set to `null` to disable the home image. Absolute paths are used as-is. |
 | `persistence.homeSize` (`4096`) | Home image size in MB. |
 | `persistence.storeOverlay` (`"nix-store-overlay-v2.img"`) | Writable Nix-store overlay image path. |
+| `persistence.storeOverlaySize` (`8192`) | Size in MiB used when creating the writable Nix-store overlay image. Existing images are not resized. |
 | `persistence.storeDisk` (`false`) | Use a generated read-only Nix-store disk instead of sharing the host `/nix/store`. |
 
 `persistence.basedir` is a hidden, deprecated spelling of `baseDir`; new

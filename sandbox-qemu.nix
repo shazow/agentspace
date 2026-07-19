@@ -156,6 +156,12 @@ in
         description = "Path for the writable nix store overlay image.";
       };
 
+      storeOverlaySize = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 8192;
+        description = "Size in MiB used when creating the writable Nix store overlay image. Existing images are not resized.";
+      };
+
       storeDisk = lib.mkOption {
         type = lib.types.bool;
         default = false;
@@ -529,6 +535,7 @@ in
           homeImage = cfg.persistence.homeImage;
           homeSize = cfg.persistence.homeSize;
           storeOverlay = cfg.persistence.storeOverlay;
+          storeOverlaySize = cfg.persistence.storeOverlaySize;
           storeDisk = cfg.persistence.storeDisk;
         };
       };
@@ -676,6 +683,10 @@ in
           {
             assertion = cfg.persistence.basedir == null;
             message = "agentspace.sandbox.persistence.basedir was renamed to agentspace.sandbox.persistence.baseDir.";
+          }
+          {
+            assertion = cfg.persistence.storeOverlaySize >= 256;
+            message = "agentspace.sandbox.persistence.storeOverlaySize must be at least 256 MiB.";
           }
           {
             assertion = cfg.swapSize == 0 || cfg.workspace.enable;
@@ -856,7 +867,7 @@ in
             {
               image = resolvedStoreOverlay;
               mountPoint = "/nix/.rw-store";
-              size = 2 * 4096;
+              size = cfg.persistence.storeOverlaySize;
             }
           ]
           ++ lib.optionals (cfg.persistence.homeImage != null) [

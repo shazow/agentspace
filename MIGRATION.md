@@ -29,6 +29,10 @@ restrictions also still apply: the shared host store must not change while
 mounted, and removing lower paths referenced by the persistent database is
 unsupported.
 
+The creation size for new writable images is configurable in MiB with
+`persistence.storeOverlaySize` and defaults to `8192`. Changing it does not
+resize an existing image.
+
 ### Migration Steps
 
 Users who explicitly configure `persistence.storeOverlay` with an existing

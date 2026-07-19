@@ -14,6 +14,7 @@ let
       identityFile = sshKeys.virtie.identityFile;
     };
     persistence.homeImage = null;
+    persistence.storeOverlaySize = 6144;
     workspace = {
       enable = true;
       addCurrentDir = true;
@@ -402,9 +403,9 @@ let
     assert manifest.ssh.ready_socket == "ready.sock";
     assert !(manifest.ssh ? retry_delay_ms);
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.exec;
-    assert builtins.any (volume: volume.source == ".agentspace/nix-store-overlay-v2.img") (
-      mountsOfType "image" manifest
-    );
+    assert builtins.any (
+      volume: volume.source == ".agentspace/nix-store-overlay-v2.img" && volume.image.size == 6144
+    ) (mountsOfType "image" manifest);
     assert builtins.length virtiofsDaemonMounts > 0;
     assert builtins.all (
       mount: mount.virtiofs.socket != "" && mount.virtiofs.bin != ""
@@ -766,6 +767,7 @@ let
                 homeImage = null;
                 homeSize = 4096;
                 storeOverlay = "nix-store-overlay-v2.img";
+                storeOverlaySize = 8192;
                 storeDisk = false;
               };
             };
