@@ -9,11 +9,12 @@ let
   cfg = config.agentspace.sandbox;
   overlayCfg = cfg.localOverlayStore;
   lowerStoreDir = "/nix/.ro-store";
+  lowerStoreViewDir = "/nix/.local-overlay-lower-store";
   lowerStateDir = "/nix/var/nix";
   upperRoot = "/nix/.rw-store";
   upperLayer = "${upperRoot}/store";
   upperStateDir = "${upperRoot}/state";
-  lowerStoreUri = "local?real=${lowerStoreDir}&state=${lowerStateDir}&read-only=true";
+  lowerStoreUri = "local?real=${lowerStoreViewDir}&state=${lowerStateDir}&read-only=true";
   remountHook = pkgs.writeShellScript "local-overlay-store-remount" ''
     set -eu
 
@@ -94,6 +95,19 @@ in
         noCheck = true;
       };
 
+      # TODO: Remove this view when read-only LocalStore stops creating .links.
+      # microvm store images contain only store paths, while LocalStore creates
+      # realStoreDir/.links even in read-only mode. Give that metadata reader a
+      # private writable view without changing the immutable OverlayFS lowerdir.
+      "${lowerStoreViewDir}" = {
+        neededForBoot = true;
+        overlay = {
+          lowerdir = [ lowerStoreDir ];
+          upperdir = "${upperRoot}/lower-store-view";
+          workdir = "${upperRoot}/lower-store-view-work";
+        };
+      };
+
       "/nix/store" = lib.mkForce {
         neededForBoot = true;
         overlay = {
@@ -119,6 +133,7 @@ in
       serviceConfig.EnvironmentFile = nixDaemonEnvironment;
       unitConfig.RequiresMountsFor = [
         "/nix/store"
+        lowerStoreViewDir
         upperStateDir
       ];
     };

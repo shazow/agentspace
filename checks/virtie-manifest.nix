@@ -448,6 +448,7 @@ let
       defaultConfig = vmDefault.config;
       storeUri = defaultConfig.agentspace.sandbox.localOverlayStore.storeUri;
       storeMount = defaultConfig.fileSystems."/nix/store";
+      lowerStoreViewMount = defaultConfig.fileSystems."/nix/.local-overlay-lower-store";
       daemonService = defaultConfig.systemd.services.nix-daemon;
     in
     assert defaultConfig.agentspace.sandbox.localOverlayStore.enable;
@@ -456,6 +457,9 @@ let
     assert storeMount.overlay.lowerdir == [ "/nix/.ro-store" ];
     assert storeMount.overlay.upperdir == "/nix/.rw-store/store";
     assert storeMount.overlay.workdir == "/nix/.rw-store/work";
+    assert lowerStoreViewMount.overlay.lowerdir == [ "/nix/.ro-store" ];
+    assert lowerStoreViewMount.overlay.upperdir == "/nix/.rw-store/lower-store-view";
+    assert lowerStoreViewMount.overlay.workdir == "/nix/.rw-store/lower-store-view-work";
     assert defaultConfig.fileSystems."/nix/.rw-store".neededForBoot;
     assert builtins.elem "overlay" defaultConfig.boot.initrd.kernelModules;
     assert builtins.elem "local-overlay-store" defaultConfig.nix.settings.experimental-features;
@@ -466,6 +470,7 @@ let
     assert builtins.readFile daemonService.serviceConfig.EnvironmentFile == "NIX_REMOTE=${storeUri}\n";
     assert builtins.elem "post-boot.service" daemonService.after;
     assert builtins.elem "/nix/store" daemonService.unitConfig.RequiresMountsFor;
+    assert builtins.elem "/nix/.local-overlay-lower-store" daemonService.unitConfig.RequiresMountsFor;
     assert builtins.elem "/nix/.rw-store/state" daemonService.unitConfig.RequiresMountsFor;
     assert vmLegacyStoreOverlay.config.microvm.writableStoreOverlay == "/nix/.rw-store";
     assert vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".neededForBoot;
