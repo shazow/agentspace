@@ -302,14 +302,87 @@ in
         export NIX_REMOTE=daemon
         nix=/run/current-system/sw/bin/nix
         canary_path=$1
-        upper_path=/nix/.rw-store/store/''${canary_path##*/}
+        canary_name=''${canary_path##*/}
+        upper_path=/nix/.rw-store/store/$canary_name
+        deleted_paths=/tmp/agentspace-minimal-gc-deletions
+        lower_probe=$(readlink -f /run/current-system/sw/bin/sh)
+        lower_name=''${lower_probe#/nix/store/}
+        lower_name=''${lower_name%%/*}
+        lower_physical=/nix/.ro-store/$lower_name
+
+        snapshot_upper() {
+          find /nix/.rw-store/store -mindepth 1 -maxdepth 1 \
+            ! -name "$canary_name" -printf "%f:%y\n" | sort
+        }
+
+        case "$lower_probe" in
+          /nix/store/*) ;;
+          *)
+            echo "could not resolve a lower store probe: $lower_probe" >&2
+            exit 1
+            ;;
+        esac
+        if [ ! -e "$lower_physical" ] || [ ! -e "/nix/store/$lower_name" ]; then
+          echo "lower store probe is not visible before garbage collection" >&2
+          exit 1
+        fi
+
+        upper_before=$(snapshot_upper)
         if ! $nix path-info "$canary_path"; then
           echo "metadata for the upper store path did not survive reboot" >&2
           exit 1
         fi
 
+        if ! minimal_gc_output=$($nix store gc --max 1M 2>&1); then
+          printf "%s\n" "$minimal_gc_output" >&2
+          echo "bounded guest store garbage collection failed" >&2
+          exit 1
+        fi
+        printf "%s\n" "$minimal_gc_output" >&2
+
+        printf "%s\n" "$minimal_gc_output" \
+          | sed -n "s|^deleting .\(/nix/store/.*\).$|\1|p" \
+          > "$deleted_paths"
+        while IFS= read -r deleted_path; do
+          deleted_name=''${deleted_path#/nix/store/}
+          deleted_name=''${deleted_name%%/*}
+          if [ -e "/nix/.ro-store/$deleted_name" ] \
+            && [ ! -e "/nix/store/$deleted_name" ]; then
+            echo "bounded garbage collection hid lower path $deleted_path" >&2
+            exit 1
+          fi
+        done < "$deleted_paths"
+
+        upper_after_bounded=$(snapshot_upper)
+        if [ "$upper_before" != "$upper_after_bounded" ]; then
+          echo "bounded garbage collection made unexpected changes to the upper layer" >&2
+          echo "upper entries before GC, excluding the canary:" >&2
+          printf "%s\n" "$upper_before" | sed "s/^/  /" >&2
+          echo "upper entries after GC:" >&2
+          printf "%s\n" "$upper_after_bounded" | sed "s/^/  /" >&2
+          exit 1
+        fi
+        if [ ! -e "$lower_physical" ] || [ ! -e "/nix/store/$lower_name" ]; then
+          echo "bounded garbage collection hid the lower store probe" >&2
+          exit 1
+        fi
+
         if ! $nix store gc; then
-          echo "guest store garbage collection failed" >&2
+          echo "full guest store garbage collection failed" >&2
+          exit 1
+        fi
+
+        upper_after_full=$(snapshot_upper)
+        if [ "$upper_before" != "$upper_after_full" ]; then
+          echo "full garbage collection made unexpected changes to the upper layer" >&2
+          echo "upper entries before GC, excluding the canary:" >&2
+          printf "%s\n" "$upper_before" | sed "s/^/  /" >&2
+          echo "upper entries after GC:" >&2
+          printf "%s\n" "$upper_after_full" | sed "s/^/  /" >&2
+          exit 1
+        fi
+        if [ ! -e "$lower_physical" ] || [ ! -e "/nix/store/$lower_name" ]; then
+          echo "full garbage collection hid the lower store probe" >&2
           exit 1
         fi
 
