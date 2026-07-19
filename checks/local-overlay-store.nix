@@ -7,7 +7,7 @@
 }:
 let
   localOverlayStoreEnabled = true;
-  vm = mkSandbox {
+  vmConfig = {
     localOverlayStore.enable = localOverlayStoreEnabled;
     ssh.autoconnect = false;
     quiet = false;
@@ -37,7 +37,31 @@ let
       }
     ];
   };
+  vm = mkSandbox vmConfig;
+  nonRootVm = mkSandbox (
+    vmConfig
+    // {
+      persistence = vmConfig.persistence // {
+        baseDir = "non-root-vm";
+      };
+      extraModules = vmConfig.extraModules ++ [
+        {
+          users.groups.nix-daemon = { };
+          users.users.nix-daemon = {
+            isSystemUser = true;
+            group = "nix-daemon";
+          };
+          nix = {
+            daemonUser = "nix-daemon";
+            daemonGroup = "nix-daemon";
+            settings.experimental-features = [ "auto-allocate-uids" ];
+          };
+        }
+      ];
+    }
+  );
   launchScript = mkLaunch vm;
+  nonRootLaunchScript = mkLaunch nonRootVm;
 in
 {
   local-overlay-store-real-boot = pkgs.writeShellApplication {
@@ -60,17 +84,27 @@ in
       export HOME="$test_root/home"
       export XDG_RUNTIME_DIR="$test_root/runtime"
 
+      non_root_log="$test_root/non-root-boot.log"
       first_log="$test_root/first-boot.log"
       second_log="$test_root/second-boot.log"
-      manifest_path="$test_root/vm/virtie-agent-sandbox.toml"
-      control_socket="$test_root/vm/virtie.sock"
-      qemu_pid_file="$test_root/vm/agent-sandbox.pid"
+      manifest_path=
+      control_socket=
+      qemu_pid_file=
+      qmp_socket=
       launch_pid=
       qemu_pid=
 
       mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
       chmod 700 "$XDG_RUNTIME_DIR"
       cd "$test_root"
+
+      select_vm() {
+        vm_dir="$test_root/$1"
+        manifest_path="$vm_dir/virtie-agent-sandbox.toml"
+        control_socket="$vm_dir/virtie.sock"
+        qemu_pid_file="$vm_dir/agent-sandbox.pid"
+        qmp_socket="$vm_dir/qmp.sock"
+      }
 
       stop_guest() {
         if [ -z "$qemu_pid" ]; then
@@ -82,7 +116,7 @@ in
           for process_dir in /proc/[0-9]*; do
             candidate_qemu_pid=''${process_dir##*/}
             if [[ "$(readlink "$process_dir/exe" 2>/dev/null || true)" == *qemu-system* ]] \
-              && [[ "$(tr '\0' ' ' < "$process_dir/cmdline" 2>/dev/null || true)" == *"unix:$test_root/vm/qmp.sock,server,nowait"* ]]; then
+              && [[ "$(tr '\0' ' ' < "$process_dir/cmdline" 2>/dev/null || true)" == *"unix:$qmp_socket,server,nowait"* ]]; then
               qemu_pid=$candidate_qemu_pid
               break
             fi
@@ -142,7 +176,7 @@ in
         stop_guest
         if [ "$status" -ne 0 ]; then
           echo "local-overlay-store-real-boot: failed with status $status" >&2
-          for log in "$first_log" "$second_log"; do
+          for log in "$non_root_log" "$first_log" "$second_log"; do
             if [ -f "$log" ]; then
               echo "== $log ==" >&2
               tail -n 200 "$log" >&2
@@ -155,8 +189,9 @@ in
 
       start_guest() {
         log=$1
+        launcher=$2
         qemu_pid=
-        ${launchScript} >"$log" 2>&1 &
+        "$launcher" >"$log" 2>&1 &
         launch_pid=$!
 
         for ((attempt = 1; attempt <= guest_ready_attempts; attempt++)); do
@@ -265,6 +300,36 @@ in
       }
 
       # shellcheck disable=SC2016 # This script is evaluated in the guest.
+      non_root_script='
+        set -eu
+
+        export NIX_REMOTE=daemon
+        nix=/run/current-system/sw/bin/nix
+        payload=/tmp/agentspace-non-root-overlay-canary
+        printf "%s\n" agentspace-non-root-overlay-canary > "$payload"
+        canary_path=$($nix store add-file "$payload")
+
+        for writable_path in \
+          /nix/.rw-store/state \
+          /nix/.local-overlay-lower-store \
+          /nix/.local-overlay-lower-store/.links; do
+          if [ "$(stat -c "%U:%G" "$writable_path")" != nix-daemon:nix-daemon ]; then
+            echo "$writable_path is not owned by nix-daemon:nix-daemon" >&2
+            exit 1
+          fi
+        done
+
+        test -e "$canary_path"
+        test -e "/nix/.rw-store/store/''${canary_path##*/}"
+        $nix path-info "$canary_path"
+      '
+
+      select_vm non-root-vm
+      start_guest "$non_root_log" ${nonRootLaunchScript}
+      run_guest_command "$non_root_script" >/dev/null
+      shutdown_guest
+
+      # shellcheck disable=SC2016 # This script is evaluated in the guest.
       first_script='
         set -eu
 
@@ -282,7 +347,8 @@ in
         printf "CANARY_PATH=%s\n" "$canary_path"
       '
 
-      start_guest "$first_log"
+      select_vm vm
+      start_guest "$first_log" ${launchScript}
       first_output=$(run_guest_command "$first_script")
       shutdown_guest
 
@@ -399,7 +465,7 @@ in
         sync
       '
 
-      start_guest "$second_log"
+      start_guest "$second_log" ${launchScript}
       run_guest_command "$second_script" "$canary_path" >/dev/null
       shutdown_guest
 

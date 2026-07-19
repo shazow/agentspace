@@ -118,6 +118,15 @@ in
       };
     };
 
+    # NixOS provisions /nix/store and /nix/var for an unprivileged daemon,
+    # but the local-overlay backend moves writable metadata outside /nix/var
+    # and gives the read-only lower store its own writable view.
+    systemd.tmpfiles.rules = [
+      "d ${upperStateDir} 0755 ${config.nix.daemonUser} ${config.nix.daemonGroup} - -"
+      "d ${lowerStoreViewDir} 0755 ${config.nix.daemonUser} ${config.nix.daemonGroup} - -"
+      "d ${lowerStoreViewDir}/.links 0755 ${config.nix.daemonUser} ${config.nix.daemonGroup} - -"
+    ];
+
     nix.settings.experimental-features = [
       "local-overlay-store"
       "read-only-local-store"

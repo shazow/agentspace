@@ -34,6 +34,24 @@ let
     persistence.storeDisk = true;
   };
 
+  vmNonRootLocalOverlayStore = mkSandbox {
+    persistence.homeImage = null;
+    extraModules = [
+      {
+        users.groups.nix-daemon = { };
+        users.users.nix-daemon = {
+          isSystemUser = true;
+          group = "nix-daemon";
+        };
+        nix = {
+          daemonUser = "nix-daemon";
+          daemonGroup = "nix-daemon";
+          settings.experimental-features = [ "auto-allocate-uids" ];
+        };
+      }
+    ];
+  };
+
   vmQuietDisabled = mkSandbox {
     quiet = false;
     persistence.homeImage = null;
@@ -450,6 +468,7 @@ let
       storeMount = defaultConfig.fileSystems."/nix/store";
       lowerStoreViewMount = defaultConfig.fileSystems."/nix/.local-overlay-lower-store";
       daemonService = defaultConfig.systemd.services.nix-daemon;
+      nonRootTmpfiles = vmNonRootLocalOverlayStore.config.systemd.tmpfiles.rules;
     in
     assert defaultConfig.agentspace.sandbox.localOverlayStore.enable;
     assert defaultConfig.microvm.writableStoreOverlay == null;
@@ -472,6 +491,11 @@ let
     assert builtins.elem "/nix/store" daemonService.unitConfig.RequiresMountsFor;
     assert builtins.elem "/nix/.local-overlay-lower-store" daemonService.unitConfig.RequiresMountsFor;
     assert builtins.elem "/nix/.rw-store/state" daemonService.unitConfig.RequiresMountsFor;
+    assert builtins.elem "d /nix/.rw-store/state 0755 nix-daemon nix-daemon - -" nonRootTmpfiles;
+    assert builtins.elem "d /nix/.local-overlay-lower-store 0755 nix-daemon nix-daemon - -"
+      nonRootTmpfiles;
+    assert builtins.elem "d /nix/.local-overlay-lower-store/.links 0755 nix-daemon nix-daemon - -"
+      nonRootTmpfiles;
     assert vmLegacyStoreOverlay.config.microvm.writableStoreOverlay == "/nix/.rw-store";
     assert vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".neededForBoot;
     assert vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".fsType == "erofs";
