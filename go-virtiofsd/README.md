@@ -29,7 +29,7 @@ QEMU must connect that socket to a `vhost-user-fs-pci` device with shared guest 
 Every node is a go-fuse loopback node wrapped by an Agentspace policy that:
 
 - accepts only `O_RDONLY` opens;
-- strips `O_NOATIME`, which an unprivileged daemon cannot use for root-owned Nix store files;
+- strips `O_NOATIME`, which an unprivileged daemon cannot use for root-owned Nix store files; ordinary reads may therefore update host atime when the host mount's atime policy permits it;
 - rejects create/truncate/append flags;
 - rejects every file ioctl with `ENOTTY` rather than forwarding guest-controlled commands to the host;
 - returns `EROFS` for setattr, write, allocation, copy-file-range, xattr mutation, create, link, symlink, rename, unlink, rmdir, mkdir, and mknod operations.
@@ -38,14 +38,15 @@ Guest mounts are independently marked read-only, and the host `/nix/store` permi
 
 ## Pinned go-fuse fixes
 
-The Nix package pins go-fuse v2.10.1 and applies narrow source substitutions in the vendored dependency:
+The Nix package pins go-fuse v2.10.1 and applies one fail-closed debug-setting substitution plus one fail-closed transport patch:
 
-1. honor the caller's debug setting instead of logging every vhost-user control message;
-2. wake a queue reader when QEMU disables its vring;
-3. avoid a dispatch-lock deadlock after that wakeup;
-4. implement the `GET_VRING_BASE` disconnect operation expected by QEMU.
+1. the substitution honors the caller's debug setting instead of logging every vhost-user control message;
+2. the transport patch preserves nonblocking kick eventfds and wakes queue readers during shutdown;
+3. the transport patch stops dequeue under the dispatch lock, then joins readers and every request handler after releasing it;
+4. the transport patch implements the `GET_VRING_BASE` disconnect operation expected by QEMU with a stable last-available index;
+5. the transport patch rejects empty indirect tables and cyclic or overlong descriptor chains.
 
-These changes belong upstream if the prototype continues. They are intentionally visible in `package.nix` rather than hidden in generated vendor source.
+These changes belong upstream if the prototype continues. They are intentionally visible as exact, fail-closed build steps in `package.nix` rather than hidden in generated vendor source.
 
 ## Prototype limitations
 

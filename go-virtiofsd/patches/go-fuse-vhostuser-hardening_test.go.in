@@ -1,0 +1,388 @@
+package vhostuser
+
+import (
+	"encoding/binary"
+	"sync/atomic"
+	"syscall"
+	"testing"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
+)
+
+const (
+	testObservationWindow = 50 * time.Millisecond
+	testTimeout           = time.Second
+)
+
+type readerResult struct {
+	control *readerControl
+	err     error
+}
+
+func testEventfd(t *testing.T) int {
+	t.Helper()
+	fd, err := unix.Eventfd(0, unix.EFD_CLOEXEC|unix.EFD_NONBLOCK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fd
+}
+
+func TestSetVringKickPreservesNonblockingStatus(t *testing.T) {
+	qemuFD := testEventfd(t)
+	defer unix.Close(qemuFD)
+	backendFD, err := unix.Dup(qemuFD)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	device := NewDevice(nil)
+	defer device.Close()
+	if err := device.SetVringKick(backendFD, 0); err != nil {
+		t.Fatalf("SetVringKick: %v", err)
+	}
+	flags, err := unix.FcntlInt(uintptr(qemuFD), unix.F_GETFL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags&unix.O_NONBLOCK == 0 {
+		t.Fatal("SetVringKick cleared O_NONBLOCK on the driver's shared eventfd")
+	}
+}
+
+func TestDisableDoesNotJoinReaderUnderDispatchLock(t *testing.T) {
+	device := NewDevice(nil)
+	defer device.Close()
+	vq := device.vqs[0]
+	vq.KickFD = testEventfd(t)
+	device.dispatchMu.Lock()
+	vq.SetEnable(func(*VirtqElem) int { return 0 })
+
+	var wake [8]byte
+	binary.LittleEndian.PutUint64(wake[:], 1)
+	if _, err := unix.Write(vq.KickFD, wake[:]); err != nil {
+		t.Fatal(err)
+	}
+	state := VhostVringState{Index: 0}
+	done := make(chan readerResult, 1)
+	go func() {
+		control, err := device.SetVringEnable(&state)
+		done <- readerResult{control: control, err: err}
+	}()
+	var result readerResult
+	select {
+	case result = <-done:
+	case <-time.After(testTimeout):
+		device.dispatchMu.Unlock()
+		result = <-done
+		result.control.wait()
+		t.Fatal("SET_VRING_ENABLE(0) waited for the reader while holding dispatchMu")
+	}
+	device.dispatchMu.Unlock()
+	if result.err != nil {
+		t.Fatalf("SetVringEnable: %v", result.err)
+	}
+	result.control.wait()
+	if err := device.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetVringBaseStopsBeforeReportingLastAvail(t *testing.T) {
+	device := NewDevice(nil)
+	vq := device.vqs[0]
+	vq.KickFD = testEventfd(t)
+	vq.LastAvailIdx = 23
+	device.dispatchMu.Lock()
+	vq.SetEnable(func(*VirtqElem) int { return 0 })
+
+	state := VhostVringState{Index: 0}
+	done := make(chan readerResult, 1)
+	go func() {
+		control, err := device.GetVringBase(&state)
+		done <- readerResult{control: control, err: err}
+	}()
+	var result readerResult
+	select {
+	case result = <-done:
+	case <-time.After(testTimeout):
+		device.dispatchMu.Unlock()
+		result = <-done
+		result.control.wait()
+		t.Fatal("GET_VRING_BASE waited for the reader while holding dispatchMu")
+	}
+	device.dispatchMu.Unlock()
+	if result.err != nil {
+		t.Fatalf("GetVringBase: %v", result.err)
+	}
+	result.control.wait()
+	if state.Num != 23 {
+		t.Fatalf("GET_VRING_BASE returned %d, want 23", state.Num)
+	}
+	if err := device.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetVringBaseRejectsOutOfRangeIndex(t *testing.T) {
+	device := NewDevice(nil)
+	state := VhostVringState{Index: uint32(len(device.vqs))}
+	control, err := device.GetVringBase(&state)
+	if err == nil {
+		t.Fatal("GetVringBase accepted an out-of-range queue index")
+	}
+	if control != nil {
+		t.Fatal("GetVringBase returned a reader for an out-of-range queue index")
+	}
+}
+
+func TestRepeatedEnableReusesActiveReader(t *testing.T) {
+	device := NewDevice(nil)
+	vq := device.vqs[0]
+	vq.KickFD = testEventfd(t)
+	enable := VhostVringState{Index: 0, Num: 1}
+	if _, err := device.SetVringEnable(&enable); err != nil {
+		t.Fatal(err)
+	}
+	first := vq.control
+	if _, err := device.SetVringEnable(&enable); err != nil {
+		t.Fatal(err)
+	}
+	second := vq.control
+	if first != second {
+		close(first.cancel)
+		close(second.cancel)
+		var wake [8]byte
+		wake[0] = 1
+		_, _ = unix.Write(vq.KickFD, wake[:])
+		first.wait()
+		second.wait()
+		vq.control = nil
+		_ = vq.closeFDs()
+		t.Fatal("repeated enable replaced the active queue reader")
+	}
+
+	disable := VhostVringState{Index: 0}
+	control, err := device.SetVringEnable(&disable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control.wait()
+	repeatedDisable, err := device.SetVringEnable(&disable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeatedDisable != nil {
+		t.Fatal("repeated disable returned a queue reader")
+	}
+	if _, err := device.SetVringEnable(&enable); err != nil {
+		t.Fatal(err)
+	}
+	restarted := vq.control
+	if restarted == nil || restarted == first {
+		t.Fatal("re-enable did not start a fresh queue reader")
+	}
+	finalControl, err := device.SetVringEnable(&disable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalControl.wait()
+	if err := device.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetVringEnableRejectsInvalidSetup(t *testing.T) {
+	t.Run("out-of-range index", func(t *testing.T) {
+		device := NewDevice(nil)
+		state := VhostVringState{Index: uint32(len(device.vqs)), Num: 1}
+		control, err := device.SetVringEnable(&state)
+		if err == nil {
+			t.Fatal("SetVringEnable accepted an out-of-range queue index")
+		}
+		if control != nil {
+			t.Fatal("SetVringEnable returned a reader for an out-of-range queue index")
+		}
+	})
+
+	t.Run("missing kick descriptor", func(t *testing.T) {
+		device := NewDevice(nil)
+		state := VhostVringState{Index: 0, Num: 1}
+		control, err := device.SetVringEnable(&state)
+		if err == nil {
+			t.Fatal("SetVringEnable accepted a queue without a kick descriptor")
+		}
+		if control != nil || device.vqs[0].control != nil {
+			t.Fatal("SetVringEnable started a reader without a kick descriptor")
+		}
+		if err := device.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestPopBatchRegistersHandlersBeforeReleasingDispatchLock(t *testing.T) {
+	device := NewDevice(nil)
+	vq := device.vqs[0]
+	vq.Vring.Num = 1
+	vq.Vring.Desc = []VringDesc{{Addr: 0x1000}}
+	vq.Vring.Avail = &VringAvail{Idx: 1}
+	vq.Vring.AvailRing = []uint16{0}
+	var availEvent uint16
+	vq.Vring.UsedAvailEvent = &availEvent
+	memory := []byte{0}
+	regions := []deviceRegion{{
+		VhostUserMemoryRegion: VhostUserMemoryRegion{GuestPhysAddr: 0x1000, MemorySize: 1},
+		Data:                  memory,
+	}}
+	device.regions.regions.Store(&regions)
+	control := &readerControl{cancel: make(chan struct{}), done: make(chan struct{})}
+
+	batch := vq.popBatch(control)
+	if len(batch) != 1 {
+		t.Fatalf("popBatch returned %d elements, want 1", len(batch))
+	}
+	close(control.done)
+	waiting := make(chan struct{})
+	joined := make(chan struct{})
+	go func() {
+		close(waiting)
+		control.wait()
+		close(joined)
+	}()
+	<-waiting
+	select {
+	case <-joined:
+		t.Fatal("handler wait completed before the dequeued request called Done")
+	case <-time.After(testObservationWindow):
+	}
+	control.handlers.Done()
+	select {
+	case <-joined:
+	case <-time.After(testTimeout):
+		t.Fatal("handler wait did not complete after the dequeued request called Done")
+	}
+}
+
+func TestDeviceCloseJoinsInflightHandlers(t *testing.T) {
+	device := NewDevice(nil)
+	vq := device.vqs[0]
+	vq.KickFD = testEventfd(t)
+	vq.CallFD = testEventfd(t)
+	vq.Vring.Num = 1
+	vq.Vring.Desc = []VringDesc{{Addr: 0x1000}}
+	vq.Vring.Avail = &VringAvail{Idx: 1}
+	vq.Vring.AvailRing = []uint16{0}
+	vq.Vring.Used = &VringUsed{}
+	vq.Vring.UsedRing = []VringUsedElement{{}}
+	var usedEvent uint16
+	vq.Vring.AvailUsedEvent = &usedEvent
+	var availEvent uint16
+	vq.Vring.UsedAvailEvent = &availEvent
+	// deviceRegion.Close uses syscall.Munmap, whose mapper only accepts
+	// mappings created through syscall.Mmap.
+	memory, err := syscall.Mmap(-1, 0, 4096, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_PRIVATE|syscall.MAP_ANON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regions := []deviceRegion{{
+		VhostUserMemoryRegion: VhostUserMemoryRegion{GuestPhysAddr: 0x1000, MemorySize: uint64(len(memory))},
+		Data:                  memory,
+	}}
+	device.regions.regions.Store(&regions)
+
+	handlerStarted := make(chan struct{})
+	allowHandler := make(chan struct{})
+	var handlerFinished atomic.Bool
+	vq.SetEnable(func(*VirtqElem) int {
+		close(handlerStarted)
+		<-allowHandler
+		handlerFinished.Store(true)
+		return 0
+	})
+	var wake [8]byte
+	wake[0] = 1
+	if _, err := unix.Write(vq.KickFD, wake[:]); err != nil {
+		t.Fatal(err)
+	}
+	<-handlerStarted
+
+	closed := make(chan error, 1)
+	go func() {
+		closed <- device.Close()
+	}()
+	select {
+	case err := <-closed:
+		close(allowHandler)
+		if err != nil {
+			t.Fatalf("Device.Close returned early with error: %v", err)
+		}
+		t.Fatal("Device.Close returned before the in-flight handler completed")
+	case <-time.After(testObservationWindow):
+	}
+	close(allowHandler)
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Device.Close: %v", err)
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("Device.Close did not return after the in-flight handler completed")
+	}
+	if !handlerFinished.Load() {
+		t.Fatal("Device.Close returned before the in-flight handler completed")
+	}
+}
+
+func TestQueueMapDescRejectsInvalidChainsFromUntrustedMemory(t *testing.T) {
+	const guestBase = 0x1000
+	memory := make([]byte, 256)
+	regions := []deviceRegion{{
+		VhostUserMemoryRegion: VhostUserMemoryRegion{GuestPhysAddr: guestBase, MemorySize: uint64(len(memory))},
+		Data:                  memory,
+	}}
+	device := NewDevice(nil)
+	device.regions.regions.Store(&regions)
+	vq := device.vqs[0]
+
+	tests := map[string][]VringDesc{
+		"self cycle": {
+			{Addr: guestBase, Flags: VRING_DESC_F_NEXT, Next: 0},
+		},
+		"multi-node cycle": {
+			{Addr: guestBase, Flags: VRING_DESC_F_NEXT, Next: 1},
+			{Addr: guestBase, Flags: VRING_DESC_F_NEXT, Next: 0},
+		},
+	}
+	for name, descriptors := range tests {
+		t.Run(name, func(t *testing.T) {
+			vq.Vring.Desc = descriptors
+			if _, err := vq.queueMapDesc(0); err == nil {
+				t.Fatal("queueMapDesc accepted a cyclic direct descriptor chain")
+			}
+		})
+	}
+
+	t.Run("zero-length indirect", func(t *testing.T) {
+		vq.Vring.Desc = []VringDesc{{Addr: guestBase, Flags: VRING_DESC_F_INDIRECT}}
+		if _, err := vq.queueMapDesc(0); err == nil {
+			t.Fatal("queueMapDesc accepted an empty indirect descriptor table")
+		}
+	})
+
+	t.Run("indirect cycle", func(t *testing.T) {
+		indirect := unsafe.Slice((*VringDesc)(unsafe.Pointer(&memory[0])), 2)
+		indirect[0] = VringDesc{Addr: guestBase + 64, Flags: VRING_DESC_F_NEXT, Next: 1}
+		indirect[1] = VringDesc{Addr: guestBase + 64, Flags: VRING_DESC_F_NEXT, Next: 0}
+		vq.Vring.Desc = []VringDesc{{
+			Addr:  guestBase,
+			Len:   uint32(2 * unsafe.Sizeof(VringDesc{})),
+			Flags: VRING_DESC_F_INDIRECT,
+		}}
+		if _, err := vq.queueMapDesc(0); err == nil {
+			t.Fatal("queueMapDesc accepted a cyclic indirect descriptor chain")
+		}
+	})
+}

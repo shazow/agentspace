@@ -37,7 +37,7 @@ Acceptance criteria:
 - [x] Add daemon CLI and Nix packaging.
 - [x] Add opt-in manifest integration.
 - [x] Run end-to-end and regression checks.
-- [x] Complete clean-context review.
+- [x] Complete clean-context review and pre-merge hardening.
 
 ## Appendix
 
