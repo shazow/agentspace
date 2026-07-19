@@ -24,6 +24,16 @@ let
     persistence.homeImage = null;
   };
 
+  vmLegacyStoreOverlay = mkSandbox {
+    localOverlayStore.enable = false;
+    persistence.homeImage = null;
+  };
+
+  vmLocalOverlayStoreDisk = mkSandbox {
+    persistence.homeImage = null;
+    persistence.storeDisk = true;
+  };
+
   vmQuietDisabled = mkSandbox {
     quiet = false;
     persistence.homeImage = null;
@@ -433,6 +443,38 @@ let
     assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;
     true;
 
+  _localOverlayStore =
+    let
+      defaultConfig = vmDefault.config;
+      storeUri = defaultConfig.agentspace.sandbox.localOverlayStore.storeUri;
+      storeMount = defaultConfig.fileSystems."/nix/store";
+      daemonService = defaultConfig.systemd.services.nix-daemon;
+    in
+    assert defaultConfig.agentspace.sandbox.localOverlayStore.enable;
+    assert defaultConfig.microvm.writableStoreOverlay == null;
+    assert storeMount.neededForBoot;
+    assert storeMount.overlay.lowerdir == [ "/nix/.ro-store" ];
+    assert storeMount.overlay.upperdir == "/nix/.rw-store/store";
+    assert storeMount.overlay.workdir == "/nix/.rw-store/work";
+    assert defaultConfig.fileSystems."/nix/.rw-store".neededForBoot;
+    assert builtins.elem "overlay" defaultConfig.boot.initrd.kernelModules;
+    assert builtins.elem "local-overlay-store" defaultConfig.nix.settings.experimental-features;
+    assert builtins.elem "read-only-local-store" defaultConfig.nix.settings.experimental-features;
+    assert pkgs.lib.hasPrefix "local-overlay://" storeUri;
+    assert pkgs.lib.hasInfix "read-only%3Dtrue" storeUri;
+    assert pkgs.lib.hasInfix "check-mount=false" storeUri;
+    assert builtins.readFile daemonService.serviceConfig.EnvironmentFile == "NIX_REMOTE=${storeUri}\n";
+    assert builtins.elem "post-boot.service" daemonService.after;
+    assert builtins.elem "/nix/store" daemonService.unitConfig.RequiresMountsFor;
+    assert builtins.elem "/nix/.rw-store/state" daemonService.unitConfig.RequiresMountsFor;
+    assert vmLegacyStoreOverlay.config.microvm.writableStoreOverlay == "/nix/.rw-store";
+    assert vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".neededForBoot;
+    assert vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".fsType == "erofs";
+    assert
+      vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".device
+      == "/dev/disk/by-label/nix-store";
+    true;
+
   _quietDisabled =
     assert !(builtins.elem "quiet" quietDisabledKernelParams);
     assert !(builtins.elem "udev.log_level=3" quietDisabledKernelParams);
@@ -736,6 +778,10 @@ in
   virtie-manifest-default-ssh-contract =
     assert _defaultSSH;
     pkgs.runCommand "virtie-manifest-default-ssh-contract" { } "touch $out";
+
+  virtie-manifest-local-overlay-store-contract =
+    assert _localOverlayStore;
+    pkgs.runCommand "virtie-manifest-local-overlay-store-contract" { } "touch $out";
 
   virtie-manifest-quiet-disabled-contract =
     assert _quietDisabled;

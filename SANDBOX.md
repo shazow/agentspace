@@ -61,6 +61,7 @@ SSH login is disabled.
 | `persistence.homeSize` (`4096`) | Home image size in MB. |
 | `persistence.storeOverlay` (`"nix-store-overlay.img"`) | Writable Nix-store overlay image path. |
 | `persistence.storeDisk` (`false`) | Use a generated read-only Nix-store disk instead of sharing the host `/nix/store`. |
+| `localOverlayStore.enable` (`true`) | Use Nix's experimental `local-overlay-store` backend so the writable layer and its Nix database persist together. Set to `false` to use microvm.nix's legacy writable-store overlay. |
 
 `persistence.basedir` is a hidden, deprecated spelling of `baseDir`; new
 configurations should use `persistence.baseDir`.
@@ -115,8 +116,24 @@ agentspace.sandbox.nixStoreShareSocket = "/run/virtiofs-nix-store.sock";
 | `socketGroup` (`"kvm"`) | Group owning the virtiofsd socket. |
 | `ownHardening` (`false`) | Disable virtiofsd's own sandboxing and rely on systemd hardening (`ProtectSystem`, `PrivateNetwork`, etc.) instead. |
 
-The default writable store overlay is a 8 GiB image. Additional `volumes` are
-attached after the built-in store overlay and optional home image. Additional
+The default writable store overlay is an 8 GiB image. With
+`localOverlayStore.enable`, it contains both the OverlayFS upper layer and the
+native Nix state database. The guest still uses the Nix daemon socket; only the
+daemon opens the `local-overlay` store directly. This enables the experimental
+`local-overlay-store` and `read-only-local-store` Nix features. Existing images
+created by the legacy overlay do not contain the native database; keep using
+the legacy mode or start with a fresh store-overlay image when switching.
+
+The native backend does not make a mutable lower store safe. When the default
+host `/nix/store` share is used, do not add, remove, or mutate host store paths
+while the VM is running. Across restarts the lower store may grow, but removing
+lower paths referenced by the persistent upper database is unsupported. In
+particular, host garbage collection can still invalidate a retained sandbox.
+`persistence.storeDisk = true` avoids concurrent host mutation by using an
+immutable lower-store image.
+
+Additional `volumes` are attached after the built-in store overlay and optional
+home image. Additional
 shares and forwards are merged with the built-in mounts and user-mode network.
 
 ## Host-side processes and notifications

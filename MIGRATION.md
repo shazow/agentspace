@@ -4,6 +4,42 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-07-19: writable guest stores use Nix local-overlay metadata
+
+### Who Is Affected
+
+- `mkSandbox` and `agentspace.nixosModules.default` users that retain a writable
+  Nix-store overlay image across launches.
+- Users that run host Nix operations while a sandbox shares the host
+  `/nix/store` as its lower layer.
+
+### What Changed
+
+`agentspace.sandbox.localOverlayStore.enable` now defaults to `true`. The guest
+uses Nix's experimental `local-overlay-store` backend and persists its native
+database in the same image as the OverlayFS upper layer. This keeps store paths
+added by the guest registered across restarts. Setting the option to `false`
+restores the previous `microvm.writableStoreOverlay` behavior.
+
+Legacy images contain upper-layer files but no corresponding native database,
+so they are not automatically migrated. The lower-store restrictions also
+still apply: the shared host store must not change while mounted, and removing
+lower paths referenced by the persistent database is unsupported.
+
+### Migration Steps
+
+To adopt the native backend, preserve the old image if it contains useful data
+and configure a fresh `persistence.storeOverlay` path. To keep using an existing
+legacy image, opt out explicitly:
+
+```nix
+agentspace.sandbox.localOverlayStore.enable = false;
+```
+
+Avoid host Nix builds and garbage collection while a VM is using the shared
+host store. For an immutable lower layer, set
+`agentspace.sandbox.persistence.storeDisk = true`.
+
 ## 2026-06-15: virtie guest control RPCs renamed and expanded
 
 ### Who Is Affected

@@ -38,6 +38,7 @@ let
 in
 {
   imports = [
+    ./local-overlay-store.nix
     ./unsupported.nix
   ];
 
@@ -845,7 +846,7 @@ in
             ++ workspaceShares
             ++ cfg.shares;
 
-          writableStoreOverlay = "/nix/.rw-store";
+          writableStoreOverlay = lib.mkIf (!cfg.localOverlayStore.enable) "/nix/.rw-store";
 
           volumes = [
             {
