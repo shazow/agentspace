@@ -184,7 +184,10 @@
           ;
       };
 
-      legacyPackages.${system}.graphicalChecks = import ./checks/graphical.nix checkArgs;
+      legacyPackages.${system} = {
+        graphicalChecks = import ./checks/graphical.nix checkArgs;
+        vmChecks = import ./checks/local-overlay-store.nix checkArgs;
+      };
 
       apps.${system} = {
         default = self.apps.${system}.launch;
