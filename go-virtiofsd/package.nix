@@ -14,12 +14,6 @@ buildGoModule {
       --replace-fail \
         'close(vq.control.cancel)' \
         'close(vq.control.cancel); _, _ = syscall.Write(vq.KickFD, []byte{1, 0, 0, 0, 0, 0, 0, 0})'
-    # SET_VRING_ENABLE holds the dispatch write lock while waiting for the
-    # reader. Once woken, exit before popBatch attempts the matching read lock.
-    substituteInPlace vendor/github.com/hanwen/go-fuse/v2/internal/vhostuser/util.go \
-      --replace-fail \
-        $'\t\t// Process the batch without holding any lock.' \
-        $'\t\tselect {\n\t\tcase <-vq.control.cancel:\n\t\t\treturn\n\t\tdefault:\n\t\t}\n\n\t\t// Process the batch without holding any lock.'
     # QEMU requests GET_VRING_BASE while disconnecting. Stop the reader and
     # return its last available index as required by the vhost-user protocol.
     substituteInPlace vendor/github.com/hanwen/go-fuse/v2/internal/vhostuser/device.go \
@@ -35,6 +29,19 @@ buildGoModule {
     # control message unconditionally.
     substituteInPlace vendor/github.com/hanwen/go-fuse/v2/virtiofs/virtiofs.go \
       --replace-fail 'srv.Debug = true' 'srv.Debug = opts.Debug'
+
+    # SCM_RIGHTS duplicates share file status flags. go-fuse must not clear
+    # O_NONBLOCK on QEMU's kick eventfds: QEMU drains the same open file
+    # descriptions during shutdown and otherwise blocks before replying to QMP
+    # quit. Poll the nonblocking descriptor instead.
+    chmod -R u+w vendor/github.com/hanwen/go-fuse/v2/internal/vhostuser
+    patch -p1 -d vendor/github.com/hanwen/go-fuse/v2 \
+      < ${./patches/go-fuse-vhostuser-nonblocking.patch}
+    cp ${./patches/go-fuse-vhostuser-nonblocking_test.go.in} \
+      vendor/github.com/hanwen/go-fuse/v2/internal/vhostuser/nonblocking_test.go
+  '';
+  preCheck = ''
+    go test github.com/hanwen/go-fuse/v2/internal/vhostuser
   '';
   ldflags = [
     "-s"

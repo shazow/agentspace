@@ -51,12 +51,19 @@ These changes belong upstream if the prototype continues. They are intentionally
 
 This is not yet a hardened security boundary:
 
-- go-fuse's vhost-user package has no direct unit tests and handles malformed guest-controlled memory with relatively young code;
+- go-fuse's vhost-user package handles malformed guest-controlled memory with relatively young code; the Agentspace package adds focused lifecycle regression tests, but upstream coverage remains limited;
 - the public `virtiofs.ServeFS` API cannot return startup/runtime errors or shut down through a context;
 - transport configuration is hardcoded to one request queue plus the hiprio queue;
 - `FUSE_SYNCFS` is currently answered as unimplemented; current guest boot tolerates that;
-- the current Agentspace QMP shutdown deadline still expires even after QEMU's vhost-user disconnect completes, so a successful guest command can be followed by `qmp quit timed out after 500ms`;
 - no performance or resource-exhaustion benchmark has been completed.
+
+The package carries a shutdown patch for go-fuse v2.10.1. The backend previously
+cleared `O_NONBLOCK` on kick eventfds received with `SCM_RIGHTS`; because file
+status flags are shared across duplicated descriptors, this also made QEMU's
+copy blocking. QEMU then hung while draining that eventfd before replying to
+QMP `quit`. The patched backend preserves `O_NONBLOCK` and waits with `poll(2)`,
+and the full guest boot/read/write-rejection/shutdown smoke test now exits
+successfully within virtie's existing 500 ms QMP deadline.
 
 Keep the option experimental and retain upstream `virtiofsd` as the fallback.
 
@@ -75,4 +82,4 @@ nix build .#agentspace-storefs --no-link
 nix build .#checks.x86_64-linux.virtie-manifest-go-store-contract --no-link
 ```
 
-The end-to-end prototype test boots an Agentspace VM, reads an executable and directory data through `/nix/.ro-store`, checks that creating a file fails, reaches SSH, and prints `STORE-FS-E2E-OK`.
+The end-to-end prototype test boots an Agentspace VM, reads an executable and directory data through `/nix/.ro-store`, checks that creating a file fails, reaches SSH, shuts QEMU down within the existing QMP deadline, and prints `STORE-FS-QMP-SHUTDOWN-OK`.

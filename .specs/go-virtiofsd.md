@@ -41,6 +41,6 @@ Acceptance criteria:
 
 ## Appendix
 
-The prototype pins go-fuse v2.10.1. Its `virtiofs` package is sufficient to boot the current x86_64 QEMU guest, but its vhost-user layer is young: it exposes no graceful shutdown/error API, hardcodes one request queue plus hiprio, and has no direct unit tests. The prototype therefore remains opt-in.
+The prototype pins go-fuse v2.10.1. Its `virtiofs` package is sufficient to boot the current x86_64 QEMU guest, but its vhost-user layer is young: it exposes no graceful shutdown/error API, hardcodes one request queue plus hiprio, and has limited upstream unit coverage. The packaged lifecycle patches include focused regression tests. The prototype therefore remains opt-in.
 
-The end-to-end guest printed `STORE-FS-E2E-OK` after reading Nix-store file and directory data and rejecting a write. QEMU's command completed, but virtie's 500 ms QMP quit deadline still expired while the go-fuse connection was being torn down; this remains a documented prototype limitation.
+The end-to-end guest printed `STORE-FS-QMP-SHUTDOWN-OK` after reading Nix-store file and directory data and rejecting a write. The initial 500 ms QMP timeout was traced to go-fuse clearing `O_NONBLOCK` on a kick eventfd received through `SCM_RIGHTS`, which changed the same open file description retained by QEMU. QEMU then blocked draining its eventfd during device teardown before it could reply to `quit`. The packaged patch preserves nonblocking status and polls for kicks; the complete guest workload and QMP shutdown now exit successfully without increasing virtie's deadline.

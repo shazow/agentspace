@@ -1,0 +1,39 @@
+diff --git a/internal/vhostuser/device.go b/internal/vhostuser/device.go
+index f0fe56e..d1b9287 100644
+--- a/internal/vhostuser/device.go
++++ b/internal/vhostuser/device.go
+@@ -162,5 +161,0 @@ func (d *Device) SetVringKick(fd int, index uint64) error {
+-
+-	// The kick FD is a notification channel, so it must be blocking.
+-	if err := syscall.SetNonblock(fd, false); err != nil {
+-		return err
+-	}
+diff --git a/internal/vhostuser/util.go b/internal/vhostuser/util.go
+index af609f1..ff83fe1 100644
+--- a/internal/vhostuser/util.go
++++ b/internal/vhostuser/util.go
+@@ -9,0 +10,2 @@ import (
++
++	"golang.org/x/sys/unix"
+@@ -56,0 +59,17 @@ func (vq *Virtq) readLoop(handle func(data *VirtqElem) int) {
++		pollFDs := []unix.PollFd{{Fd: int32(vq.KickFD), Events: unix.POLLIN}}
++		for {
++			if _, err := unix.Poll(pollFDs, -1); err == unix.EINTR {
++				continue
++			} else if err != nil {
++				log.Printf("poll: %v", err)
++				return
++			}
++			break
++		}
++
++		select {
++		case <-vq.control.cancel:
++			return
++		default:
++		}
++
+@@ -58,0 +78,3 @@ func (vq *Virtq) readLoop(handle func(data *VirtqElem) int) {
++		if err == syscall.EAGAIN {
++			continue
++		}
