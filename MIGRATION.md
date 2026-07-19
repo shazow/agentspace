@@ -4,6 +4,47 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-07-19: writable guest stores use Nix local-overlay metadata
+
+### Who Is Affected
+
+- `mkSandbox` and `agentspace.nixosModules.default` users that retain a writable
+  Nix-store overlay image across launches.
+- Users that run host Nix operations while a sandbox shares the host
+  `/nix/store` as its lower layer.
+
+### What Changed
+
+The guest now always uses Nix's experimental `local-overlay-store` backend and
+persists its native database in the same image as the OverlayFS upper layer.
+This keeps store paths added by the guest registered across restarts. The
+legacy `microvm.writableStoreOverlay` mode is no longer supported.
+
+The default writable image path changed from `nix-store-overlay.img` to
+`nix-store-overlay-v2.img`, so existing default images are not reused. The
+launch wrapper warns when the old image exists; it is no longer used and can be
+safely deleted. Legacy images contain upper-layer files but no corresponding
+native database, so they are not automatically migrated. The lower-store
+restrictions also still apply: the shared host store must not change while
+mounted, and removing lower paths referenced by the persistent database is
+unsupported.
+
+The creation size for new writable images is configurable in MiB with
+`persistence.storeOverlaySize` and defaults to `8192`. Changing it does not
+resize an existing image.
+
+### Migration Steps
+
+Users who explicitly configure `persistence.storeOverlay` with an existing
+legacy image should change it to a fresh image path before upgrading. There is
+no supported in-place migration for legacy images. Remove any
+`agentspace.sandbox.localOverlayStore.enable` setting; the native backend is no
+longer optional.
+
+Avoid host Nix builds and garbage collection while a VM is using the shared
+host store. For an immutable lower layer, set
+`agentspace.sandbox.persistence.storeDisk = true`.
+
 ## 2026-06-15: virtie guest control RPCs renamed and expanded
 
 ### Who Is Affected

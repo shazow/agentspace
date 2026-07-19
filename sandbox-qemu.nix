@@ -16,6 +16,7 @@ let
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
+  legacyStoreOverlay = resolvePersistencePath "nix-store-overlay.img";
   resolvedSerialMode = if cfg.quiet then "off" else "print";
   workspaceHostDir = cfg.workspace.hostDir;
   workspaceSwapFile = "${cfg.workspace.guestDir}/swapfile";
@@ -38,6 +39,7 @@ let
 in
 {
   imports = [
+    ./local-overlay-store.nix
     ./unsupported.nix
   ];
 
@@ -150,8 +152,14 @@ in
 
       storeOverlay = lib.mkOption {
         type = lib.types.str;
-        default = "nix-store-overlay.img";
+        default = "nix-store-overlay-v2.img";
         description = "Path for the writable nix store overlay image.";
+      };
+
+      storeOverlaySize = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 8192;
+        description = "Size in MiB used when creating the writable Nix store overlay image. Existing images are not resized.";
       };
 
       storeDisk = lib.mkOption {
@@ -409,6 +417,11 @@ in
       commonInit = ''
         echo "🚀 Preparing Agent QEMU Sandbox..."
       ''
+      + lib.optionalString (resolvedStoreOverlay != legacyStoreOverlay) ''
+        if [ -e ${lib.escapeShellArg legacyStoreOverlay} ]; then
+          ${pkgs.coreutils}/bin/printf '%s\n' ${lib.escapeShellArg "agentspace: legacy Nix store overlay ${legacyStoreOverlay} is no longer used and can be safely deleted."} >&2
+        fi
+      ''
       + lib.optionalString cfg.workspace.enable ''
         ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg workspaceHostDir}
       ''
@@ -522,6 +535,7 @@ in
           homeImage = cfg.persistence.homeImage;
           homeSize = cfg.persistence.homeSize;
           storeOverlay = cfg.persistence.storeOverlay;
+          storeOverlaySize = cfg.persistence.storeOverlaySize;
           storeDisk = cfg.persistence.storeDisk;
         };
       };
@@ -669,6 +683,10 @@ in
           {
             assertion = cfg.persistence.basedir == null;
             message = "agentspace.sandbox.persistence.basedir was renamed to agentspace.sandbox.persistence.baseDir.";
+          }
+          {
+            assertion = cfg.persistence.storeOverlaySize >= 256;
+            message = "agentspace.sandbox.persistence.storeOverlaySize must be at least 256 MiB.";
           }
           {
             assertion = cfg.swapSize == 0 || cfg.workspace.enable;
@@ -845,13 +863,11 @@ in
             ++ workspaceShares
             ++ cfg.shares;
 
-          writableStoreOverlay = "/nix/.rw-store";
-
           volumes = [
             {
               image = resolvedStoreOverlay;
               mountPoint = "/nix/.rw-store";
-              size = 2 * 4096;
+              size = cfg.persistence.storeOverlaySize;
             }
           ]
           ++ lib.optionals (cfg.persistence.homeImage != null) [

@@ -14,6 +14,7 @@ let
       identityFile = sshKeys.virtie.identityFile;
     };
     persistence.homeImage = null;
+    persistence.storeOverlaySize = 6144;
     workspace = {
       enable = true;
       addCurrentDir = true;
@@ -22,6 +23,16 @@ let
 
   vmDefault = mkSandbox {
     persistence.homeImage = null;
+  };
+
+  vmLocalOverlayStoreDisk = mkSandbox {
+    persistence.homeImage = null;
+    persistence.storeDisk = true;
+  };
+
+  vmNonRootLocalOverlayStore = mkSandbox {
+    persistence.homeImage = null;
+    extraModules = [ ./local-overlay-store/non-root-daemon.nix ];
   };
 
   vmQuietDisabled = mkSandbox {
@@ -392,9 +403,9 @@ let
     assert manifest.ssh.ready_socket == "ready.sock";
     assert !(manifest.ssh ? retry_delay_ms);
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.exec;
-    assert builtins.any (volume: volume.source == ".agentspace/nix-store-overlay.img") (
-      mountsOfType "image" manifest
-    );
+    assert builtins.any (
+      volume: volume.source == ".agentspace/nix-store-overlay-v2.img" && volume.image.size == 6144
+    ) (mountsOfType "image" manifest);
     assert builtins.length virtiofsDaemonMounts > 0;
     assert builtins.all (
       mount: mount.virtiofs.socket != "" && mount.virtiofs.bin != ""
@@ -431,6 +442,46 @@ let
     assert !(builtins.elem ".agentspace/id_ed25519" defaultManifest.ssh.exec);
     assert defaultManifest.write_files == [ ];
     assert !(manifest.ssh ? autoprovision) || manifest.ssh.autoprovision == false;
+    true;
+
+  _localOverlayStore =
+    let
+      defaultConfig = vmDefault.config;
+      storeMount = defaultConfig.fileSystems."/nix/store";
+      lowerStoreViewMount = defaultConfig.fileSystems."/nix/.local-overlay-lower-store";
+      daemonService = defaultConfig.systemd.services.nix-daemon;
+      daemonEnvironment = builtins.readFile daemonService.serviceConfig.EnvironmentFile;
+      nonRootTmpfiles = vmNonRootLocalOverlayStore.config.systemd.tmpfiles.rules;
+    in
+    assert defaultConfig.microvm.writableStoreOverlay == null;
+    assert storeMount.neededForBoot;
+    assert storeMount.overlay.lowerdir == [ "/nix/.ro-store" ];
+    assert storeMount.overlay.upperdir == "/nix/.rw-store/store";
+    assert storeMount.overlay.workdir == "/nix/.rw-store/work";
+    assert lowerStoreViewMount.overlay.lowerdir == [ "/nix/.ro-store" ];
+    assert lowerStoreViewMount.overlay.upperdir == "/nix/.rw-store/lower-store-view";
+    assert lowerStoreViewMount.overlay.workdir == "/nix/.rw-store/lower-store-view-work";
+    assert defaultConfig.fileSystems."/nix/.rw-store".neededForBoot;
+    assert builtins.elem "overlay" defaultConfig.boot.initrd.kernelModules;
+    assert builtins.elem "local-overlay-store" defaultConfig.nix.settings.experimental-features;
+    assert builtins.elem "read-only-local-store" defaultConfig.nix.settings.experimental-features;
+    assert pkgs.lib.hasPrefix "NIX_REMOTE=local-overlay://" daemonEnvironment;
+    assert pkgs.lib.hasInfix "read-only%3Dtrue" daemonEnvironment;
+    assert pkgs.lib.hasInfix "check-mount=false" daemonEnvironment;
+    assert builtins.elem "post-boot.service" daemonService.after;
+    assert builtins.elem "/nix/store" daemonService.unitConfig.RequiresMountsFor;
+    assert builtins.elem "/nix/.local-overlay-lower-store" daemonService.unitConfig.RequiresMountsFor;
+    assert builtins.elem "/nix/.rw-store/state" daemonService.unitConfig.RequiresMountsFor;
+    assert builtins.elem "d /nix/.rw-store/state 0755 nix-daemon nix-daemon - -" nonRootTmpfiles;
+    assert builtins.elem "d /nix/.local-overlay-lower-store 0755 nix-daemon nix-daemon - -"
+      nonRootTmpfiles;
+    assert builtins.elem "d /nix/.local-overlay-lower-store/.links 0755 nix-daemon nix-daemon - -"
+      nonRootTmpfiles;
+    assert vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".neededForBoot;
+    assert vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".fsType == "erofs";
+    assert
+      vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".device
+      == "/dev/disk/by-label/nix-store";
     true;
 
   _quietDisabled =
@@ -715,7 +766,8 @@ let
                 baseDir = ".agentspace";
                 homeImage = null;
                 homeSize = 4096;
-                storeOverlay = "nix-store-overlay.img";
+                storeOverlay = "nix-store-overlay-v2.img";
+                storeOverlaySize = 8192;
                 storeDisk = false;
               };
             };
@@ -736,6 +788,10 @@ in
   virtie-manifest-default-ssh-contract =
     assert _defaultSSH;
     pkgs.runCommand "virtie-manifest-default-ssh-contract" { } "touch $out";
+
+  virtie-manifest-local-overlay-store-contract =
+    assert _localOverlayStore;
+    pkgs.runCommand "virtie-manifest-local-overlay-store-contract" { } "touch $out";
 
   virtie-manifest-quiet-disabled-contract =
     assert _quietDisabled;
