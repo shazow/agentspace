@@ -20,7 +20,7 @@ let
     ];
     persistence = {
       homeImage = "/var/lib/agentspace/home.img";
-      storeOverlay = "/var/lib/agentspace/nix-store-overlay.img";
+      storeOverlay = "/var/lib/agentspace/nix-store-overlay-v2.img";
     };
     machine = {
       memory = 512;
@@ -82,7 +82,7 @@ let
     assert sandboxCfg.ssh.command == "bash -lc pwd";
     assert sandboxCfg.ssh.autoconnect == true;
     assert sandboxCfg.persistence.homeImage == "/var/lib/agentspace/home.img";
-    assert sandboxCfg.persistence.storeOverlay == "/var/lib/agentspace/nix-store-overlay.img";
+    assert sandboxCfg.persistence.storeOverlay == "/var/lib/agentspace/nix-store-overlay-v2.img";
     assert sandboxCfg.machine.memory == 512;
     assert sandboxCfg.machine.vcpu == 16;
     assert
@@ -113,7 +113,7 @@ let
     assert builtins.any (volume: volume.source == "/var/lib/agentspace/home.img") (
       mountsOfType "image" manifest
     );
-    assert builtins.any (volume: volume.source == "/var/lib/agentspace/nix-store-overlay.img") (
+    assert builtins.any (volume: volume.source == "/var/lib/agentspace/nix-store-overlay-v2.img") (
       mountsOfType "image" manifest
     );
     true;
@@ -133,6 +133,15 @@ in
       test ${pkgs.lib.escapeShellArg manifestPath} = '.agentspace/virtie-agent-sandbox.toml'
       grep -F "bash -lc pwd" ${launchScript}
       grep -F 'virtie --manifest="$MANIFEST_PATH" launch -v --ssh -- "$@"' ${launchScript}
+
+      mkdir -p legacy-warning/.agentspace
+      touch legacy-warning/.agentspace/nix-store-overlay.img
+      (
+        cd legacy-warning
+        REPO_DIR=$PWD
+        ${sandboxCfg.launch.commonInit}
+      ) >legacy-warning/stdout 2>legacy-warning/stderr
+      grep -F 'legacy Nix store overlay .agentspace/nix-store-overlay.img is no longer used and can be safely deleted.' legacy-warning/stderr
 
       grep -F 'managed by virtie' ${virtiofsdHelper}
 

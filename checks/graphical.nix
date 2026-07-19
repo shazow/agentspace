@@ -15,7 +15,7 @@ let
     };
     persistence = {
       homeImage = null;
-      storeOverlay = "nix-store-overlay.img";
+      storeOverlay = "nix-store-overlay-v2.img";
       storeDisk = true;
     };
     machine = {

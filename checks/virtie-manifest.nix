@@ -24,11 +24,6 @@ let
     persistence.homeImage = null;
   };
 
-  vmLegacyStoreOverlay = mkSandbox {
-    localOverlayStore.enable = false;
-    persistence.homeImage = null;
-  };
-
   vmLocalOverlayStoreDisk = mkSandbox {
     persistence.homeImage = null;
     persistence.storeDisk = true;
@@ -407,7 +402,7 @@ let
     assert manifest.ssh.ready_socket == "ready.sock";
     assert !(manifest.ssh ? retry_delay_ms);
     assert builtins.elem ".agentspace-test/id_ed25519" manifest.ssh.exec;
-    assert builtins.any (volume: volume.source == ".agentspace/nix-store-overlay.img") (
+    assert builtins.any (volume: volume.source == ".agentspace/nix-store-overlay-v2.img") (
       mountsOfType "image" manifest
     );
     assert builtins.length virtiofsDaemonMounts > 0;
@@ -451,13 +446,12 @@ let
   _localOverlayStore =
     let
       defaultConfig = vmDefault.config;
-      storeUri = defaultConfig.agentspace.sandbox.localOverlayStore.storeUri;
       storeMount = defaultConfig.fileSystems."/nix/store";
       lowerStoreViewMount = defaultConfig.fileSystems."/nix/.local-overlay-lower-store";
       daemonService = defaultConfig.systemd.services.nix-daemon;
+      daemonEnvironment = builtins.readFile daemonService.serviceConfig.EnvironmentFile;
       nonRootTmpfiles = vmNonRootLocalOverlayStore.config.systemd.tmpfiles.rules;
     in
-    assert defaultConfig.agentspace.sandbox.localOverlayStore.enable;
     assert defaultConfig.microvm.writableStoreOverlay == null;
     assert storeMount.neededForBoot;
     assert storeMount.overlay.lowerdir == [ "/nix/.ro-store" ];
@@ -470,10 +464,9 @@ let
     assert builtins.elem "overlay" defaultConfig.boot.initrd.kernelModules;
     assert builtins.elem "local-overlay-store" defaultConfig.nix.settings.experimental-features;
     assert builtins.elem "read-only-local-store" defaultConfig.nix.settings.experimental-features;
-    assert pkgs.lib.hasPrefix "local-overlay://" storeUri;
-    assert pkgs.lib.hasInfix "read-only%3Dtrue" storeUri;
-    assert pkgs.lib.hasInfix "check-mount=false" storeUri;
-    assert builtins.readFile daemonService.serviceConfig.EnvironmentFile == "NIX_REMOTE=${storeUri}\n";
+    assert pkgs.lib.hasPrefix "NIX_REMOTE=local-overlay://" daemonEnvironment;
+    assert pkgs.lib.hasInfix "read-only%3Dtrue" daemonEnvironment;
+    assert pkgs.lib.hasInfix "check-mount=false" daemonEnvironment;
     assert builtins.elem "post-boot.service" daemonService.after;
     assert builtins.elem "/nix/store" daemonService.unitConfig.RequiresMountsFor;
     assert builtins.elem "/nix/.local-overlay-lower-store" daemonService.unitConfig.RequiresMountsFor;
@@ -483,7 +476,6 @@ let
       nonRootTmpfiles;
     assert builtins.elem "d /nix/.local-overlay-lower-store/.links 0755 nix-daemon nix-daemon - -"
       nonRootTmpfiles;
-    assert vmLegacyStoreOverlay.config.microvm.writableStoreOverlay == "/nix/.rw-store";
     assert vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".neededForBoot;
     assert vmLocalOverlayStoreDisk.config.fileSystems."/nix/.ro-store".fsType == "erofs";
     assert
@@ -773,7 +765,7 @@ let
                 baseDir = ".agentspace";
                 homeImage = null;
                 homeSize = 4096;
-                storeOverlay = "nix-store-overlay.img";
+                storeOverlay = "nix-store-overlay-v2.img";
                 storeDisk = false;
               };
             };

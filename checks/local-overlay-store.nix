@@ -24,7 +24,6 @@ let
       extraModules ? [ ],
     }:
     mkSandbox {
-      localOverlayStore.enable = true;
       ssh.autoconnect = false;
       quiet = false;
       machine = {

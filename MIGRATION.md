@@ -15,26 +15,27 @@ flake output, manifest contract, or generated wrapper behavior changes.
 
 ### What Changed
 
-`agentspace.sandbox.localOverlayStore.enable` now defaults to `true`. The guest
-uses Nix's experimental `local-overlay-store` backend and persists its native
-database in the same image as the OverlayFS upper layer. This keeps store paths
-added by the guest registered across restarts. Setting the option to `false`
-restores the previous `microvm.writableStoreOverlay` behavior.
+The guest now always uses Nix's experimental `local-overlay-store` backend and
+persists its native database in the same image as the OverlayFS upper layer.
+This keeps store paths added by the guest registered across restarts. The
+legacy `microvm.writableStoreOverlay` mode is no longer supported.
 
-Legacy images contain upper-layer files but no corresponding native database,
-so they are not automatically migrated. The lower-store restrictions also
-still apply: the shared host store must not change while mounted, and removing
-lower paths referenced by the persistent database is unsupported.
+The default writable image path changed from `nix-store-overlay.img` to
+`nix-store-overlay-v2.img`, so existing default images are not reused. The
+launch wrapper warns when the old image exists; it is no longer used and can be
+safely deleted. Legacy images contain upper-layer files but no corresponding
+native database, so they are not automatically migrated. The lower-store
+restrictions also still apply: the shared host store must not change while
+mounted, and removing lower paths referenced by the persistent database is
+unsupported.
 
 ### Migration Steps
 
-To adopt the native backend, preserve the old image if it contains useful data
-and configure a fresh `persistence.storeOverlay` path. To keep using an existing
-legacy image, opt out explicitly:
-
-```nix
-agentspace.sandbox.localOverlayStore.enable = false;
-```
+Users who explicitly configure `persistence.storeOverlay` with an existing
+legacy image should change it to a fresh image path before upgrading. There is
+no supported in-place migration for legacy images. Remove any
+`agentspace.sandbox.localOverlayStore.enable` setting; the native backend is no
+longer optional.
 
 Avoid host Nix builds and garbage collection while a VM is using the shared
 host store. For an immutable lower layer, set

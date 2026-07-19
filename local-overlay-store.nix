@@ -7,7 +7,6 @@
 
 let
   cfg = config.agentspace.sandbox;
-  overlayCfg = cfg.localOverlayStore;
   lowerStoreDir = "/nix/.ro-store";
   lowerStoreViewDir = "/nix/.local-overlay-lower-store";
   lowerStateDir = "/nix/var/nix";
@@ -37,44 +36,24 @@ let
     if config.microvm.storeDiskType == "erofs" then "/dev/disk/by-label/nix-store" else "/dev/vda";
 in
 {
-  options.agentspace.sandbox.localOverlayStore = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = ''
-        Use Nix's experimental local-overlay store backend for the writable
-        guest store instead of microvm.writableStoreOverlay's metadata model.
-      '';
-    };
-
-    storeUri = lib.mkOption {
-      type = lib.types.str;
-      readOnly = true;
-      internal = true;
-      description = "Resolved local-overlay store URI used by nix-daemon.";
-    };
-  };
-
-  config = lib.mkIf (cfg.enable && overlayCfg.enable) {
+  config = lib.mkIf cfg.enable {
     assertions = [
       {
         assertion = config.nix.enable;
-        message = "agentspace.sandbox.localOverlayStore requires Nix in the guest.";
+        message = "agentspace sandbox local-overlay storage requires Nix in the guest.";
       }
       {
         assertion = (config.nix.package.pname or null) == "nix";
-        message = "agentspace.sandbox.localOverlayStore requires upstream Nix.";
+        message = "agentspace sandbox local-overlay storage requires upstream Nix.";
       }
       {
         assertion = config.microvm.registerClosure;
         message = ''
-          agentspace.sandbox.localOverlayStore requires microvm.registerClosure
+          agentspace sandbox local-overlay storage requires microvm.registerClosure
           so the ephemeral lower-store database describes the boot closure.
         '';
       }
     ];
-
-    agentspace.sandbox.localOverlayStore.storeUri = storeUri;
 
     # Replace microvm.nix's writableStoreOverlay wiring while retaining its
     # volume and read-only host-store mounts.

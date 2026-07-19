@@ -59,9 +59,8 @@ SSH login is disabled.
 | `persistence.baseDir` (`".agentspace"`) | Host directory prefix for generated images, state, and the virtie manifest. Relative paths are resolved from the launch directory. |
 | `persistence.homeImage` (`"home.img"`) | Ext4 image for persistent `/home/<user>`. Set to `null` to disable the home image. Absolute paths are used as-is. |
 | `persistence.homeSize` (`4096`) | Home image size in MB. |
-| `persistence.storeOverlay` (`"nix-store-overlay.img"`) | Writable Nix-store overlay image path. |
+| `persistence.storeOverlay` (`"nix-store-overlay-v2.img"`) | Writable Nix-store overlay image path. |
 | `persistence.storeDisk` (`false`) | Use a generated read-only Nix-store disk instead of sharing the host `/nix/store`. |
-| `localOverlayStore.enable` (`true`) | Use Nix's experimental `local-overlay-store` backend so the writable layer and its Nix database persist together. Set to `false` to use microvm.nix's legacy writable-store overlay. |
 
 `persistence.basedir` is a hidden, deprecated spelling of `baseDir`; new
 configurations should use `persistence.baseDir`.
@@ -116,13 +115,13 @@ agentspace.sandbox.nixStoreShareSocket = "/run/virtiofs-nix-store.sock";
 | `socketGroup` (`"kvm"`) | Group owning the virtiofsd socket. |
 | `ownHardening` (`false`) | Disable virtiofsd's own sandboxing and rely on systemd hardening (`ProtectSystem`, `PrivateNetwork`, etc.) instead. |
 
-The default writable store overlay is an 8 GiB image. With
-`localOverlayStore.enable`, it contains both the OverlayFS upper layer and the
-native Nix state database. The guest still uses the Nix daemon socket; only the
-daemon opens the `local-overlay` store directly. This enables the experimental
-`local-overlay-store` and `read-only-local-store` Nix features. Existing images
-created by the legacy overlay do not contain the native database; keep using
-the legacy mode or start with a fresh store-overlay image when switching.
+The default writable store overlay is an 8 GiB image containing both the
+OverlayFS upper layer and the native Nix state database. The guest still uses
+the Nix daemon socket; only the daemon opens the `local-overlay` store directly.
+This enables the experimental `local-overlay-store` and `read-only-local-store`
+Nix features. Images created by the legacy writable-store overlay do not contain
+the native database and are not supported. The launch wrapper warns when the
+old default `nix-store-overlay.img` remains beside the new image.
 
 The native backend does not make a mutable lower store safe. When the default
 host `/nix/store` share is used, do not add, remove, or mutate host store paths

@@ -16,6 +16,7 @@ let
     path: if path == null || lib.hasPrefix "/" path then path else "${persistenceBaseDir}/${path}";
   resolvedHomeImage = resolvePersistencePath cfg.persistence.homeImage;
   resolvedStoreOverlay = resolvePersistencePath cfg.persistence.storeOverlay;
+  legacyStoreOverlay = resolvePersistencePath "nix-store-overlay.img";
   resolvedSerialMode = if cfg.quiet then "off" else "print";
   workspaceHostDir = cfg.workspace.hostDir;
   workspaceSwapFile = "${cfg.workspace.guestDir}/swapfile";
@@ -151,7 +152,7 @@ in
 
       storeOverlay = lib.mkOption {
         type = lib.types.str;
-        default = "nix-store-overlay.img";
+        default = "nix-store-overlay-v2.img";
         description = "Path for the writable nix store overlay image.";
       };
 
@@ -409,6 +410,11 @@ in
 
       commonInit = ''
         echo "🚀 Preparing Agent QEMU Sandbox..."
+      ''
+      + lib.optionalString (resolvedStoreOverlay != legacyStoreOverlay) ''
+        if [ -e ${lib.escapeShellArg legacyStoreOverlay} ]; then
+          ${pkgs.coreutils}/bin/printf '%s\n' ${lib.escapeShellArg "agentspace: legacy Nix store overlay ${legacyStoreOverlay} is no longer used and can be safely deleted."} >&2
+        fi
       ''
       + lib.optionalString cfg.workspace.enable ''
         ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg workspaceHostDir}
@@ -845,8 +851,6 @@ in
             ]
             ++ workspaceShares
             ++ cfg.shares;
-
-          writableStoreOverlay = lib.mkIf (!cfg.localOverlayStore.enable) "/nix/.rw-store";
 
           volumes = [
             {
