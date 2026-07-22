@@ -1,14 +1,14 @@
 {
   mkLaunch,
   pkgs,
-  virtiePackage,
+  virtlePackage,
   ...
 }:
 let
   sshKeys = import ./ssh-keys.nix { inherit pkgs; };
 
   fakeTools = pkgs.symlinkJoin {
-    name = "virtie-fake-tools";
+    name = "virtle-fake-tools";
     paths = [
       (pkgs.writeShellScriptBin "qemu-system-x86_64" ''
                 set -euo pipefail
@@ -364,7 +364,7 @@ let
     ];
   };
 
-  fakeSSH = pkgs.writeShellScript "virtie-fake-ssh" ''
+  fakeSSH = pkgs.writeShellScript "virtle-fake-ssh" ''
     set -euo pipefail
 
     mkdir -p "$PWD/state"
@@ -415,7 +415,7 @@ let
     exec ${pkgs.runtimeShell} -c "$command_string"
   '';
 
-  fakeAuthFailureSSH = pkgs.writeShellScript "virtie-fake-auth-failure-ssh" ''
+  fakeAuthFailureSSH = pkgs.writeShellScript "virtle-fake-auth-failure-ssh" ''
     set -euo pipefail
 
     mkdir -p "$PWD/state"
@@ -442,9 +442,9 @@ let
     done
   '';
 
-  manifest = pkgs.writeText "virtie-fake-manifest.json" (
+  manifest = pkgs.writeText "virtle-fake-manifest.json" (
     builtins.toJSON {
-      host_name = "virtie-fake";
+      host_name = "virtle-fake";
       working_dir = ".";
       state_dir = ".agentspace";
       ssh = {
@@ -487,14 +487,14 @@ let
       ];
       write_files = [
         {
-          guest_path = "/etc/virtie/inline";
+          guest_path = "/etc/virtle/inline";
           chown = "agent:users";
           text = "inline-from-manifest";
           mode = "0640";
           overwrite = true;
         }
         {
-          guest_path = "/var/lib/virtie/host";
+          guest_path = "/var/lib/virtle/host";
           overwrite = true;
           source = "host-write-file";
         }
@@ -512,8 +512,8 @@ let
         commonInit = ''
           cd "$REPO_DIR"
         '';
-        virtieManifest = ".agentspace/virtie-fake.json";
-        virtieManifestTemplate = manifest;
+        virtleManifest = ".agentspace/virtle-fake.json";
+        virtleManifestTemplate = manifest;
       };
     };
   };
@@ -530,8 +530,8 @@ let
         commonInit = ''
           cd "$REPO_DIR"
         '';
-        virtieManifest = ".agentspace/virtie-fake.json";
-        virtieManifestTemplate = manifest;
+        virtleManifest = ".agentspace/virtle-fake.json";
+        virtleManifestTemplate = manifest;
       };
     };
   };
@@ -546,34 +546,34 @@ let
         commonInit = ''
           cd "$REPO_DIR"
         '';
-        virtieManifest = ".agentspace/virtie-fake.json";
-        virtieManifestTemplate = manifest;
+        virtleManifest = ".agentspace/virtle-fake.json";
+        virtleManifestTemplate = manifest;
       };
     };
   };
 in
 {
-  virtie-launch-e2e = pkgs.runCommand "virtie-launch-e2e" { } ''
+  virtle-launch-e2e = pkgs.runCommand "virtle-launch-e2e" { } ''
     set -euo pipefail
 
     tmpdir="$(mktemp -d)"
     workspace_dir="$tmpdir/workspace"
-    launch_log="$tmpdir/virtie.log"
+    launch_log="$tmpdir/virtle.log"
     failed=0
-    trap 'echo "virtie-launch-e2e: command failed at line $LINENO" >&2' ERR
+    trap 'echo "virtle-launch-e2e: command failed at line $LINENO" >&2' ERR
 
     cleanup() {
       status=$?
       if [ "$status" -ne 0 ] && [ "$failed" -eq 0 ]; then
         failed=1
-        echo "virtie-launch-e2e: failed with status $status" >&2
+        echo "virtle-launch-e2e: failed with status $status" >&2
         for log in "$tmpdir"/*.log; do
           if [ -f "$log" ]; then
             echo "== $log ==" >&2
             cat "$log" >&2
           fi
         done
-        for manifest_file in "$tmpdir"/*/.agentspace/virtie-fake.json; do
+        for manifest_file in "$tmpdir"/*/.agentspace/virtle-fake.json; do
           if [ -f "$manifest_file" ]; then
             echo "== $manifest_file ==" >&2
             cat "$manifest_file" >&2
@@ -601,40 +601,40 @@ in
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f state/ssh-ready-sent; test -f .agentspace/virtie-fake.json; test -f .agentspace/virtie-fake.pid; test -f .agentspace/virtiofs.sock; test -f .agentspace/virtiofs.sock.pid; test -S .agentspace/qmp.sock; test -S .agentspace/qga.sock; test -S .agentspace/ready.sock; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; test ! -e ready.sock; echo AGENTSPACE_VIRTIE_OK' >"$launch_log" 2>&1; then
-      echo "virtie-launch-e2e: launch script exited non-zero" >&2
+    if ! ${launchScript} sh -c 'test -f state/virtiofsd-started; test -f state/qemu-started; test -f state/guest-agent-ping; test -f state/ssh-ready-sent; test -f .agentspace/virtle-fake.json; test -f .agentspace/virtle-fake.pid; test -f .agentspace/virtiofs.sock; test -f .agentspace/virtiofs.sock.pid; test -S .agentspace/qmp.sock; test -S .agentspace/qga.sock; test -S .agentspace/ready.sock; test -f overlay.img; test ! -e virtiofs.sock; test ! -e virtiofs.sock.pid; test ! -e qmp.sock; test ! -e qga.sock; test ! -e ready.sock; echo AGENTSPACE_VIRTLE_OK' >"$launch_log" 2>&1; then
+      echo "virtle-launch-e2e: launch script exited non-zero" >&2
       cat "$launch_log" >&2
       exit 1
     fi
 
-    grep -F 'AGENTSPACE_VIRTIE_OK' "$launch_log" >/dev/null
+    grep -F 'AGENTSPACE_VIRTLE_OK' "$launch_log" >/dev/null
     grep -F 'stats:' "$launch_log" >/dev/null
     workspace_real="$(${pkgs.coreutils}/bin/realpath "$workspace_dir")"
-    grep -F '"working_dir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtie-fake.json" >/dev/null
+    grep -F '"working_dir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtle-fake.json" >/dev/null
     grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
     grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
-    grep -Fx '/etc/virtie/inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
-    grep -Fx '/var/lib/virtie/host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
-    grep -Fx '/etc/virtie/inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
-    grep -Fx '/var/lib/virtie/host' "$workspace_dir/state/guest-agent-closes" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/test -d /etc/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/install -d -o agent -g users -m 0750 /etc/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/chown agent:users /etc/virtie/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtie/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/test -d /var/lib/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/install -d /var/lib/virtie capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/etc/virtle/inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
+    grep -Fx '/var/lib/virtle/host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
+    grep -Fx '/etc/virtle/inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
+    grep -Fx '/var/lib/virtle/host' "$workspace_dir/state/guest-agent-closes" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/test -d /etc/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/install -d -o agent -g users -m 0750 /etc/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/chown agent:users /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/test -d /var/lib/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx '/run/current-system/sw/bin/install -d /var/lib/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
-    test ! -e "$workspace_dir/.agentspace/virtie-fake.pid"
+    test ! -e "$workspace_dir/.agentspace/virtle-fake.pid"
 
     command_workspace_dir="$tmpdir/command-workspace"
-    command_log="$tmpdir/virtie-command.log"
+    command_log="$tmpdir/virtle-command.log"
     mkdir -p "$command_workspace_dir"
     cd "$command_workspace_dir"
     printf '%s' 'host payload' > host-write-file
 
     if ! ${commandLaunchScript} >"$command_log" 2>&1; then
-      echo "virtie-launch-e2e: configured command launch exited non-zero" >&2
+      echo "virtle-launch-e2e: configured command launch exited non-zero" >&2
       cat "$command_log" >&2
       exit 1
     fi
@@ -642,10 +642,10 @@ in
     grep -F "configured value with spaces" "$command_workspace_dir/state/ssh-remote-command" >/dev/null
     test -f "$command_workspace_dir/state/qemu-stopped"
     test -f "$command_workspace_dir/state/virtiofsd-stopped"
-    test ! -e "$command_workspace_dir/.agentspace/virtie-fake.pid"
+    test ! -e "$command_workspace_dir/.agentspace/virtle-fake.pid"
 
     no_ssh_workspace_dir="$tmpdir/no-ssh-workspace"
-    no_ssh_log="$tmpdir/virtie-no-ssh.log"
+    no_ssh_log="$tmpdir/virtle-no-ssh.log"
     mkdir -p "$no_ssh_workspace_dir"
     cd "$no_ssh_workspace_dir"
     printf '%s' 'host payload' > host-write-file
@@ -654,7 +654,7 @@ in
     launch_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S .agentspace/qmp.sock ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with' "$no_ssh_log" >/dev/null 2>&1; then
+      if [ -S .agentspace/qmp.sock ] && [ -f .agentspace/virtle-fake.pid ] && grep -F 'connect with' "$no_ssh_log" >/dev/null 2>&1; then
         break
       fi
       sleep 0.1
@@ -663,22 +663,22 @@ in
     grep -F 'connect with' "$no_ssh_log" >/dev/null
     grep -F 'agent@vsock/3' "$no_ssh_log" >/dev/null
     test ! -f "$no_ssh_workspace_dir/state/ssh-session-started"
-    no_ssh_manifest="$no_ssh_workspace_dir/.agentspace/virtie-fake.json"
-    ${virtiePackage}/bin/virtie --manifest="$no_ssh_manifest" suspend
+    no_ssh_manifest="$no_ssh_workspace_dir/.agentspace/virtle-fake.json"
+    ${virtlePackage}/bin/virtle --manifest="$no_ssh_manifest" suspend
     test -f "$no_ssh_workspace_dir/state/qemu-paused"
     test -f "$no_ssh_workspace_dir/state/qemu-migrated"
-    test ! -e "$no_ssh_workspace_dir/.agentspace/virtie-fake.pid"
+    test ! -e "$no_ssh_workspace_dir/.agentspace/virtle-fake.pid"
 
     if ! wait "$launch_pid"; then
-      echo "virtie-launch-e2e: no-ssh launch exited non-zero" >&2
+      echo "virtle-launch-e2e: no-ssh launch exited non-zero" >&2
       cat "$no_ssh_log" >&2
       exit 1
     fi
     unset launch_pid
 
     disk_workspace_dir="$tmpdir/disk-workspace"
-    disk_log="$tmpdir/virtie-disk.log"
-    disk_resume_log="$tmpdir/virtie-disk-resume.log"
+    disk_log="$tmpdir/virtle-disk.log"
+    disk_resume_log="$tmpdir/virtle-disk-resume.log"
     mkdir -p "$disk_workspace_dir"
     cd "$disk_workspace_dir"
     printf '%s' 'host payload' > host-write-file
@@ -687,25 +687,25 @@ in
     launch_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S .agentspace/qmp.sock ] && [ -f .agentspace/virtie-fake.pid ] && [ -f state/ssh-destination ]; then
+      if [ -S .agentspace/qmp.sock ] && [ -f .agentspace/virtle-fake.pid ] && [ -f state/ssh-destination ]; then
         break
       fi
       sleep 0.1
     done
 
-    disk_manifest="$disk_workspace_dir/.agentspace/virtie-fake.json"
-    ${virtiePackage}/bin/virtie --manifest="$disk_manifest" suspend
+    disk_manifest="$disk_workspace_dir/.agentspace/virtle-fake.json"
+    ${virtlePackage}/bin/virtle --manifest="$disk_manifest" suspend
     test ! -f "$disk_workspace_dir/state/qmp-second-client"
     test -f "$disk_workspace_dir/state/qemu-paused"
     test -f "$disk_workspace_dir/state/qemu-migrated"
-    test -f "$disk_workspace_dir/.agentspace/virtie-fake.vmstate"
-    test -f "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json"
-    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.pid"
-    grep -F '"status": "saved"' "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
-    grep -F '"cid": 3' "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json" >/dev/null
+    test -f "$disk_workspace_dir/.agentspace/virtle-fake.vmstate"
+    test -f "$disk_workspace_dir/.agentspace/virtle-fake.suspend.json"
+    test ! -e "$disk_workspace_dir/.agentspace/virtle-fake.pid"
+    grep -F '"status": "saved"' "$disk_workspace_dir/.agentspace/virtle-fake.suspend.json" >/dev/null
+    grep -F '"cid": 3' "$disk_workspace_dir/.agentspace/virtle-fake.suspend.json" >/dev/null
 
     if ! wait "$launch_pid"; then
-      echo "virtie-launch-e2e: disk suspend launch exited non-zero" >&2
+      echo "virtle-launch-e2e: disk suspend launch exited non-zero" >&2
       cat "$disk_log" >&2
       exit 1
     fi
@@ -715,7 +715,7 @@ in
     mkdir -p "$disk_resume_cwd"
     cd "$disk_resume_cwd"
 
-    ${virtiePackage}/bin/virtie --manifest="$disk_manifest" launch --ssh --resume=force >"$disk_resume_log" 2>&1 &
+    ${virtlePackage}/bin/virtle --manifest="$disk_manifest" launch --ssh --resume=force >"$disk_resume_log" 2>&1 &
     resume_pid=$!
     for _ in $(seq 1 100); do
       if [ -f "$disk_workspace_dir/state/qemu-migrate-incoming" ] && [ -f "$disk_workspace_dir/state/qemu-resumed" ] && [ -f "$disk_workspace_dir/state/ssh-session-started" ]; then
@@ -728,42 +728,42 @@ in
     test -f "$disk_workspace_dir/state/qemu-migrate-incoming"
     test -f "$disk_workspace_dir/state/qemu-resumed"
     grep -Fx '3' "$disk_workspace_dir/state/qemu-vsock-cid" >/dev/null
-    test -f "$disk_workspace_dir/.agentspace/virtie-fake.pid"
+    test -f "$disk_workspace_dir/.agentspace/virtle-fake.pid"
 
     touch "$disk_workspace_dir/state/ssh-session-finished"
     if ! wait "$resume_pid"; then
-      echo "virtie-launch-e2e: disk resume exited non-zero" >&2
+      echo "virtle-launch-e2e: disk resume exited non-zero" >&2
       cat "$disk_resume_log" >&2
       exit 1
     fi
     unset resume_pid
-    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.pid"
-    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.vmstate"
-    test ! -e "$disk_workspace_dir/.agentspace/virtie-fake.suspend.json"
+    test ! -e "$disk_workspace_dir/.agentspace/virtle-fake.pid"
+    test ! -e "$disk_workspace_dir/.agentspace/virtle-fake.vmstate"
+    test ! -e "$disk_workspace_dir/.agentspace/virtle-fake.suspend.json"
 
     mkdir -p "$out"
-    cp "$launch_log" "$out/virtie.log"
-    cp "$command_log" "$out/virtie-command.log"
-    cp "$no_ssh_log" "$out/virtie-no-ssh.log"
-    cp "$disk_log" "$out/virtie-disk.log"
-    cp "$disk_resume_log" "$out/virtie-disk-resume.log"
+    cp "$launch_log" "$out/virtle.log"
+    cp "$command_log" "$out/virtle-command.log"
+    cp "$no_ssh_log" "$out/virtle-no-ssh.log"
+    cp "$disk_log" "$out/virtle-disk.log"
+    cp "$disk_resume_log" "$out/virtle-disk-resume.log"
   '';
 
-  virtie-ssh-auth-failure-e2e = pkgs.runCommand "virtie-ssh-auth-failure-e2e" { } ''
+  virtle-ssh-auth-failure-e2e = pkgs.runCommand "virtle-ssh-auth-failure-e2e" { } ''
     set -euo pipefail
 
     tmpdir="$(mktemp -d)"
     workspace_dir="$tmpdir/workspace"
-    auth_manifest="$tmpdir/virtie-auth-failure-manifest.json"
-    auth_log="$tmpdir/virtie-auth-failure.log"
+    auth_manifest="$tmpdir/virtle-auth-failure-manifest.json"
+    auth_log="$tmpdir/virtle-auth-failure.log"
     failed=0
-    trap 'echo "virtie-ssh-auth-failure-e2e: command failed at line $LINENO" >&2' ERR
+    trap 'echo "virtle-ssh-auth-failure-e2e: command failed at line $LINENO" >&2' ERR
 
     cleanup() {
       status=$?
       if [ "$status" -ne 0 ] && [ "$failed" -eq 0 ]; then
         failed=1
-        echo "virtie-ssh-auth-failure-e2e: failed with status $status" >&2
+        echo "virtle-ssh-auth-failure-e2e: failed with status $status" >&2
         if [ -f "$auth_log" ]; then
           echo "== $auth_log ==" >&2
           cat "$auth_log" >&2
@@ -791,7 +791,7 @@ in
     printf '%s' 'host payload' > host-write-file
     install -m 0600 ${sshKeys.passphraseProtected.privateKey} .agentspace-test/id_ed25519
     if ${pkgs.openssh}/bin/ssh-keygen -y -P "" -f .agentspace-test/id_ed25519 >/dev/null 2>&1; then
-      echo "virtie-ssh-auth-failure-e2e: test key is not passphrase protected" >&2
+      echo "virtle-ssh-auth-failure-e2e: test key is not passphrase protected" >&2
       exit 1
     fi
 
@@ -804,7 +804,7 @@ in
     export XDG_RUNTIME_DIR="$tmpdir/run"
     mkdir -p "$XDG_RUNTIME_DIR"
 
-    ${pkgs.coreutils}/bin/timeout 20s ${virtiePackage}/bin/virtie --manifest="$auth_manifest" launch --ssh >"$auth_log" 2>&1 &
+    ${pkgs.coreutils}/bin/timeout 20s ${virtlePackage}/bin/virtle --manifest="$auth_manifest" launch --ssh >"$auth_log" 2>&1 &
     auth_pid=$!
 
     for _ in $(seq 1 100); do
@@ -823,31 +823,31 @@ in
     set -e
     if [ "$status" -ne 0 ]; then
       if [ "$status" -eq 124 ]; then
-        echo "virtie-ssh-auth-failure-e2e: launch timed out, likely stuck retrying ssh" >&2
+        echo "virtle-ssh-auth-failure-e2e: launch timed out, likely stuck retrying ssh" >&2
       else
-        echo "virtie-ssh-auth-failure-e2e: launch exited non-zero" >&2
+        echo "virtle-ssh-auth-failure-e2e: launch exited non-zero" >&2
       fi
       exit 1
     fi
 
     grep -F 'stats:' "$auth_log" >/dev/null
     if grep -F 'waiting for ssh connection' "$auth_log" >/dev/null || grep -F 'connecting ssh' "$auth_log" >/dev/null; then
-      echo "virtie-ssh-auth-failure-e2e: autoconnect unexpectedly logged retry phases" >&2
+      echo "virtle-ssh-auth-failure-e2e: autoconnect unexpectedly logged retry phases" >&2
       exit 1
     fi
     if [ "$(cat "$workspace_dir/state/ssh-auth-failure-first-last-arg")" = "true" ]; then
-      echo "virtie-ssh-auth-failure-e2e: first autoconnect ssh was readiness probe" >&2
+      echo "virtle-ssh-auth-failure-e2e: first autoconnect ssh was readiness probe" >&2
       exit 1
     fi
     test ! -e "$workspace_dir/state/ssh-auth-failure-attempt"
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
-    test ! -e "$workspace_dir/.agentspace/virtie-fake.pid"
+    test ! -e "$workspace_dir/.agentspace/virtle-fake.pid"
     unset auth_pid
 
     no_ssh_workspace_dir="$tmpdir/no-ssh-workspace"
-    no_ssh_manifest="$tmpdir/virtie-auth-failure-no-ssh-manifest.json"
-    no_ssh_log="$tmpdir/virtie-auth-failure-no-ssh.log"
+    no_ssh_manifest="$tmpdir/virtle-auth-failure-no-ssh-manifest.json"
+    no_ssh_log="$tmpdir/virtle-auth-failure-no-ssh.log"
     mkdir -p "$no_ssh_workspace_dir"
     cd "$no_ssh_workspace_dir"
     printf '%s' 'host payload' > host-write-file
@@ -857,11 +857,11 @@ in
       '.ssh.exec = [$ssh]' \
       ${manifest} > "$no_ssh_manifest"
 
-    ${virtiePackage}/bin/virtie --manifest="$no_ssh_manifest" launch >"$no_ssh_log" 2>&1 &
+    ${virtlePackage}/bin/virtle --manifest="$no_ssh_manifest" launch >"$no_ssh_log" 2>&1 &
     no_ssh_pid=$!
 
     for _ in $(seq 1 100); do
-      if [ -S .agentspace/qmp.sock ] && [ -f .agentspace/virtie-fake.pid ] && grep -F 'connect with' "$no_ssh_log" >/dev/null 2>&1; then
+      if [ -S .agentspace/qmp.sock ] && [ -f .agentspace/virtle-fake.pid ] && grep -F 'connect with' "$no_ssh_log" >/dev/null 2>&1; then
         break
       fi
       sleep 0.1
@@ -869,22 +869,22 @@ in
 
     grep -F 'connect with' "$no_ssh_log" >/dev/null
     if grep -F 'ssh-add' "$no_ssh_log" >/dev/null; then
-      echo "virtie-ssh-auth-failure-e2e: no-ssh launch unexpectedly checked ssh auth" >&2
+      echo "virtle-ssh-auth-failure-e2e: no-ssh launch unexpectedly checked ssh auth" >&2
       exit 1
     fi
     test ! -e "$no_ssh_workspace_dir/state/ssh-auth-failure-attempt"
-    ${virtiePackage}/bin/virtie --manifest="$no_ssh_manifest" suspend
+    ${virtlePackage}/bin/virtle --manifest="$no_ssh_manifest" suspend
     test -f "$no_ssh_workspace_dir/state/qemu-stopped"
     test -f "$no_ssh_workspace_dir/state/virtiofsd-stopped"
-    test ! -e "$no_ssh_workspace_dir/.agentspace/virtie-fake.pid"
+    test ! -e "$no_ssh_workspace_dir/.agentspace/virtle-fake.pid"
     if ! wait "$no_ssh_pid"; then
-      echo "virtie-ssh-auth-failure-e2e: no-ssh launch exited non-zero" >&2
+      echo "virtle-ssh-auth-failure-e2e: no-ssh launch exited non-zero" >&2
       exit 1
     fi
     unset no_ssh_pid
 
     mkdir -p "$out"
-    cp "$auth_log" "$out/virtie-auth-failure.log"
-    cp "$no_ssh_log" "$out/virtie-auth-failure-no-ssh.log"
+    cp "$auth_log" "$out/virtle-auth-failure.log"
+    cp "$no_ssh_log" "$out/virtle-auth-failure-no-ssh.log"
   '';
 }

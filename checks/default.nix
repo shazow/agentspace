@@ -3,7 +3,7 @@
   mkLaunch,
   mkExecSSH,
   pkgs,
-  virtiePackage,
+  virtlePackage,
 }:
 let
   args = {
@@ -12,10 +12,10 @@ let
       mkSandbox
       mkExecSSH
       pkgs
-      virtiePackage
+      virtlePackage
       ;
   };
 in
-import ./virtie-manifest.nix args
-// import ./virtie-e2e.nix args
+import ./virtle-manifest.nix args
+// import ./virtle-e2e.nix args
 // import ./consumer-workflow.nix args

@@ -44,7 +44,7 @@ let
   };
 
   launchScript = mkLaunch graphicalVM;
-  manifest = graphicalVM.config.agentspace.sandbox.launch.virtieManifestData;
+  manifest = graphicalVM.config.agentspace.sandbox.launch.virtleManifestData;
 in
 {
   graphical-manifest-contract =
@@ -68,9 +68,9 @@ in
         set -euo pipefail
 
         export HOME="$PWD/home"
-        export XDG_RUNTIME_DIR="$(mktemp -d /tmp/virtie-graphical.XXXXXX)"
+        export XDG_RUNTIME_DIR="$(mktemp -d /tmp/virtle-graphical.XXXXXX)"
         export LIBGL_ALWAYS_SOFTWARE=1
-        export VIRTIE_SSH_READY_TIMEOUT=5m
+        export VIRTLE_SSH_READY_TIMEOUT=5m
         trap 'rm -rf "$XDG_RUNTIME_DIR"' EXIT
         mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
         chmod 700 "$XDG_RUNTIME_DIR"

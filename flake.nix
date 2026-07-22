@@ -11,25 +11,24 @@
     inputs.nixpkgs.follows = "nixpkgs";
   };
 
+  inputs.virtle = {
+    url = "github:shazow/virtle";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+
   outputs =
     {
       self,
       home-manager,
       nixpkgs,
       microvm,
+      virtle,
     }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
       lib = nixpkgs.lib;
-      virtiePackage = pkgs.buildGoModule {
-        pname = "virtie";
-        version = "0.1.0";
-        src = ./virtie;
-        vendorHash = "sha256-r9IW9NAU67IVMDkeznVqohw2mY9P3I9m+TkLFOJAdGc=";
-        subPackages = [ "." ];
-        env.CGO_ENABLED = 0;
-      };
+      virtlePackage = virtle.packages.${system}.default;
 
       mkExecSSH = import ./lib/mkExecSSH.nix { inherit pkgs lib; };
       mkVirtioFSD = import ./lib/mkVirtioFSD.nix { inherit pkgs lib; };
@@ -94,10 +93,10 @@
 
             ${launchCfg.commonInit}
 
-            MANIFEST_PATH=${lib.escapeShellArg launchCfg.virtieManifest}
+            MANIFEST_PATH=${lib.escapeShellArg launchCfg.virtleManifest}
             ${pkgs.coreutils}/bin/mkdir -p "$(${pkgs.coreutils}/bin/dirname "$MANIFEST_PATH")"
             ${pkgs.coreutils}/bin/rm -f "$MANIFEST_PATH"
-            ${pkgs.coreutils}/bin/install -m 0644 ${lib.escapeShellArg launchCfg.virtieManifestTemplate} "$MANIFEST_PATH"
+            ${pkgs.coreutils}/bin/install -m 0644 ${lib.escapeShellArg launchCfg.virtleManifestTemplate} "$MANIFEST_PATH"
 
             ${lib.optionalString (systemClosure != null) ''
               SYSTEM_CLOSURE=${lib.escapeShellArg systemClosure}
@@ -118,23 +117,23 @@
             ''}
 
             if [ "$#" -eq 0 ] && [ -n ${lib.escapeShellArg remoteCommand} ]; then
-              exec ${virtiePackage}/bin/virtie --manifest="$MANIFEST_PATH" launch -v --ssh -- ${lib.escapeShellArg remoteCommand}
+              exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch -v --ssh -- ${lib.escapeShellArg remoteCommand}
             fi
 
             if [ "$#" -eq 0 ]; then
               ${
                 if sshAutoconnect then
                   ''
-                    exec ${virtiePackage}/bin/virtie --manifest="$MANIFEST_PATH" launch -v --ssh
+                    exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch -v --ssh
                   ''
                 else
                   ''
-                    exec ${virtiePackage}/bin/virtie --manifest="$MANIFEST_PATH" launch -v
+                    exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch -v
                   ''
               }
             fi
 
-            exec ${virtiePackage}/bin/virtie --manifest="$MANIFEST_PATH" launch -v --ssh -- "$@"
+            exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch -v --ssh -- "$@"
           '';
         in
         "${script}/bin/launch-agent";
@@ -148,7 +147,7 @@
           mkSandbox
           mkExecSSH
           pkgs
-          virtiePackage
+          virtlePackage
           ;
       };
 
@@ -157,7 +156,7 @@
       nixosConfigurations = vmConfigs;
 
       packages.${system} = {
-        virtie = virtiePackage;
+        virtle = virtlePackage;
       };
 
       formatter.${system} = pkgs.nixfmt-tree;
@@ -180,7 +179,7 @@
           mkSandbox
           mkExecSSH
           pkgs
-          virtiePackage
+          virtlePackage
           ;
       };
 

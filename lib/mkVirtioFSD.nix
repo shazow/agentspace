@@ -102,7 +102,7 @@ in
 
   moduleDefaults = {
     # Some workspace-backed filesystems (like FUSE) reject chgrp/chown on the
-    # virtiofsd socket path with EINVAL when --socket-group is used. virtie
+    # virtiofsd socket path with EINVAL when --socket-group is used. virtle
     # starts QEMU and virtiofsd as the same user, so managed sockets do not need
     # a group override.
     microvm.virtiofsd.group = lib.mkDefault null;

@@ -66,9 +66,9 @@ let
   sandboxCfg = vmConsumer.config.agentspace.sandbox;
   userCfg = vmConsumer.config.users.users.${sandboxCfg.user};
   homeCfg = vmConsumer.config.home-manager.users.${sandboxCfg.user};
-  manifestPath = sandboxCfg.launch.virtieManifest;
-  manifestTemplate = sandboxCfg.launch.virtieManifestTemplate;
-  manifest = sandboxCfg.launch.virtieManifestData;
+  manifestPath = sandboxCfg.launch.virtleManifest;
+  manifestTemplate = sandboxCfg.launch.virtleManifestTemplate;
+  manifest = sandboxCfg.launch.virtleManifestData;
   mountsOfType = type: manifest: builtins.filter (mount: mount.type == type) manifest.mounts;
   launchScript = mkLaunch vmConsumer;
   runner = vmConsumer.config.microvm.declaredRunner.outPath;
@@ -122,7 +122,7 @@ in
   sandbox-consumer-workflow =
     assert consumerWorkflow;
     pkgs.runCommand "sandbox-consumer-workflow" { } ''
-      grep -F 'virtie --manifest="$MANIFEST_PATH" launch -v --ssh' ${launchScript}
+      grep -F 'virtle --manifest="$MANIFEST_PATH" launch -v --ssh' ${launchScript}
       grep -F ${pkgs.lib.escapeShellArg manifestPath} ${launchScript}
       grep -F ${pkgs.lib.escapeShellArg manifestTemplate} ${launchScript}
       grep -F 'mkdir -p "$(' ${launchScript}
@@ -130,9 +130,9 @@ in
       grep -F 'install -m 0644 ${pkgs.lib.escapeShellArg manifestTemplate} "$MANIFEST_PATH"' ${launchScript}
       grep -F 'nix path-info --closure-size --human-readable "$SYSTEM_CLOSURE"' ${launchScript}
       grep -F 'mkSandbox closure size:' ${launchScript}
-      test ${pkgs.lib.escapeShellArg manifestPath} = '.agentspace/virtie-agent-sandbox.toml'
+      test ${pkgs.lib.escapeShellArg manifestPath} = '.agentspace/virtle-agent-sandbox.toml'
       grep -F "bash -lc pwd" ${launchScript}
-      grep -F 'virtie --manifest="$MANIFEST_PATH" launch -v --ssh -- "$@"' ${launchScript}
+      grep -F 'virtle --manifest="$MANIFEST_PATH" launch -v --ssh -- "$@"' ${launchScript}
 
       mkdir -p legacy-warning/.agentspace
       touch legacy-warning/.agentspace/nix-store-overlay.img
@@ -143,7 +143,7 @@ in
       ) >legacy-warning/stdout 2>legacy-warning/stderr
       grep -F 'legacy Nix store overlay .agentspace/nix-store-overlay.img is no longer used and can be safely deleted.' legacy-warning/stderr
 
-      grep -F 'managed by virtie' ${virtiofsdHelper}
+      grep -F 'managed by virtle' ${virtiofsdHelper}
 
       touch $out
     '';

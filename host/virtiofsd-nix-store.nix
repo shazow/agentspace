@@ -1,7 +1,7 @@
 # Host-side NixOS module: a socket-activated virtiofsd sharing the host's
 # read-only /nix/store. Point `agentspace.sandbox.nixStoreShareSocket` at the
 # resulting socket path to reuse this daemon across launches instead of
-# having virtie start its own for the ro-store share.
+# having virtle start its own for the ro-store share.
 #
 # Adapted from https://github.com/shazow/nixfiles/blob/main/modules/virtiofsd-nix-store.nix
 {
