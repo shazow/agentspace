@@ -19,3 +19,4 @@ in
 import ./virtie-manifest.nix args
 // import ./virtie-e2e.nix args
 // import ./consumer-workflow.nix args
+// import ./real-vm.nix args
