@@ -4,8 +4,7 @@
 
 - The remote origin project is https://github.com/shazow/agentspace
 - Project root contains the Nix flake and VM/check definitions.
-- Specifications and progress are tracked in `.specs/*.md`.
-- Summary: The agentspace flake builds the VM image, wraps helper scripts, and produces `manifest.toml` which feeds into the standalone `virtle` package that manages running everything. There are three API surfaces: Agentspace nix module, manifest.toml, and virtle commandline.
+- Summary: The agentspace flake builds the VM image, wraps helper scripts, and produces `manifest.toml` for the standalone `virtle` runtime. Agentspace owns the Nix module and generated manifest surfaces; Virtle owns its command line.
 
 ## Process
 
@@ -41,10 +40,10 @@ Commit message style:
 Example resulting commit message:
 
 ```
-virtle: Take over vsock allocation
+sandbox: Configure runtime vsock allocation
 
 VSock CID is no longer hardcoded in nix, instead it uses a placeholder which
-gets overwritten by virtle.
+the runtime launcher overwrites.
 
 Validation performed:
 - ...
