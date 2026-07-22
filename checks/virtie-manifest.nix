@@ -88,6 +88,12 @@ let
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
+  vmVirtieGoStore = mkSandbox {
+    persistence.homeImage = null;
+    nixStoreBackend = "go-fuse";
+    workspace.enable = true;
+  };
+
   vmVirtieEscapedExternalStoreSocket = mkSandbox {
     persistence.homeImage = null;
     nixStoreShareSocket = "/tmp/$(touch injected).sock";
@@ -331,6 +337,7 @@ let
     vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
   externalStoreSocketManifest =
     vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
+  goStoreManifest = vmVirtieGoStore.config.agentspace.sandbox.launch.virtieManifestData;
   customSSHExecManifest = vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
   configFileManifest = vmVirtieConfigFile.config.agentspace.sandbox.launch.virtieManifestData;
   homeSSHPathsManifest = vmVirtieHomeSSHPaths.config.agentspace.sandbox.launch.virtieManifestData;
@@ -554,6 +561,19 @@ let
     assert !invalidRelativeStoreSocket.success;
     assert !invalidOldPersistenceBaseDir.success;
     assert !invalidOldWorkspaceBaseDir.success;
+    true;
+
+  _goStore =
+    let
+      goStoreMounts = mountsOfType "virtiofs" goStoreManifest;
+      roStore = builtins.head (builtins.filter (mount: mount.tag == "ro-store") goStoreMounts);
+      workspace = builtins.head (builtins.filter (mount: mount.tag == "workspace") goStoreMounts);
+      roStoreScriptPath = toString roStore.virtiofs.bin;
+      workspaceScriptPath = toString workspace.virtiofs.bin;
+    in
+    assert pkgs.lib.hasInfix "storefs-" roStoreScriptPath;
+    assert pkgs.lib.hasInfix "virtiofsd-" workspaceScriptPath;
+    assert !(pkgs.lib.hasInfix "storefs-" workspaceScriptPath);
     true;
 
   _customSSHExec =
@@ -812,6 +832,10 @@ in
   virtie-manifest-external-store-socket-contract =
     assert _externalStoreSocket;
     pkgs.runCommand "virtie-manifest-external-store-socket-contract" { } "touch $out";
+
+  virtie-manifest-go-store-contract =
+    assert _goStore;
+    pkgs.runCommand "virtie-manifest-go-store-contract" { } "touch $out";
 
   virtie-manifest-custom-ssh-exec-contract =
     assert _customSSHExec;

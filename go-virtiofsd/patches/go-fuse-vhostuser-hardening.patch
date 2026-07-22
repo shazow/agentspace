@@ -1,0 +1,212 @@
+diff --git a/internal/vhostuser/device.go b/internal/vhostuser/device.go
+index f0fe56e..8443593 100644
+--- a/internal/vhostuser/device.go
++++ b/internal/vhostuser/device.go
+@@ -35,0 +36,2 @@ func (d *Device) Close() error {
++	controls := make([]*readerControl, len(d.vqs))
++	d.dispatchMu.Lock()
+@@ -37 +39,8 @@ func (d *Device) Close() error {
+-		if err := d.vqs[i].Close(); err != nil && retErr == nil {
++		controls[i] = d.vqs[i].stop()
++	}
++	d.dispatchMu.Unlock()
++	for _, control := range controls {
++		control.wait()
++	}
++	for i := range d.vqs {
++		if err := d.vqs[i].closeFDs(); err != nil && retErr == nil {
+@@ -103 +112,14 @@ func (d *Device) SetVringBase(state *VhostVringState) {
+-func (d *Device) SetVringEnable(state *VhostVringState) {
++func (d *Device) GetVringBase(state *VhostVringState) (*readerControl, error) {
++	if state.Index >= uint32(len(d.vqs)) {
++		return nil, fmt.Errorf("vring index %d out of range", state.Index)
++	}
++	vq := d.vqs[state.Index]
++	control := vq.stop()
++	state.Num = uint32(vq.lastAvailIdx())
++	return control, nil
++}
++
++func (d *Device) SetVringEnable(state *VhostVringState) (*readerControl, error) {
++	if state.Index >= uint32(len(d.vqs)) {
++		return nil, fmt.Errorf("vring index %d out of range", state.Index)
++	}
+@@ -107,0 +130,6 @@ func (d *Device) SetVringEnable(state *VhostVringState) {
++		if vq.control != nil {
++			return nil, nil
++		}
++		if vq.KickFD < 0 {
++			return nil, fmt.Errorf("vring %d has no kick descriptor", state.Index)
++		}
+@@ -108,0 +137 @@ func (d *Device) SetVringEnable(state *VhostVringState) {
++		return nil, nil
+@@ -110 +139 @@ func (d *Device) SetVringEnable(state *VhostVringState) {
+-		vq.SetEnable(nil)
++		return vq.stop(), nil
+@@ -163,4 +191,0 @@ func (d *Device) SetVringKick(fd int, index uint64) error {
+-	// The kick FD is a notification channel, so it must be blocking.
+-	if err := syscall.SetNonblock(fd, false); err != nil {
+-		return err
+-	}
+diff --git a/internal/vhostuser/server.go b/internal/vhostuser/server.go
+index 97d7da2..3eb62e3 100644
+--- a/internal/vhostuser/server.go
++++ b/internal/vhostuser/server.go
+@@ -301,0 +302 @@ func (s *Server) oneRequest() error {
++	var stopped *readerControl
+@@ -352 +353,9 @@ func (s *Server) oneRequest() error {
+-		s.device.SetVringEnable(req)
++		stopped, deviceErr = s.device.SetVringEnable(req)
++	case REQ_GET_VRING_BASE:
++		req := (*VhostVringState)(inPayloadPtr)
++		stopped, deviceErr = s.device.GetVringBase(req)
++		if deviceErr == nil {
++			r := (*VhostVringState)(outPayloadPtr)
++			*r = *req
++			rep = r
++		}
+@@ -362,0 +372,4 @@ func (s *Server) oneRequest() error {
++	stopped.wait()
++	if deviceErr != nil && (inHeader.Request == REQ_SET_VRING_ENABLE || inHeader.Request == REQ_GET_VRING_BASE) {
++		return deviceErr
++	}
+diff --git a/internal/vhostuser/util.go b/internal/vhostuser/util.go
+index af609f1..7d5fafc 100644
+--- a/internal/vhostuser/util.go
++++ b/internal/vhostuser/util.go
+@@ -9,0 +10,2 @@ import (
++
++	"golang.org/x/sys/unix"
+@@ -48,2 +50,2 @@ func composeMask(fs []int) uint64 {
+-func (vq *Virtq) readLoop(handle func(data *VirtqElem) int) {
+-	defer close(vq.control.done)
++func (vq *Virtq) readLoop(handle func(data *VirtqElem) int, control *readerControl) {
++	defer close(control.done)
+@@ -52 +54,18 @@ func (vq *Virtq) readLoop(handle func(data *VirtqElem) int) {
+-		case <-vq.control.cancel:
++		case <-control.cancel:
++			return
++		default:
++		}
++
++		pollFDs := []unix.PollFd{{Fd: int32(vq.KickFD), Events: unix.POLLIN}}
++		for {
++			if _, err := unix.Poll(pollFDs, -1); err == unix.EINTR {
++				continue
++			} else if err != nil {
++				log.Printf("poll: %v", err)
++				return
++			}
++			break
++		}
++
++		select {
++		case <-control.cancel:
+@@ -58,0 +78,3 @@ func (vq *Virtq) readLoop(handle func(data *VirtqElem) int) {
++		if err == syscall.EAGAIN {
++			continue
++		}
+@@ -65 +87 @@ func (vq *Virtq) readLoop(handle func(data *VirtqElem) int) {
+-		for _, data := range vq.popBatch() {
++		for _, data := range vq.popBatch(control) {
+@@ -67,0 +90 @@ func (vq *Virtq) readLoop(handle func(data *VirtqElem) int) {
++				defer control.handlers.Done()
+diff --git a/internal/vhostuser/virtq.go b/internal/vhostuser/virtq.go
+index 514769e..2b55be5 100644
+--- a/internal/vhostuser/virtq.go
++++ b/internal/vhostuser/virtq.go
+@@ -75,3 +75,4 @@ func (vq *Virtq) SetEnable(handle func(*VirtqElem) int) {
+-	var enable uint
+-	if handle != nil {
+-		enable = 1
++	vq.Enable = 1
++	vq.control = &readerControl{
++		cancel: make(chan struct{}),
++		done:   make(chan struct{}),
+@@ -78,0 +80,2 @@ func (vq *Virtq) SetEnable(handle func(*VirtqElem) int) {
++	go vq.readLoop(handle, vq.control)
++}
+@@ -80,10 +83,8 @@ func (vq *Virtq) SetEnable(handle func(*VirtqElem) int) {
+-	vq.Enable = enable
+-	if vq.Enable != 0 {
+-		vq.control = &readerControl{
+-			cancel: make(chan struct{}, 1),
+-			done:   make(chan struct{}, 1),
+-		}
+-		go vq.readLoop(handle)
+-	} else if vq.control != nil {
+-		close(vq.control.cancel)
+-		<-vq.control.done
++func (vq *Virtq) stop() *readerControl {
++	vq.Enable = 0
++	control := vq.control
++	if control != nil {
++		close(control.cancel)
++		var wake [8]byte
++		wake[0] = 1
++		_, _ = syscall.Write(vq.KickFD, wake[:])
+@@ -91,0 +93 @@ func (vq *Virtq) SetEnable(handle func(*VirtqElem) int) {
++	return control
+@@ -97 +99 @@ func (vq *Virtq) SetEnable(handle func(*VirtqElem) int) {
+-func (vq *Virtq) popBatch() []*VirtqElem {
++func (vq *Virtq) popBatch(control *readerControl) []*VirtqElem {
+@@ -99,0 +102,5 @@ func (vq *Virtq) popBatch() []*VirtqElem {
++	select {
++	case <-control.cancel:
++		return nil
++	default:
++	}
+@@ -112,0 +120 @@ func (vq *Virtq) popBatch() []*VirtqElem {
++	control.handlers.Add(len(batch))
+@@ -303,0 +312,3 @@ func (vq *Virtq) queueMapDesc(head uint16) (*VirtqElem, error) {
++		if n == 0 {
++			return nil, fmt.Errorf("zero-length indirect descriptor table")
++		}
+@@ -308 +319,11 @@ func (vq *Virtq) queueMapDesc(head uint16) (*VirtqElem, error) {
+-	for {
++	maxDescriptors := len(descArray)
++	if maxDescriptors > 1<<16 {
++		maxDescriptors = 1 << 16
++	}
++	for traversed := 0; ; traversed++ {
++		if traversed >= maxDescriptors {
++			return nil, fmt.Errorf("descriptor chain cycle or length exceeds table size %d", len(descArray))
++		}
++		if desc.Flags&VRING_DESC_F_INDIRECT != 0 {
++			return nil, fmt.Errorf("nested indirect descriptor")
++		}
+@@ -326 +347 @@ func (vq *Virtq) queueMapDesc(head uint16) (*VirtqElem, error) {
+-		if head >= uint16(len(descArray)) {
++		if int(head) >= len(descArray) {
+@@ -354,2 +375,11 @@ type readerControl struct {
+-	cancel chan struct{}
+-	done   chan struct{}
++	cancel   chan struct{}
++	done     chan struct{}
++	handlers sync.WaitGroup
++}
++
++func (c *readerControl) wait() {
++	if c == nil {
++		return
++	}
++	<-c.done
++	c.handlers.Wait()
+@@ -400,5 +430,3 @@ func (vq *Virtq) Close() error {
+-	if vq.control != nil {
+-		close(vq.control.cancel)
+-		<-vq.control.done
+-		vq.control = nil
+-	}
++	vq.stop().wait()
++	return vq.closeFDs()
++}
+@@ -405,0 +434 @@ func (vq *Virtq) Close() error {
++func (vq *Virtq) closeFDs() error {
+@@ -415,0 +445,6 @@ func (vq *Virtq) Close() error {
++func (vq *Virtq) lastAvailIdx() uint16 {
++	vq.mu.Lock()
++	defer vq.mu.Unlock()
++	return vq.LastAvailIdx
++}
++

@@ -5,6 +5,7 @@
   pkgs,
   mkExecSSH ? import ./lib/mkExecSSH.nix { inherit pkgs lib; },
   mkVirtioFSD ? import ./lib/mkVirtioFSD.nix { inherit pkgs lib; },
+  goVirtiofsdPackage ? pkgs.callPackage ./go-virtiofsd/package.nix { },
   ...
 }:
 
@@ -340,6 +341,19 @@ in
       description = "Files to write into the guest during fresh VM launch, keyed by absolute guest path.";
     };
 
+    nixStoreBackend = lib.mkOption {
+      type = lib.types.enum [
+        "virtiofsd"
+        "go-fuse"
+      ];
+      default = "virtiofsd";
+      description = ''
+        Backend for the managed read-only Nix store share. "go-fuse" selects
+        the experimental Agentspace storefs daemon; writable workspace shares
+        continue to use the configured virtiofsd package.
+      '';
+    };
+
     nixStoreShareSocket = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -461,6 +475,24 @@ in
           ;
       };
 
+      mkGoStoreFSDaemonCommand =
+        share:
+        pkgs.writeShellScript "storefs-${cfg.hostName}-${share.tag}" ''
+          socket_path=${lib.escapeShellArg share.socket}
+          if [ -n "''${VIRTIOFSD_SOCKET-}" ]; then
+            socket_path="$VIRTIOFSD_SOCKET"
+          fi
+
+          source_path=${lib.escapeShellArg share.source}
+          if [ -n "''${VIRTIOFSD_SOURCE-}" ]; then
+            source_path="$VIRTIOFSD_SOURCE"
+          fi
+
+          exec ${lib.getExe goVirtiofsdPackage} \
+            --socket-path="$socket_path" \
+            --shared-dir="$source_path"
+        '';
+
       notificationManifest = {
         states = cfg.notifications.states;
       }
@@ -564,7 +596,11 @@ in
                 socket = socketPath;
               }
               // lib.optionalAttrs (!(nixStoreShareUsesSocket && isNixStoreShare share)) {
-                bin = mkVirtioFSDaemonCommand share;
+                bin =
+                  if cfg.nixStoreBackend == "go-fuse" && isNixStoreShare share then
+                    mkGoStoreFSDaemonCommand share
+                  else
+                    mkVirtioFSDaemonCommand share;
                 args = [ ];
               }
             );

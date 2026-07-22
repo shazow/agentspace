@@ -30,6 +30,7 @@
         subPackages = [ "." ];
         env.CGO_ENABLED = 0;
       };
+      goVirtiofsdPackage = pkgs.callPackage ./go-virtiofsd/package.nix { };
 
       mkExecSSH = import ./lib/mkExecSSH.nix { inherit pkgs lib; };
       mkVirtioFSD = import ./lib/mkVirtioFSD.nix { inherit pkgs lib; };
@@ -66,7 +67,7 @@
           baseSystem = nixpkgs.lib.nixosSystem {
             inherit system;
             modules = baseModules;
-            specialArgs = { inherit mkExecSSH mkVirtioFSD; };
+            specialArgs = { inherit mkExecSSH mkVirtioFSD goVirtiofsdPackage; };
           };
           sandboxExtraModules = baseSystem.config.agentspace.sandbox.extraModules;
         in
@@ -75,7 +76,7 @@
         else
           baseSystem.extendModules {
             modules = sandboxExtraModules;
-            specialArgs = { inherit mkExecSSH mkVirtioFSD; };
+            specialArgs = { inherit mkExecSSH mkVirtioFSD goVirtiofsdPackage; };
           };
 
       mkLaunch =
@@ -158,6 +159,7 @@
 
       packages.${system} = {
         virtie = virtiePackage;
+        agentspace-storefs = goVirtiofsdPackage;
       };
 
       formatter.${system} = pkgs.nixfmt-tree;
