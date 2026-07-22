@@ -4,9 +4,7 @@
 
 - The remote origin project is https://github.com/shazow/agentspace
 - Project root contains the Nix flake and VM/check definitions.
-- The `virtie/` directory is a separate Go module; run Go commands such as `go test ./...` from `virtie/`, not the repository root.
-- Specifications and progress are tracked in `.specs/*.md`.
-- Summary: The agentspace flake builds the VM image, wraps helper scripts, and produces `manifest.toml` which feeds into `virtie` that manages running everything. There are three API surfaces: Agentspace nix module, manifest.toml, and virtie commandline.
+- Summary: The agentspace flake builds the VM image, wraps helper scripts, and produces `manifest.toml` for the standalone `virtle` runtime. Agentspace owns the Nix module and generated manifest surfaces; Virtle owns its command line.
 
 ## Process
 
@@ -14,7 +12,7 @@
 - This project should prioritize working on NixOS, but ideally also support macOS. Surface any concerns that may break macOS compatibility.
 - Backward-incompatible changes are acceptable when justified. When changing the consumer API, document it in `MIGRATION.md`.
 - When launching a VM, ensure we allocate less memory than is available, and choose an available CID (the default may be taken).
-- When debugging VM boot failures, use `mkSandbox { quiet = false; ... }` in agentspace or `kernel.serial = "print"` in the virtie manifest.
+- When debugging VM boot failures, use `mkSandbox { quiet = false; ... }` in agentspace or `kernel.serial = "print"` in the virtle manifest.
 
 ## Code Style
 
@@ -42,10 +40,10 @@ Commit message style:
 Example resulting commit message:
 
 ```
-virtie: Take over vsock allocation
+sandbox: Configure runtime vsock allocation
 
 VSock CID is no longer hardcoded in nix, instead it uses a placeholder which
-gets overwritten by virtie.
+the runtime launcher overwrites.
 
 Validation performed:
 - ...

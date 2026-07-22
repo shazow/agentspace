@@ -83,7 +83,7 @@ in
       vcpu = lib.mkOption {
         type = lib.types.nullOr lib.types.ints.positive;
         default = null;
-        description = "Number of vCPUs for the guest VM. Null lets virtie use the host-visible CPU count at launch time.";
+        description = "Number of vCPUs for the guest VM. Null lets virtle use the host-visible CPU count at launch time.";
       };
     };
 
@@ -109,7 +109,7 @@ in
           "ssh_config"
         ];
         description = ''
-          Complete host-side SSH argv used by virtie. When unset, agentspace
+          Complete host-side SSH argv used by virtle. When unset, agentspace
           generates a default OpenSSH command. Use `lib.mkExecSSH` to build the
           common OpenSSH argv with optional config and identity arguments.
         '';
@@ -237,7 +237,7 @@ in
                   "{{.Workspace.HostPath}}/dbus-proxy.sock"
                   "--filter"
                 ];
-                description = "Host-side argv run and managed by virtie. Template variables include Workspace.GuestPath, Workspace.HostPath, CID, StateDir, vars entries, and Env.";
+                description = "Host-side argv run and managed by virtle. Template variables include Workspace.GuestPath, Workspace.HostPath, CID, StateDir, vars entries, and Env.";
               };
 
               vars = lib.mkOption {
@@ -250,7 +250,7 @@ in
         )
       );
       default = [ ];
-      description = "Host-side commands managed for the lifetime of the virtie launch.";
+      description = "Host-side commands managed for the lifetime of the virtle launch.";
     };
 
     swapSize = lib.mkOption {
@@ -262,7 +262,7 @@ in
     balloon = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Enable the virtio-balloon device and virtie's default runtime balloon controller.";
+      description = "Enable the virtio-balloon device and virtle's default runtime balloon controller.";
     };
 
     notifications = {
@@ -270,9 +270,9 @@ in
         type = lib.types.str;
         default = "";
         example = ''
-          notify-send "virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE"
+          notify-send "virtle: $VIRTLE_NOTIFY_STATE - $VIRTLE_NOTIFY_MESSAGE"
         '';
-        description = "Host-side shell command for virtie runtime notification hooks. Set to an empty string to disable notifications.";
+        description = "Host-side shell command for virtle runtime notification hooks. Set to an empty string to disable notifications.";
       };
 
       states = lib.mkOption {
@@ -346,7 +346,7 @@ in
       example = "/var/run/virtiofs-nix-store.sock";
       description = ''
         Existing host-side virtiofsd socket for the Nix store share. If
-        provided, QEMU uses this socket instead of having virtie start a
+        provided, QEMU uses this socket instead of having virtle start a
         userland virtiofsd process for the share.
       '';
     };
@@ -372,19 +372,19 @@ in
         internal = true;
       };
 
-      virtieManifestData = lib.mkOption {
+      virtleManifestData = lib.mkOption {
         type = lib.types.anything;
         readOnly = true;
         internal = true;
       };
 
-      virtieManifest = lib.mkOption {
+      virtleManifest = lib.mkOption {
         type = lib.types.str;
         readOnly = true;
         internal = true;
       };
 
-      virtieManifestTemplate = lib.mkOption {
+      virtleManifestTemplate = lib.mkOption {
         type = lib.types.path;
         readOnly = true;
         internal = true;
@@ -595,7 +595,7 @@ in
         // lib.optionalAttrs (file.path != null) { source = file.path; }
       ) cfg.writeFiles;
 
-      virtieManifestData = {
+      virtleManifestData = {
         host_name = cfg.hostName;
         working_dir = ".";
         state_dir = persistenceStateDir;
@@ -673,8 +673,8 @@ in
       };
 
       tomlFormat = pkgs.formats.toml { };
-      virtieManifestTemplate = tomlFormat.generate "virtie-${cfg.hostName}.toml" virtieManifestData;
-      virtieManifest = "${persistenceBaseDir}/virtie-${cfg.hostName}.toml";
+      virtleManifestTemplate = tomlFormat.generate "virtle-${cfg.hostName}.toml" virtleManifestData;
+      virtleManifest = "${persistenceBaseDir}/virtle-${cfg.hostName}.toml";
     in
     lib.mkMerge [
       mkVirtioFSD.moduleDefaults
@@ -702,9 +702,9 @@ in
 
         agentspace.sandbox.launch = {
           inherit commonInit;
-          inherit virtieManifestData;
-          inherit virtieManifest;
-          inherit virtieManifestTemplate;
+          inherit virtleManifestData;
+          inherit virtleManifest;
+          inherit virtleManifestTemplate;
         };
 
         networking.hostName = cfg.hostName;
@@ -771,13 +771,13 @@ in
             PermitRootLogin = "no";
           };
         };
-        systemd.services.virtie-ssh-signal = {
+        systemd.services.virtle-ssh-signal = {
           wantedBy = [ "multi-user.target" ];
           requires = [ "sshd.service" ];
           after = [ "sshd.service" ];
           serviceConfig.Type = "oneshot";
           script = ''
-            ${pkgs.coreutils}/bin/echo SSH-READY > /dev/virtio-ports/virtie.ready
+            ${pkgs.coreutils}/bin/echo SSH-READY > /dev/virtio-ports/virtle.ready
           '';
         };
         services.qemuGuest.enable = true;
@@ -815,7 +815,7 @@ in
         ]);
 
         microvm.binScripts.virtiofsd-run = lib.mkForce ''
-          echo "virtiofsd-run is managed by virtie and should not be invoked directly." >&2
+          echo "virtiofsd-run is managed by virtle and should not be invoked directly." >&2
           exit 1
         '';
 

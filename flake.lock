@@ -59,7 +59,8 @@
       "inputs": {
         "home-manager": "home-manager",
         "microvm": "microvm",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "virtle": "virtle"
       }
     },
     "spectrum": {
@@ -76,6 +77,26 @@
       "original": {
         "type": "git",
         "url": "https://spectrum-os.org/git/spectrum"
+      }
+    },
+    "virtle": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1784578131,
+        "narHash": "sha256-RHTkAmX4LwSCrgAkLS12MPefJfW4ouTy7hK2gVra9vQ=",
+        "owner": "shazow",
+        "repo": "virtle",
+        "rev": "da28af2107cecb83ab76b8042920d53803d044c5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "shazow",
+        "repo": "virtle",
+        "type": "github"
       }
     }
   },

@@ -21,7 +21,7 @@
   };
 
   passphraseProtected = {
-    privateKey = pkgs.writeText "virtie-passphrase-test-key" ''
+    privateKey = pkgs.writeText "virtle-passphrase-test-key" ''
       -----BEGIN OPENSSH PRIVATE KEY-----
       b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABC6P5muIj
       Mitcjuj0yqzfEvAAAAGAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIELNH7oZlQETmedW
@@ -33,8 +33,8 @@
     '';
   };
 
-  virtie = {
-    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBIqXkHFLTDd7n09425txXfdOgJDUb7CpMAdCPVRS94z agentspace-virtie-test";
+  virtle = {
+    publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBIqXkHFLTDd7n09425txXfdOgJDUb7CpMAdCPVRS94z agentspace-virtle-test";
     identityFile = ".agentspace-test/id_ed25519";
   };
 }

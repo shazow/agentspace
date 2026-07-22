@@ -6,12 +6,12 @@
 }:
 let
   sshKeys = import ./ssh-keys.nix { inherit pkgs; };
-  notificationCommand = "notify-send \"virtie: $VIRTIE_NOTIFY_STATE - $VIRTIE_NOTIFY_MESSAGE\"";
+  notificationCommand = "notify-send \"virtle: $VIRTLE_NOTIFY_STATE - $VIRTLE_NOTIFY_MESSAGE\"";
 
-  vmVirtie = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtle = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
     };
     persistence.homeImage = null;
     persistence.storeOverlaySize = 6144;
@@ -40,10 +40,10 @@ let
     persistence.homeImage = null;
   };
 
-  vmVirtieFeatureRich = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleFeatureRich = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
     };
     persistence.homeImage = null;
     balloon = true;
@@ -70,25 +70,25 @@ let
     };
   };
 
-  vmVirtieBalloonDisabled = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleBalloonDisabled = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
     };
     persistence.homeImage = null;
     balloon = false;
   };
 
-  vmVirtieExternalStoreSocket = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleExternalStoreSocket = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
     };
     persistence.homeImage = null;
     nixStoreShareSocket = "/var/run/virtiofs-nix-store.sock";
   };
 
-  vmVirtieEscapedExternalStoreSocket = mkSandbox {
+  vmVirtleEscapedExternalStoreSocket = mkSandbox {
     persistence.homeImage = null;
     nixStoreShareSocket = "/tmp/$(touch injected).sock";
   };
@@ -119,8 +119,8 @@ let
     }).config.system.build.toplevel.drvPath
   );
 
-  vmVirtieCustomSSHExec = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleCustomSSHExec = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = [
       "/custom/ssh"
       "-F"
@@ -129,17 +129,17 @@ let
     persistence.homeImage = null;
   };
 
-  vmVirtieConfigFile = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleConfigFile = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
       configFile = ".agentspace-test/ssh_config";
     };
     persistence.homeImage = null;
   };
 
-  vmVirtieHomeSSHPaths = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleHomeSSHPaths = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
       homeDir = "/home/test";
       identityFile = "~/.ssh/id_ed25519";
@@ -148,10 +148,10 @@ let
     persistence.homeImage = null;
   };
 
-  vmVirtieExtraShares = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleExtraShares = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
     };
     persistence.homeImage = null;
     shares = [
@@ -173,10 +173,10 @@ let
     ];
   };
 
-  vmVirtieExtraImagesAndPorts = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleExtraImagesAndPorts = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
     };
     persistence.homeImage = null;
     volumes = [
@@ -234,10 +234,10 @@ let
     ];
   };
 
-  vmVirtieWorkspaces = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleWorkspaces = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
     };
     persistence.homeImage = null;
     workspace = {
@@ -251,7 +251,7 @@ let
     };
   };
 
-  vmVirtieSwap = mkSandbox {
+  vmVirtleSwap = mkSandbox {
     persistence.homeImage = null;
     swapSize = 1024;
     workspace = {
@@ -260,10 +260,10 @@ let
     };
   };
 
-  vmVirtieFixedMachine = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleFixedMachine = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
     };
     persistence.homeImage = null;
     machine = {
@@ -272,10 +272,10 @@ let
     };
   };
 
-  vmVirtieGraphical = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleGraphical = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
     };
     persistence.homeImage = null;
     extraModules = [
@@ -288,10 +288,10 @@ let
     ];
   };
 
-  vmVirtieRun = mkSandbox {
-    ssh.authorizedKeys = [ sshKeys.virtie.publicKey ];
+  vmVirtleRun = mkSandbox {
+    ssh.authorizedKeys = [ sshKeys.virtle.publicKey ];
     ssh.exec = mkExecSSH {
-      identityFile = sshKeys.virtie.identityFile;
+      identityFile = sshKeys.virtle.identityFile;
     };
     persistence.homeImage = null;
     run = [
@@ -309,7 +309,7 @@ let
     ];
   };
 
-  vmVirtieInodeFileHandlesPrefer = mkSandbox {
+  vmVirtleInodeFileHandlesPrefer = mkSandbox {
     persistence.homeImage = null;
     extraModules = [
       {
@@ -318,33 +318,33 @@ let
     ];
   };
 
-  vmVirtieNativeInodeFileHandlesPrefer = mkSandbox {
+  vmVirtleNativeInodeFileHandlesPrefer = mkSandbox {
     persistence.homeImage = null;
     virtiofsd.inodeFileHandles = "prefer";
   };
 
-  manifest = vmVirtie.config.agentspace.sandbox.launch.virtieManifestData;
-  defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtieManifestData;
+  manifest = vmVirtle.config.agentspace.sandbox.launch.virtleManifestData;
+  defaultManifest = vmDefault.config.agentspace.sandbox.launch.virtleManifestData;
   quietDisabledKernelParams = vmQuietDisabled.config.microvm.kernelParams;
-  featureRichManifest = vmVirtieFeatureRich.config.agentspace.sandbox.launch.virtieManifestData;
+  featureRichManifest = vmVirtleFeatureRich.config.agentspace.sandbox.launch.virtleManifestData;
   disabledBalloonManifest =
-    vmVirtieBalloonDisabled.config.agentspace.sandbox.launch.virtieManifestData;
+    vmVirtleBalloonDisabled.config.agentspace.sandbox.launch.virtleManifestData;
   externalStoreSocketManifest =
-    vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.virtieManifestData;
-  customSSHExecManifest = vmVirtieCustomSSHExec.config.agentspace.sandbox.launch.virtieManifestData;
-  configFileManifest = vmVirtieConfigFile.config.agentspace.sandbox.launch.virtieManifestData;
-  homeSSHPathsManifest = vmVirtieHomeSSHPaths.config.agentspace.sandbox.launch.virtieManifestData;
-  extraSharesManifest = vmVirtieExtraShares.config.agentspace.sandbox.launch.virtieManifestData;
+    vmVirtleExternalStoreSocket.config.agentspace.sandbox.launch.virtleManifestData;
+  customSSHExecManifest = vmVirtleCustomSSHExec.config.agentspace.sandbox.launch.virtleManifestData;
+  configFileManifest = vmVirtleConfigFile.config.agentspace.sandbox.launch.virtleManifestData;
+  homeSSHPathsManifest = vmVirtleHomeSSHPaths.config.agentspace.sandbox.launch.virtleManifestData;
+  extraSharesManifest = vmVirtleExtraShares.config.agentspace.sandbox.launch.virtleManifestData;
   extraImagesAndPortsManifest =
-    vmVirtieExtraImagesAndPorts.config.agentspace.sandbox.launch.virtieManifestData;
-  workspaceManifest = vmVirtieWorkspaces.config.agentspace.sandbox.launch.virtieManifestData;
-  fixedMachineManifest = vmVirtieFixedMachine.config.agentspace.sandbox.launch.virtieManifestData;
-  graphicalManifest = vmVirtieGraphical.config.agentspace.sandbox.launch.virtieManifestData;
-  runManifest = vmVirtieRun.config.agentspace.sandbox.launch.virtieManifestData;
+    vmVirtleExtraImagesAndPorts.config.agentspace.sandbox.launch.virtleManifestData;
+  workspaceManifest = vmVirtleWorkspaces.config.agentspace.sandbox.launch.virtleManifestData;
+  fixedMachineManifest = vmVirtleFixedMachine.config.agentspace.sandbox.launch.virtleManifestData;
+  graphicalManifest = vmVirtleGraphical.config.agentspace.sandbox.launch.virtleManifestData;
+  runManifest = vmVirtleRun.config.agentspace.sandbox.launch.virtleManifestData;
   inodeFileHandlesPreferManifest =
-    vmVirtieInodeFileHandlesPrefer.config.agentspace.sandbox.launch.virtieManifestData;
+    vmVirtleInodeFileHandlesPrefer.config.agentspace.sandbox.launch.virtleManifestData;
   nativeInodeFileHandlesPreferManifest =
-    vmVirtieNativeInodeFileHandlesPrefer.config.agentspace.sandbox.launch.virtieManifestData;
+    vmVirtleNativeInodeFileHandlesPrefer.config.agentspace.sandbox.launch.virtleManifestData;
 
   mountsOfType = type: manifest: builtins.filter (mount: mount.type == type) manifest.mounts;
   virtiofsMounts = mountsOfType "virtiofs" manifest;
@@ -387,12 +387,12 @@ let
     assert !(manifest ? volumes);
     assert builtins.length (mountsOfType "image" manifest) > 0;
     assert builtins.length manifest.networks > 0;
-    assert vmVirtie.config.systemd.services.virtie-ssh-signal.after == [ "sshd.service" ];
-    assert vmVirtie.config.systemd.services.virtie-ssh-signal.requires == [ "sshd.service" ];
-    assert vmVirtie.config.systemd.services.virtie-ssh-signal.serviceConfig.Type == "oneshot";
+    assert vmVirtle.config.systemd.services.virtle-ssh-signal.after == [ "sshd.service" ];
+    assert vmVirtle.config.systemd.services.virtle-ssh-signal.requires == [ "sshd.service" ];
+    assert vmVirtle.config.systemd.services.virtle-ssh-signal.serviceConfig.Type == "oneshot";
     assert
-      vmVirtie.config.agentspace.sandbox.ssh.exec == mkExecSSH {
-        identityFile = sshKeys.virtie.identityFile;
+      vmVirtle.config.agentspace.sandbox.ssh.exec == mkExecSSH {
+        identityFile = sshKeys.virtle.identityFile;
       };
     assert builtins.head manifest.ssh.exec == "${pkgs.openssh}/bin/ssh";
     assert builtins.elem "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
@@ -490,7 +490,7 @@ let
     assert vmQuietDisabled.config.boot.consoleLogLevel != 0;
     assert vmQuietDisabled.config.boot.initrd.verbose != false;
     assert vmQuietDisabled.config.microvm.qemu.serialConsole == false;
-    assert vmQuietDisabled.config.agentspace.sandbox.launch.virtieManifestData.kernel.serial == "print";
+    assert vmQuietDisabled.config.agentspace.sandbox.launch.virtleManifestData.kernel.serial == "print";
     assert vmQuietDisabled.config.systemd.services."serial-getty@ttyS0".enable == false;
     assert vmQuietDisabled.config.systemd.services."serial-getty@ttyAMA0".enable == false;
     true;
@@ -498,8 +498,8 @@ let
   _fixedMachine =
     assert fixedMachineManifest.machine.memory == 512;
     assert fixedMachineManifest.machine.vcpu == 2;
-    assert vmVirtieFixedMachine.config.microvm.mem == 512;
-    assert vmVirtieFixedMachine.config.microvm.vcpu == 2;
+    assert vmVirtleFixedMachine.config.microvm.mem == 512;
+    assert vmVirtleFixedMachine.config.microvm.vcpu == 2;
     true;
 
   _balloon =
@@ -545,12 +545,12 @@ let
       mountsOfType "virtiofs" externalStoreSocketManifest
     );
     assert pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket"
-      vmVirtieExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
+      vmVirtleExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
     assert pkgs.lib.hasInfix
       "nixStoreShareSocket does not exist or is not a socket: '/tmp/$(touch injected).sock'"
-      vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
+      vmVirtleEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit;
     assert
-      !(pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock" vmVirtieEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
+      !(pkgs.lib.hasInfix "nixStoreShareSocket does not exist or is not a socket: /tmp/$(touch injected).sock" vmVirtleEscapedExternalStoreSocket.config.agentspace.sandbox.launch.commonInit);
     assert !invalidRelativeStoreSocket.success;
     assert !invalidOldPersistenceBaseDir.success;
     assert !invalidOldWorkspaceBaseDir.success;
@@ -638,30 +638,30 @@ let
     assert workspaceManifest.workspace.guest_dir == "/home/agent/workspace";
     assert workspaceManifest.workspace.host_dir == ".agentspace/workspace";
     assert workspaceManifest.workspace.mount_cwd == true;
-    assert vmVirtieWorkspaces.config.environment.sessionVariables.WORKSPACE == "/home/agent/workspace";
+    assert vmVirtleWorkspaces.config.environment.sessionVariables.WORKSPACE == "/home/agent/workspace";
     assert builtins.elem "d /home/agent/workspace 0755 agent users -"
-      vmVirtieWorkspaces.config.systemd.tmpfiles.rules;
+      vmVirtleWorkspaces.config.systemd.tmpfiles.rules;
     assert builtins.any (
       share:
       share.tag == "workspace"
       && share.source == ".agentspace/workspace"
       && share.mountPoint == "/home/agent/workspace"
-    ) vmVirtieWorkspaces.config.microvm.shares;
+    ) vmVirtleWorkspaces.config.microvm.shares;
     assert builtins.any (
       share:
       share.tag == "workspace-agentspace"
       && share.source == "/home/shazow/projects/agentspace"
       && share.mountPoint == "/home/agent/workspace/agentspace"
-    ) vmVirtieWorkspaces.config.microvm.shares;
+    ) vmVirtleWorkspaces.config.microvm.shares;
     assert builtins.any (
       share:
       share.tag == "workspace-project2-foo"
       && share.source == "/home/shazow/foo"
       && share.mountPoint == "/home/agent/workspace/project2/foo"
-    ) vmVirtieWorkspaces.config.microvm.shares;
+    ) vmVirtleWorkspaces.config.microvm.shares;
     assert builtins.any (
       share: share.tag == "workspace_cwd" && share.source == "." && share.mountPoint == "/mnt/cwd"
-    ) vmVirtieWorkspaces.config.microvm.shares;
+    ) vmVirtleWorkspaces.config.microvm.shares;
     assert builtins.any (
       mount:
       mount.tag == "workspace"
@@ -695,8 +695,8 @@ let
   _swap =
     assert builtins.any (
       swap: swap.device == "/home/agent/workspace/swapfile" && swap.size == 1024
-    ) vmVirtieSwap.config.swapDevices;
-    assert !(builtins.any (swap: swap.device == "/swapfile") vmVirtieSwap.config.swapDevices);
+    ) vmVirtleSwap.config.swapDevices;
+    assert !(builtins.any (swap: swap.device == "/swapfile") vmVirtleSwap.config.swapDevices);
     assert !invalidSwapWithoutWorkspace.success;
     true;
 
@@ -775,69 +775,69 @@ let
         }
       ];
     assert !(runManifest ? run_with_tunnel);
-    assert !(builtins.any (share: share.tag == "agentspace_tunnels") vmVirtieRun.config.microvm.shares);
+    assert !(builtins.any (share: share.tag == "agentspace_tunnels") vmVirtleRun.config.microvm.shares);
     assert
-      !(pkgs.lib.hasInfix ".agentspace/tunnels" vmVirtieRun.config.agentspace.sandbox.launch.commonInit);
+      !(pkgs.lib.hasInfix ".agentspace/tunnels" vmVirtleRun.config.agentspace.sandbox.launch.commonInit);
     true;
 in
 {
-  virtie-manifest-contract =
+  virtle-manifest-contract =
     assert _;
-    pkgs.runCommand "virtie-manifest-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-contract" { } "touch $out";
 
-  virtie-manifest-default-ssh-contract =
+  virtle-manifest-default-ssh-contract =
     assert _defaultSSH;
-    pkgs.runCommand "virtie-manifest-default-ssh-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-default-ssh-contract" { } "touch $out";
 
-  virtie-manifest-local-overlay-store-contract =
+  virtle-manifest-local-overlay-store-contract =
     assert _localOverlayStore;
-    pkgs.runCommand "virtie-manifest-local-overlay-store-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-local-overlay-store-contract" { } "touch $out";
 
-  virtie-manifest-quiet-disabled-contract =
+  virtle-manifest-quiet-disabled-contract =
     assert _quietDisabled;
-    pkgs.runCommand "virtie-manifest-quiet-disabled-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-quiet-disabled-contract" { } "touch $out";
 
-  virtie-manifest-balloon-contract =
+  virtle-manifest-balloon-contract =
     assert _balloon;
-    pkgs.runCommand "virtie-manifest-balloon-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-balloon-contract" { } "touch $out";
 
-  virtie-manifest-graphical-contract =
+  virtle-manifest-graphical-contract =
     assert _graphical;
-    pkgs.runCommand "virtie-manifest-graphical-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-graphical-contract" { } "touch $out";
 
-  virtie-manifest-fixed-machine-contract =
+  virtle-manifest-fixed-machine-contract =
     assert _fixedMachine;
-    pkgs.runCommand "virtie-manifest-fixed-machine-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-fixed-machine-contract" { } "touch $out";
 
-  virtie-manifest-external-store-socket-contract =
+  virtle-manifest-external-store-socket-contract =
     assert _externalStoreSocket;
-    pkgs.runCommand "virtie-manifest-external-store-socket-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-external-store-socket-contract" { } "touch $out";
 
-  virtie-manifest-custom-ssh-exec-contract =
+  virtle-manifest-custom-ssh-exec-contract =
     assert _customSSHExec;
-    pkgs.runCommand "virtie-manifest-custom-ssh-exec-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-custom-ssh-exec-contract" { } "touch $out";
 
-  virtie-manifest-extra-shares-contract =
+  virtle-manifest-extra-shares-contract =
     assert _extraShares;
-    pkgs.runCommand "virtie-manifest-extra-shares-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-extra-shares-contract" { } "touch $out";
 
-  virtie-manifest-extra-images-and-ports-contract =
+  virtle-manifest-extra-images-and-ports-contract =
     assert _extraImagesAndPorts;
-    pkgs.runCommand "virtie-manifest-extra-images-and-ports-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-extra-images-and-ports-contract" { } "touch $out";
 
-  virtie-manifest-write-files-contract =
+  virtle-manifest-write-files-contract =
     assert _writeFiles;
-    pkgs.runCommand "virtie-manifest-write-files-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-write-files-contract" { } "touch $out";
 
-  virtie-manifest-swap-contract =
+  virtle-manifest-swap-contract =
     assert _swap;
-    pkgs.runCommand "virtie-manifest-swap-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-swap-contract" { } "touch $out";
 
-  virtie-manifest-notifications-contract =
+  virtle-manifest-notifications-contract =
     assert _notifications;
-    pkgs.runCommand "virtie-manifest-notifications-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-notifications-contract" { } "touch $out";
 
-  virtie-manifest-run-contract =
+  virtle-manifest-run-contract =
     assert _run;
-    pkgs.runCommand "virtie-manifest-run-contract" { } "touch $out";
+    pkgs.runCommand "virtle-manifest-run-contract" { } "touch $out";
 }

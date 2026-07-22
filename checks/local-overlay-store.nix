@@ -2,7 +2,7 @@
   mkLaunch,
   mkSandbox,
   pkgs,
-  virtiePackage,
+  virtlePackage,
   ...
 }:
 let
@@ -133,7 +133,7 @@ in
         fi
 
         run_guest_script ${./local-overlay-store/poweroff.sh} >/dev/null 2>&1 || true
-        # QEMU exits before virtie asks it to quit, so the launcher currently
+        # QEMU exits before virtle asks it to quit, so the launcher currently
         # reports a broken QMP pipe even after an orderly guest poweroff.
         wait "$launch_pid" 2>/dev/null || true
         launch_pid=
@@ -166,8 +166,8 @@ in
         launcher=$2
         log=$3
         vm_dir="$test_root/$vm_name"
-        manifest_path="$vm_dir/virtie-agent-sandbox.toml"
-        control_socket="$vm_dir/virtie.sock"
+        manifest_path="$vm_dir/virtle-agent-sandbox.toml"
+        control_socket="$vm_dir/virtle.sock"
         qemu_pid_file="$vm_dir/agent-sandbox.pid"
         qmp_socket="$vm_dir/qmp.sock"
         qemu_pid=
@@ -181,7 +181,7 @@ in
             qemu_pid=$candidate_qemu_pid
           fi
           if [ -S "$control_socket" ] \
-            && ${virtiePackage}/bin/virtie --manifest="$manifest_path" rpc guest-ps \
+            && ${virtlePackage}/bin/virtle --manifest="$manifest_path" rpc guest-ps \
               >/dev/null 2>&1 \
             && run_guest_script ${./local-overlay-store/ping-daemon.sh} >/dev/null 2>&1; then
             return 0
@@ -200,7 +200,7 @@ in
       guest_read_file() {
         guest_path=$1
         request=$(jq -cn --arg path "$guest_path" '{path: $path}')
-        if ! response=$(${virtiePackage}/bin/virtie \
+        if ! response=$(${virtlePackage}/bin/virtle \
           --manifest="$manifest_path" rpc guest-read "$request" 2>/dev/null); then
           return 1
         fi
@@ -210,7 +210,7 @@ in
       run_guest_script() {
         guest_script_path=$1
         guest_arg=''${2-}
-        # virtie's guest-exec RPC has a 500 ms command timeout. Start the real
+        # virtle's guest-exec RPC has a 500 ms command timeout. Start the real
         # command asynchronously, then collect its status and output through
         # guest-read so store operations can take as long as they need.
         # shellcheck disable=SC2016 # This wrapper is evaluated in the guest.
@@ -236,7 +236,7 @@ in
             args: ["-c", $wrapper, "guest-wrapper", $script, $guest_arg],
             captureOutput: true
           }')
-        if ! response=$(${virtiePackage}/bin/virtie \
+        if ! response=$(${virtlePackage}/bin/virtle \
           --manifest="$manifest_path" rpc guest-exec "$request"); then
           return 1
         fi

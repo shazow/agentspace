@@ -1,5 +1,5 @@
 {
-  description = "Example virtie-backed agent flake using agentspace.lib.mkSandbox";
+  description = "Example virtle-backed agent flake using agentspace.lib.mkSandbox";
 
   inputs = {
     agentspace.url = "path:../..";

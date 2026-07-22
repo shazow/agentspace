@@ -1,5 +1,5 @@
 {
-  description = "Standalone virtie manifest example using a reusable custom VM image";
+  description = "Standalone virtle manifest example using a reusable custom VM image";
 
   inputs = {
     agentspace.url = "path:../..";
@@ -23,14 +23,14 @@
 
       manifest = pkgs.writeText "manifest.toml" ''
         host_name = "custom-vm"
-        state_dir = ".virtie"
+        state_dir = ".virtle"
 
         [qemu]
         exec = [
           "${pkgs.qemu_kvm}/bin/qemu-system-x86_64",
-          "-chardev", "socket,path=.virtie/virtio-port.sock,server=on,wait=off,id=virtio_port_char",
+          "-chardev", "socket,path=.virtle/virtio-port.sock,server=on,wait=off,id=virtio_port_char",
           "-device", "virtserialport,chardev=virtio_port_char,name=virtio-port",
-          "-chardev", "socket,path=.virtie/virtio-fs.sock,server=on,wait=off,id=virtio_fs_char",
+          "-chardev", "socket,path=.virtle/virtio-fs.sock,server=on,wait=off,id=virtio_fs_char",
           "-device", "virtserialport,chardev=virtio_fs_char,name=virtio-fs",
         ]
 
@@ -49,7 +49,7 @@
 
         [[mounts]]
         type = "image"
-        source = ".virtie/rootfs.ext4"
+        source = ".virtle/rootfs.ext4"
 
         [mounts.image]
         fs = "ext4"
@@ -60,16 +60,16 @@
       launch = pkgs.writeShellScriptBin "launch-custom-vm" ''
         set -euo pipefail
 
-        mkdir -p .virtie
-        if [ ! -e .virtie/rootfs.ext4 ]; then
-          cp ${gondolin-alpine}/rootfs.ext4 .virtie/rootfs.ext4
-          chmod u+w .virtie/rootfs.ext4
+        mkdir -p .virtle
+        if [ ! -e .virtle/rootfs.ext4 ]; then
+          cp ${gondolin-alpine}/rootfs.ext4 .virtle/rootfs.ext4
+          chmod u+w .virtle/rootfs.ext4
         fi
         install -m 0644 ${manifest} manifest.toml
 
         exec ${
-          agentspace.packages.${system}.virtie
-        }/bin/virtie --manifest=manifest.toml launch -v --resume=no "$@"
+          agentspace.packages.${system}.virtle
+        }/bin/virtle --manifest=manifest.toml launch -v --resume=no "$@"
       '';
     in
     {

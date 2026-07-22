@@ -11,10 +11,10 @@ Most exploring concepts around ideas here: https://github.com/shazow/shazow.net/
 
 - Agentspace is a nix flake that has two library outputs with high-level consumer APIs:
   - `lib.mkSandbox` produces a sandbox VM configuration with the help of `microvm.nix`, check [sandbox-qemu.nix](https://github.com/shazow/agentspace/blob/main/sandbox-qemu.nix) for all the options.
-  - `lib.mkLaunch` takes the sandbox output and wires it up into an executable script that runs the VM with `virtie`.
-- Virtie handles running a bunch if processes and wiring them up together, including: `virtiofsd` for volume mounts, `qemu` for the VM, notification hooks, socket sharing, memory ballooning, and other things.
+  - `lib.mkLaunch` takes the sandbox output and wires it up into an executable script that runs the VM with `virtle`.
+- [Virtle](https://github.com/shazow/virtle) handles running a bunch of processes and wiring them up together, including: `virtiofsd` for volume mounts, `qemu` for the VM, notification hooks, socket sharing, memory ballooning, and other things.
 
-Virtie is rapidly evolving, but the agentspace consumer interface should remain fairly stable.
+Virtle is rapidly evolving, but the agentspace consumer interface should remain fairly stable.
 
 ## Usage
 
