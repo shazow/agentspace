@@ -33,7 +33,7 @@ noted otherwise.
 | `hostName` (`"agent-sandbox"`) | Guest hostname and the generated manifest name. |
 | `quiet` (`true`) | Suppress normal kernel/initrd output. Set `false` to print serial output while debugging boot failures. |
 | `machine.memory` (`4096`) | Guest memory in MiB. |
-| `machine.vcpu` (`null`) | vCPU count. `null` lets virtie choose the host-visible CPU count at launch time. |
+| `machine.vcpu` (`null`) | vCPU count. `null` lets virtle choose the host-visible CPU count at launch time. |
 
 The sandbox also enables QEMU, a user-mode network interface, the QEMU guest
 agent, SSH, passwordless `sudo` for `wheel`, and a small base package set
@@ -56,7 +56,7 @@ SSH login is disabled.
 
 | Option | Function |
 | --- | --- |
-| `persistence.baseDir` (`".agentspace"`) | Host directory prefix for generated images, state, and the virtie manifest. Relative paths are resolved from the launch directory. |
+| `persistence.baseDir` (`".agentspace"`) | Host directory prefix for generated images, state, and the virtle manifest. Relative paths are resolved from the launch directory. |
 | `persistence.homeImage` (`"home.img"`) | Ext4 image for persistent `/home/<user>`. Set to `null` to disable the home image. Absolute paths are used as-is. |
 | `persistence.homeSize` (`4096`) | Home image size in MB. |
 | `persistence.storeOverlay` (`"nix-store-overlay-v2.img"`) | Writable Nix-store overlay image path. |
@@ -88,8 +88,8 @@ size without a workspace).
 | `volumes` (`[ ]`) | Additional disk images using the `microvm.volumes` schema. |
 | `forwardPorts` (`[ ]`) | Additional user-network forwards using the `microvm.forwardPorts` schema. |
 | `swapSize` (`0`) | Guest sparse swapfile size in MiB, created below the workspace. `0` disables it. |
-| `balloon` (`false`) | Enable virtio-balloon and virtie's runtime balloon controller, including deflation on OOM and free-page reporting. |
-| `nixStoreShareSocket` (`null`) | Existing host virtiofsd socket for the read-only Nix-store share. When set, virtie does not start its own daemon for that share; the path must be absolute and already be a socket when launching. |
+| `balloon` (`false`) | Enable virtio-balloon and virtle's runtime balloon controller, including deflation on OOM and free-page reporting. |
+| `nixStoreShareSocket` (`null`) | Existing host virtiofsd socket for the read-only Nix-store share. When set, virtle does not start its own daemon for that share; the path must be absolute and already be a socket when launching. |
 | `virtiofsd.*` | Configure the virtiofsd package, group, thread-pool size, inode file-handle policy, and extra arguments using the `mkVirtioFSD` options. |
 
 `agentspace.nixosModules.hostVirtiofsdNixStore` provides a ready-made socket
@@ -140,7 +140,7 @@ shares and forwards are merged with the built-in mounts and user-mode network.
 
 ### `run`
 
-`run` is a list of host-side commands managed for the lifetime of the virtie
+`run` is a list of host-side commands managed for the lifetime of the virtle
 launch:
 
 ```nix
@@ -166,7 +166,7 @@ the effective user, workspace, and persistence settings.
 
 | Option | Function |
 | --- | --- |
-| `notifications.command` (`""`) | Host shell command run by virtie for runtime notifications. It can read `VIRTIE_NOTIFY_STATE` and `VIRTIE_NOTIFY_MESSAGE`. Empty disables the hook. |
+| `notifications.command` (`""`) | Host shell command run by virtle for runtime notifications. It can read `VIRTLE_NOTIFY_STATE` and `VIRTLE_NOTIFY_MESSAGE`. Empty disables the hook. |
 | `notifications.states` (`[ ]`) | Optional state allowlist. Empty means all notification states. |
 
 ## Files injected into the guest
@@ -185,7 +185,7 @@ contain:
 | `overwrite` (`false`) | Replace an existing guest file. |
 
 Use either `text` or `path` for the file contents. The host path is read by
-virtie at runtime rather than embedded as file contents in the Nix store.
+virtle at runtime rather than embedded as file contents in the Nix store.
 
 Example:
 
@@ -235,9 +235,9 @@ graphics settings, and other NixOS configuration. Prefer the dedicated
 `mkLaunch sandbox` to produce a launcher that:
 
 1. creates the workspace host directory and persistence directory as needed;
-2. writes the generated virtie TOML manifest;
+2. writes the generated virtle TOML manifest;
 3. reports the system closure size when available; and
-4. runs virtie/QEMU, optionally attaching SSH or passing a default/explicit
+4. runs virtle/QEMU, optionally attaching SSH or passing a default/explicit
    remote command.
 
 The generated manifest also includes the built-in Nix-store share (unless

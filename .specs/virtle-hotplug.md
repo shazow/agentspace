@@ -1,12 +1,16 @@
-# Virtie Hotplug
+# Virtle Hotplug
 
-Runtime device hotplug support for `virtie` through typed manifest entries.
+Runtime device hotplug support for `virtle` through typed manifest entries.
 
 **Status**: In-Progress
 
+The runtime implementation now lives in the standalone
+[`shazow/virtle`](https://github.com/shazow/virtle) repository. Agentspace owns
+only the Nix-facing integration described here.
+
 ## Goals
 
-Provide a first hotplug path for already-running `virtie` VMs without expanding
+Provide a first hotplug path for already-running `virtle` VMs without expanding
 the agentspace Nix API yet.
 
 - Define typed direct-manifest entries with `[[hotplug]] type = "virtiofs"`,
@@ -14,8 +18,8 @@ the agentspace Nix API yet.
 - Support `mounts[].hotplugged = true` as sugar for a virtiofs hotplug device.
 - Automatically preallocate one QEMU PCIe root port for each resolved hotplug
   device so it can be attached after launch.
-- Add `virtie --manifest=MANIFEST hotplug ID` and
-  `virtie --manifest=MANIFEST hotplug --detach ID`.
+- Add `virtle --manifest=MANIFEST hotplug ID` and
+  `virtle --manifest=MANIFEST hotplug --detach ID`.
 - Persist per-device runtime state under `state_dir/hotplug/<id>.json`.
 - Keep the relationship to
   [#112](https://github.com/shazow/agentspace/issues/112) visible: future
@@ -94,9 +98,9 @@ branch lands.
 
 ## Runtime Design
 
-`virtie/internal/hotplug` owns the typed device descriptors, state records, QMP
+`virtle/internal/hotplug` owns the typed device descriptors, state records, QMP
 command construction, rollback sequencing, and attach/detach orchestration.
-`virtie/internal/manager` adapts that package to the existing process runner,
+`virtle/internal/manager` adapts that package to the existing process runner,
 QMP dialer/client, guest-agent dialer, socket waiter, path resolution, and
 stage-error wrapping.
 
@@ -115,6 +119,6 @@ currently consumed through `config.microvm.*` into native `mkSandbox` options.
 Hotplugged shares should eventually follow that direction rather than becoming
 another user-facing reason to understand `config.microvm.shares`.
 
-The current branch intentionally stops at the virtie manifest/runtime layer:
+The current branch intentionally stops at the virtle manifest/runtime layer:
 hand-written or direct manifest producers can use hotplug now, and the future
 agentspace API can lower into the same typed manifest fields.

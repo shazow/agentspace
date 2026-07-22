@@ -1,8 +1,11 @@
-# Virtie Logging
+# Virtle Logging
 
-Structured logging design pattern for `virtie`.
+Structured logging design pattern for `virtle`.
 
 **Status**: Completed
+
+The implementation described here now lives in the standalone
+[`shazow/virtle`](https://github.com/shazow/virtle) repository.
 
 ## Goals
 
@@ -24,7 +27,7 @@ Out of scope:
 
 Acceptance criteria:
 
-- [x] `virtie` uses stdlib `log/slog` for structured runtime logs.
+- [x] `virtle` uses stdlib `log/slog` for structured runtime logs.
 - [x] Package loggers default to `slog.New(slog.DiscardHandler)`.
 - [x] Package `SetLogger` functions accept `*slog.Logger`.
 - [x] The command entrypoint owns handler construction and verbosity policy.
@@ -35,7 +38,7 @@ Acceptance criteria:
 
 - [x] Added package-local `logger.go` files for `internal/manager` and `internal/balloon`.
 - [x] Removed the shared `internal/logging` package.
-- [x] Configured `virtie launch -v` to enable manager logs and `-vv` to include balloon logs.
+- [x] Configured `virtle launch -v` to enable manager logs and `-vv` to include balloon logs.
 - [x] Updated tests to provide discard loggers for direct struct fixtures that bypass constructors.
 - [x] Removed logger setup tests in favor of structural coverage from package compilation and runtime tests.
 

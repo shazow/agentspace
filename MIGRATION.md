@@ -4,6 +4,40 @@ This file tracks consumer-facing API changes and the steps needed to migrate
 existing usage. Add a new dated section whenever a public command, Nix option,
 flake output, manifest contract, or generated wrapper behavior changes.
 
+## 2026-07-22: virtie moved to standalone virtle
+
+Affected users:
+
+- Consumers using `agentspace.packages.<system>.virtie`.
+- Consumers inspecting `agentspace.sandbox.launch.virtieManifest`,
+  `virtieManifestTemplate`, or `virtieManifestData`.
+- Notification hooks reading `VIRTIE_NOTIFY_*` variables.
+- Tooling that relies on generated `virtie-<host>.toml` paths or invokes the
+  `virtie` executable directly.
+
+Agentspace now consumes the standalone `github.com/shazow/virtle` project
+through its flake input instead of building the local `./virtie` Go module.
+The package output, executable, generated manifest names, guest readiness port,
+control socket, and notification environment use the new `virtle` name.
+
+Update downstream references:
+
+```diff
+-agentspace.packages.${system}.virtie
++agentspace.packages.${system}.virtle
+
+-sandbox.config.agentspace.sandbox.launch.virtieManifest
++sandbox.config.agentspace.sandbox.launch.virtleManifest
+
+-VIRTIE_NOTIFY_STATE
+-VIRTIE_NOTIFY_MESSAGE
++VIRTLE_NOTIFY_STATE
++VIRTLE_NOTIFY_MESSAGE
+```
+
+Generated manifests now use `.agentspace/virtle-<host>.toml`. No deprecated
+aliases for the old package or launch attributes are provided.
+
 ## 2026-07-19: writable guest stores use Nix local-overlay metadata
 
 ### Who Is Affected
