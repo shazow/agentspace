@@ -708,6 +708,10 @@ in
         };
 
         networking.hostName = cfg.hostName;
+        networking.nameservers = [
+          "1.1.1.1"
+          "8.8.8.8"
+        ];
         nixpkgs.config.allowUnfree = true;
         services.logrotate.enable = false;
         systemd.services."serial-getty@ttyS0".enable = lib.mkIf (resolvedSerialMode == "print") false;
