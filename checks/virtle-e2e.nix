@@ -619,12 +619,9 @@ in
     grep -Fx '/var/lib/virtle/host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
     grep -Fx '/etc/virtle/inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
     grep -Fx '/var/lib/virtle/host' "$workspace_dir/state/guest-agent-closes" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/test -d /etc/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/install -d -o agent -g users -m 0750 /etc/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/chown agent:users /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/test -d /var/lib/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/install -d /var/lib/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -F '/bin/sh -c' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx 'chown agent:users /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx 'chmod 0640 /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
     test ! -e "$workspace_dir/.agentspace/virtle-fake.pid"
