@@ -120,6 +120,10 @@ let
             with open(os.path.join(state_dir, name), "a", encoding="utf-8"):
                 pass
 
+        def vm_running():
+            with status_lock:
+                return status == "running"
+
         def handle(conn):
             global status
             global migration_status
@@ -273,6 +277,18 @@ let
                         send({"return": {"pid": qga_next_pid}})
                     elif command == "guest-exec-status":
                         send({"return": qga_exec_statuses.get(args.get("pid"), {"exited": True, "exitcode": 0})})
+                    elif command == "guest-shutdown":
+                        if not vm_running():
+                            # A paused guest has no vcpus to run the agent, so
+                            # a real one never answers; virtle falls back to
+                            # forcing the quit through QMP.
+                            send({"error": {"class": "GenericError", "desc": "guest is not running"}})
+                            continue
+                        touch("guest-agent-shutdown")
+                        send({"return": {}})
+                        # A real guest powers off shortly after acknowledging,
+                        # and QEMU exiting is what virtle waits for.
+                        threading.Timer(0.1, os.kill, (parent_pid, signal.SIGTERM)).start()
                     else:
                         send({"return": {}})
             conn.close()
@@ -623,6 +639,7 @@ in
     grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     grep -Fx '/run/current-system/sw/bin/test -d /var/lib/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     grep -Fx '/run/current-system/sw/bin/install -d /var/lib/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    test -f "$workspace_dir/state/guest-agent-shutdown"
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
     test ! -e "$workspace_dir/.agentspace/virtle-fake.pid"
@@ -823,7 +840,7 @@ in
     set -e
     if [ "$status" -ne 0 ]; then
       if [ "$status" -eq 124 ]; then
-        echo "virtle-ssh-auth-failure-e2e: launch timed out, likely stuck retrying ssh" >&2
+        echo "virtle-ssh-auth-failure-e2e: launch did not exit within the timeout" >&2
       else
         echo "virtle-ssh-auth-failure-e2e: launch exited non-zero" >&2
       fi
@@ -840,6 +857,7 @@ in
       exit 1
     fi
     test ! -e "$workspace_dir/state/ssh-auth-failure-attempt"
+    test -f "$workspace_dir/state/guest-agent-shutdown"
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
     test ! -e "$workspace_dir/.agentspace/virtle-fake.pid"
