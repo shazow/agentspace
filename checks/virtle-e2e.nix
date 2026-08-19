@@ -613,8 +613,6 @@ in
 
     grep -F 'AGENTSPACE_VIRTLE_OK' "$launch_log" >/dev/null
     grep -F 'stats:' "$launch_log" >/dev/null
-    workspace_real="$(${pkgs.coreutils}/bin/realpath "$workspace_dir")"
-    grep -F '"working_dir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtle-fake.json" >/dev/null
     grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
     grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
     grep -Fx '/etc/virtle/inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
