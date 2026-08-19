@@ -710,9 +710,7 @@ in
     fi
     unset launch_pid
 
-    disk_resume_cwd="$tmpdir/disk-resume-cwd"
-    mkdir -p "$disk_resume_cwd"
-    cd "$disk_resume_cwd"
+    cd "$disk_workspace_dir"
 
     ${virtlePackage}/bin/virtle --manifest="$disk_manifest" launch --ssh --resume=force >"$disk_resume_log" 2>&1 &
     resume_pid=$!
