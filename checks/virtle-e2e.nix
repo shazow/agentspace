@@ -273,6 +273,10 @@ let
                         send({"return": {"pid": qga_next_pid}})
                     elif command == "guest-exec-status":
                         send({"return": qga_exec_statuses.get(args.get("pid"), {"exited": True, "exitcode": 0})})
+                    elif command == "guest-shutdown":
+                        send({"return": {}})
+                        os.kill(parent_pid, signal.SIGTERM)
+                        return
                     else:
                         send({"return": {}})
             conn.close()
