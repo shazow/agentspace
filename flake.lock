@@ -85,11 +85,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1787169485,
-        "narHash": "sha256-12AbUTW8nC+f2zH6WnKK0RSEsv3Jc8oprMgEQQcgeQI=",
+        "lastModified": 1787169837,
+        "narHash": "sha256-jJcZB3M9HXSmhEeu9AbcQrpOvRI4Gzy4y765+Sv1sos=",
         "owner": "shazow",
         "repo": "virtle",
-        "rev": "0f1ff3f60f5b84fd1338e0699634c298ae1e41dc",
+        "rev": "9a8393ea2774a61a72c247f6cd8109aa3440b419",
         "type": "github"
       },
       "original": {
