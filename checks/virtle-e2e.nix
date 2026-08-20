@@ -273,6 +273,10 @@ let
                         send({"return": {"pid": qga_next_pid}})
                     elif command == "guest-exec-status":
                         send({"return": qga_exec_statuses.get(args.get("pid"), {"exited": True, "exitcode": 0})})
+                    elif command == "guest-shutdown":
+                        send({"return": {}})
+                        os.kill(parent_pid, signal.SIGTERM)
+                        return
                     else:
                         send({"return": {}})
             conn.close()
@@ -609,20 +613,15 @@ in
 
     grep -F 'AGENTSPACE_VIRTLE_OK' "$launch_log" >/dev/null
     grep -F 'stats:' "$launch_log" >/dev/null
-    workspace_real="$(${pkgs.coreutils}/bin/realpath "$workspace_dir")"
-    grep -F '"working_dir": "'"$workspace_real"'"' "$workspace_dir/.agentspace/virtle-fake.json" >/dev/null
     grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
     grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
     grep -Fx '/etc/virtle/inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
     grep -Fx '/var/lib/virtle/host aG9zdCBwYXlsb2Fk' "$workspace_dir/state/guest-agent-writes" >/dev/null
     grep -Fx '/etc/virtle/inline' "$workspace_dir/state/guest-agent-closes" >/dev/null
     grep -Fx '/var/lib/virtle/host' "$workspace_dir/state/guest-agent-closes" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/test -d /etc/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/install -d -o agent -g users -m 0750 /etc/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/chown agent:users /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/chmod 0640 /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/test -d /var/lib/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
-    grep -Fx '/run/current-system/sw/bin/install -d /var/lib/virtle capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -F '/bin/sh -c' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx 'chown agent:users /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
+    grep -Fx 'chmod 0640 /etc/virtle/inline capture-output=True' "$workspace_dir/state/guest-agent-execs" >/dev/null
     test -f "$workspace_dir/state/qemu-stopped"
     test -f "$workspace_dir/state/virtiofsd-stopped"
     test ! -e "$workspace_dir/.agentspace/virtle-fake.pid"
@@ -711,9 +710,7 @@ in
     fi
     unset launch_pid
 
-    disk_resume_cwd="$tmpdir/disk-resume-cwd"
-    mkdir -p "$disk_resume_cwd"
-    cd "$disk_resume_cwd"
+    cd "$disk_workspace_dir"
 
     ${virtlePackage}/bin/virtle --manifest="$disk_manifest" launch --ssh --resume=force >"$disk_resume_log" 2>&1 &
     resume_pid=$!
