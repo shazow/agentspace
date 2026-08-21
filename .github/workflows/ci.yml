@@ -29,4 +29,6 @@ jobs:
         run: nix fmt -- --fail-on-change
 
       - name: Run flake checks
-        run: nix flake check --print-build-logs
+        run: |
+          sudo chmod a+rw /dev/kvm
+          nix flake check --print-build-logs
