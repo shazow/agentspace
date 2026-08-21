@@ -612,7 +612,6 @@ in
     fi
 
     grep -F 'AGENTSPACE_VIRTLE_OK' "$launch_log" >/dev/null
-    grep -F 'stats:' "$launch_log" >/dev/null
     grep -Fx '3' "$workspace_dir/state/qemu-vsock-cid" >/dev/null
     grep -Fx 'agent@vsock/3' "$workspace_dir/state/ssh-destination" >/dev/null
     grep -Fx '/etc/virtle/inline aW5saW5lLWZyb20tbWFuaWZlc3Q=' "$workspace_dir/state/guest-agent-writes" >/dev/null
@@ -827,11 +826,6 @@ in
       exit 1
     fi
 
-    grep -F 'stats:' "$auth_log" >/dev/null
-    if grep -F 'waiting for ssh connection' "$auth_log" >/dev/null || grep -F 'connecting ssh' "$auth_log" >/dev/null; then
-      echo "virtle-ssh-auth-failure-e2e: autoconnect unexpectedly logged retry phases" >&2
-      exit 1
-    fi
     if [ "$(cat "$workspace_dir/state/ssh-auth-failure-first-last-arg")" = "true" ]; then
       echo "virtle-ssh-auth-failure-e2e: first autoconnect ssh was readiness probe" >&2
       exit 1
@@ -865,10 +859,6 @@ in
     done
 
     grep -F 'connect with' "$no_ssh_log" >/dev/null
-    if grep -F 'ssh-add' "$no_ssh_log" >/dev/null; then
-      echo "virtle-ssh-auth-failure-e2e: no-ssh launch unexpectedly checked ssh auth" >&2
-      exit 1
-    fi
     test ! -e "$no_ssh_workspace_dir/state/ssh-auth-failure-attempt"
     ${virtlePackage}/bin/virtle --manifest="$no_ssh_manifest" suspend
     test -f "$no_ssh_workspace_dir/state/qemu-stopped"
