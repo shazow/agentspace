@@ -22,13 +22,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The real-boot checks need KVM plus a vhost-vsock device for virtle's
+      # guest control channel. Grant access via udev rules (the documented way
+      # for GitHub-hosted runners) and load the vhost_vsock module, which the
+      # runner image does not load by default.
+      - name: Enable KVM and vhost-vsock access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          echo 'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-vhost-vsock.rules
+          sudo udevadm control --reload-rules
+          sudo modprobe vhost_vsock
+          sudo udevadm trigger --name-match=kvm --name-match=vhost-vsock
+          sudo chmod a+rw /dev/kvm /dev/vhost-vsock
+          ls -l /dev/kvm /dev/vhost-vsock
+
       - name: Install Nix
         uses: cachix/install-nix-action@v31
+        with:
+          # /dev/kvm is exposed to kvm-feature builds automatically, but
+          # /dev/vhost-vsock must be bind-mounted into the build sandbox
+          # explicitly so QEMU's vhost-vsock device works inside nix checks.
+          extra_nix_config: |
+            extra-sandbox-paths = /dev/vhost-vsock
 
       - name: Check Nix formatting
         run: nix fmt -- --fail-on-change
 
       - name: Run flake checks
-        run: |
-          sudo chmod a+rw /dev/kvm
-          nix flake check --print-build-logs
+        run: nix flake check --print-build-logs
