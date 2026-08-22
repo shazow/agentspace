@@ -45,6 +45,21 @@ jobs:
           extra_nix_config: |
             extra-sandbox-paths = /dev/vhost-vsock
 
+      # Cache the Nix store between runs. microvm.nix's optimize mode swaps in
+      # a minimized QEMU variant (qemu-host-cpu-only-for-vm-tests) that
+      # cache.nixos.org does not serve, so without this every run compiles
+      # QEMU from source on a stateless runner.
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 6G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
       - name: Check Nix formatting
         run: nix fmt -- --fail-on-change
 
