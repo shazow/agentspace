@@ -19,3 +19,4 @@ in
 import ./virtle-manifest.nix args
 // import ./virtle-e2e.nix args
 // import ./consumer-workflow.nix args
+// import ./mount-cwd-e2e.nix args
