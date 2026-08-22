@@ -91,6 +91,10 @@
 
             REPO_DIR=$(${pkgs.coreutils}/bin/realpath .)
 
+            # Launch verbosity, overridable for debugging: virtle only logs
+            # managed-process (virtiofsd, qemu) output at -vv.
+            VIRTLE_VERBOSITY="''${AGENTSPACE_LAUNCH_VERBOSITY:--v}"
+
             ${launchCfg.commonInit}
 
             MANIFEST_PATH=${lib.escapeShellArg launchCfg.virtleManifest}
@@ -117,23 +121,23 @@
             ''}
 
             if [ "$#" -eq 0 ] && [ -n ${lib.escapeShellArg remoteCommand} ]; then
-              exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch -v --ssh -- ${lib.escapeShellArg remoteCommand}
+              exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch "$VIRTLE_VERBOSITY" --ssh -- ${lib.escapeShellArg remoteCommand}
             fi
 
             if [ "$#" -eq 0 ]; then
               ${
                 if sshAutoconnect then
                   ''
-                    exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch -v --ssh
+                    exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch "$VIRTLE_VERBOSITY" --ssh
                   ''
                 else
                   ''
-                    exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch -v
+                    exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch "$VIRTLE_VERBOSITY"
                   ''
               }
             fi
 
-            exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch -v --ssh -- "$@"
+            exec ${virtlePackage}/bin/virtle --manifest="$MANIFEST_PATH" launch "$VIRTLE_VERBOSITY" --ssh -- "$@"
           '';
         in
         "${script}/bin/launch-agent";

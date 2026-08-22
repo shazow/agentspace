@@ -22,13 +22,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The real-boot checks need KVM plus a vhost-vsock device for virtle's
+      # guest control channel. Grant access via udev rules (the documented way
+      # for GitHub-hosted runners) and load the vhost_vsock module, which the
+      # runner image does not load by default.
+      - name: Enable KVM and vhost-vsock access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          echo 'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-vhost-vsock.rules
+          sudo udevadm control --reload-rules
+          sudo modprobe vhost_vsock
+          sudo udevadm trigger --name-match=kvm --name-match=vhost-vsock
+          sudo chmod a+rw /dev/kvm /dev/vhost-vsock
+          ls -l /dev/kvm /dev/vhost-vsock
+
       - name: Install Nix
         uses: cachix/install-nix-action@v31
+        with:
+          # /dev/kvm is exposed to kvm-feature builds automatically, but
+          # /dev/vhost-vsock must be bind-mounted into the build sandbox
+          # explicitly so QEMU's vhost-vsock device works inside nix checks.
+          extra_nix_config: |
+            extra-sandbox-paths = /dev/vhost-vsock
+
+      # Cache the Nix store between runs. microvm.nix's optimize mode swaps in
+      # a minimized QEMU variant (qemu-host-cpu-only-for-vm-tests) that
+      # cache.nixos.org does not serve, so without this every run compiles
+      # QEMU from source on a stateless runner.
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 6G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
 
       - name: Check Nix formatting
         run: nix fmt -- --fail-on-change
 
       - name: Run flake checks
-        run: |
-          sudo chmod a+rw /dev/kvm
-          nix flake check --print-build-logs
+        run: nix flake check --print-build-logs

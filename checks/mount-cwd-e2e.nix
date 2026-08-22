@@ -24,6 +24,15 @@ let
       (
         { lib, pkgs, ... }:
         {
+          # virtiofsd's default namespace sandbox cannot finish its mount
+          # setup inside the unprivileged Nix build sandbox — it dies with
+          # "Error entering sandbox: CleanMount(... PermissionDenied)" — and
+          # its only other mode (chroot) requires root. The build sandbox
+          # already isolates this test; run virtiofsd without its own sandbox.
+          agentspace.sandbox.virtiofsd.extraArgs = [
+            "--sandbox"
+            "none"
+          ];
           environment.systemPackages = lib.mkForce [
             pkgs.bashInteractive
             pkgs.coreutils
@@ -60,6 +69,11 @@ in
           exit 1
         fi
 
+        if [ ! -r /dev/vhost-vsock ] || [ ! -w /dev/vhost-vsock ]; then
+          echo "mount-cwd-real-boot: readable and writable /dev/vhost-vsock is required for virtle's vsock control channel (modprobe vhost_vsock and expose it with extra-sandbox-paths)" >&2
+          exit 1
+        fi
+
         workspace_root="''${WORKSPACE:-}"
         if [ -z "$workspace_root" ]; then
           workspace_root="''${TMPDIR:-$PWD}"
@@ -69,6 +83,9 @@ in
 
         export HOME="$test_root/home"
         export XDG_RUNTIME_DIR="$test_root/runtime"
+        # Surface managed-process (virtiofsd, qemu) output in the build log;
+        # virtle discards it below debug verbosity.
+        export AGENTSPACE_LAUNCH_VERBOSITY=-vv
 
         cleanup() {
           status=$?

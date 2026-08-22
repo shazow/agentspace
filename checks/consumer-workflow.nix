@@ -122,7 +122,7 @@ in
   sandbox-consumer-workflow =
     assert consumerWorkflow;
     pkgs.runCommand "sandbox-consumer-workflow" { } ''
-      grep -F 'virtle --manifest="$MANIFEST_PATH" launch -v --ssh' ${launchScript}
+      grep -F 'virtle --manifest="$MANIFEST_PATH" launch "$VIRTLE_VERBOSITY" --ssh' ${launchScript}
       grep -F ${pkgs.lib.escapeShellArg manifestPath} ${launchScript}
       grep -F ${pkgs.lib.escapeShellArg manifestTemplate} ${launchScript}
       grep -F 'mkdir -p "$(' ${launchScript}
@@ -132,7 +132,7 @@ in
       grep -F 'mkSandbox closure size:' ${launchScript}
       test ${pkgs.lib.escapeShellArg manifestPath} = '.agentspace/virtle-agent-sandbox.toml'
       grep -F "bash -lc pwd" ${launchScript}
-      grep -F 'virtle --manifest="$MANIFEST_PATH" launch -v --ssh -- "$@"' ${launchScript}
+      grep -F 'virtle --manifest="$MANIFEST_PATH" launch "$VIRTLE_VERBOSITY" --ssh -- "$@"' ${launchScript}
 
       mkdir -p legacy-warning/.agentspace
       touch legacy-warning/.agentspace/nix-store-overlay.img
