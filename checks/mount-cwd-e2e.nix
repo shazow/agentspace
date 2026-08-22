@@ -24,6 +24,15 @@ let
       (
         { lib, pkgs, ... }:
         {
+          # virtiofsd's default namespace sandbox needs to create namespaces
+          # and pivot_root, which the unprivileged Nix build sandbox denies,
+          # so the daemon exits immediately and virtle fails with "virtiofs
+          # startup: ... exited with code 1". The build sandbox already
+          # isolates this test; run virtiofsd without its own sandbox.
+          agentspace.sandbox.virtiofsd.extraArgs = [
+            "--sandbox"
+            "none"
+          ];
           environment.systemPackages = lib.mkForce [
             pkgs.bashInteractive
             pkgs.coreutils
